@@ -4,6 +4,7 @@ import { notifyResidentInProgress } from "../submit-maintenance-request/resident
 import { resumeMaintenanceWorkflowAfterVendorAccepted } from "../_shared/maintenance_admin_escalation.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
+import { closeOpenAsksForTicket } from "../_shared/closeOpenAsksForTicket.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromJobActionToken } from "../_shared/vendorJobActionToken.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
@@ -410,6 +411,16 @@ serve(async (req) => {
       }
     }
 
+    try {
+      await closeOpenAsksForTicket(
+        supabase,
+        ticketId,
+        `vendor_work_status → in_progress (completion pending feedback, ${source})`,
+      )
+    } catch (e) {
+      console.error("[vendor-update-job-status] closeOpenAsks", e)
+    }
+
     return jsonResponse({
       ok: true,
       ticketId,
@@ -427,6 +438,22 @@ serve(async (req) => {
   if (upErr) {
     console.error("[vendor-update-job-status] update", upErr)
     return jsonResponse({ error: "Update failed" }, 500)
+  }
+
+  if (
+    step.next === "in_progress" ||
+    step.next === "completed" ||
+    step.next === "cancelled"
+  ) {
+    try {
+      await closeOpenAsksForTicket(
+        supabase,
+        ticketId,
+        `vendor_work_status → ${step.next} (${source})`,
+      )
+    } catch (e) {
+      console.error("[vendor-update-job-status] closeOpenAsks", e)
+    }
   }
 
   const { error: logErr } = await supabase.from("vendor_status_events").insert({

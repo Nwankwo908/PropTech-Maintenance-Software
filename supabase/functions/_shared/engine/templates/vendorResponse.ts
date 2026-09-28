@@ -24,6 +24,12 @@ import {
 } from "../../sms/vendorWorkOrderClarification.ts"
 import { resolveVendorAvailability } from "../../vendor_availability_parse.ts"
 import { confirmVendorSchedule } from "../../vendor_job_schedule.ts"
+import { closeOpenAsksForTicket } from "../../closeOpenAsksForTicket.ts"
+import { loadLandlordOperationalSettings } from "../../landlordNotificationPrefs.ts"
+import {
+  buildVendorScheduleAlreadyAdvancedSms,
+  ticketStatusBlocksScheduleAsks,
+} from "../../scheduleAskGuards.ts"
 import {
   askTenantScheduleConfirmation,
   buildVendorWaitingOnTenantSms,
@@ -461,6 +467,75 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
     const ticketId = ticketBind.ticketId
     const workOrderRef = formatWorkOrderRef(ticketId)
 
+    const { data: ticketStatusRow } = await supabase
+      .from("maintenance_requests")
+      .select("vendor_work_status, landlord_id")
+      .eq("id", ticketId)
+      .maybeSingle()
+    const ticketWorkStatus =
+      typeof ticketStatusRow?.vendor_work_status === "string"
+        ? ticketStatusRow.vendor_work_status
+        : ""
+
+    // Ticket already past scheduling — never start/continue a resident confirm ask.
+    if (
+      ticketStatusBlocksScheduleAsks(ticketWorkStatus) &&
+      !parsedAction
+    ) {
+      if (prevInScheduleSteps) {
+        await closeOpenAsksForTicket(
+          supabase,
+          ticketId,
+          `vendor SMS while ticket ${ticketWorkStatus}`,
+        )
+      }
+      replyHint = buildVendorScheduleAlreadyAdvancedSms({
+        workOrderRef,
+        vendorWorkStatus: ticketWorkStatus,
+      })
+      await recordVendorRepliedEvent(supabase, {
+        landlordId: ctx.landlordId,
+        vendorId,
+        conversationId: sms.conversationId,
+        messageId: sms.messageId,
+        maintenanceRequestId: ticketId,
+        bodyPreview: sms.inbound.body,
+        parsedAction: null,
+        transition: undefined,
+      })
+      return {
+        templateId: "vendor_job_response",
+        route: workflowRouteForTemplate("vendor_job_response"),
+        replyHint,
+        metadata: {
+          vendorId,
+          maintenanceRequestId: ticketId,
+          parsedAction: null,
+          scheduleBlockedStatus: ticketWorkStatus,
+          bodyPreview: sms.inbound.body.slice(0, 160),
+          skipGenericAutoReply: true,
+        },
+      }
+    }
+
+    const scheduleTimeZone = await (async () => {
+      const landlordIdForTz =
+        (typeof ticketStatusRow?.landlord_id === "string"
+          ? ticketStatusRow.landlord_id
+          : "") ||
+        (typeof ctx.landlordId === "string" ? ctx.landlordId : "")
+      if (!landlordIdForTz) return undefined
+      try {
+        const ops = await loadLandlordOperationalSettings(
+          supabase,
+          landlordIdForTz,
+        )
+        return ops.timeZone?.trim() || undefined
+      } catch {
+        return undefined
+      }
+    })()
+
     const staleSchedule = isStaleScheduleForTicket(prev, ticketId)
     // Stale FSM from a prior job on this SMS thread must not steal YES / times
     // from a new assignment (skips accept + "Earliest availability?").
@@ -565,6 +640,8 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         const resolved = await resolveVendorAvailability(availabilityBody, {
           conversationContext: formatScheduleContextForPrompt(schedulePrev),
           clarifyAttempts: schedulePrev.clarifyAttempts ?? 0,
+          timeZone: scheduleTimeZone,
+          now: new Date(inboundAt),
         })
         const outcome =
           resolved.status === "resolved"

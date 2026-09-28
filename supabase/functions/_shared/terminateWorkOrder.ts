@@ -23,6 +23,7 @@ import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { resolveVendorAlertSenderNumber } from "./sms/vendorSmsRouting.ts"
 import { releaseMaintenanceIntakePin } from "./sms/residentIntake.ts"
 import { runLinksCancelledTicket } from "./sms/cancelResidentWorkOrderLink.ts"
+import { closeOpenAsksForTicket } from "./closeOpenAsksForTicket.ts"
 import type { SmsIntakeState } from "./sms/residentIntakeTypes.ts"
 
 export const MAX_TERMINATE_SMS_ATTEMPTS = 3
@@ -700,6 +701,16 @@ export async function terminateWorkOrder(
     if (upErr) {
       console.error("[terminate-wo] ticket update", upErr.message)
       return { ok: false, error: upErr.message }
+    }
+
+    try {
+      await closeOpenAsksForTicket(
+        supabase,
+        ticketId,
+        `vendor_work_status → ${params.mode === "archive" ? "archived" : "cancelled"} (${params.source})`,
+      )
+    } catch (e) {
+      console.warn("[terminate-wo] closeOpenAsks", e)
     }
 
     if (params.closeWorkflowRuns !== false) {

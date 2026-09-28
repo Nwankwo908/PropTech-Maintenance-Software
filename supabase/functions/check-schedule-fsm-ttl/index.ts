@@ -5,6 +5,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { processScheduleFsmTtlChecks } from "../_shared/scheduleFsmTtl.ts"
+import { processExpiredVendorProbeHolds } from "../_shared/vendorAvailabilityProbe.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +30,7 @@ serve(async (req) => {
   }
   if (
     !authorizedCronBearer(req, [
+      "ULO_OPS_CRON_SECRET",
       "CHECK_SCHEDULE_FSM_TTL_SECRET",
       "CHECK_WORK_ORDER_TERMINATE_NOTIFY_SECRET",
       "ADMIN_REASSIGN_SECRET",
@@ -59,6 +61,7 @@ serve(async (req) => {
     ? body.ticketIds.map((id) => String(id).trim()).filter(Boolean)
     : null
   const force = body.force === true
+  const dryRun = body.dry_run === true || body.dryRun === true
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -69,8 +72,14 @@ serve(async (req) => {
       landlordId,
       ticketIds,
       force,
+      dryRun,
     })
-    return jsonResponse({ ok: true, ...summary })
+    // Multi-vendor availability holds: finalize after timeout when more vendors
+    // never replied (same clock the status SMS started).
+    const probeHolds = dryRun
+      ? { scanned: 0, finalized: 0, dryRun: true }
+      : await processExpiredVendorProbeHolds(supabase)
+    return jsonResponse({ ok: true, ...summary, vendor_probe_holds: probeHolds })
   } catch (err) {
     console.error("[check-schedule-fsm-ttl]", err)
     return jsonResponse(

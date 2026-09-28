@@ -8,6 +8,10 @@ import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
 import { confirmVendorSchedule } from "../vendor_job_schedule.ts"
 import {
+  buildResidentScheduleAlreadyAdvancedSms,
+  ticketStatusBlocksScheduleAsks,
+} from "../scheduleAskGuards.ts"
+import {
   appendOutboundContext,
   persistVendorScheduleFsm,
   readVendorScheduleFsm,
@@ -31,6 +35,11 @@ import {
   extractTenantSchedulePreferredWindow,
   hasTenantScheduleTimeCue,
 } from "./tenantSchedulePreferredWindow.ts"
+import { matchShortReplyToken } from "./shortReplyTokens.ts"
+import {
+  landlordRecipients,
+  recordSmsNoRecipients,
+} from "../smsRecipients.ts"
 
 export {
   extractTenantSchedulePreferredWindow,
@@ -178,7 +187,47 @@ export function parseTenantScheduleDecision(
     return "counter_propose"
   }
 
+  // Typo tolerance for short YES/NO command tokens (in addition to phrases above).
+  const acceptHit = matchShortReplyToken(normalized, [
+    "YES",
+    "Y",
+    "CONFIRM",
+    "CONFIRMED",
+    "OK",
+    "OKAY",
+  ])
+  if (acceptHit) return "accept"
+  const declineHit = matchShortReplyToken(normalized, [
+    "NO",
+    "N",
+    "NOPE",
+    "NAH",
+    "DECLINE",
+    "DECLINED",
+  ])
+  if (declineHit) return "decline"
+
   return null
+}
+
+export function buildScheduleConfirmClarifySms(input: {
+  windowText?: string | null
+  workOrderRef?: string | null
+}): string {
+  const window = input.windowText?.trim() || ""
+  const wo = input.workOrderRef?.trim() || ""
+  if (window && wo) {
+    return (
+      `I didn't quite catch that — did you mean to confirm ${window} for ${wo}? ` +
+      "Reply YES or NO."
+    )
+  }
+  if (window) {
+    return (
+      `I didn't quite catch that — did you mean to confirm ${window}? Reply YES or NO.`
+    )
+  }
+  return "I didn't quite catch that — reply YES to confirm the visit time, or NO if you need a different window."
 }
 
 function readAwaitingScheduleConfirmation(
@@ -459,12 +508,19 @@ async function notifyLandlordOpsSms(
   supabase: SupabaseClient,
   landlordId: string,
   body: string,
+  opts?: { messageType?: string; ticketId?: string | null },
 ): Promise<void> {
-  const phones = (Deno.env.get("SMS_ADMIN_NOTIFY_PHONES") ?? "")
-    .split(/[,;\s]+/)
-    .map((p) => normalizePhoneFlexible(p))
-    .filter((p): p is string => Boolean(p))
-  if (phones.length === 0) return
+  const { phones } = await landlordRecipients(supabase, landlordId)
+  if (phones.length === 0) {
+    await recordSmsNoRecipients({
+      supabase,
+      landlordId,
+      caller: "tenantScheduleConfirm.notifyLandlordOpsSms",
+      messageType: opts?.messageType ?? "landlord_schedule_update",
+      maintenanceRequestId: opts?.ticketId ?? null,
+    })
+    return
+  }
   const sender = await findActiveLandlordMainNumber(supabase, landlordId)
   const from = sender?.phone_number?.trim()
   if (!from) return
@@ -494,6 +550,12 @@ export async function tryHandleTenantScheduleConfirmInbound(
       ticketId: string
       replyBody: string
     }
+  | {
+      handled: true
+      clarified: true
+      ticketId: string
+      replyBody: string
+    }
   | { handled: false }
 > {
   if (params.identityType !== "resident") return { handled: false }
@@ -512,12 +574,48 @@ export async function tryHandleTenantScheduleConfirmInbound(
   const pending = readAwaitingScheduleConfirmation(prior)
   if (!pending) return { handled: false }
 
+  const { data: ticketRow } = await supabase
+    .from("maintenance_requests")
+    .select("vendor_work_status")
+    .eq("id", pending.ticketId)
+    .maybeSingle()
+  const workStatus =
+    typeof ticketRow?.vendor_work_status === "string"
+      ? ticketRow.vendor_work_status
+      : ""
+  if (ticketStatusBlocksScheduleAsks(workStatus)) {
+    await clearAwaitingScheduleConfirmation(
+      supabase,
+      params.conversationId,
+      prior,
+    )
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody: buildResidentScheduleAlreadyAdvancedSms({
+        workOrderRef: formatWorkOrderRef(pending.ticketId),
+      }),
+    }
+  }
+
   // While a window is pending, bare day/time (or "No Wed 2pm") is a counter-propose.
   let decision = parseTenantScheduleDecision(params.body)
   if (!decision && hasTenantScheduleTimeCue(params.body)) {
     decision = "counter_propose"
   }
-  if (!decision) return { handled: false }
+  if (!decision) {
+    // Keep the pending ask — never fall through to a generic maintenance greeting.
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody: buildScheduleConfirmClarifySms({
+        windowText: pending.windowText,
+        workOrderRef: formatWorkOrderRef(pending.ticketId),
+      }),
+    }
+  }
 
   const preferredWindow =
     decision === "counter_propose"
@@ -692,6 +790,10 @@ export async function tryHandleTenantScheduleConfirmInbound(
         unitLabel,
         newTimeLabel,
       }),
+      {
+        messageType: "landlord_resident_declined_reschedule",
+        ticketId: pending.ticketId,
+      },
     )
     await logGraphEvent(supabase, {
       landlord_id: params.landlordId,

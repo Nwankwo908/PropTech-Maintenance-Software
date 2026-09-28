@@ -7,7 +7,6 @@ import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { sendOutboundSms } from "./sms/adapters.ts"
 import { resolveLandlordId } from "./sms/landlordSmsOnboarding.ts"
-import { normalizePhoneFlexible } from "./resident_notify.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { requestVendorFeedback } from "./vendor_feedback.ts"
@@ -17,6 +16,11 @@ import {
   loadLandlordOperationalSettings,
   requiresCompletionPhotoEvidence,
 } from "./landlordNotificationPrefs.ts"
+import { closeOpenAsksForTicket } from "./closeOpenAsksForTicket.ts"
+import {
+  landlordRecipients,
+  recordSmsNoRecipients,
+} from "./smsRecipients.ts"
 
 const MAX_PHOTOS = 12
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -31,18 +35,6 @@ function rateFnBase(): string {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()?.replace(/\/$/, "") ?? ""
   if (!supabaseUrl) return ""
   return `${supabaseUrl}/functions/v1/landlord-rate-vendor`
-}
-
-function adminNotifyPhones(): string[] {
-  const raw =
-    Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ||
-    Deno.env.get("LANDLORD_OPS_PHONE")?.trim() ||
-    ""
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((p: string) => normalizePhoneFlexible(p))
-    .filter((p): p is string => Boolean(p))
 }
 
 function extFromContentType(ct: string): string {
@@ -323,11 +315,22 @@ export async function notifyLandlordJobCompleted(
 
   const smsBody = smsLines.join("\n")
 
-  for (const phone of adminNotifyPhones()) {
-    try {
-      await sendOutboundSms(phone, smsBody, { landlordId: params.landlordId })
-    } catch (e) {
-      console.error("[maintenance-completion] landlord SMS", e)
+  const { phones } = await landlordRecipients(supabase, params.landlordId)
+  if (phones.length === 0) {
+    await recordSmsNoRecipients({
+      supabase,
+      landlordId: params.landlordId,
+      caller: "maintenanceCompletion.notifyLandlordJobCompleted",
+      messageType: "landlord_job_completed",
+      maintenanceRequestId: params.ticketId,
+    })
+  } else {
+    for (const phone of phones) {
+      try {
+        await sendOutboundSms(phone, smsBody, { landlordId: params.landlordId })
+      } catch (e) {
+        console.error("[maintenance-completion] landlord SMS", e)
+      }
     }
   }
 
@@ -403,8 +406,8 @@ export async function notifyLandlordJobCompleted(
       maintenance_request_id: params.ticketId,
       metadata: {
         photo_count: params.photoCount,
-        sms_targets: adminNotifyPhones().length,
-        email_targets: allEmails.length,
+        sms_targets: phones.length,
+        email_sent: true,
       },
     })
   } catch (e) {
@@ -493,6 +496,16 @@ export async function completeJobWithPhotos(
       console.error("[maintenance-completion] set in_progress", upErr.message)
       return { ok: false, error: "Could not update job", status: 500 }
     }
+  }
+
+  try {
+    await closeOpenAsksForTicket(
+      supabase,
+      params.ticketId,
+      "vendor_work_status → in_progress (completion upload path)",
+    )
+  } catch (e) {
+    console.error("[maintenance-completion] closeOpenAsks", e)
   }
 
   try {

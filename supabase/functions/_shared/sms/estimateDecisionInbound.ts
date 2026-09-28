@@ -9,6 +9,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { decideMaintenanceEstimate } from "../maintenanceEstimates.ts"
+import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
 import { resolveLandlordIdForAccountOrOpsPhone } from "./landlordAccountPhone.ts"
 import {
   listPendingEstimatesForLandlord,
@@ -16,41 +17,87 @@ import {
   sendLandlordEstimateDisambiguationSms,
   type PendingLandlordEstimate,
 } from "./landlordEstimateNotify.ts"
+import {
+  matchShortReplyToken,
+  normalizeShortReply,
+} from "./shortReplyTokens.ts"
 
 export type EstimateDecisionKeyword = "approve" | "reject"
+
+const APPROVE_EXACT = [
+  "APPROVE",
+  "APPROVED",
+  "YES APPROVE",
+  "APPROVE ESTIMATE",
+] as const
+
+const DECLINE_EXACT = [
+  "DECLINE",
+  "DECLINED",
+  "REJECT",
+  "REJECTED",
+  "NO DECLINE",
+  "DECLINE ESTIMATE",
+] as const
+
+/**
+ * Canonical command words for Levenshtein typo tolerance.
+ * Keep this list short — near-duplicates (DECLINE/DECLINED) tie at distance 2
+ * and would otherwise reject a valid misspelling as ambiguous.
+ */
+const APPROVE_FUZZY = ["APPROVE"] as const
+const DECLINE_FUZZY = ["DECLINE", "REJECT"] as const
 
 export function parseEstimateDecisionKeyword(
   body: string,
 ): EstimateDecisionKeyword | null {
-  const normalized = body
-    .trim()
-    .toUpperCase()
-    .replace(/[.!]+$/g, "")
-    .replace(/\s+/g, " ")
-
+  const normalized = normalizeShortReply(body)
   if (!normalized) return null
 
-  if (
-    normalized === "APPROVE" ||
-    normalized === "APPROVED" ||
-    normalized === "YES APPROVE" ||
-    normalized === "APPROVE ESTIMATE"
-  ) {
+  if ((APPROVE_EXACT as readonly string[]).includes(normalized)) {
     return "approve"
   }
-
-  if (
-    normalized === "DECLINE" ||
-    normalized === "DECLINED" ||
-    normalized === "REJECT" ||
-    normalized === "REJECTED" ||
-    normalized === "NO DECLINE" ||
-    normalized === "DECLINE ESTIMATE"
-  ) {
+  if ((DECLINE_EXACT as readonly string[]).includes(normalized)) {
     return "reject"
   }
 
+  // Typo tolerance for the literal command word (e.g. "Aprrove" → APPROVE).
+  // Complements the semantic allowlist above; does not replace it.
+  const approveHit = matchShortReplyToken(normalized, APPROVE_FUZZY)
+  if (approveHit) return "approve"
+  const declineHit = matchShortReplyToken(normalized, DECLINE_FUZZY)
+  if (declineHit) return "reject"
+
   return null
+}
+
+function money(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD" })
+}
+
+/** Clarify when a pending estimate ask exists but the reply did not parse. */
+export function buildEstimateDecisionClarifySms(input: {
+  totalCost?: number | null
+  workOrderRef?: string | null
+}): string {
+  const wo = input.workOrderRef?.trim() || ""
+  const amount =
+    typeof input.totalCost === "number" && Number.isFinite(input.totalCost)
+      ? money(input.totalCost)
+      : ""
+  if (amount && wo) {
+    return (
+      `I didn't quite catch that — did you mean to approve the ${amount} estimate for ${wo}? ` +
+      "Reply APPROVE or DECLINE."
+    )
+  }
+  if (wo) {
+    return (
+      `I didn't quite catch that — did you mean to approve the estimate for ${wo}? ` +
+      "Reply APPROVE or DECLINE."
+    )
+  }
+  return "I didn't quite catch that — reply APPROVE or DECLINE for the estimate waiting on this thread."
 }
 
 type AwaitingEstimateDecision = {
@@ -300,6 +347,56 @@ async function applyDecision(
   }
 }
 
+export type EstimateDecisionInboundResult =
+  | {
+      handled: true
+      action: EstimateDecisionKeyword
+      estimateId: string
+      status: "approved" | "rejected"
+      already?: boolean
+      replyBody: string
+    }
+  | {
+      handled: true
+      clarified: true
+      estimateId: string
+      replyBody: string
+    }
+  | { handled: false }
+
+async function clarifyPendingEstimateDecision(
+  supabase: SupabaseClient,
+  awaiting: AwaitingEstimateDecision,
+): Promise<EstimateDecisionInboundResult> {
+  const { data } = await supabase
+    .from("maintenance_estimates")
+    .select("id, total_cost, maintenance_request_id, status")
+    .eq("id", awaiting.estimateId)
+    .maybeSingle()
+
+  const ticketId =
+    awaiting.ticketId ||
+    (typeof data?.maintenance_request_id === "string"
+      ? data.maintenance_request_id
+      : null)
+  const totalCost =
+    typeof data?.total_cost === "number"
+      ? data.total_cost
+      : typeof data?.total_cost === "string"
+      ? Number(data.total_cost)
+      : null
+
+  return {
+    handled: true,
+    clarified: true,
+    estimateId: awaiting.estimateId,
+    replyBody: buildEstimateDecisionClarifySms({
+      totalCost: Number.isFinite(totalCost) ? totalCost : null,
+      workOrderRef: ticketId ? formatWorkOrderRef(ticketId) : null,
+    }),
+  }
+}
+
 export async function tryHandleEstimateDecisionInbound(
   supabase: SupabaseClient,
   params: {
@@ -310,17 +407,7 @@ export async function tryHandleEstimateDecisionInbound(
     identityType: string
     fromPhone?: string | null
   },
-): Promise<
-  | {
-      handled: true
-      action: EstimateDecisionKeyword
-      estimateId: string
-      status: "approved" | "rejected"
-      already?: boolean
-      replyBody: string
-    }
-  | { handled: false }
-> {
+): Promise<EstimateDecisionInboundResult> {
   // Real vendor threads must not approve estimates by SMS.
   if (params.identityType === "vendor") return { handled: false }
 
@@ -355,9 +442,8 @@ export async function tryHandleEstimateDecisionInbound(
       if (!action) {
         return {
           handled: true,
-          action: "approve",
+          clarified: true,
           estimateId: chosen.estimateId,
-          status: "approved",
           replyBody:
             "Reply APPROVE or DECLINE after picking a number, or send the number again with APPROVE / DECLINE.",
         }
@@ -374,8 +460,25 @@ export async function tryHandleEstimateDecisionInbound(
     }
   }
 
+  const awaitingEarly = readAwaitingEstimateDecision(priorIntake)
   const action = parseEstimateDecisionKeyword(params.body)
-  if (!action) return { handled: false }
+  if (!action) {
+    // Pending ask + unparseable reply: restate the decision — never fall through
+    // to the generic unknown-contact maintenance greeting.
+    if (awaitingEarly) {
+      return await clarifyPendingEstimateDecision(supabase, awaitingEarly)
+    }
+    if (disambiguation) {
+      return {
+        handled: true,
+        clarified: true,
+        estimateId: disambiguation[0]?.estimateId ?? "",
+        replyBody:
+          "I didn't quite catch that — reply with the number of the estimate, then APPROVE or DECLINE.",
+      }
+    }
+    return { handled: false }
+  }
 
   // Resolve landlord via the same account/ops phone helper used elsewhere.
   let landlordId = params.landlordId

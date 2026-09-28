@@ -1,6 +1,7 @@
 /// <reference lib="deno.ns" />
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
+  buildScheduleConfirmClarifySms,
   buildTenantScheduleAskSms,
   buildTenantScheduleDeclinedSms,
   buildVendorTenantNeedsDifferentTimeSms,
@@ -39,6 +40,24 @@ Deno.test("parseTenantScheduleDecision ignores unrelated text", () => {
   assertEquals(parseTenantScheduleDecision("tomorrow after 3"), null)
   assertEquals(parseTenantScheduleDecision("No water pressure"), null)
   assertEquals(parseTenantScheduleDecision(""), null)
+})
+
+Deno.test("parseTenantScheduleDecision tolerates short YES/NO typos", () => {
+  assertEquals(parseTenantScheduleDecision("YSE"), null) // distance 2 on YES — too loose; rejected
+  assertEquals(parseTenantScheduleDecision("YE"), "accept") // distance 1 → YES
+  assertEquals(parseTenantScheduleDecision("CONFIM"), "accept") // CONFIRM typo ≤2
+  assertEquals(parseTenantScheduleDecision("DECLIEN"), "decline")
+})
+
+Deno.test("buildScheduleConfirmClarifySms references the pending window", () => {
+  const body = buildScheduleConfirmClarifySms({
+    windowText: "Wed 9am–12pm",
+    workOrderRef: "WO-B347",
+  })
+  assertEquals(body.includes("Wed 9am–12pm"), true)
+  assertEquals(body.includes("WO-B347"), true)
+  assertEquals(body.includes("YES or NO"), true)
+  assertEquals(body.includes("How can we help with your maintenance"), false)
 })
 
 Deno.test("extractTenantSchedulePreferredWindow strips decline lead-in", () => {
