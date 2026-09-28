@@ -23,6 +23,7 @@ import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import { resolveOutboundLandlordSmsLine } from "../sms/landlordSmsOnboarding.ts"
 import { resolveVendorVerificationConversationId } from "../sms/vendorVerificationInbox.ts"
 import type { SmsProviderName } from "../sms/types.ts"
+import { staffAlertRecipients } from "../smsRecipients.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 
@@ -144,8 +145,7 @@ export function buildComplianceRestoredSms(input: {
 }
 
 function adminNotifyPhones(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ?? ""
-  return raw.split(",").map((p) => p.trim()).filter(Boolean)
+  return staffAlertRecipients()
 }
 
 async function ensureVendorSmsChannel(
@@ -269,7 +269,12 @@ async function notifyOpsExpiry(
   })
 
   const phones = adminNotifyPhones()
-  if (phones.length === 0) return
+  if (phones.length === 0) {
+    console.warn(
+      "[vendor-compliance-expiry] staff SMS list empty — relying on email",
+    )
+    return
+  }
   const line = await resolveOutboundLandlordSmsLine(supabase, params.landlordId)
   if (!line?.phone) return
   const provider = getSMSProviderForSend({

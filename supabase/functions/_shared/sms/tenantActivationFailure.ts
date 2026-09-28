@@ -183,7 +183,8 @@ export function filterVendorPhonesFromOpsRecipients(
 
 /**
  * Landlord account / onboarding phones are identity numbers.
- * Never drop them just because the same number also appears on a vendor row.
+ * Returns those identity phones only — never appends non-identity candidates
+ * (shared staff lists must not leak in via this helper).
  */
 export function keepLandlordIdentityPhones(
   identityPhones: Iterable<string>,
@@ -195,21 +196,16 @@ export function keepLandlordIdentityPhones(
     if (n) identity.add(n)
   }
   const allowed: string[] = []
-  const seen = new Set<string>()
   for (const p of identity) {
     allowed.push(p)
-    seen.add(p)
   }
-  for (const p of filtered.allowed) {
-    const n = normalizeOpsPhoneDigits(p)
-    if (!n || seen.has(n)) continue
-    seen.add(n)
-    allowed.push(n)
-  }
+  // Drop vendor-blocked numbers that are not landlord identity.
   const blocked = filtered.blocked.filter((p) => {
     const n = normalizeOpsPhoneDigits(p)
     return Boolean(n && !identity.has(n))
   })
+  // filtered.allowed is intentionally ignored — identity only.
+  void filtered.allowed
   return { allowed, blocked }
 }
 

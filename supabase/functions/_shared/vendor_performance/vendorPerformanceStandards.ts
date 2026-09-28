@@ -27,6 +27,7 @@ import { resolveOutboundLandlordSmsLine } from "../sms/landlordSmsOnboarding.ts"
 import { resolveVendorVerificationConversationId } from "../sms/vendorVerificationInbox.ts"
 import type { SmsProviderName } from "../sms/types.ts"
 import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
+import { staffAlertRecipients } from "../smsRecipients.ts"
 
 export type PerformanceNotices = {
   rating_coaching?: string
@@ -214,8 +215,7 @@ export function buildMisconductSuspendedSms(input: {
 }
 
 function adminNotifyPhones(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ?? ""
-  return raw.split(",").map((p: string) => p.trim()).filter(Boolean)
+  return staffAlertRecipients()
 }
 
 async function ensureVendorSmsChannel(
@@ -304,7 +304,13 @@ async function sendVendorSms(
 
 async function notifyOpsSms(body: string, landlordId: string, supabase: SupabaseClient) {
   const phones = adminNotifyPhones()
-  if (phones.length === 0) return
+  if (phones.length === 0) {
+    console.warn(
+      "[vendor-performance] staff SMS list empty — relying on email",
+      { landlordId },
+    )
+    return
+  }
   const line = await resolveOutboundLandlordSmsLine(supabase, landlordId)
   if (!line?.phone) return
   const provider = getSMSProviderForSend({

@@ -10,7 +10,6 @@ import {
   normalizeOpsEmail,
   sendLandlordOpsEmail,
 } from "../landlordOpsNotify.ts"
-import { teamMemberContactFromOnboarding } from "../../../../shared/landlordTeamContact.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import {
@@ -30,7 +29,6 @@ import {
   type OpsAlertChannelPreference,
 } from "./tenantActivationFailure.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
-import { normalizePhoneFlexible } from "../resident_notify.ts"
 
 export type { OpsAlertChannelPreference }
 export {
@@ -74,40 +72,6 @@ function residentDetailsUrl(building: string, residentId: string): string {
   )
 }
 
-function adminNotifyPhonesFromEnv(): string[] {
-  const raw =
-    Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ||
-    Deno.env.get("LANDLORD_OPS_PHONE")?.trim() ||
-    ""
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((p) => normalizePhoneFlexible(p))
-    .filter((p): p is string => Boolean(p))
-}
-
-async function loadVendorPhonesForLandlord(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<Set<string>> {
-  const blocked = new Set<string>()
-  const { data, error } = await supabase
-    .from("vendors")
-    .select("phone")
-    .eq("landlord_id", landlordId)
-    .not("phone", "is", null)
-    .limit(2000)
-  if (error) {
-    console.warn("[activation-admin-alert] vendor phone lookup", error.message)
-    return blocked
-  }
-  for (const row of data ?? []) {
-    const n = normalizePhoneFlexible(typeof row.phone === "string" ? row.phone : "")
-    if (n) blocked.add(n)
-  }
-  return blocked
-}
-
 async function loadVendorEmailsForLandlord(
   supabase: SupabaseClient,
   landlordId: string,
@@ -128,96 +92,15 @@ async function loadVendorEmailsForLandlord(
 }
 
 /**
- * Resolve landlord/property-team phones for operational activation alerts.
- * Sources: env ops phones, landlords.phone, onboarding account/backup/PM phones.
- * Vendor phones are excluded except the landlord's own onboarding/account number.
+ * Resolve landlord/property-team phones for operational alerts.
+ * Landlord-owned numbers only — never SMS_ADMIN_NOTIFY_PHONES.
  */
 export async function resolveLandlordOpsPhones(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<{ phones: string[]; blocked: string[] }> {
-  const candidates = new Set<string>(adminNotifyPhonesFromEnv())
-  const identityPhones = new Set<string>()
-
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("phone, email")
-    .eq("id", landlordId)
-    .maybeSingle()
-  if (typeof landlord?.phone === "string") {
-    const n = normalizePhoneFlexible(landlord.phone)
-    if (n) {
-      candidates.add(n)
-      identityPhones.add(n)
-    }
-  }
-
-  const { data: onboarding } = await supabase
-    .from("landlord_onboarding")
-    .select("draft_state, account_settings, properties, onboarding_status")
-    .eq("landlord_id", landlordId)
-    .maybeSingle()
-
-  const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
-  const account = (draft.accountSetup ?? {}) as Record<string, unknown>
-  for (const key of ["phone", "backupContactPhone", "backup_contact_phone"]) {
-    const n = normalizePhoneFlexible(
-      typeof account[key] === "string" ? (account[key] as string) : "",
-    )
-    if (n) {
-      candidates.add(n)
-      identityPhones.add(n)
-    }
-  }
-  const team = teamMemberContactFromOnboarding(onboarding)
-  const teamPhone = normalizePhoneFlexible(team.phone)
-  if (teamPhone) {
-    candidates.add(teamPhone)
-    identityPhones.add(teamPhone)
-  }
-
-  const { data: propertyRows } = await supabase
-    .from("properties")
-    .select("manager_phone")
-    .eq("landlord_id", landlordId)
-    .limit(200)
-
-  for (const row of propertyRows ?? []) {
-    const n = normalizePhoneFlexible(
-      typeof row.manager_phone === "string" ? row.manager_phone : "",
-    )
-    if (n) candidates.add(n)
-  }
-
-  const onboardingCompleted = onboarding?.onboarding_status === "completed"
-  const hasCanonicalProperties = (propertyRows?.length ?? 0) > 0
-  if (!onboardingCompleted && !hasCanonicalProperties) {
-    const properties = Array.isArray(onboarding?.properties)
-      ? onboarding.properties
-      : Array.isArray(draft.properties)
-        ? draft.properties
-        : []
-    for (const raw of properties) {
-      if (!raw || typeof raw !== "object") continue
-      const row = raw as Record<string, unknown>
-      const n = normalizePhoneFlexible(
-        typeof row.propertyManagerPhone === "string"
-          ? row.propertyManagerPhone
-          : typeof row.property_manager_phone === "string"
-            ? row.property_manager_phone
-            : "",
-      )
-      if (n) candidates.add(n)
-    }
-  }
-
-  const vendorPhones = await loadVendorPhonesForLandlord(supabase, landlordId)
-  const filtered = filterVendorPhonesFromOpsRecipients(
-    candidates,
-    vendorPhones,
-  )
-  const { allowed, blocked } = keepLandlordIdentityPhones(identityPhones, filtered)
-  return { phones: allowed, blocked }
+  const { landlordRecipients } = await import("../smsRecipients.ts")
+  return landlordRecipients(supabase, landlordId)
 }
 
 /**

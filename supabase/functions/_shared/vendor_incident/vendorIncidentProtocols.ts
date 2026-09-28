@@ -20,6 +20,7 @@ import {
   reportVendorMisconduct,
   type MisconductClass,
 } from "../vendor_performance/vendorPerformanceStandards.ts"
+import { staffAlertRecipients } from "../smsRecipients.ts"
 
 /** Minutes after scheduled_at for landlord + tenant notify. */
 export const NOSHOW_NOTIFY_MINUTES = 120
@@ -33,16 +34,12 @@ export type NoShowIncidentSummary = {
   errors: string[]
 }
 
-function adminNotifyPhones(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ?? ""
-  return raw.split(",").map((p: string) => p.trim()).filter(Boolean)
-}
-
 function founderNotifyPhones(): string[] {
-  const raw = Deno.env.get("FOUNDER_NOTIFY_PHONES")?.trim() ??
-    Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ??
-    ""
-  return raw.split(",").map((p: string) => p.trim()).filter(Boolean)
+  const raw = Deno.env.get("FOUNDER_NOTIFY_PHONES")?.trim() ?? ""
+  if (raw) {
+    return raw.split(",").map((p: string) => p.trim()).filter(Boolean)
+  }
+  return staffAlertRecipients()
 }
 
 function founderNotifyEmails(): string[] {
@@ -56,7 +53,13 @@ async function notifyOpsSms(
   body: string,
   phones: string[],
 ): Promise<void> {
-  if (phones.length === 0) return
+  if (phones.length === 0) {
+    console.warn(
+      "[vendor-incident] staff SMS list empty — relying on email",
+      { landlordId },
+    )
+    return
+  }
   const line = await resolveOutboundLandlordSmsLine(supabase, landlordId)
   if (!line?.phone) return
   const provider = getSMSProviderForSend({
@@ -522,7 +525,7 @@ export async function reportPropertyDamage(
     supabase,
     params.landlordId,
     `Ulo: ${vendorName} suspended — property damage. Claims via vendor COI (Ulo does not pay).`,
-    adminNotifyPhones(),
+    staffAlertRecipients(),
   )
 
   await logGraphEvent(supabase, {

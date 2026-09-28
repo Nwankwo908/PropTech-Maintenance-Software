@@ -62,7 +62,8 @@ Deno.test("onboarding landlord phone is kept even if it matches a vendor row", (
     filtered,
   )
   assertEquals(allowed[0], "+15551110001")
-  assertEquals(allowed.includes("+15552220002"), true)
+  // Non-identity candidates are never appended (staff / other numbers stay out).
+  assertEquals(allowed.includes("+15552220002"), false)
   assertEquals(blocked.includes("+15551110001"), false)
 })
 

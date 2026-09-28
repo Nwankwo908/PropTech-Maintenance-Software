@@ -36,6 +36,10 @@ import {
   persistVendorWorkOrderClarification,
   type VendorActiveJob,
 } from "./vendorWorkOrderClarification.ts"
+import {
+  landlordRecipients,
+  recordSmsNoRecipients,
+} from "../smsRecipients.ts"
 
 /** Keep in sync with tenantScheduleConfirm.AWAITING_SCHEDULE_CONFIRM_KEY */
 const AWAITING_SCHEDULE_CONFIRM_KEY = "awaiting_schedule_confirmation"
@@ -564,12 +568,16 @@ async function notifyLandlordReschedule(
   })
 
   let smsOk = false
-  const phones = (Deno.env.get("SMS_ADMIN_NOTIFY_PHONES") ?? "")
-    .split(/[,;\s]+/)
-    .map((p) => normalizePhoneFlexible(p))
-    .filter((p): p is string => Boolean(p))
+  const { phones } = await landlordRecipients(supabase, params.landlordId)
 
-  if (phones.length > 0) {
+  if (phones.length === 0) {
+    await recordSmsNoRecipients({
+      supabase,
+      landlordId: params.landlordId,
+      caller: "vendorRescheduleSms.notifyLandlordReschedule",
+      messageType: "landlord_reschedule_notice",
+    })
+  } else {
     const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
     const from = sender?.phone_number?.trim()
     if (from) {

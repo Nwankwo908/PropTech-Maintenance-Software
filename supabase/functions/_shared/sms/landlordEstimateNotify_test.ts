@@ -691,6 +691,126 @@ Deno.test(
 )
 
 Deno.test(
+  "Aprrove / Apporve typos approve a pending estimate",
+  async () => {
+    for (const body of ["Aprrove", "Apporve"]) {
+      const state = newState()
+      state.estimates[0]!.total_cost = 942
+      state.conversations[CONV_ID]!.intake_state = {
+        awaiting_estimate_decision: {
+          estimate_id: ESTIMATE_ID,
+          action_token: TOKEN,
+          ticket_id: TICKET_ID,
+        },
+      }
+      const supabase = mockSupabase(state)
+      const result = await tryHandleEstimateDecisionInbound(supabase, {
+        landlordId: LANDLORD_ID,
+        conversationId: CONV_ID,
+        messageId: `msg-typo-${body}`,
+        body,
+        identityType: "landlord",
+        fromPhone: OPS_A,
+      })
+      assertEquals(result.handled, true, body)
+      if (result.handled && !("clarified" in result && result.clarified)) {
+        assertEquals(result.action, "approve")
+        assertEquals(result.estimateId, ESTIMATE_ID)
+        assertEquals(result.status, "approved")
+      } else {
+        throw new Error(`expected approve for typo "${body}", got clarify/false`)
+      }
+    }
+  },
+)
+
+Deno.test(
+  "Declien typo declines a pending estimate",
+  async () => {
+    const state = newState()
+    state.conversations[CONV_ID]!.intake_state = {
+      awaiting_estimate_decision: {
+        estimate_id: ESTIMATE_ID,
+        action_token: TOKEN,
+        ticket_id: TICKET_ID,
+      },
+    }
+    const supabase = mockSupabase(state)
+    const result = await tryHandleEstimateDecisionInbound(supabase, {
+      landlordId: LANDLORD_ID,
+      conversationId: CONV_ID,
+      messageId: "msg-declien",
+      body: "Declien",
+      identityType: "landlord",
+      fromPhone: OPS_A,
+    })
+    assertEquals(result.handled, true)
+    if (result.handled && !("clarified" in result && result.clarified)) {
+      assertEquals(result.action, "reject")
+      assertEquals(result.status, "rejected")
+    } else {
+      throw new Error("expected decline for Declien typo")
+    }
+  },
+)
+
+Deno.test(
+  "unparseable reply against pending estimate clarifies instead of generic fallback",
+  async () => {
+    const state = newState()
+    state.estimates[0]!.total_cost = 942
+    state.conversations[CONV_ID]!.intake_state = {
+      awaiting_estimate_decision: {
+        estimate_id: ESTIMATE_ID,
+        action_token: TOKEN,
+        ticket_id: TICKET_ID,
+      },
+    }
+    const supabase = mockSupabase(state)
+    const result = await tryHandleEstimateDecisionInbound(supabase, {
+      landlordId: LANDLORD_ID,
+      conversationId: CONV_ID,
+      messageId: "msg-blue",
+      body: "blue elephant",
+      identityType: "landlord",
+      fromPhone: OPS_A,
+    })
+    assertEquals(result.handled, true)
+    assertEquals("clarified" in result && result.clarified, true)
+    if (result.handled && "clarified" in result && result.clarified) {
+      assertStringIncludes(result.replyBody, "$942.00")
+      assertStringIncludes(result.replyBody, "WO-CCCC")
+      assertStringIncludes(result.replyBody, "APPROVE or DECLINE")
+      assertEquals(
+        result.replyBody.includes("How can we help with your maintenance"),
+        false,
+      )
+    }
+    // Pending ask must still be present so a later APPROVE can succeed.
+    const waiting = state.conversations[CONV_ID]!.intake_state
+      .awaiting_estimate_decision as { estimate_id?: string } | undefined
+    assertEquals(waiting?.estimate_id, ESTIMATE_ID)
+
+    const retry = await tryHandleEstimateDecisionInbound(supabase, {
+      landlordId: LANDLORD_ID,
+      conversationId: CONV_ID,
+      messageId: "msg-retry-approve",
+      body: "APPROVE",
+      identityType: "landlord",
+      fromPhone: OPS_A,
+    })
+    assertEquals(retry.handled, true)
+    if (retry.handled && !("clarified" in retry && retry.clarified)) {
+      assertEquals(retry.action, "approve")
+      assertEquals(retry.estimateId, ESTIMATE_ID)
+      assertEquals(retry.status, "approved")
+    } else {
+      throw new Error("expected later APPROVE to decide the still-pending estimate")
+    }
+  },
+)
+
+Deno.test(
   "APPROVE after already approved returns status-specific confirmation",
   async () => {
     const state = newState()
