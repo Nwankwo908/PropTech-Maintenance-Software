@@ -1,6 +1,12 @@
 /**
  * After a positive resident rating, text the landlord invoice payment options
  * (card / BNPL / ACH / dashboard review).
+ *
+ * UNUSED / UNWIRED — no production call sites. Do not wire this as a second
+ * reply contract on the same invoice thread without an explicit sequencing
+ * decision (invoice_ready paid-confirmation YES/NO owns the ask today).
+ * Kept for reference only; prefer deleting once product confirms payment
+ * options SMS is not needed.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
@@ -10,6 +16,10 @@ import { logOutboundNoLandlordMain } from "./sms/logOutboundNoLandlordMain.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
+import {
+  landlordRecipients,
+  recordSmsNoRecipients,
+} from "./smsRecipients.ts"
 
 function money(n: number): string {
   return n.toLocaleString("en-US", {
@@ -17,14 +27,6 @@ function money(n: number): string {
     currency: "USD",
     minimumFractionDigits: 2,
   })
-}
-
-function adminNotifyPhones(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ?? ""
-  return raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean)
 }
 
 export function buildLandlordInvoicePaymentSms(input: {
@@ -48,6 +50,11 @@ export function buildLandlordInvoicePaymentSms(input: {
   ].join("\n")
 }
 
+/**
+ * @deprecated UNUSED — no call sites. Do not invoke for live invoices; the
+ * invoice_ready paid-confirmation YES/NO ask is the active landlord reply
+ * contract. See file header.
+ */
 export async function notifyLandlordInvoicePaymentOptions(
   supabase: SupabaseClient,
   params: {
@@ -58,15 +65,34 @@ export async function notifyLandlordInvoicePaymentOptions(
     unit: string
     totalCost: number
     invoiceId?: string | null
+    dryRun?: boolean
   },
-): Promise<void> {
+): Promise<{ phones: string[]; body: string; sent: boolean }> {
+  const empty = { phones: [] as string[], body: "", sent: false }
   if (!landlordHasPayments(params.landlordId)) {
-    return
+    return empty
   }
-  const phones = adminNotifyPhones()
+  const { phones } = await landlordRecipients(supabase, params.landlordId)
+  const body = buildLandlordInvoicePaymentSms({
+    workOrderRef: formatWorkOrderRef(params.ticketId),
+    vendorName: params.vendorName,
+    totalCost: params.totalCost,
+    unit: params.unit,
+  })
   if (phones.length === 0) {
-    console.warn("[invoice-payment-sms] no SMS_ADMIN_NOTIFY_PHONES configured")
-    return
+    await recordSmsNoRecipients({
+      supabase,
+      landlordId: params.landlordId,
+      caller: "invoicePaymentSms.notifyLandlordInvoicePaymentOptions",
+      messageType: "landlord_invoice_payment_options",
+      maintenanceRequestId: params.ticketId,
+      dryRun: params.dryRun,
+    })
+    return { phones, body, sent: false }
+  }
+
+  if (params.dryRun) {
+    return { phones, body, sent: false }
   }
 
   const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
@@ -78,20 +104,14 @@ export async function notifyLandlordInvoicePaymentOptions(
       resolver: "findActiveLandlordMainNumber",
       ticketId: params.ticketId,
     })
-    return
+    return { phones, body, sent: false }
   }
-
-  const body = buildLandlordInvoicePaymentSms({
-    workOrderRef: formatWorkOrderRef(params.ticketId),
-    vendorName: params.vendorName,
-    totalCost: params.totalCost,
-    unit: params.unit,
-  })
 
   const provider = getSMSProviderForSend({
     landlordId: params.landlordId,
     lineProvider: sender.provider,
   })
+  let sentAny = false
   for (const to of phones) {
     const send = await provider.sendMessage({
       to,
@@ -102,6 +122,7 @@ export async function notifyLandlordInvoicePaymentOptions(
       console.error("[invoice-payment-sms] send failed", to, send.error)
       continue
     }
+    sentAny = true
     try {
       await logGraphEvent(supabase, {
         landlord_id: params.landlordId,
@@ -122,6 +143,7 @@ export async function notifyLandlordInvoicePaymentOptions(
       console.error("[invoice-payment-sms] graph", e)
     }
   }
+  return { phones, body, sent: sentAny }
 }
 
 /** Map landlord reply 1–4 to a payment preference label. */
@@ -138,15 +160,9 @@ export function parseInvoicePaymentReply(
   return null
 }
 
-function adminNotifyPhoneSet(): Set<string> {
-  return new Set(
-    adminNotifyPhones().map((p) => p.replace(/\D/g, "")).filter(Boolean),
-  )
-}
-
 /**
- * Handle landlord/admin replies to invoice payment-option SMS.
- * Matches by known admin notify phones + recent payment_options_sent graph event.
+ * Handle landlord replies to invoice payment-option SMS.
+ * Matches landlord identity phones + a recent payment_options_sent graph event.
  */
 export async function tryHandleInvoicePaymentInbound(
   supabase: SupabaseClient,
@@ -159,7 +175,13 @@ export async function tryHandleInvoicePaymentInbound(
   },
 ): Promise<{ handled: false } | { handled: true; replyBody: string }> {
   const fromDigits = params.fromPhone.replace(/\D/g, "")
-  if (!fromDigits || !adminNotifyPhoneSet().has(fromDigits)) {
+  if (!fromDigits) return { handled: false }
+
+  const { phones } = await landlordRecipients(supabase, params.landlordId)
+  const allowed = new Set(
+    phones.map((p) => p.replace(/\D/g, "")).filter(Boolean),
+  )
+  if (![...allowed].some((d) => d === fromDigits || d.endsWith(fromDigits) || fromDigits.endsWith(d))) {
     return { handled: false }
   }
 

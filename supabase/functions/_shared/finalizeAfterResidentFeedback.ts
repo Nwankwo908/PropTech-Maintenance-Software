@@ -13,6 +13,7 @@ import {
 import { cleanInvoiceJobHeadline } from "./sms/invoicePaidConfirmation.ts"
 import { notifyResidentCompleted } from "../submit-maintenance-request/resident_notify.ts"
 import { emitServerProductEvent } from "./ga4MeasurementProtocol.ts"
+import { closeOpenAsksForTicket } from "./closeOpenAsksForTicket.ts"
 
 const POSITIVE_RATING_MIN = 4
 
@@ -74,6 +75,16 @@ export async function finalizeJobAfterResidentFeedback(
       })
     } catch (e) {
       console.error("[finalize-feedback] status event", e)
+    }
+
+    try {
+      await closeOpenAsksForTicket(
+        supabase,
+        params.ticketId,
+        "vendor_work_status → completed (resident feedback)",
+      )
+    } catch (e) {
+      console.error("[finalize-feedback] closeOpenAsks", e)
     }
   }
 
@@ -198,6 +209,7 @@ export async function finalizeJobAfterResidentFeedback(
   }
 
   // ensureInvoice may have already notified on create; idempotency covers retries.
+  // Always pass invoicePaidConfirmation so the YES/NO ask wins in either order.
   try {
     const unit =
       typeof ticket.unit === "string" && ticket.unit.trim() ? ticket.unit.trim() : ""
@@ -206,6 +218,11 @@ export async function finalizeJobAfterResidentFeedback(
       currency: "USD",
       minimumFractionDigits: 2,
     })
+    const jobHeadline = cleanInvoiceJobHeadline(
+      typeof ticket.description === "string" ? ticket.description : null,
+      typeof ticket.issue_category === "string" ? ticket.issue_category : null,
+      typeof ticket.issue_headline === "string" ? ticket.issue_headline : null,
+    )
     await notifyLandlordNeedsAttention(supabase, {
       landlordId: params.landlordId,
       kind: "invoice_ready",
@@ -216,6 +233,14 @@ export async function finalizeJobAfterResidentFeedback(
       idempotencyKey: `invoice:${invoiceId}`,
       maintenanceRequestId: params.ticketId,
       vendorId: params.vendorId,
+      invoicePaidConfirmation: {
+        invoiceId,
+        ticketId: params.ticketId,
+        amount: totalCost,
+        unit: unit || null,
+        vendorName,
+        jobHeadline,
+      },
     })
   } catch (e) {
     console.error("[finalize-feedback] attention notify", e)

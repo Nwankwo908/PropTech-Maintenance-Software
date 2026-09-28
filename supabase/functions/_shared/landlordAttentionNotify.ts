@@ -315,11 +315,18 @@ ${choiceReplyHint ? `<p>${escapeHtml(choiceReplyHint)}</p>` : ""}
   return { subject: `Ulo: ${headline}`, text, html }
 }
 
-async function alreadyAlerted(
+type PriorAttentionAlert = {
+  found: boolean
+  /** True when the prior send already carried the YES/NO paid-confirmation ask. */
+  invoicePaidAsk: boolean
+  eventId: string | null
+}
+
+async function findPriorAttentionAlert(
   supabase: SupabaseClient,
   landlordId: string,
   idempotencyKey: string,
-): Promise<boolean> {
+): Promise<PriorAttentionAlert> {
   const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
   const { data, error } = await supabase
     .from("operations_graph_events")
@@ -332,14 +339,140 @@ async function alreadyAlerted(
 
   if (error) {
     console.warn("[landlord-attention] idempotency lookup", error.message)
-    return false
+    return { found: false, invoicePaidAsk: false, eventId: null }
   }
 
   for (const row of data ?? []) {
     const meta = row.metadata as Record<string, unknown> | null
-    if (meta?.idempotency_key === idempotencyKey) return true
+    if (meta?.idempotency_key === idempotencyKey) {
+      return {
+        found: true,
+        invoicePaidAsk: meta.invoice_paid_ask === true,
+        eventId: typeof row.id === "string" ? row.id : null,
+      }
+    }
   }
-  return false
+  return { found: false, invoicePaidAsk: false, eventId: null }
+}
+
+/**
+ * When a generic invoice_ready alert already went out without the YES/NO ask,
+ * the paid-confirmation version must still win: send the paid SMS and set the
+ * pending ask (no duplicate email).
+ */
+async function upgradeInvoiceReadyToPaidConfirmation(
+  supabase: SupabaseClient,
+  params: NotifyLandlordAttentionParams & {
+    invoicePaidConfirmation: AwaitingInvoicePaidConfirmation
+  },
+  priorEventId: string | null,
+): Promise<NotifyLandlordAttentionResult> {
+  const landlordId = params.landlordId.trim()
+  const awaiting = params.invoicePaidConfirmation
+  const errors: string[] = []
+  const smsSent: string[] = []
+
+  let landlordFirstName = params.landlordFirstName?.trim() || null
+  if (!landlordFirstName) {
+    try {
+      const { data: landlord } = await supabase
+        .from("landlords")
+        .select("name")
+        .eq("id", landlordId)
+        .maybeSingle()
+      const raw = typeof landlord?.name === "string" ? landlord.name.trim() : ""
+      landlordFirstName = raw ? (raw.split(/\s+/)[0] ?? null) : null
+    } catch {
+      landlordFirstName = null
+    }
+  }
+
+  const smsBody = buildInvoiceReadyPaidConfirmationSms({
+    landlordFirstName,
+    unit: awaiting.unit,
+    vendorName: awaiting.vendorName,
+    amount: awaiting.amount,
+    jobHeadline: awaiting.jobHeadline,
+    detailsUrl: attentionDashboardUrl(params),
+  })
+
+  const phones = (await resolveLandlordOpsPhones(supabase, landlordId)).phones
+  if (phones.length === 0) {
+    const { recordSmsNoRecipients } = await import("./smsRecipients.ts")
+    await recordSmsNoRecipients({
+      supabase,
+      landlordId,
+      caller: "landlordAttentionNotify.upgradeInvoiceReadyToPaidConfirmation",
+      messageType: "landlord_attention_invoice_ready_paid_ask",
+      maintenanceRequestId: params.maintenanceRequestId ?? null,
+      workflowRunId: params.workflowRunId ?? null,
+    })
+  } else {
+    const sender = await findActiveLandlordMainNumber(supabase, landlordId)
+    const from = sender?.phone_number?.trim() || undefined
+    if (!sender || !from) {
+      errors.push("no_landlord_main_sms")
+    } else {
+      const provider = getSMSProviderForSend({
+        landlordId,
+        lineProvider: sender.provider,
+      })
+      for (const to of phones) {
+        const send = await provider.sendMessage({ to, body: smsBody, from })
+        if (send.error) {
+          errors.push(`sms:${to}:${send.error}`)
+          continue
+        }
+        smsSent.push(to)
+        const providerMessageSid =
+          send.providerMessageSid ??
+          send.messageId ??
+          `landlord-attention-paid-upgrade:${params.idempotencyKey}:${to}`
+        try {
+          await persistInvoicePaidConfirmationSms(supabase, {
+            landlordId,
+            phone: to,
+            body: smsBody,
+            awaiting,
+            providerMessageSid,
+            provider: send.provider ?? "twilio",
+            fromNumber: from,
+          })
+        } catch (e) {
+          console.error("[landlord-attention] upgrade persist paid ask", e)
+        }
+      }
+    }
+  }
+
+  if (priorEventId) {
+    try {
+      const { data: prior } = await supabase
+        .from("operations_graph_events")
+        .select("metadata")
+        .eq("id", priorEventId)
+        .maybeSingle()
+      const priorMeta =
+        prior?.metadata && typeof prior.metadata === "object"
+          ? (prior.metadata as Record<string, unknown>)
+          : {}
+      await supabase
+        .from("operations_graph_events")
+        .update({
+          metadata: {
+            ...priorMeta,
+            invoice_paid_ask: true,
+            paid_ask_upgraded_at: new Date().toISOString(),
+            sms_sent_paid_ask: smsSent,
+          },
+        })
+        .eq("id", priorEventId)
+    } catch (e) {
+      console.error("[landlord-attention] upgrade metadata", e)
+    }
+  }
+
+  return { skipped: false, smsSent, emailSent: [], errors }
 }
 
 /**
@@ -372,7 +505,23 @@ export async function notifyLandlordNeedsAttention(
     }
   }
 
-  if (await alreadyAlerted(supabase, landlordId, key)) {
+  const priorAlert = await findPriorAttentionAlert(supabase, landlordId, key)
+  if (priorAlert.found) {
+    // Paid-confirmation version must win even if a generic invoice_ready went first.
+    if (
+      params.kind === "invoice_ready" &&
+      params.invoicePaidConfirmation &&
+      !priorAlert.invoicePaidAsk
+    ) {
+      return await upgradeInvoiceReadyToPaidConfirmation(
+        supabase,
+        {
+          ...params,
+          invoicePaidConfirmation: params.invoicePaidConfirmation,
+        },
+        priorAlert.eventId,
+      )
+    }
     return {
       skipped: true,
       reason: "already_sent",
@@ -455,6 +604,17 @@ export async function notifyLandlordNeedsAttention(
   const phones = allowSms
     ? (await resolveLandlordOpsPhones(supabase, landlordId)).phones
     : []
+  if (allowSms && phones.length === 0) {
+    const { recordSmsNoRecipients } = await import("./smsRecipients.ts")
+    await recordSmsNoRecipients({
+      supabase,
+      landlordId,
+      caller: "landlordAttentionNotify.notifyLandlordNeedsAttention",
+      messageType: `landlord_attention_${params.kind}`,
+      maintenanceRequestId: params.maintenanceRequestId ?? null,
+      workflowRunId: params.workflowRunId ?? null,
+    })
+  }
   if (allowSms && phones.length > 0) {
     const sender = await findActiveLandlordMainNumber(supabase, landlordId)
     const from = sender?.phone_number?.trim() || undefined
@@ -558,6 +718,7 @@ export async function notifyLandlordNeedsAttention(
         headline: params.headline,
         detail: params.detail,
         idempotency_key: key,
+        invoice_paid_ask: Boolean(params.invoicePaidConfirmation),
         sms_sent: smsSent,
         email_sent: emailSent,
         channels: [

@@ -85,6 +85,23 @@ async function tryScheduleConfirmHandler(
   })
   if (!result.handled) return { handled: false }
 
+  if ("clarified" in result && result.clarified) {
+    return {
+      handled: true,
+      workflowRoute: "tenant_schedule_confirm",
+      maintenanceRequestId: result.ticketId,
+      workflowMetadata: {
+        clarified: true,
+        ticket_id: result.ticketId,
+      },
+      reply: {
+        body: result.replyBody,
+        source: "tenant_schedule_clarify",
+        skipGenericFallback: true,
+      },
+    }
+  }
+
   return {
     handled: true,
     workflowRoute: "tenant_schedule_confirm",
@@ -112,6 +129,22 @@ async function tryEstimateDecisionHandler(
     fromPhone: ctx.inbound.from,
   })
   if (!result.handled) return { handled: false }
+
+  if ("clarified" in result && result.clarified) {
+    return {
+      handled: true,
+      workflowRoute: "landlord_estimate_decision",
+      workflowMetadata: {
+        estimate_id: result.estimateId,
+        clarified: true,
+      },
+      reply: {
+        body: result.replyBody,
+        source: "estimate_decision_clarify",
+        skipGenericFallback: true,
+      },
+    }
+  }
 
   return {
     handled: true,
@@ -454,6 +487,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3… — roster or nearby external vendors)",
   landlord_rent_receipt:
     "intake_state.awaiting_landlord_rent_receipt, awaiting_landlord_rent_amount, or awaiting_landlord_rent_method (YES/NO/PARTIAL then amount/method)",
+  invoice_paid_confirmation:
+    "intake_state.awaiting_invoice_paid_confirmation (YES/NO paid confirmation for the invoice id stored in the ask)",
   invoice_payment:
     "SMS_ADMIN_NOTIFY phone + recent maintenance.invoice_payment_options_sent event",
   tenant_activation_reply:
@@ -470,12 +505,28 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   vendor_tenant_proxy: "conversation_type === vendor_tenant_proxy",
 } as const
 
+/**
+ * Handlers implemented in this file (or imported) but intentionally not
+ * registered. Keep empty unless a try* adapter exists without a registry slot.
+ * Prefer deleting dead adapters; use this list only with a documented reason.
+ */
+export const INBOUND_SMS_HANDLERS_UNUSED: Readonly<
+  Record<string, string>
+> = {
+  // none — invoice_paid_confirmation was previously unregistered; now registered
+} as const
+
 export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
   { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
   { id: "landlord_rent_receipt", priority: 22, try: tryLandlordRentReceiptHandler },
+  {
+    id: "invoice_paid_confirmation",
+    priority: 24,
+    try: tryInvoicePaidConfirmationHandler,
+  },
   { id: "invoice_payment", priority: 25, try: tryInvoicePaymentHandler },
   {
     id: "tenant_activation_reply",
