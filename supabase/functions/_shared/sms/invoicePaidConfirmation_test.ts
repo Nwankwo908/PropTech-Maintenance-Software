@@ -299,7 +299,8 @@ Deno.test("YES on pending invoice_paid confirmation marks invoice paid + recogni
       e.eventType === "maintenance.spend_recorded",
   )
   assertEquals(paidOrSpend, true)
-  assertStringIncludes(result.replyBody, "marked")
+  assertStringIncludes(result.replyBody, "Marked")
+  assertStringIncludes(result.replyBody, "as paid")
 })
 
 Deno.test("NO on pending invoice_paid confirmation leaves invoice open and logs", async () => {

@@ -215,7 +215,8 @@ async function assertPaidViaRouter(body: string) {
       e.eventType === "maintenance.spend_recorded",
   )
   assertEquals(paidOrSpend, true)
-  assertStringIncludes(String(result.reply?.body ?? ""), "marked")
+  assertStringIncludes(String(result.reply?.body ?? ""), "Marked")
+  assertStringIncludes(String(result.reply?.body ?? ""), "as paid")
   assertEquals(result.reply?.skipGenericFallback, true)
 }
 
@@ -285,4 +286,63 @@ Deno.test("router: without pending ask, invoice_paid_confirmation does not claim
       false,
     )
   }
+})
+
+Deno.test("router: two invoices pending + YES asks which (does not approve)", async () => {
+  const state = baseState()
+  state.intake = {
+    awaiting_invoice_paid_confirmation: {
+      invoices: {
+        "inv-1": {
+          invoice_id: "inv-1",
+          ticket_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          amount: 125,
+        },
+        "inv-2": {
+          invoice_id: "inv-2",
+          ticket_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          amount: 80,
+        },
+      },
+    },
+  }
+  const result = await tryInboundSmsHandlers(routerCtx(state, "YES"))
+  assertEquals(result.handled, true)
+  if (!result.handled) return
+  assertEquals(result.workflowMetadata?.action, "clarify")
+  assertStringIncludes(String(result.reply?.body ?? ""), "more than one invoice")
+  assertEquals(state.invoice.status, "submitted")
+  assertEquals(
+    Object.keys(
+      (state.intake.awaiting_invoice_paid_confirmation as { invoices: object })
+        .invoices,
+    ).length,
+    2,
+  )
+})
+
+Deno.test("router: invoice ask + vendor-choice ask + YES asks which (no priority win)", async () => {
+  const state = baseState()
+  state.intake = {
+    awaiting_invoice_paid_confirmation: {
+      invoices: {
+        "inv-1": {
+          invoice_id: "inv-1",
+          ticket_id: "tix-1",
+          amount: 450,
+        },
+      },
+    },
+    awaiting_vendor_choice: {
+      ticket_id: "tix-choice",
+      options: [{ id: "v1", name: "Acme Plumbing" }],
+    },
+  }
+  const result = await tryInboundSmsHandlers(routerCtx(state, "yes"))
+  assertEquals(result.handled, true)
+  if (!result.handled) return
+  assertEquals(result.workflowRoute, "ambiguous_yes_pending_asks")
+  assertStringIncludes(String(result.reply?.body ?? ""), "more than one yes/no")
+  assertEquals(state.invoice.status, "submitted")
+  assertEquals(result.reply?.skipGenericFallback, true)
 })

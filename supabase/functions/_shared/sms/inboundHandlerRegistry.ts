@@ -27,7 +27,12 @@ import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
 import { tryHandleVendorCapacityInbound } from "../vendor_capacity.ts"
 import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
 import { tryHandleLandlordRentReceiptInbound } from "./landlordRentReceiptInbound.ts"
-import { tryHandleInvoicePaidConfirmationInbound } from "./invoicePaidConfirmation.ts"
+import {
+  buildAmbiguousYesPendingAsksSms,
+  canHandleInvoicePaidConfirmation,
+  isBareYesInvoicePaidReply,
+  tryHandleInvoicePaidConfirmationInbound,
+} from "./invoicePaidConfirmation.ts"
 import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import {
   tryHandleTenantActivationReply,
@@ -36,7 +41,10 @@ import {
 import { tryHandleTenantActivationHold } from "./tenantActivationPending.ts"
 import { relayInboundProxiedMessage } from "./proxiedMessaging.ts"
 import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
-import { tryHandleLandlordVendorChoiceInbound } from "../vendorLandlordChoice.ts"
+import {
+  canHandleLandlordVendorChoice,
+  tryHandleLandlordVendorChoiceInbound,
+} from "../vendorLandlordChoice.ts"
 import {
   canHandleVendorAvailabilityProbe,
   tryHandleVendorAvailabilityProbeInbound,
@@ -552,6 +560,36 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
 export async function tryInboundSmsHandlers(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
+  // Invoice paid ask + another bare-YES ask → clarify instead of priority race.
+  if (isBareYesInvoicePaidReply(ctx.inbound.body)) {
+    const { data: conv } = await ctx.supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", ctx.conversationId)
+      .maybeSingle()
+    const intakeState = conv?.intake_state
+    const invoicePending = canHandleInvoicePaidConfirmation({
+      identityType: ctx.identity.identity_type,
+      intakeState,
+    })
+    const vendorChoicePending = canHandleLandlordVendorChoice({
+      identityType: ctx.identity.identity_type,
+      conversationType: ctx.conversationType,
+      intakeState,
+    })
+    if (invoicePending && vendorChoicePending) {
+      return {
+        handled: true,
+        workflowRoute: "ambiguous_yes_pending_asks",
+        reply: {
+          body: buildAmbiguousYesPendingAsksSms(),
+          source: "ambiguous_yes_pending_asks",
+          skipGenericFallback: true,
+        },
+      }
+    }
+  }
+
   for (const handler of INBOUND_SMS_HANDLERS) {
     const result = await handler.try(ctx)
     if (result.handled) return result

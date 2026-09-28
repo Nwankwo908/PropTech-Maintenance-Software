@@ -183,6 +183,15 @@ async function dryRunPlanForTicket(
     ])
   }
 
+  // Vendor already accepted or on site — never rematch / landlord-choice / dwell
+  // from this job. Evaluate before awaiting_* flags so stale choice stamps cannot
+  // escalate an active job.
+  if (vendorWorkStatus === "accepted" || vendorWorkStatus === "in_progress") {
+    return planBase("skipped:vendor_active_on_job", [
+      "no state change — vendor already accepted or in progress",
+    ])
+  }
+
   if (await landlordIsDemo(supabase, landlordId)) {
     return planBase("skipped:demo_landlord", [
       "Demo landlord excluded from vendor-delayed auto-reassign",

@@ -487,10 +487,26 @@ async function processMaintenanceAutoReassign(
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
     .select(
-      "unit, vendor_notify_error, due_at, assigned_at, assigned_vendor_id, vendor_notified_at, awaiting_landlord_choice_at, awaiting_vendor_availability_at, landlord_vendor_choice_resolved_at, auto_reassign_last_outcome, auto_reassign_same_outcome_count, auto_reassign_same_outcome_since, auto_reassign_needs_admin_entries",
+      "unit, vendor_work_status, vendor_notify_error, due_at, assigned_at, assigned_vendor_id, vendor_notified_at, awaiting_landlord_choice_at, awaiting_vendor_availability_at, landlord_vendor_choice_resolved_at, auto_reassign_last_outcome, auto_reassign_same_outcome_count, auto_reassign_same_outcome_since, auto_reassign_needs_admin_entries",
     )
     .eq("id", ticketId)
     .maybeSingle()
+
+  const workStatus = String(ticketRow?.vendor_work_status ?? "")
+    .trim()
+    .toLowerCase()
+  if (workStatus === "accepted" || workStatus === "in_progress") {
+    return {
+      status: "ok",
+      templateId: "maintenance_request",
+      route: workflowRouteForTemplate("maintenance_request"),
+      metadata: {
+        outcome: "skipped",
+        reason: "vendor_active_on_job",
+        vendor_work_status: workStatus,
+      },
+    }
+  }
 
   const awaitingChoice = ticketIsAwaitingLandlordVendorChoice(
     typeof ticketRow?.vendor_notify_error === "string"

@@ -39,14 +39,9 @@ export function serializeAwaitingInvoicePaidConfirmation(
   }
 }
 
-export function readAwaitingInvoicePaidConfirmation(
-  intakeState: unknown,
+function parseAwaitingInvoicePaidRow(
+  row: Record<string, unknown>,
 ): AwaitingInvoicePaidConfirmation | null {
-  if (!intakeState || typeof intakeState !== "object") return null
-  const raw = (intakeState as Record<string, unknown>)
-    .awaiting_invoice_paid_confirmation
-  if (!raw || typeof raw !== "object") return null
-  const row = raw as Record<string, unknown>
   const invoiceId =
     (typeof row.invoice_id === "string" && row.invoice_id.trim()) ||
     (typeof row.invoiceId === "string" && row.invoiceId.trim()) ||
@@ -67,10 +62,7 @@ export function readAwaitingInvoicePaidConfirmation(
     invoiceId,
     ticketId,
     amount: amount != null && Number.isFinite(amount) ? amount : null,
-    unit:
-      typeof row.unit === "string"
-        ? row.unit
-        : null,
+    unit: typeof row.unit === "string" ? row.unit : null,
     vendorName:
       (typeof row.vendor_name === "string" && row.vendor_name) ||
       (typeof row.vendorName === "string" && row.vendorName) ||
@@ -80,6 +72,70 @@ export function readAwaitingInvoicePaidConfirmation(
       (typeof row.jobHeadline === "string" && row.jobHeadline) ||
       null,
   }
+}
+
+/** All pending invoice-paid asks (per invoice). Supports legacy single-object shape. */
+export function readAwaitingInvoicePaidConfirmations(
+  intakeState: unknown,
+): AwaitingInvoicePaidConfirmation[] {
+  if (!intakeState || typeof intakeState !== "object") return []
+  const raw = (intakeState as Record<string, unknown>)
+    .awaiting_invoice_paid_confirmation
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
+  const root = raw as Record<string, unknown>
+  const invoicesRaw = root.invoices
+  if (invoicesRaw && typeof invoicesRaw === "object" && !Array.isArray(invoicesRaw)) {
+    const out: AwaitingInvoicePaidConfirmation[] = []
+    for (const value of Object.values(invoicesRaw as Record<string, unknown>)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue
+      const parsed = parseAwaitingInvoicePaidRow(value as Record<string, unknown>)
+      if (parsed) out.push(parsed)
+    }
+    return out
+  }
+  const legacy = parseAwaitingInvoicePaidRow(root)
+  return legacy ? [legacy] : []
+}
+
+/** Sole pending ask, or first when several (prefer readAwaitingInvoicePaidConfirmations). */
+export function readAwaitingInvoicePaidConfirmation(
+  intakeState: unknown,
+): AwaitingInvoicePaidConfirmation | null {
+  const all = readAwaitingInvoicePaidConfirmations(intakeState)
+  return all[0] ?? null
+}
+
+export function upsertAwaitingInvoicePaidConfirmation(
+  priorIntake: Record<string, unknown>,
+  awaiting: AwaitingInvoicePaidConfirmation,
+): Record<string, unknown> {
+  const invoices: Record<string, Record<string, unknown>> = {}
+  for (const row of readAwaitingInvoicePaidConfirmations(priorIntake)) {
+    invoices[row.invoiceId] = serializeAwaitingInvoicePaidConfirmation(row)
+  }
+  invoices[awaiting.invoiceId] = serializeAwaitingInvoicePaidConfirmation(awaiting)
+  return {
+    ...priorIntake,
+    awaiting_invoice_paid_confirmation: { invoices },
+  }
+}
+
+export function removeAwaitingInvoicePaidConfirmation(
+  priorIntake: Record<string, unknown>,
+  invoiceId: string,
+): Record<string, unknown> {
+  const invoices: Record<string, Record<string, unknown>> = {}
+  for (const row of readAwaitingInvoicePaidConfirmations(priorIntake)) {
+    if (row.invoiceId === invoiceId) continue
+    invoices[row.invoiceId] = serializeAwaitingInvoicePaidConfirmation(row)
+  }
+  const next = { ...priorIntake }
+  if (Object.keys(invoices).length === 0) {
+    delete next.awaiting_invoice_paid_confirmation
+  } else {
+    next.awaiting_invoice_paid_confirmation = { invoices }
+  }
+  return next
 }
 
 export function invoicePaidConfirmationResolvedIntake(
@@ -95,7 +151,65 @@ export function canHandleInvoicePaidConfirmation(input: {
   intakeState: unknown
 }): boolean {
   if (input.identityType === "vendor") return false
-  return readAwaitingInvoicePaidConfirmation(input.intakeState) != null
+  return readAwaitingInvoicePaidConfirmations(input.intakeState).length > 0
+}
+
+function formatInvoiceAmount(amount: number | null | undefined): string {
+  const n = Number(amount)
+  if (!Number.isFinite(n) || n <= 0) return "$—"
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+  })
+}
+
+export function buildWhichInvoicePaidAskSms(
+  pending: AwaitingInvoicePaidConfirmation[],
+): string {
+  const lines = pending.map((p) => {
+    const wo = formatWorkOrderRef(p.ticketId)
+    const amount = formatInvoiceAmount(p.amount)
+    return `• ${wo} (${amount})`
+  })
+  return [
+    "You have more than one invoice waiting for a paid confirmation.",
+    "Which did you mean?",
+    ...lines,
+    "",
+    "Reply with the work order (e.g. WO-B347) plus YES or NO.",
+  ].join("\n")
+}
+
+export function buildInvoicePaidMarkedSms(input: {
+  ticketId: string
+  amount?: number | null
+}): string {
+  const wo = formatWorkOrderRef(input.ticketId)
+  const amount = formatInvoiceAmount(input.amount)
+  return `Marked ${wo} (${amount}) as paid.`
+}
+
+export function buildAmbiguousYesPendingAsksSms(): string {
+  return [
+    "You have more than one yes/no question waiting.",
+    "Reply with what you mean — for example which vendor to send, or which invoice you paid — so we don't guess.",
+  ].join("\n")
+}
+
+/** True when body is a bare YES-equivalent (conflicts with other pending YES asks). */
+export function isBareYesInvoicePaidReply(body: string): boolean {
+  const normalized = body
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/g, "")
+    .replace(/\s+/g, " ")
+  return (
+    normalized === "yes" ||
+    normalized === "y" ||
+    normalized === "yeah" ||
+    normalized === "yep"
+  )
 }
 
 /**
@@ -177,16 +291,6 @@ export function cleanInvoiceJobHeadline(
     return `${cat.charAt(0).toUpperCase() + cat.slice(1)} repair`
   }
   return "This repair"
-}
-
-function formatInvoiceAmount(amount: number | null | undefined): string {
-  const n = Number(amount)
-  if (!Number.isFinite(n) || n <= 0) return "$—"
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  })
 }
 
 export function buildInvoiceReadyPaidConfirmationSms(input: {
@@ -296,21 +400,21 @@ export async function persistInvoicePaidConfirmationSms(
       status: "open",
       conversation_type: "landlord_update",
       maintenance_request_id: ticketId,
-      intake_state: {
-        ...nextIntake,
-        awaiting_invoice_paid_confirmation:
-          serializeAwaitingInvoicePaidConfirmation(params.awaiting),
-      },
+      intake_state: upsertAwaitingInvoicePaidConfirmation(
+        nextIntake,
+        params.awaiting,
+      ),
     })
     .eq("id", conversationId)
 }
 
-async function clearAwaitingInvoicePaidConfirmation(
+async function clearOneAwaitingInvoicePaidConfirmation(
   supabase: SupabaseClient,
   conversationId: string,
   priorIntake: Record<string, unknown>,
+  invoiceId: string,
 ): Promise<void> {
-  const next = invoicePaidConfirmationResolvedIntake(priorIntake)
+  const next = removeAwaitingInvoicePaidConfirmation(priorIntake, invoiceId)
   await supabase
     .from("sms_conversations")
     .update({
@@ -318,6 +422,21 @@ async function clearAwaitingInvoicePaidConfirmation(
       updated_at: new Date().toISOString(),
     })
     .eq("id", conversationId)
+}
+
+function matchPendingInvoiceFromBody(
+  body: string,
+  pending: AwaitingInvoicePaidConfirmation[],
+): AwaitingInvoicePaidConfirmation | null {
+  if (pending.length === 1) return pending[0]
+  const upper = body.toUpperCase()
+  for (const row of pending) {
+    const wo = formatWorkOrderRef(row.ticketId).toUpperCase()
+    const short = row.ticketId.replace(/-/g, "").slice(0, 8).toUpperCase()
+    if (wo && upper.includes(wo)) return row
+    if (short.length >= 4 && upper.includes(short)) return row
+  }
+  return null
 }
 
 export async function tryHandleInvoicePaidConfirmationInbound(
@@ -355,10 +474,23 @@ export async function tryHandleInvoicePaidConfirmationInbound(
     conv.intake_state && typeof conv.intake_state === "object"
       ? (conv.intake_state as Record<string, unknown>)
       : {}
-  const awaiting = readAwaitingInvoicePaidConfirmation(priorIntake)
-  if (!awaiting) return { handled: false }
+  const pending = readAwaitingInvoicePaidConfirmations(priorIntake)
+  if (pending.length === 0) return { handled: false }
 
   const parsed = parseInvoicePaidConfirmationReply(params.body)
+  const matched = matchPendingInvoiceFromBody(params.body, pending)
+
+  if (parsed != null && pending.length > 1 && !matched) {
+    return {
+      handled: true,
+      action: "clarify",
+      invoiceId: pending[0].invoiceId,
+      ticketId: pending[0].ticketId,
+      replyBody: buildWhichInvoicePaidAskSms(pending),
+    }
+  }
+
+  const awaiting = matched ?? pending[0]
 
   if (parsed == null) {
     // Pending ask wins: claim the message so inboundFinish cannot invent a
@@ -409,10 +541,11 @@ export async function tryHandleInvoicePaidConfirmationInbound(
 
   if ("error" in approved) {
     if (approved.error === "invoice_not_found") {
-      await clearAwaitingInvoicePaidConfirmation(
+      await clearOneAwaitingInvoicePaidConfirmation(
         supabase,
         params.conversationId,
         priorIntake,
+        awaiting.invoiceId,
       )
       return {
         handled: true,
@@ -425,10 +558,11 @@ export async function tryHandleInvoicePaidConfirmationInbound(
     }
     if (approved.error === "invoice_not_submittable") {
       // Already decided elsewhere — clear ask, don't re-approve.
-      await clearAwaitingInvoicePaidConfirmation(
+      await clearOneAwaitingInvoicePaidConfirmation(
         supabase,
         params.conversationId,
         priorIntake,
+        awaiting.invoiceId,
       )
       return {
         handled: true,
@@ -450,20 +584,23 @@ export async function tryHandleInvoicePaidConfirmationInbound(
     }
   }
 
-  await clearAwaitingInvoicePaidConfirmation(
+  await clearOneAwaitingInvoicePaidConfirmation(
     supabase,
     params.conversationId,
     priorIntake,
+    awaiting.invoiceId,
   )
 
   const amount = approved.recognizedAmount
-  const amountLabel = formatInvoiceAmount(amount)
   return {
     handled: true,
     action: "paid",
     invoiceId: awaiting.invoiceId,
     ticketId: awaiting.ticketId,
     recognizedAmount: amount,
-    replyBody: `Thanks — marked ${amountLabel} as paid. It's now reflected in your maintenance spend.`,
+    replyBody: buildInvoicePaidMarkedSms({
+      ticketId: awaiting.ticketId,
+      amount,
+    }),
   }
 }
