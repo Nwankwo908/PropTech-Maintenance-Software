@@ -9,7 +9,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import {
-  AWAITING_LANDLORD_VENDOR_CHOICE,
+  markAwaitingLandlordVendorChoice,
   notifyLandlordVendorChoice,
 } from "./vendorLandlordChoice.ts"
 import type {
@@ -37,6 +37,14 @@ import {
 
 export const AWAITING_VENDOR_AVAILABILITY_PROBE =
   "Awaiting vendor availability before landlord choice"
+
+/**
+ * After the first multi-vendor offer, hold before the landlord decision SMS so
+ * a second responder does not reframe YES → 1/2 mid-flight. Aligns with typical
+ * soft-offer reply windows (insight inspector uses 30m); 20m is the middle of
+ * the 15–30m product band.
+ */
+export const VENDOR_PROBE_HOLD_MS = 20 * 60 * 1000
 
 export type VendorProbeOffer = {
   vendorId: string
@@ -69,8 +77,20 @@ export type VendorAvailabilityProbe = {
   }>
   offers: VendorProbeOffer[]
   declinedVendorIds: string[]
-  status: "probing" | "awaiting_landlord"
+  /**
+   * probing — soft-offers out, no landlord status/decision yet
+   * holding — status SMS sent; collecting more offers (not replyable as YES)
+   * awaiting_landlord — one decision SMS sent (YES or 1/2)
+   */
+  status: "probing" | "holding" | "awaiting_landlord"
   startedAt: string
+  /** When the first offer arrived (hold clock). */
+  firstOfferAt: string | null
+  /** When the non-actionable "Checking availability…" SMS was sent. */
+  statusSmsSentAt: string | null
+  /** Absolute deadline to finalize the hold (ISO). */
+  holdUntil: string | null
+  /** When the decision (YES / 1/2) SMS was sent. */
   landlordNotifiedAt: string | null
   /** Insight inspector path: assign on first offer (no landlord YES/1/2). */
   insightAutoAssign?: boolean
@@ -317,6 +337,9 @@ function serializeProbe(probe: VendorAvailabilityProbe): Record<string, unknown>
     declined_vendor_ids: probe.declinedVendorIds,
     status: probe.status,
     started_at: probe.startedAt,
+    first_offer_at: probe.firstOfferAt,
+    status_sms_sent_at: probe.statusSmsSentAt,
+    hold_until: probe.holdUntil,
     landlord_notified_at: probe.landlordNotifiedAt,
     insight_auto_assign: probe.insightAutoAssign === true,
     insight_scheduling_request_id: probe.insightSchedulingRequestId ?? null,
@@ -384,8 +407,17 @@ export function readVendorAvailabilityProbe(
     declinedVendorIds: declinedRaw
       .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
       .map((id) => id.trim()),
-    status: row.status === "awaiting_landlord" ? "awaiting_landlord" : "probing",
+    status: row.status === "awaiting_landlord"
+      ? "awaiting_landlord"
+      : row.status === "holding"
+      ? "holding"
+      : "probing",
     startedAt: typeof row.started_at === "string" ? row.started_at : "",
+    firstOfferAt:
+      typeof row.first_offer_at === "string" ? row.first_offer_at : null,
+    statusSmsSentAt:
+      typeof row.status_sms_sent_at === "string" ? row.status_sms_sent_at : null,
+    holdUntil: typeof row.hold_until === "string" ? row.hold_until : null,
     landlordNotifiedAt:
       typeof row.landlord_notified_at === "string" ? row.landlord_notified_at : null,
     insightAutoAssign: row.insight_auto_assign === true,
@@ -394,6 +426,80 @@ export function readVendorAvailabilityProbe(
         ? row.insight_scheduling_request_id
         : null,
   }
+}
+
+/** Candidates that were actually soft-offered (have a phone). */
+export function probePhoneCandidates(
+  probe: VendorAvailabilityProbe,
+): VendorAvailabilityProbe["candidates"] {
+  return probe.candidates.filter((c) => Boolean(c.phone?.trim()))
+}
+
+/** Every soft-offered vendor has either offered a slot or declined. */
+export function probeAllCandidatesResponded(
+  probe: VendorAvailabilityProbe,
+): boolean {
+  const phoneOnes = probePhoneCandidates(probe)
+  if (phoneOnes.length === 0) return true
+  return phoneOnes.every(
+    (c) =>
+      probe.offers.some((o) => o.vendorId === c.vendorId) ||
+      probe.declinedVendorIds.includes(c.vendorId),
+  )
+}
+
+export function isVendorProbeHoldActive(probe: VendorAvailabilityProbe): boolean {
+  return (
+    probe.status === "holding" &&
+    !probe.landlordNotifiedAt &&
+    probe.offers.length > 0
+  )
+}
+
+/**
+ * Ready to send the one landlord decision SMS (YES or 1/2).
+ * Single soft-offered vendor finalizes immediately; multi waits for all
+ * responses or the hold timeout from the first offer.
+ */
+export function shouldFinalizeVendorProbeHold(
+  probe: VendorAvailabilityProbe,
+  nowMs: number = Date.now(),
+  holdMs: number = VENDOR_PROBE_HOLD_MS,
+): boolean {
+  if (probe.offers.length === 0) return false
+  if (probe.landlordNotifiedAt) return false
+  if (probe.status === "awaiting_landlord") return false
+
+  const phoneCount = probePhoneCandidates(probe).length
+  if (phoneCount <= 1) return true
+  if (probeAllCandidatesResponded(probe)) return true
+
+  const anchor = probe.firstOfferAt || probe.statusSmsSentAt || probe.startedAt
+  if (!anchor) return false
+  const start = Date.parse(anchor)
+  if (!Number.isFinite(start)) return false
+  if (probe.holdUntil) {
+    const until = Date.parse(probe.holdUntil)
+    if (Number.isFinite(until) && nowMs >= until) return true
+  }
+  return nowMs >= start + holdMs
+}
+
+/** Status-only SMS — not an approval ask (YES must not assign anyone). */
+export function buildLandlordProbeStatusSms(input: {
+  issueHeadline?: string | null
+  locationLabel?: string | null
+  unit?: string | null
+}): string {
+  const issue = input.issueHeadline?.trim() || "the repair"
+  const loc =
+    input.locationLabel?.trim() ||
+    input.unit?.trim() ||
+    "the property"
+  return (
+    `Checking vendor availability for ${issue} at ${loc}. ` +
+    "I'll follow up shortly with options."
+  )
 }
 
 async function loadLandlordProbeConversation(
@@ -578,6 +684,9 @@ export async function startVendorAvailabilityProbe(
     declinedVendorIds: [],
     status: "probing",
     startedAt: new Date().toISOString(),
+    firstOfferAt: null,
+    statusSmsSentAt: null,
+    holdUntil: null,
     landlordNotifiedAt: null,
     insightAutoAssign: params.insightAutoAssign === true,
     insightSchedulingRequestId: params.insightSchedulingRequestId ?? null,
@@ -648,7 +757,10 @@ export async function startVendorAvailabilityProbe(
 
   await supabase
     .from("maintenance_requests")
-    .update({ vendor_notify_error: AWAITING_VENDOR_AVAILABILITY_PROBE })
+    .update({
+      vendor_notify_error: AWAITING_VENDOR_AVAILABILITY_PROBE,
+      awaiting_vendor_availability_at: new Date().toISOString(),
+    })
     .eq("id", params.ticketId)
 
   await recordActivityLog(supabase, {
@@ -691,11 +803,119 @@ function looksLikeProbeDecline(body: string): boolean {
   return false
 }
 
-async function notifyLandlordOfProbeOffers(
+async function sendLandlordProbeStatusSms(
   supabase: SupabaseClient,
   probe: VendorAvailabilityProbe,
 ): Promise<void> {
-  if (probe.offers.length === 0) return
+  const locationLabel = await resolveVendorProbeLocationLabel(supabase, {
+    landlordId: probe.landlordId,
+    ticketId: probe.ticketId,
+    unitFallback: probe.unit,
+  })
+  const body = buildLandlordProbeStatusSms({
+    issueHeadline: probe.issueHeadline,
+    locationLabel: locationLabel || probe.unit,
+    unit: probe.unit,
+  })
+
+  const main = await findActiveLandlordMainNumber(supabase, probe.landlordId)
+  const { getSMSProviderForSend } = await import("./sms/providerFactory.ts")
+  const provider = getSMSProviderForSend({
+    landlordId: probe.landlordId,
+    lineProvider: main?.provider,
+  })
+  const { phones } = await import("./sms/tenantActivationAdminAlert.ts").then((m) =>
+    m.resolveLandlordOpsPhones(supabase, probe.landlordId)
+  )
+
+  for (const phone of phones) {
+    const sendResult = await provider.sendMessage({
+      to: phone,
+      body,
+      from: main?.phone_number,
+    })
+    if (sendResult.error) {
+      console.error("[vendor-probe] status SMS", phone, sendResult.error)
+      continue
+    }
+    try {
+      const identity = await upsertSmsIdentityForPhone(supabase, {
+        landlordId: probe.landlordId,
+        phone,
+        identityType: "landlord",
+      })
+      if (!identity || !main?.id) continue
+      const { conversationId } = await findOrCreateConversation(supabase, {
+        landlordId: probe.landlordId,
+        smsNumberId: main.id,
+        externalPhone: phone,
+        identity,
+        maintenanceRequestId: probe.ticketId,
+        conversationStatus: "open",
+      })
+      const { data: conv } = await supabase
+        .from("sms_conversations")
+        .select("intake_state")
+        .eq("id", conversationId)
+        .maybeSingle()
+      const prior =
+        conv?.intake_state && typeof conv.intake_state === "object"
+          ? { ...(conv.intake_state as Record<string, unknown>) }
+          : {}
+      // Persist hold probe on the ops thread — do NOT set awaiting_vendor_choice.
+      await saveProbeOnLandlordThread(supabase, conversationId, {
+        ...prior,
+        // Keep conversation type landlord so hold replies stay on this path.
+      }, {
+        ...probe,
+        // Ensure status is holding before save (caller may have set it).
+        status: "holding",
+      })
+      await supabase
+        .from("sms_conversations")
+        .update({
+          conversation_type: "landlord_update",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", conversationId)
+    } catch (e) {
+      console.error("[vendor-probe] persist status SMS", e)
+    }
+  }
+
+  await recordActivityLog(supabase, {
+    landlordId: probe.landlordId,
+    eventType: "maintenance.vendor_probe_status_sent",
+    source: "automation",
+    actorType: "system",
+    maintenanceRequestId: probe.ticketId,
+    metadata: {
+      message: `Told the landlord vendors are being checked for availability on ${formatWorkOrderRef(probe.ticketId)}.`,
+    },
+  })
+}
+
+/** Send exactly one decision SMS (YES or 1/2). Idempotent via landlordNotifiedAt. */
+export async function finalizeLandlordProbeDecision(
+  supabase: SupabaseClient,
+  probe: VendorAvailabilityProbe,
+): Promise<{ sent: boolean }> {
+  if (probe.offers.length === 0) return { sent: false }
+  if (probe.landlordNotifiedAt) return { sent: false }
+
+  const nowIso = new Date().toISOString()
+  probe.landlordNotifiedAt = nowIso
+  probe.status = "awaiting_landlord"
+
+  const host = await loadLandlordProbeConversation(
+    supabase,
+    probe.landlordId,
+    probe.ticketId,
+  )
+  if (host) {
+    await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
+  }
+
   const enriched = probeOffersToChoiceNames(probe.offers)
   const locationLabel = await resolveVendorProbeLocationLabel(supabase, {
     landlordId: probe.landlordId,
@@ -715,10 +935,97 @@ async function notifyLandlordOfProbeOffers(
     availabilityByVendorId: probeOffersAvailabilityByVendorId(probe.offers),
   })
 
-  await supabase
+  await markAwaitingLandlordVendorChoice(supabase, probe.ticketId)
+
+  return { sent: true }
+}
+
+/**
+ * After a vendor offer/decline (or cron): either send the status SMS, keep
+ * holding, or finalize the one decision message.
+ */
+export async function progressLandlordProbeAfterOffer(
+  supabase: SupabaseClient,
+  probe: VendorAvailabilityProbe,
+  nowMs: number = Date.now(),
+): Promise<"status" | "holding" | "decision" | "noop"> {
+  if (probe.insightAutoAssign) return "noop"
+  if (probe.offers.length === 0) return "noop"
+  if (probe.landlordNotifiedAt || probe.status === "awaiting_landlord") {
+    return "noop"
+  }
+
+  const phoneCount = probePhoneCandidates(probe).length
+  const nowIso = new Date(nowMs).toISOString()
+
+  // Multi-vendor: first offer → status-only (not replyable as approval).
+  if (phoneCount > 1 && !probe.statusSmsSentAt) {
+    probe.status = "holding"
+    probe.firstOfferAt = probe.firstOfferAt || nowIso
+    probe.statusSmsSentAt = nowIso
+    probe.holdUntil = new Date(nowMs + VENDOR_PROBE_HOLD_MS).toISOString()
+    await sendLandlordProbeStatusSms(supabase, probe)
+    const host = await loadLandlordProbeConversation(
+      supabase,
+      probe.landlordId,
+      probe.ticketId,
+    )
+    if (host) {
+      await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
+    }
+    return "status"
+  }
+
+  if (shouldFinalizeVendorProbeHold(probe, nowMs)) {
+    await finalizeLandlordProbeDecision(supabase, probe)
+    return "decision"
+  }
+
+  probe.status = "holding"
+  if (!probe.firstOfferAt) probe.firstOfferAt = nowIso
+  if (!probe.holdUntil && probe.firstOfferAt) {
+    const start = Date.parse(probe.firstOfferAt)
+    if (Number.isFinite(start)) {
+      probe.holdUntil = new Date(start + VENDOR_PROBE_HOLD_MS).toISOString()
+    }
+  }
+  const host = await loadLandlordProbeConversation(
+    supabase,
+    probe.landlordId,
+    probe.ticketId,
+  )
+  if (host) {
+    await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
+  }
+  return "holding"
+}
+
+/** Cron: finalize holds whose timeout elapsed with at least one offer. */
+export async function processExpiredVendorProbeHolds(
+  supabase: SupabaseClient,
+  nowMs: number = Date.now(),
+): Promise<{ finalized: number }> {
+  const { data: tickets, error } = await supabase
     .from("maintenance_requests")
-    .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
-    .eq("id", probe.ticketId)
+    .select("id, landlord_id")
+    .ilike("vendor_notify_error", `%${AWAITING_VENDOR_AVAILABILITY_PROBE}%`)
+    .limit(80)
+  if (error) {
+    console.error("[vendor-probe] list holding tickets", error.message)
+    return { finalized: 0 }
+  }
+
+  let finalized = 0
+  for (const row of tickets ?? []) {
+    const ticketId = typeof row.id === "string" ? row.id : ""
+    if (!ticketId) continue
+    const probe = await loadVendorAvailabilityProbeForTicket(supabase, ticketId)
+    if (!probe) continue
+    if (!shouldFinalizeVendorProbeHold(probe, nowMs)) continue
+    const result = await finalizeLandlordProbeDecision(supabase, probe)
+    if (result.sent) finalized += 1
+  }
+  return { finalized }
 }
 
 export async function tryHandleVendorAvailabilityProbeInbound(
@@ -816,37 +1123,44 @@ export async function tryHandleVendorAvailabilityProbeInbound(
         }
         await supabase
           .from("maintenance_requests")
-          .update({ vendor_notify_error: null })
+          .update({
+            vendor_notify_error: null,
+            awaiting_vendor_availability_at: null,
+          })
           .eq("id", probe.ticketId)
       } else {
-      const fallbackOptions: VendorAssignmentOption[] = probe.candidates.map((c) => ({
-        vendor: {
-          id: c.vendorId,
-          name: c.name,
-          email: null,
-          phone: c.phone,
-          notification_channel: "sms",
-          active: true,
-          category: null,
-          portal_api_key: null,
-          last_assigned_at: null,
-          created_at: "",
-        } satisfies VendorAssignmentRow,
-        role: c.role,
-      }))
-      await notifyLandlordVendorChoice(supabase, {
-        landlordId: probe.landlordId,
-        ticketId: probe.ticketId,
-        unit: probe.unit,
-        issueCategory: probe.issueCategory,
-        options: fallbackOptions,
-        reason: "declined",
-      })
-      await supabase
-        .from("maintenance_requests")
-        .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
-        .eq("id", probe.ticketId)
+        const fallbackOptions: VendorAssignmentOption[] = probe.candidates.map((c) => ({
+          vendor: {
+            id: c.vendorId,
+            name: c.name,
+            email: null,
+            phone: c.phone,
+            notification_channel: "sms",
+            active: true,
+            category: null,
+            portal_api_key: null,
+            last_assigned_at: null,
+            created_at: "",
+          } satisfies VendorAssignmentRow,
+          role: c.role,
+        }))
+        await notifyLandlordVendorChoice(supabase, {
+          landlordId: probe.landlordId,
+          ticketId: probe.ticketId,
+          unit: probe.unit,
+          issueCategory: probe.issueCategory,
+          options: fallbackOptions,
+          reason: "declined",
+        })
+        await markAwaitingLandlordVendorChoice(supabase, probe.ticketId)
       }
+    } else if (
+      !probe.insightAutoAssign &&
+      probe.offers.length > 0 &&
+      shouldFinalizeVendorProbeHold(probe)
+    ) {
+      // Remaining vendors declined — finalize with whoever offered.
+      await finalizeLandlordProbeDecision(supabase, probe)
     }
 
     return {
@@ -858,6 +1172,20 @@ export async function tryHandleVendorAvailabilityProbeInbound(
   const resolved = await resolveVendorAvailability(params.body, {
     conversationContext: undefined,
     clarifyAttempts: 0,
+    timeZone: await (async () => {
+      try {
+        const { loadLandlordOperationalSettings } = await import(
+          "./landlordNotificationPrefs.ts"
+        )
+        const ops = await loadLandlordOperationalSettings(
+          supabase,
+          probe.landlordId,
+        )
+        return ops.timeZone?.trim() || undefined
+      } catch {
+        return undefined
+      }
+    })(),
   })
 
   if (resolved.status === "needs_clarification") {
@@ -888,10 +1216,6 @@ export async function tryHandleVendorAvailabilityProbeInbound(
   }
   if (existingIdx >= 0) probe.offers[existingIdx] = offer
   else probe.offers.push(offer)
-
-  const firstOffer = probe.offers.length === 1 && !probe.landlordNotifiedAt
-  probe.status = "awaiting_landlord"
-  if (firstOffer) probe.landlordNotifiedAt = new Date().toISOString()
 
   delete intake.awaiting_vendor_probe
   await supabase
@@ -925,7 +1249,6 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     },
   })
 
-  // First offer (or refreshed set) → ask landlord to authorize one vendor.
   // Insight inspector path: auto-assign immediately (landlord already tapped Schedule).
   if (probe.insightAutoAssign) {
     const { assignVendorAndNotify } = await import(
@@ -988,7 +1311,8 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     }
   }
 
-  await notifyLandlordOfProbeOffers(supabase, probe)
+  // Multi-vendor: status-only → hold → one decision SMS (no mid-flight YES→1/2).
+  await progressLandlordProbeAfterOffer(supabase, probe)
 
   return {
     handled: true,

@@ -18,12 +18,32 @@ import {
   type VendorReassignTrigger,
 } from "../../vendor_reassignment.ts"
 import {
-  AWAITING_LANDLORD_VENDOR_CHOICE,
+  abandonStaleLandlordVendorChoiceAsk,
   loadStoredAwaitingVendorChoiceForTicket,
+  markAwaitingLandlordVendorChoice,
   notifyLandlordVendorChoice,
   ticketIsAwaitingLandlordVendorChoice,
   vendorChoiceOptionIdsEqual,
 } from "../../vendorLandlordChoice.ts"
+import { ticketIsAwaitingVendorAvailabilityProbe } from "../../vendorAvailabilityProbe.ts"
+import {
+  decideAutoReassignGuard,
+  detectNeedsAdminCycle,
+  type VendorReassignGuardTrigger,
+} from "../../../../../shared/ops/vendorReassignGuards.ts"
+import { recordActivityLog } from "../../graph/recordActivityLog.ts"
+import { staffAlertRecipients } from "../../smsRecipients.ts"
+import { getSMSProviderForSend } from "../../sms/providerFactory.ts"
+import { findActiveLandlordMainNumber } from "../../sms/landlordSmsOnboarding.ts"
+import {
+  clearNeedsAdminVendorSticky,
+  releaseNeedsAdminVendorToAutomation,
+} from "../../clearNeedsAdminVendorSticky.ts"
+
+export {
+  clearNeedsAdminVendorSticky,
+  releaseNeedsAdminVendorToAutomation,
+}
 import { workflowRouteForTemplate } from "../logStage.ts"
 import {
   advanceMaintenanceRequestVendorStep,
@@ -254,6 +274,190 @@ export const maintenanceRequestTemplate: WorkflowTemplate = {
   },
 }
 
+async function persistAutoReassignRepeatState(
+  supabase: SupabaseClient,
+  ticketId: string,
+  repeat: { signature: string; count: number; sinceMs: number },
+  extras?: { needsAdminEntries?: number },
+): Promise<void> {
+  const patch: Record<string, unknown> = {
+    auto_reassign_last_outcome: repeat.signature,
+    auto_reassign_same_outcome_count: repeat.count,
+    auto_reassign_same_outcome_since: new Date(repeat.sinceMs).toISOString(),
+  }
+  if (typeof extras?.needsAdminEntries === "number") {
+    patch.auto_reassign_needs_admin_entries = extras.needsAdminEntries
+  }
+  await supabase.from("maintenance_requests").update(patch).eq("id", ticketId)
+}
+
+async function alertStaffNeedsAdminCycle(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    ticketId: string
+    reason: string
+    entryCount: number
+  },
+): Promise<void> {
+  const message =
+    `Ulo cycle alert: work order re-entered "needs a vendor" (entry ${params.entryCount}, ${params.reason.replace(/_/g, " ")}). Staff review required.`
+  try {
+    await recordActivityLog(supabase, {
+      landlordId: params.landlordId,
+      eventType: "maintenance.needs_admin_cycle_detected",
+      source: "automation",
+      actorType: "system",
+      maintenanceRequestId: params.ticketId,
+      metadata: {
+        message,
+        reason: params.reason,
+        entry_count: params.entryCount,
+      },
+    })
+  } catch (e) {
+    console.error("[maintenance_request] needs_admin cycle log", e)
+  }
+
+  const phones = staffAlertRecipients()
+  if (phones.length === 0) {
+    console.warn(
+      "[maintenance_request] needs_admin cycle — staff SMS empty, logged only",
+    )
+    return
+  }
+  try {
+    const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
+    const from = sender?.phone_number?.trim()
+    if (!from) return
+    const provider = getSMSProviderForSend({
+      landlordId: params.landlordId,
+      lineProvider: sender.provider,
+    })
+    for (const to of phones) {
+      await provider.sendMessage({ to, body: message, from })
+    }
+  } catch (e) {
+    console.error("[maintenance_request] needs_admin cycle staff SMS", e)
+  }
+}
+
+async function enterNeedsAdminVendorState(
+  supabase: SupabaseClient,
+  input: {
+    ticketId: string
+    landlordId: string | null
+    trigger: VendorReassignTrigger
+    lastOutcomeSignature: string | null
+    priorNeedsAdminEntries: number
+  },
+): Promise<void> {
+  const cycle = detectNeedsAdminCycle({
+    lastOutcomeSignature: input.lastOutcomeSignature,
+    priorNeedsAdminEntries: input.priorNeedsAdminEntries,
+    enteringNeedsAdmin: true,
+  })
+  await persistAutoReassignRepeatState(
+    supabase,
+    input.ticketId,
+    {
+      signature: `needs_admin_vendor|${input.trigger}`,
+      count: 1,
+      sinceMs: Date.now(),
+    },
+    { needsAdminEntries: cycle.nextEntryCount },
+  )
+  if (cycle.alert && input.landlordId && cycle.reason) {
+    await alertStaffNeedsAdminCycle(supabase, {
+      landlordId: input.landlordId,
+      ticketId: input.ticketId,
+      reason: cycle.reason,
+      entryCount: cycle.nextEntryCount,
+    })
+  }
+}
+
+async function escalateStuckAutoReassign(
+  supabase: SupabaseClient,
+  input: {
+    ticketId: string
+    landlordId: string | null | undefined
+    trigger: VendorReassignTrigger
+    reason:
+      | "awaiting_choice_dwell_exceeded"
+      | "awaiting_probe_dwell_exceeded"
+      | "identical_outcome_loop"
+    loopCount?: number
+    signature?: string
+    lastOutcomeSignature?: string | null
+    priorNeedsAdminEntries?: number
+  },
+): Promise<WorkflowActResult> {
+  const ticketId = input.ticketId
+  await abandonStaleLandlordVendorChoiceAsk(supabase, ticketId)
+
+  const landlordId = input.landlordId?.trim() || null
+  if (landlordId) {
+    const message =
+      input.reason === "identical_outcome_loop"
+        ? `Auto-reassign repeated the same outcome ${input.loopCount ?? "many"} times without progress — needs a staff decision.`
+        : input.reason === "awaiting_probe_dwell_exceeded"
+        ? "Vendor availability ask went unanswered past the wait window — needs a staff decision."
+        : "Landlord vendor choice went unanswered past the wait window — needs a staff decision."
+    try {
+      await recordActivityLog(supabase, {
+        landlordId,
+        eventType:
+          input.reason === "identical_outcome_loop"
+            ? "maintenance.auto_reassign_loop_detected"
+            : "maintenance.landlord_choice_unanswered",
+        source: "automation",
+        actorType: "system",
+        maintenanceRequestId: ticketId,
+        metadata: {
+          message,
+          trigger: input.trigger,
+          outcome_signature: input.signature ?? null,
+          repeat_count: input.loopCount ?? null,
+        },
+      })
+    } catch (e) {
+      console.error("[maintenance_request] stuck auto-reassign log", e)
+    }
+  }
+
+  const escalationTrigger = mapReassignToEscalationTrigger(input.trigger)
+  if (escalationTrigger && landlordId) {
+    await escalateWhenNoReplacementVendor(
+      supabase,
+      { id: ticketId, landlord_id: landlordId },
+      escalationTrigger,
+    )
+  }
+
+  await enterNeedsAdminVendorState(supabase, {
+    ticketId,
+    landlordId,
+    trigger: input.trigger,
+    lastOutcomeSignature: input.lastOutcomeSignature ?? null,
+    priorNeedsAdminEntries: input.priorNeedsAdminEntries ?? 0,
+  })
+
+  return {
+    templateId: "maintenance_request",
+    route: workflowRouteForTemplate("maintenance_request"),
+    metadata: {
+      action: "auto_reassign",
+      outcome: "needs_admin_vendor",
+      reason: input.reason,
+      ticket_id: ticketId,
+      trigger: input.trigger,
+      loop_count: input.loopCount ?? null,
+    },
+    shouldEscalate: true,
+  }
+}
+
 async function processMaintenanceAutoReassign(
   supabase: SupabaseClient,
   _ctx: WorkflowExecutionContext,
@@ -282,23 +486,128 @@ async function processMaintenanceAutoReassign(
 
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
-    .select("unit, vendor_notify_error")
+    .select(
+      "unit, vendor_notify_error, due_at, assigned_at, assigned_vendor_id, vendor_notified_at, awaiting_landlord_choice_at, awaiting_vendor_availability_at, landlord_vendor_choice_resolved_at, auto_reassign_last_outcome, auto_reassign_same_outcome_count, auto_reassign_same_outcome_since, auto_reassign_needs_admin_entries",
+    )
     .eq("id", ticketId)
     .maybeSingle()
 
-  if (
-    ticketIsAwaitingLandlordVendorChoice(
-      typeof ticketRow?.vendor_notify_error === "string"
-        ? ticketRow.vendor_notify_error
+  const awaitingChoice = ticketIsAwaitingLandlordVendorChoice(
+    typeof ticketRow?.vendor_notify_error === "string"
+      ? ticketRow.vendor_notify_error
+      : null,
+  )
+  const awaitingProbe = ticketIsAwaitingVendorAvailabilityProbe(
+    typeof ticketRow?.vendor_notify_error === "string"
+      ? ticketRow.vendor_notify_error
+      : null,
+  )
+  const lastOutcomeSignature =
+    typeof ticketRow?.auto_reassign_last_outcome === "string"
+      ? ticketRow.auto_reassign_last_outcome
+      : null
+  const priorNeedsAdminEntries =
+    typeof ticketRow?.auto_reassign_needs_admin_entries === "number"
+      ? ticketRow.auto_reassign_needs_admin_entries
+      : 0
+  const guardTrigger = input.trigger as VendorReassignGuardTrigger
+  const guard = decideAutoReassignGuard({
+    trigger: guardTrigger,
+    nowMs: Date.now(),
+    dueAt: typeof ticketRow?.due_at === "string" ? ticketRow.due_at : null,
+    assignedAt:
+      typeof ticketRow?.assigned_at === "string" ? ticketRow.assigned_at : null,
+    awaitingLandlordChoice: awaitingChoice,
+    awaitingLandlordChoiceAt:
+      typeof ticketRow?.awaiting_landlord_choice_at === "string"
+        ? ticketRow.awaiting_landlord_choice_at
         : null,
-    )
-  ) {
+    awaitingVendorAvailabilityProbe: awaitingProbe,
+    awaitingVendorAvailabilityAt:
+      typeof ticketRow?.awaiting_vendor_availability_at === "string"
+        ? ticketRow.awaiting_vendor_availability_at
+        : null,
+    landlordVendorChoiceResolvedAt:
+      typeof ticketRow?.landlord_vendor_choice_resolved_at === "string"
+        ? ticketRow.landlord_vendor_choice_resolved_at
+        : null,
+    vendorNotifiedAt:
+      typeof ticketRow?.vendor_notified_at === "string"
+        ? ticketRow.vendor_notified_at
+        : null,
+    assignedVendorId:
+      typeof ticketRow?.assigned_vendor_id === "string"
+        ? ticketRow.assigned_vendor_id
+        : input.assignedVendorId ?? null,
+    lastOutcomeSignature,
+    sameOutcomeCount:
+      typeof ticketRow?.auto_reassign_same_outcome_count === "number"
+        ? ticketRow.auto_reassign_same_outcome_count
+        : 0,
+    sameOutcomeSince:
+      typeof ticketRow?.auto_reassign_same_outcome_since === "string"
+        ? ticketRow.auto_reassign_same_outcome_since
+        : null,
+  })
+
+  if (guard.action === "escalate_awaiting_stale") {
+    return escalateStuckAutoReassign(supabase, {
+      ticketId,
+      landlordId: input.landlordId,
+      trigger: input.trigger,
+      reason: guard.reason,
+      lastOutcomeSignature,
+      priorNeedsAdminEntries,
+    })
+  }
+
+  if (guard.action === "escalate_loop") {
+    return escalateStuckAutoReassign(supabase, {
+      ticketId,
+      landlordId: input.landlordId,
+      trigger: input.trigger,
+      reason: "identical_outcome_loop",
+      loopCount: guard.count,
+      signature: guard.signature,
+      lastOutcomeSignature,
+      priorNeedsAdminEntries,
+    })
+  }
+
+  if (guard.action === "short_circuit_awaiting") {
+    if (
+      guard.reason === "awaiting_landlord_choice" &&
+      guard.stampLandlordChoiceAt
+    ) {
+      const stamped = new Date().toISOString()
+      await supabase
+        .from("maintenance_requests")
+        .update({ awaiting_landlord_choice_at: stamped })
+        .eq("id", ticketId)
+    }
+    await persistAutoReassignRepeatState(supabase, ticketId, guard.repeat)
     return {
       templateId: "maintenance_request",
       route: workflowRouteForTemplate("maintenance_request"),
       metadata: {
         action: "auto_reassign",
-        outcome: "awaiting_landlord_choice",
+        outcome: guard.reason,
+        ticket_id: ticketId,
+        trigger: input.trigger,
+        repeat_count: guard.repeat.count,
+        stamped_landlord_choice_at: Boolean(guard.stampLandlordChoiceAt),
+      },
+    }
+  }
+
+  if (guard.action === "skip") {
+    return {
+      templateId: "maintenance_request",
+      route: workflowRouteForTemplate("maintenance_request"),
+      metadata: {
+        action: "auto_reassign",
+        outcome: "skipped",
+        reason: guard.reason,
         ticket_id: ticketId,
         trigger: input.trigger,
       },
@@ -348,10 +657,12 @@ async function processMaintenanceAutoReassign(
         },
       }
     }
-    await supabase
-      .from("maintenance_requests")
-      .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
-      .eq("id", ticketId)
+    await markAwaitingLandlordVendorChoice(supabase, ticketId)
+    await persistAutoReassignRepeatState(supabase, ticketId, {
+      signature: `awaiting_landlord_choice|${input.trigger}`,
+      count: 1,
+      sinceMs: Date.now(),
+    })
     return {
       templateId: "maintenance_request",
       route: workflowRouteForTemplate("maintenance_request"),
@@ -375,6 +686,7 @@ async function processMaintenanceAutoReassign(
         vendor_work_status: "unassigned",
         vendor_notified_at: null,
         vendor_notify_error: null,
+        awaiting_landlord_choice_at: null,
       })
       .eq("id", ticketId)
       .eq("vendor_work_status", "declined")
@@ -397,6 +709,13 @@ async function processMaintenanceAutoReassign(
       escalationTrigger,
     )
   }
+  await enterNeedsAdminVendorState(supabase, {
+    ticketId,
+    landlordId: input.landlordId?.trim() || null,
+    trigger: input.trigger,
+    lastOutcomeSignature,
+    priorNeedsAdminEntries,
+  })
   return {
     templateId: "maintenance_request",
     route: workflowRouteForTemplate("maintenance_request"),

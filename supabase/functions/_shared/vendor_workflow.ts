@@ -3,6 +3,7 @@ import { resumeMaintenanceWorkflowAfterVendorAccepted } from "./maintenance_admi
 import { tryAutoReassignAfterDecline } from "./vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "./vendor_job_schedule.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
+import { matchShortReplyToken } from "./sms/shortReplyTokens.ts"
 
 export type VendorSmsReplyAction = "accept" | "decline"
 
@@ -39,6 +40,33 @@ export function parseVendorSmsReply(body: string): VendorSmsReplyAction | null {
   ) {
     return "decline"
   }
+
+  // Typo tolerance for single short command words (e.g. "accpet", "declien").
+  const acceptHit = matchShortReplyToken(normalized, [
+    "ACCEPT",
+    "ACCEPTED",
+    "YES",
+    "Y",
+    "OK",
+    "OKAY",
+    "CONFIRM",
+    "CONFIRMED",
+    "APPROVE",
+    "APPROVED",
+  ])
+  if (acceptHit) return "accept"
+  const declineHit = matchShortReplyToken(normalized, [
+    "DECLINE",
+    "DECLINED",
+    "NO",
+    "N",
+    "REJECT",
+    "REJECTED",
+    "PASS",
+    "CANCEL",
+    "CANCELLED",
+  ])
+  if (declineHit) return "decline"
 
   return null
 }

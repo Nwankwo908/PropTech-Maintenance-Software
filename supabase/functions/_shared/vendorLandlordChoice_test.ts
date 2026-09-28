@@ -194,12 +194,9 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
       { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
     ],
   })
-  assertEquals(one.includes("Reply YES to send this job to Ivanhomesolutions"), true)
+  assertStringIncludes(one, "Reply YES to send the job to Ivanhomesolutions")
   assertEquals(one.includes("property management team"), false)
-  assertEquals(one.includes("WO-E6F7"), false)
-  assertStringIncludes(one, "Hi Alex — job at 563 Springdale Circle, Unit 1")
-  assertStringIncludes(one, "Issue: dripping faucet")
-  assertStringIncludes(one, "Vendor: Ivanhomesolutions")
+  assertStringIncludes(one, "Ivanhomesolutions can take the dripping faucet at 563 Springdale Circle")
 
   const two = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",

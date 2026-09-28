@@ -22,6 +22,7 @@ export type SlaReassignOutcome =
   | "reassigned"
   | "needs_admin_vendor"
   | "awaiting_landlord_choice"
+  | "awaiting_vendor_availability_probe"
   | "skipped"
 
 export type SlaReassignResult = {
@@ -67,6 +68,17 @@ async function processSlaExpiredTicketRow(
 
   if (TERMINAL_STATUSES.has(ticket.vendor_work_status)) {
     return { ticketId: ticket.id, outcome: "skipped", reason: "terminal" }
+  }
+
+  if (ticket.landlord_id) {
+    const { data: landlord } = await supabase
+      .from("landlords")
+      .select("is_demo")
+      .eq("id", ticket.landlord_id)
+      .maybeSingle()
+    if (landlord?.is_demo === true) {
+      return { ticketId: ticket.id, outcome: "skipped", reason: "demo_landlord" }
+    }
   }
 
   if (!AUTO_REASSIGN_STATUSES.has(ticket.vendor_work_status)) {
@@ -130,6 +142,12 @@ async function processSlaExpiredTicketRow(
   }
   if (outcome === "awaiting_landlord_choice") {
     return { ticketId: ticket.id, outcome: "awaiting_landlord_choice" }
+  }
+  if (outcome === "awaiting_vendor_availability_probe") {
+    return {
+      ticketId: ticket.id,
+      outcome: "awaiting_vendor_availability_probe",
+    }
   }
   if (outcome === "needs_admin_vendor") {
     return { ticketId: ticket.id, outcome: "needs_admin_vendor" }

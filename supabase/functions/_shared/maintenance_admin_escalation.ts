@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { updateWorkflowRun } from "./engine/workflowRuns.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
+import { closeNeedsVendorActivityEpisode } from "./graph/recordActivityLog.ts"
 import {
   formatAttentionLocationLine,
   formatReportedAgo,
@@ -309,6 +310,33 @@ export async function resumeMaintenanceWorkflowAfterVendorAssigned(
     eventMessage: params.eventMessage?.trim() || "Vendor assigned",
     eventStep: params.eventStep?.trim() || "vendor_assigned",
   })
+
+  // Clear sticky needs_admin hold + close activity episode so automation can resume.
+  try {
+    const { clearNeedsAdminVendorSticky } = await import(
+      "./clearNeedsAdminVendorSticky.ts"
+    )
+    await clearNeedsAdminVendorSticky(supabase, ticketId)
+  } catch (e) {
+    console.warn("[maintenance-admin-escalation] clear sticky", e)
+  }
+  try {
+    const { data: ticket } = await supabase
+      .from("maintenance_requests")
+      .select("landlord_id")
+      .eq("id", ticketId)
+      .maybeSingle()
+    const landlordId =
+      typeof ticket?.landlord_id === "string" ? ticket.landlord_id.trim() : ""
+    if (landlordId) {
+      await closeNeedsVendorActivityEpisode(supabase, {
+        landlordId,
+        maintenanceRequestId: ticketId,
+      })
+    }
+  } catch (e) {
+    console.warn("[maintenance-admin-escalation] close episode", e)
+  }
 }
 
 /** After the assigned vendor accepts, drop the "needs a vendor" escalation. */

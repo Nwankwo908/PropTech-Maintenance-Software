@@ -25,6 +25,106 @@ export function ticketIsAwaitingLandlordVendorChoice(
   return (vendorNotifyError ?? "").includes(AWAITING_LANDLORD_VENDOR_CHOICE)
 }
 
+/** Set the blocking flag + dwell timer when a landlord choice ask is sent. */
+export async function markAwaitingLandlordVendorChoice(
+  supabase: SupabaseClient,
+  ticketId: string,
+  at: Date = new Date(),
+): Promise<void> {
+  const id = ticketId.trim()
+  if (!id) return
+  await supabase
+    .from("maintenance_requests")
+    .update({
+      vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE,
+      awaiting_landlord_choice_at: at.toISOString(),
+    })
+    .eq("id", id)
+}
+
+/**
+ * Clear the blocking flag when the landlord answers (or the ask is otherwise
+ * finished). Records landlord_vendor_choice_resolved_at for cool-down.
+ */
+export async function clearLandlordVendorChoiceTicketFlag(
+  supabase: SupabaseClient,
+  ticketId: string,
+  at: Date = new Date(),
+): Promise<void> {
+  const id = ticketId.trim()
+  if (!id) return
+  await supabase
+    .from("maintenance_requests")
+    .update({
+      vendor_notify_error: null,
+      awaiting_landlord_choice_at: null,
+      landlord_vendor_choice_resolved_at: at.toISOString(),
+    })
+    .eq("id", id)
+}
+
+/**
+ * Drop the blocking flag without treating it as a landlord answer (dwell /
+ * loop escalation). Leaves landlord_vendor_choice_resolved_at unchanged.
+ */
+export async function releaseAwaitingLandlordVendorChoiceFlag(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<void> {
+  const id = ticketId.trim()
+  if (!id) return
+  await supabase
+    .from("maintenance_requests")
+    .update({
+      vendor_notify_error: null,
+      awaiting_landlord_choice_at: null,
+    })
+    .eq("id", id)
+}
+
+/**
+ * Escalate out of a stuck landlord-choice ask: clear ticket flag + pending
+ * intake so automation cannot short-circuit forever. Does not mark the choice
+ * as answered (no landlord_vendor_choice_resolved_at bump).
+ */
+export async function abandonStaleLandlordVendorChoiceAsk(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<void> {
+  const id = ticketId.trim()
+  if (!id) return
+  await releaseAwaitingLandlordVendorChoiceFlag(supabase, id)
+
+  const { data, error } = await supabase
+    .from("sms_conversations")
+    .select("id, intake_state")
+    .eq("maintenance_request_id", id)
+    .order("updated_at", { ascending: false })
+    .limit(25)
+  if (error) {
+    console.error("[vendor-choice] abandon stale ask load", error)
+    return
+  }
+  const now = new Date().toISOString()
+  for (const row of data ?? []) {
+    const prior =
+      row.intake_state && typeof row.intake_state === "object"
+        ? (row.intake_state as Record<string, unknown>)
+        : {}
+    const awaiting = readAwaitingVendorChoice(prior)
+    if (!awaiting || awaiting.ticketId !== id) continue
+    const next = landlordVendorChoiceResolvedIntake(prior)
+    delete next[UNKNOWN_CONTACT_INTAKE_KEY]
+    await supabase
+      .from("sms_conversations")
+      .update({
+        intake_state: next,
+        updated_at: now,
+      })
+      .eq("id", row.id)
+  }
+}
+
 /**
  * Intake + ticket fields that must all clear when a landlord vendor-choice ask
  * is finished (YES / 1 / 2, already-assigned short-circuit, etc.).
@@ -231,11 +331,32 @@ export function serializeAwaitingVendorChoice(
   }
 }
 
-/** Strip probe suffixes embedded in older choice names ("Flex — Thu · $200"). */
+/** Strip probe suffixes; title-case so roster casing stays consistent in SMS. */
 export function vendorChoiceDisplayName(name: string): string {
   const raw = name.trim()
   if (!raw) return "your vendor"
-  return raw.split(" — ")[0]?.trim() || raw
+  const base = raw.split(" — ")[0]?.trim() || raw
+  return vendorCompanyName(base)
+}
+
+/** True while multi-vendor probe is collecting offers (status SMS sent, no decision yet). */
+export function intakeHasActiveVendorProbeHold(intakeState: unknown): boolean {
+  if (!intakeState || typeof intakeState !== "object") return false
+  const raw = (intakeState as Record<string, unknown>).vendor_availability_probe
+  if (!raw || typeof raw !== "object") return false
+  const row = raw as Record<string, unknown>
+  if (row.status !== "holding") return false
+  if (typeof row.landlord_notified_at === "string" && row.landlord_notified_at.trim()) {
+    return false
+  }
+  return Array.isArray(row.offers) && row.offers.length > 0
+}
+
+export function buildLandlordProbeHoldClarifySms(): string {
+  return (
+    "Vendor options are still being gathered — your reply wasn't actionable yet. " +
+    "I'll text you when there's a choice to make."
+  )
 }
 
 function problemContextForLandlordSms(input: {
@@ -345,7 +466,8 @@ export function canHandleLandlordVendorChoice(input: {
   // Ops phones are sometimes mislabeled as resident (unknown-contact reuse).
   // Still honor a pending landlord choice ask; only skip real vendor threads.
   if (input.identityType === "vendor") return false
-  return readAwaitingVendorChoice(input.intakeState) != null
+  if (readAwaitingVendorChoice(input.intakeState) != null) return true
+  return intakeHasActiveVendorProbeHold(input.intakeState)
 }
 
 export function landlordChoiceReplyHint(count: number): string {
@@ -442,6 +564,8 @@ export function buildLandlordVendorChoiceSms(input: {
   const rematch = rematchReasonLine(input.reason)
   const lines: string[] = []
 
+  const anyEstimate = input.options.some((o) => Boolean(o.estimateNote?.trim()))
+
   if (input.options.length === 1) {
     const only = input.options[0]
     const name = vendorChoiceDisplayName(only?.name || "your vendor")
@@ -474,7 +598,10 @@ export function buildLandlordVendorChoiceSms(input: {
       const window = option.windowLabel?.trim()
       const estimate = option.estimateNote?.trim()
       if (window) lines.push(window)
+      // When any vendor quoted a price, show a placeholder for the rest so the
+      // landlord doesn't miss that a number was simply omitted.
       if (estimate) lines.push(estimate)
+      else if (anyEstimate) lines.push("No estimate provided")
       if (index < input.options.length - 1) lines.push("")
     })
     lines.push(
@@ -744,10 +871,7 @@ async function clearAwaitingVendorChoice(
 
   const id = ticketId?.trim()
   if (id) {
-    await supabase
-      .from("maintenance_requests")
-      .update({ vendor_notify_error: null })
-      .eq("id", id)
+    await clearLandlordVendorChoiceTicketFlag(supabase, id)
   }
 }
 
@@ -812,7 +936,53 @@ export async function tryHandleLandlordVendorChoiceInbound(
     }
   }
 
-  if (!awaiting) return { handled: false }
+  if (!awaiting) {
+    // Multi-vendor probe hold: status SMS was sent, decision not yet — never
+    // treat YES/1/2 (or anything else) as an approval, and never fall through
+    // to the generic maintenance greeting.
+    let holdTicketId: string | null = null
+    if (intakeHasActiveVendorProbeHold(priorIntake)) {
+      const raw = (priorIntake as Record<string, unknown>).vendor_availability_probe as
+        | Record<string, unknown>
+        | undefined
+      holdTicketId =
+        typeof raw?.ticket_id === "string" ? raw.ticket_id.trim() : null
+    } else {
+      const phone = normalizeSmsPhone(
+        params.fromPhone?.trim() ||
+          (typeof conv.external_phone_number === "string"
+            ? conv.external_phone_number
+            : ""),
+      )
+      if (phone) {
+        const { data: others } = await supabase
+          .from("sms_conversations")
+          .select("id, intake_state")
+          .eq("landlord_id", params.landlordId)
+          .eq("external_phone_number", phone)
+          .order("updated_at", { ascending: false })
+          .limit(25)
+        const holdMatch = (others ?? []).find((row) =>
+          intakeHasActiveVendorProbeHold(row.intake_state)
+        )
+        if (holdMatch?.intake_state && typeof holdMatch.intake_state === "object") {
+          const raw = (holdMatch.intake_state as Record<string, unknown>)
+            .vendor_availability_probe as Record<string, unknown> | undefined
+          holdTicketId =
+            typeof raw?.ticket_id === "string" ? raw.ticket_id.trim() : null
+        }
+      }
+    }
+    if (holdTicketId) {
+      return {
+        handled: true,
+        ticketId: holdTicketId,
+        vendorId: null,
+        replyBody: buildLandlordProbeHoldClarifySms(),
+      }
+    }
+    return { handled: false }
+  }
 
   // Ops phone was mislabeled as resident — treat as landlord for this ask.
   if (params.identityType === "resident") {
