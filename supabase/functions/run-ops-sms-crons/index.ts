@@ -14,7 +14,9 @@ import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { listLandlordIdsForCron } from "../_shared/cronLandlords.ts"
 import { checkRentCollection } from "../_shared/engine/checkRentCollection.ts"
+import { reportMissingRequiredCronJobs } from "../_shared/missingRequiredCrons.ts"
 import { processTenantActivationRetries } from "../_shared/sms/tenantActivation.ts"
+import { sendNeedsAdminVendorDigest } from "../_shared/needsAdminVendorDigest.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -65,12 +67,37 @@ serve(async (req) => {
   const scopedLandlordId = typeof body.landlord_id === "string"
     ? body.landlord_id.trim()
     : ""
+  const dryRun = body.dry_run === true || body.dryRun === true
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
   try {
+    const missingCrons = await reportMissingRequiredCronJobs(supabase, {
+      landlordId: scopedLandlordId || null,
+    })
+
+    if (dryRun) {
+      const landlordIds = scopedLandlordId
+        ? [scopedLandlordId]
+        : await listLandlordIdsForCron(supabase)
+      return jsonResponse({
+        ok: true,
+        dry_run: true,
+        missing_required_crons: missingCrons.map((j) => ({
+          jobname: j.jobname,
+          edge_function: j.edgeFunction,
+        })),
+        would_process: {
+          tenant_activation: true,
+          rent_collection_landlords: landlordIds,
+        },
+        message:
+          "Dry-run: would run tenant activation retries + rent collection for listed landlords; no SMS or writes.",
+      })
+    }
+
     const activation = await processTenantActivationRetries(
       supabase,
       scopedLandlordId || null,
@@ -108,8 +135,23 @@ serve(async (req) => {
       }
     }
 
+    let needsAdminDigest: Record<string, unknown> = {}
+    try {
+      needsAdminDigest = await sendNeedsAdminVendorDigest(supabase)
+    } catch (err) {
+      console.error("[run-ops-sms-crons] needs_admin digest", err)
+      needsAdminDigest = {
+        sent: false,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+
     return jsonResponse({
       ok: true,
+      missing_required_crons: missingCrons.map((j) => ({
+        jobname: j.jobname,
+        edge_function: j.edgeFunction,
+      })),
       tenant_activation: activation,
       rent_collection: {
         landlords: landlordIds.length,
@@ -118,6 +160,7 @@ serve(async (req) => {
         errors: rentErrors,
         results: rentResults,
       },
+      needs_admin_vendor_digest: needsAdminDigest,
     })
   } catch (err) {
     console.error("[run-ops-sms-crons]", err)
