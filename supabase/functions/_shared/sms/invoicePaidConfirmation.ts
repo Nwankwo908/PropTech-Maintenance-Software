@@ -556,7 +556,10 @@ export async function tryHandleInvoicePaidConfirmationInbound(
           "We couldn't find that invoice anymore. Open the details link above to review it in Ulo.",
       }
     }
-    if (approved.error === "invoice_not_submittable") {
+    if (
+      approved.error === "invoice_not_submittable" ||
+      approved.error === "already_approved"
+    ) {
       // Already decided elsewhere — clear ask, don't re-approve.
       await clearOneAwaitingInvoicePaidConfirmation(
         supabase,
@@ -570,7 +573,12 @@ export async function tryHandleInvoicePaidConfirmationInbound(
         invoiceId: awaiting.invoiceId,
         ticketId: awaiting.ticketId,
         replyBody:
-          "This invoice is no longer waiting for payment confirmation. You can review it in Ulo.",
+          approved.error === "already_approved"
+            ? buildInvoicePaidMarkedSms({
+              ticketId: awaiting.ticketId,
+              amount: awaiting.amount,
+            })
+            : "This invoice is no longer waiting for payment confirmation. You can review it in Ulo.",
       }
     }
     console.error("[invoice-paid-confirm] approve failed", approved.error)

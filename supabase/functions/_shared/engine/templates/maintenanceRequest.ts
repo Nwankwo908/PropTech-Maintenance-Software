@@ -83,6 +83,8 @@ export type MaintenanceRequestEngineInput = {
     notifyResident?: boolean
     activityMetadataExtra?: Record<string, unknown>
     clearSchedule?: boolean
+    /** Decide only — no SMS, no ticket/workflow writes. */
+    dryRun?: boolean
   }
   adminReassigned?: {
     ticketId: string
@@ -465,6 +467,7 @@ async function processMaintenanceAutoReassign(
   input: NonNullable<MaintenanceRequestEngineInput["autoReassign"]>,
 ): Promise<WorkflowActResult> {
   const ticketId = input.ticketId.trim()
+  const dryRun = input.dryRun === true
   if (!ticketId) {
     return {
       templateId: "maintenance_request",
@@ -473,7 +476,7 @@ async function processMaintenanceAutoReassign(
     }
   }
 
-  if (input.clearSchedule) {
+  if (input.clearSchedule && !dryRun) {
     await supabase
       .from("maintenance_requests")
       .update({
@@ -504,6 +507,7 @@ async function processMaintenanceAutoReassign(
         outcome: "skipped",
         reason: "vendor_active_on_job",
         vendor_work_status: workStatus,
+        dry_run: dryRun || undefined,
       },
     }
   }
@@ -567,6 +571,21 @@ async function processMaintenanceAutoReassign(
   })
 
   if (guard.action === "escalate_awaiting_stale") {
+    if (dryRun) {
+      return {
+        templateId: "maintenance_request",
+        route: workflowRouteForTemplate("maintenance_request"),
+        metadata: {
+          action: "auto_reassign",
+          outcome: "needs_admin_vendor",
+          reason: guard.reason,
+          ticket_id: ticketId,
+          trigger: input.trigger,
+          dry_run: true,
+        },
+        shouldEscalate: true,
+      }
+    }
     return escalateStuckAutoReassign(supabase, {
       ticketId,
       landlordId: input.landlordId,
@@ -578,6 +597,21 @@ async function processMaintenanceAutoReassign(
   }
 
   if (guard.action === "escalate_loop") {
+    if (dryRun) {
+      return {
+        templateId: "maintenance_request",
+        route: workflowRouteForTemplate("maintenance_request"),
+        metadata: {
+          action: "auto_reassign",
+          outcome: "needs_admin_vendor",
+          reason: "identical_outcome_loop",
+          ticket_id: ticketId,
+          trigger: input.trigger,
+          dry_run: true,
+        },
+        shouldEscalate: true,
+      }
+    }
     return escalateStuckAutoReassign(supabase, {
       ticketId,
       landlordId: input.landlordId,
@@ -591,17 +625,19 @@ async function processMaintenanceAutoReassign(
   }
 
   if (guard.action === "short_circuit_awaiting") {
-    if (
-      guard.reason === "awaiting_landlord_choice" &&
-      guard.stampLandlordChoiceAt
-    ) {
-      const stamped = new Date().toISOString()
-      await supabase
-        .from("maintenance_requests")
-        .update({ awaiting_landlord_choice_at: stamped })
-        .eq("id", ticketId)
+    if (!dryRun) {
+      if (
+        guard.reason === "awaiting_landlord_choice" &&
+        guard.stampLandlordChoiceAt
+      ) {
+        const stamped = new Date().toISOString()
+        await supabase
+          .from("maintenance_requests")
+          .update({ awaiting_landlord_choice_at: stamped })
+          .eq("id", ticketId)
+      }
+      await persistAutoReassignRepeatState(supabase, ticketId, guard.repeat)
     }
-    await persistAutoReassignRepeatState(supabase, ticketId, guard.repeat)
     return {
       templateId: "maintenance_request",
       route: workflowRouteForTemplate("maintenance_request"),
@@ -612,6 +648,7 @@ async function processMaintenanceAutoReassign(
         trigger: input.trigger,
         repeat_count: guard.repeat.count,
         stamped_landlord_choice_at: Boolean(guard.stampLandlordChoiceAt),
+        dry_run: dryRun || undefined,
       },
     }
   }
@@ -626,6 +663,7 @@ async function processMaintenanceAutoReassign(
         reason: guard.reason,
         ticket_id: ticketId,
         trigger: input.trigger,
+        dry_run: dryRun || undefined,
       },
     }
   }
@@ -650,6 +688,22 @@ async function processMaintenanceAutoReassign(
           outcome: "skipped",
           reason: "missing_landlord",
           ticket_id: ticketId,
+          dry_run: dryRun || undefined,
+        },
+      }
+    }
+    if (dryRun) {
+      return {
+        templateId: "maintenance_request",
+        route: workflowRouteForTemplate("maintenance_request"),
+        metadata: {
+          action: "auto_reassign",
+          outcome: "awaiting_landlord_choice",
+          ticket_id: ticketId,
+          trigger: input.trigger,
+          option_ids: decision.options.map((row) => row.vendor.id),
+          classified_reason: intent.reason,
+          dry_run: true,
         },
       }
     }
@@ -693,7 +747,7 @@ async function processMaintenanceAutoReassign(
     }
   }
 
-  if (input.trigger === "vendor_declined" && input.previousVendorId) {
+  if (input.trigger === "vendor_declined" && input.previousVendorId && !dryRun) {
     await supabase
       .from("maintenance_requests")
       .update({
@@ -715,6 +769,21 @@ async function processMaintenanceAutoReassign(
       source: "auto_reassign",
       vendor_id: input.previousVendorId,
     })
+  }
+
+  if (dryRun) {
+    return {
+      templateId: "maintenance_request",
+      route: workflowRouteForTemplate("maintenance_request"),
+      metadata: {
+        action: "auto_reassign",
+        outcome: "needs_admin_vendor",
+        ticket_id: ticketId,
+        trigger: input.trigger,
+        dry_run: true,
+      },
+      shouldEscalate: true,
+    }
   }
 
   const escalationTrigger = mapReassignToEscalationTrigger(input.trigger)

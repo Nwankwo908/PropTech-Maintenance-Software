@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "deploy:status": "node scripts/deploy-status.mjs",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {

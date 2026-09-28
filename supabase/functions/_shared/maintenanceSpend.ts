@@ -285,7 +285,7 @@ export async function approveMaintenanceInvoice(
     return { error: "forbidden" }
   }
   if (String(invoice.status) === "approved") {
-    return { recognizedAmount: Number(invoice.total_cost ?? 0) }
+    return { error: "already_approved" }
   }
   if (String(invoice.status) !== "submitted") {
     return { error: "invoice_not_submittable" }
@@ -309,7 +309,8 @@ export async function approveMaintenanceInvoice(
       ? invoice.metadata as Record<string, unknown>
       : {}
 
-  const { error: approveErr } = await supabase
+  // Conditional update: only one caller wins the submitted → approved race.
+  const { data: wonRows, error: approveErr } = await supabase
     .from("maintenance_invoices")
     .update({
       status: "approved",
@@ -323,10 +324,24 @@ export async function approveMaintenanceInvoice(
       },
     })
     .eq("id", params.invoiceId)
+    .eq("landlord_id", params.landlordId)
+    .eq("status", "submitted")
+    .select("id")
 
   if (approveErr) {
     console.error("[maintenance-spend] approve update", approveErr.message)
     return { error: "approve_failed" }
+  }
+  if (!wonRows?.length) {
+    const { data: again } = await supabase
+      .from("maintenance_invoices")
+      .select("status")
+      .eq("id", params.invoiceId)
+      .maybeSingle()
+    if (String(again?.status ?? "") === "approved") {
+      return { error: "already_approved" }
+    }
+    return { error: "invoice_not_submittable" }
   }
 
   const ledgerId = await logLedgerEvent(supabase, {

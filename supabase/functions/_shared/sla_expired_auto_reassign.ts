@@ -51,7 +51,9 @@ export async function escalateForNoVendor(
 async function processSlaExpiredTicketRow(
   supabase: SupabaseClient,
   raw: Record<string, unknown>,
+  opts?: { dryRun?: boolean },
 ): Promise<SlaReassignResult> {
+  const dryRun = opts?.dryRun === true
   const ticket: SlaTicketRow = {
     id: String(raw.id ?? ""),
     landlord_id: raw.landlord_id == null ? null : String(raw.landlord_id),
@@ -126,6 +128,7 @@ async function processSlaExpiredTicketRow(
         issueCategory: ticket.issue_category,
         previousVendorId: ticket.assigned_vendor_id,
         findStrategy: "alternatives_then_pick",
+        dryRun,
       },
     },
   })
@@ -171,6 +174,7 @@ async function processSlaExpiredTicketRow(
 export async function processSlaExpiredAutoReassignForTicket(
   supabase: SupabaseClient,
   ticketId: string,
+  opts?: { dryRun?: boolean },
 ): Promise<SlaReassignResult | { error: string }> {
   const id = ticketId.trim()
   if (!id) return { error: "Missing ticketId" }
@@ -197,13 +201,13 @@ export async function processSlaExpiredAutoReassignForTicket(
     return { ticketId: id, outcome: "skipped", reason: "sla_not_expired" }
   }
 
-  return processSlaExpiredTicketRow(supabase, raw as Record<string, unknown>)
+  return processSlaExpiredTicketRow(supabase, raw as Record<string, unknown>, opts)
 }
 
 /** Process open tickets past due_at — reassign when a roster vendor exists. */
 export async function processSlaExpiredAutoReassign(
   supabase: SupabaseClient,
-  opts?: { limit?: number },
+  opts?: { limit?: number; dryRun?: boolean },
 ): Promise<SlaReassignResult[]> {
   const nowIso = new Date().toISOString()
   const limit = opts?.limit ?? 50
@@ -226,7 +230,11 @@ export async function processSlaExpiredAutoReassign(
 
   for (const raw of rows ?? []) {
     results.push(
-      await processSlaExpiredTicketRow(supabase, raw as Record<string, unknown>),
+      await processSlaExpiredTicketRow(
+        supabase,
+        raw as Record<string, unknown>,
+        { dryRun: opts?.dryRun },
+      ),
     )
   }
 
