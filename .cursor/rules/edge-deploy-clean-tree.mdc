@@ -1,0 +1,15 @@
+# Edge function deploys — clean tree + commit SHA
+
+## Rule
+
+Every Edge Function deploy must:
+
+1. Run from a **clean git working tree** (no staged/unstaged/untracked changes that belong in the deploy). Refuse to deploy if `git status --porcelain` is non-empty.
+2. Record the **full commit SHA** (`git rev-parse HEAD`) in the deploy log / report.
+
+Use `scripts/deploy-edge-function.sh <slug>` (or the same checks inline). Do not `supabase functions deploy` from a dirty tree.
+
+## Do not
+
+- Deploy uncommitted local edits “just to smoke”
+- Deploy without stating the commit SHA in the agent report

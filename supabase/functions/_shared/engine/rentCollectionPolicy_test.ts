@@ -1,3 +1,4 @@
+/// <reference lib="deno.ns" />
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   parseRentReminderCadenceDays,
@@ -7,6 +8,7 @@ import {
   shouldAskLandlordRentReceiptToday,
   shouldSendOfflineTenantGraceReminder,
   shouldRunRentCollectionCron,
+  calendarDatePartsInTimeZone,
 } from "./rentCollectionPolicy.ts"
 import { buildRentCollectionPrompt } from "./rentCollectionOutreachCopy.ts"
 
@@ -14,6 +16,70 @@ Deno.test("parseRentReminderCadenceDays sorts descending", () => {
   assertEquals(parseRentReminderCadenceDays("5, 3, 1 days before"), [5, 3, 1])
   assertEquals(parseRentReminderCadenceDays("3, 1 days before"), [3, 1])
   assertEquals(parseRentReminderCadenceDays("2, 5, 1 day before"), [5, 2, 1])
+})
+
+Deno.test("rentReminderSlotForToday uses landlord timezone across UTC midnight", () => {
+  // Sep 26 9pm Eastern = Sep 27 01:00 UTC. Cadence day is still Sep 26 in ET.
+  // Due day 1 → next due Oct 1 → 5 days before.
+  const instant = new Date("2026-09-27T01:00:00.000Z")
+  const cadence = [5, 3, 1]
+  assertEquals(
+    rentReminderSlotForToday(1, cadence, instant, "America/New_York"),
+    5,
+  )
+  assertEquals(
+    rentReminderSlotForToday(1, cadence, instant, "UTC"),
+    null,
+  )
+  assertEquals(
+    shouldRunRentCollectionCron(1, cadence, instant, "America/New_York"),
+    true,
+  )
+  assertEquals(
+    shouldRunRentCollectionCron(1, cadence, instant, "UTC"),
+    false,
+  )
+})
+
+Deno.test("rentReminderSlotForToday rolls to next month after due day", () => {
+  const cadence = [5, 3, 1]
+  // Sep 26 local + due day 1 → Oct 1 is 5 days away.
+  assertEquals(
+    rentReminderSlotForToday(1, cadence, new Date(2026, 8, 26)),
+    5,
+  )
+  // Sep 28 local + due day 1 → Oct 1 is 3 days away.
+  assertEquals(
+    rentReminderSlotForToday(1, cadence, new Date(2026, 8, 28)),
+    3,
+  )
+  // After this month's due day, overdue receipt still uses this-month days.
+  assertEquals(
+    shouldAskLandlordRentReceiptToday(1, new Date(2026, 8, 26)),
+    true,
+  )
+  assertEquals(
+    shouldAskLandlordRentReceiptToday(1, new Date(2026, 8, 1)),
+    true,
+  )
+  assertEquals(
+    shouldAskLandlordRentReceiptToday(10, new Date(2026, 8, 5)),
+    false,
+  )
+})
+
+Deno.test("calendarDatePartsInTimeZone reads Eastern civil date", () => {
+  const instant = new Date("2026-09-27T01:00:00.000Z")
+  assertEquals(calendarDatePartsInTimeZone(instant, "America/New_York"), {
+    year: 2026,
+    month: 9,
+    day: 26,
+  })
+  assertEquals(calendarDatePartsInTimeZone(instant, "UTC"), {
+    year: 2026,
+    month: 9,
+    day: 27,
+  })
 })
 
 Deno.test("rentReminderSlotForToday matches cadence and due date", () => {

@@ -35,6 +35,13 @@ export type CheckLeaseRenewalsResult = {
   candidates: number
   started: number
   skipped: number
+  dry_run?: boolean
+  would_start?: Array<{
+    resident_id: string
+    lease_end_date: string
+    full_name: string | null
+    unit: string | null
+  }>
   started_runs: LeaseRenewalStartResult[]
   errors: Array<{ resident_id: string; lease_end_date: string; error: string }>
 }
@@ -54,16 +61,23 @@ function horizonDates(noticeDays: number): { todayIso: string; horizonIso: strin
 export async function findExpiringResidents(
   supabase: SupabaseClient,
   noticeDays: number,
+  landlordId?: string | null,
 ): Promise<ExpiringResidentRow[]> {
   const { todayIso, horizonIso } = horizonDates(noticeDays)
 
-  const { data, error } = await supabase
+  let q = supabase
     .from("users")
     .select("id, full_name, phone, unit, building, lease_end_date, status")
     .eq("status", "active")
     .not("lease_end_date", "is", null)
     .gte("lease_end_date", todayIso)
     .lte("lease_end_date", horizonIso)
+
+  if (landlordId?.trim()) {
+    q = q.eq("landlord_id", landlordId.trim())
+  }
+
+  const { data, error } = await q
 
   if (error) {
     console.error("[check-lease-renewals] residents query", error.message)
@@ -169,32 +183,41 @@ export async function checkLeaseRenewals(
     landlordId: string
     noticeDays?: number
     noResponseDays?: number
+    dryRun?: boolean
   },
 ): Promise<CheckLeaseRenewalsResult> {
+  const dryRun = params.dryRun === true
   const templateConfig = await fetchWorkflowTemplateConfig(supabase, "lease_renewal")
   const timing = leaseRenewalTimingFromConfig(templateConfig, {
     noticeDays: params.noticeDays,
     noResponseDays: params.noResponseDays,
   })
 
-  await logGraphEvent(supabase, {
-    landlord_id: params.landlordId,
-    event_type: "lease.renewal_cron_triggered",
-    source: "automation",
-    actor_type: "system",
-    workflow_template_id: "lease_renewal",
-    metadata: {
-      notice_days: timing.noticeDays,
-      no_response_days: timing.noResponseDays,
-      source: "check-lease-renewals",
-    },
-  })
+  if (!dryRun) {
+    await logGraphEvent(supabase, {
+      landlord_id: params.landlordId,
+      event_type: "lease.renewal_cron_triggered",
+      source: "automation",
+      actor_type: "system",
+      workflow_template_id: "lease_renewal",
+      metadata: {
+        notice_days: timing.noticeDays,
+        no_response_days: timing.noResponseDays,
+        source: "check-lease-renewals",
+      },
+    })
+  }
 
-  const residents = await findExpiringResidents(supabase, timing.noticeDays)
+  const residents = await findExpiringResidents(
+    supabase,
+    timing.noticeDays,
+    params.landlordId,
+  )
 
   let started = 0
   let skipped = 0
   const startedRuns: LeaseRenewalStartResult[] = []
+  const wouldStart: NonNullable<CheckLeaseRenewalsResult["would_start"]> = []
   const errors: CheckLeaseRenewalsResult["errors"] = []
 
   for (const resident of residents) {
@@ -206,6 +229,17 @@ export async function checkLeaseRenewals(
 
     if (duplicate) {
       skipped++
+      continue
+    }
+
+    if (dryRun) {
+      wouldStart.push({
+        resident_id: resident.id,
+        lease_end_date: resident.lease_end_date,
+        full_name: resident.full_name,
+        unit: resident.unit,
+      })
+      started++
       continue
     }
 
@@ -239,6 +273,8 @@ export async function checkLeaseRenewals(
     candidates: residents.length,
     started,
     skipped,
+    dry_run: dryRun || undefined,
+    would_start: dryRun ? wouldStart : undefined,
     started_runs: startedRuns,
     errors,
   }

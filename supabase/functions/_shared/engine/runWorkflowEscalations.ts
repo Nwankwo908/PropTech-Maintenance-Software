@@ -81,6 +81,13 @@ export type RunWorkflowEscalationsResult = {
   candidates: number
   escalated: number
   skipped: number
+  dry_run?: boolean
+  would_escalate?: Array<{
+    workflow_run_id: string
+    template_id: string
+    reason: string
+    entity_id: string | null
+  }>
   escalations: WorkflowEscalationResult[]
   errors: Array<{ workflow_run_id: string; error: string }>
 }
@@ -410,15 +417,18 @@ export async function escalateWorkflowRun(
  */
 export async function runWorkflowEscalations(
   supabase: SupabaseClient,
-  params: { landlordId: string },
+  params: { landlordId: string; dryRun?: boolean },
 ): Promise<RunWorkflowEscalationsResult> {
-  await logGraphEvent(supabase, {
-    landlord_id: params.landlordId,
-    event_type: "workflow.escalation_cron_triggered",
-    source: "automation",
-    actor_type: "system",
-    metadata: { source: "run-workflow-escalations" },
-  })
+  const dryRun = params.dryRun === true
+  if (!dryRun) {
+    await logGraphEvent(supabase, {
+      landlord_id: params.landlordId,
+      event_type: "workflow.escalation_cron_triggered",
+      source: "automation",
+      actor_type: "system",
+      metadata: { source: "run-workflow-escalations" },
+    })
+  }
 
   const candidates = await findEscalationCandidates(supabase, params.landlordId)
   const activeRuns = await findActiveWorkflowRunsForLandlord(
@@ -428,9 +438,21 @@ export async function runWorkflowEscalations(
   const waitingCount = activeRuns.filter(isWaitingWorkflowRun).length
 
   const escalations: WorkflowEscalationResult[] = []
+  const wouldEscalate: NonNullable<
+    RunWorkflowEscalationsResult["would_escalate"]
+  > = []
   const errors: RunWorkflowEscalationsResult["errors"] = []
 
   for (const candidate of candidates) {
+    if (dryRun) {
+      wouldEscalate.push({
+        workflow_run_id: candidate.run.id,
+        template_id: candidate.run.template_id,
+        reason: candidate.reason,
+        entity_id: candidate.run.entity_id ?? null,
+      })
+      continue
+    }
     try {
       if (candidate.run.template_id === "rent_collection") {
         const rentResult = await escalateRentCollectionRun(supabase, {
@@ -475,8 +497,10 @@ export async function runWorkflowEscalations(
   return {
     landlord_id: params.landlordId,
     candidates: candidates.length,
-    escalated: escalations.length,
+    escalated: dryRun ? wouldEscalate.length : escalations.length,
     skipped: Math.max(0, waitingCount - candidates.length),
+    dry_run: dryRun || undefined,
+    would_escalate: dryRun ? wouldEscalate : undefined,
     escalations,
     errors,
   }

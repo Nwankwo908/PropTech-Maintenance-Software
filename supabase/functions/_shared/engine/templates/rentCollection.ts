@@ -58,10 +58,12 @@ import {
 } from "../rentCollectionOutreachCopy.ts"
 import {
   daysUntilRentDue,
+  nextRentDueDateParts,
   parseRentReminderCadenceDays,
   rentReminderAmountDue,
   rentReminderSlotForToday,
   resolvePreferredLanguage,
+  todayIsoInTimeZone,
   type PreferredLanguageId,
 } from "../rentCollectionPolicy.ts"
 
@@ -100,28 +102,42 @@ export type RentCollectionState = {
   tenant_grace_reminder_dates?: string[]
 }
 
-export function currentBillingPeriod(date = new Date()): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, "0")
-  return `${y}-${m}`
+export function currentBillingPeriod(
+  date = new Date(),
+  timeZone?: string | null,
+): string {
+  const iso = todayIsoInTimeZone(date, timeZone)
+  return iso.slice(0, 7)
 }
 
-export function rentDueDateIso(rentDueDay: number, date = new Date()): string {
-  const clampedDay = Math.min(Math.max(rentDueDay, 1), 28)
-  const y = date.getFullYear()
-  const m = date.getMonth()
-  return new Date(y, m, clampedDay).toISOString().slice(0, 10)
+/** YYYY-MM for the next upcoming rent due cycle (rolls forward after due day). */
+export function rentBillingPeriod(
+  rentDueDay: number,
+  date = new Date(),
+  timeZone?: string | null,
+): string {
+  const parts = nextRentDueDateParts(rentDueDay, date, timeZone)
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}`
+}
+
+export function rentDueDateIso(
+  rentDueDay: number,
+  date = new Date(),
+  timeZone?: string | null,
+): string {
+  const parts = nextRentDueDateParts(rentDueDay, date, timeZone)
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${
+    String(parts.day).padStart(2, "0")
+  }`
 }
 
 /** Trigger: rent due date has arrived (today is on or after the configured due day). */
 export function isRentDueDateReached(
   rentDueDay: number,
   date = new Date(),
+  timeZone?: string | null,
 ): boolean {
-  const clampedDay = Math.min(Math.max(rentDueDay, 1), 28)
-  const dueDate = new Date(date.getFullYear(), date.getMonth(), clampedDay)
-  const today = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  return today >= dueDate
+  return daysUntilRentDue(rentDueDay, date, timeZone) <= 0
 }
 
 /** @deprecated Use isRentDueDateReached — kept for callers during transition. */
@@ -313,13 +329,20 @@ async function processRentDueTrigger(
   )
   const landlordId = ctx.landlordId
   const operational = await loadLandlordOperationalSettings(supabase, landlordId)
+  const timeZone = operational.timeZone?.trim() || "America/New_York"
   const cadenceDays = parseRentReminderCadenceDays(operational.rentReminderCadence)
   const preferredLanguage = resolvePreferredLanguage(operational.preferredLanguage)
-  const billingPeriod = currentBillingPeriod()
-  const rentDueDate = rentDueDateIso(rentDueDay)
+  const now = new Date()
+  const billingPeriod = rentBillingPeriod(rentDueDay, now, timeZone)
+  const rentDueDate = rentDueDateIso(rentDueDay, now, timeZone)
   const paymentsOn = landlordHasPayments(landlordId)
-  const daysUntil = daysUntilRentDue(rentDueDay)
-  const reminderSlot = rentReminderSlotForToday(rentDueDay, cadenceDays)
+  const reminderSlot = rentReminderSlotForToday(
+    rentDueDay,
+    cadenceDays,
+    now,
+    timeZone,
+  )
+  const dueToday = reminderSlot === 0
 
   if (reminderSlot == null) {
     return {
@@ -333,6 +356,7 @@ async function processRentDueTrigger(
         rent_reminder_cadence: operational.rentReminderCadence,
         rent_reminder_days: cadenceDays,
         preferred_language: operational.preferredLanguage,
+        time_zone: timeZone,
         skipped: "no_cadence_slot_today",
         candidates: 0,
         started: 0,
@@ -418,7 +442,7 @@ async function processRentDueTrigger(
             state,
             preferredLanguage,
             daysBeforeDue: reminderSlot,
-            dueToday: daysUntil === 0,
+            dueToday,
           })
           const tenant = await maybeSendOfflineTenantGraceReminder(supabase, {
             landlordId,
@@ -493,7 +517,7 @@ async function processRentDueTrigger(
           state,
           preferredLanguage,
           daysBeforeDue: reminderSlot,
-          dueToday: daysUntil === 0,
+          dueToday,
         })
         const nextSentDays = [...new Set([...sentDays, reminderSlot])]
         const nextStep = routed.smsSent || routed.emailSent
@@ -664,7 +688,7 @@ async function processRentDueTrigger(
       },
       preferredLanguage,
       daysBeforeDue: reminderSlot,
-      dueToday: daysUntil === 0,
+      dueToday,
     })
 
     const nextStep = routed.smsSent || routed.emailSent
@@ -754,6 +778,7 @@ async function processRentDueTrigger(
       rent_reminder_cadence: operational.rentReminderCadence,
       rent_reminder_days: cadenceDays,
       preferred_language: operational.preferredLanguage,
+      time_zone: timeZone,
       reminder_slot_today: reminderSlot,
       template_active: templateConfig?.active ?? true,
       candidates: residents?.length ?? 0,

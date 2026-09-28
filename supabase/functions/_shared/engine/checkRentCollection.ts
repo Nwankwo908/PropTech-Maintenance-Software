@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
 import {
-  currentBillingPeriod,
+  rentBillingPeriod,
   rentDueDateIso,
 } from "./templates/rentCollection.ts"
 import type { RentCollectionClassification } from "./rentCollectionClassify.ts"
@@ -126,12 +126,16 @@ export async function checkRentCollection(
     latePaymentGraceDays: params.latePaymentGraceDays,
   })
   const cadenceDays = parseRentReminderCadenceDays(operational.rentReminderCadence)
+  const timeZone = operational.timeZone?.trim() || "America/New_York"
+  const now = new Date()
 
-  const billingPeriod = currentBillingPeriod()
-  const rentDueDate = rentDueDateIso(timing.rentDueDay)
+  const billingPeriod = rentBillingPeriod(timing.rentDueDay, now, timeZone)
+  const rentDueDate = rentDueDateIso(timing.rentDueDay, now, timeZone)
   const rentDueWindow = shouldRunRentCollectionCron(
     timing.rentDueDay,
     cadenceDays,
+    now,
+    timeZone,
   )
 
   await logGraphEvent(supabase, {
@@ -149,6 +153,7 @@ export async function checkRentCollection(
       rent_reminder_cadence: operational.rentReminderCadence,
       rent_reminder_days: cadenceDays,
       preferred_language: operational.preferredLanguage,
+      time_zone: timeZone,
       source: "check-rent-collection",
     },
   })

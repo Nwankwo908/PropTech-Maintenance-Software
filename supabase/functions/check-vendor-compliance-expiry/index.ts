@@ -36,7 +36,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  if (!authorizedCronBearer(req, ["CHECK_VENDOR_COMPLIANCE_EXPIRY_SECRET","CHECK_VENDOR_ONBOARDING_SECRET","CHECK_RENT_COLLECTION_SECRET","RUN_WORKFLOW_TRIGGERS_SECRET","ADMIN_REASSIGN_SECRET"])) {
+  if (!authorizedCronBearer(req, ["ULO_OPS_CRON_SECRET","CHECK_VENDOR_COMPLIANCE_EXPIRY_SECRET","CHECK_VENDOR_ONBOARDING_SECRET","CHECK_RENT_COLLECTION_SECRET","RUN_WORKFLOW_TRIGGERS_SECRET","ADMIN_REASSIGN_SECRET"])) {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 
@@ -56,10 +56,21 @@ serve(async (req) => {
   const landlordId = typeof body.landlord_id === "string"
     ? body.landlord_id.trim()
     : Deno.env.get("DEFAULT_LANDLORD_ID")?.trim() ?? null
+  const dryRun = body.dry_run === true || body.dryRun === true
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+
+  if (dryRun) {
+    return jsonResponse({
+      ok: true,
+      dry_run: true,
+      message:
+        "Dry-run: check-vendor-compliance-expiry would scan COI/license windows; no SMS or writes.",
+      landlord_id: landlordId,
+    })
+  }
 
   try {
     const summary = await checkVendorComplianceExpiry(supabase, landlordId)
