@@ -71,11 +71,11 @@ export async function loadNeedsAdminVendorDigestLines(
   let query = supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, unit, resident_name, description, issue_headline, issue_category, auto_reassign_last_outcome, auto_reassign_same_outcome_since, updated_at",
+      "id, landlord_id, unit, resident_name, description, issue_headline, issue_category, auto_reassign_last_outcome, auto_reassign_same_outcome_since, created_at",
     )
     .like("auto_reassign_last_outcome", "needs_admin_vendor|%")
     .or(
-      `auto_reassign_same_outcome_since.lte.${cutoffIso},and(auto_reassign_same_outcome_since.is.null,updated_at.lte.${cutoffIso})`,
+      `auto_reassign_same_outcome_since.lte.${cutoffIso},and(auto_reassign_same_outcome_since.is.null,created_at.lte.${cutoffIso})`,
     )
     .limit(200)
 
@@ -122,8 +122,8 @@ export async function loadNeedsAdminVendorDigestLines(
     const sinceRaw =
       typeof row.auto_reassign_same_outcome_since === "string"
         ? row.auto_reassign_same_outcome_since
-        : typeof row.updated_at === "string"
-          ? row.updated_at
+        : typeof row.created_at === "string"
+          ? row.created_at
           : null
     const sinceMs = sinceRaw ? Date.parse(sinceRaw) : NaN
     if (!Number.isFinite(sinceMs) || nowMs - sinceMs < STUCK_AFTER_MS) continue
