@@ -374,15 +374,6 @@ async function processRentDueTrigger(
       },
     }
   }
-  const cadenceDays = parseRentReminderCadenceDays(operational.rentReminderCadence)
-  const preferredLanguage = resolvePreferredLanguage(operational.preferredLanguage)
-  const now = new Date()
-  const paymentsOn = landlordHasPayments(landlordId)
-
-  // Portfolio-level metadata still uses landlord TZ for the cron log; each
-  // resident is evaluated against property (or resident) TZ below.
-  const portfolioBillingPeriod = rentBillingPeriod(rentDueDay, now, landlordTimeZone)
-  const portfolioRentDueDate = rentDueDateIso(rentDueDay, now, landlordTimeZone)
 
   const { data: residents, error } = await supabase
     .from("users")
