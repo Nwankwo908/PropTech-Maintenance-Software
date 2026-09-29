@@ -4,6 +4,7 @@ import {
   mergeNotificationCategories,
 } from '@/lib/notificationSettings'
 import { resolveNotificationDelivery } from '@/lib/notificationDelivery'
+import { DEFAULT_ORGANIZATION_SETTINGS } from '@/lib/organizationSettings'
 
 describe('notification event matrix', () => {
   it('merges saved toggles onto default categories', () => {
@@ -149,9 +150,19 @@ describe('notification event matrix', () => {
     expect(landlordAlert.allowed).toBe(false)
     expect(landlordAlert.reason).toBe('event_muted')
 
-    // Resident pause is a separate operational flag — mute alone must not set it.
-    const orgPaused = false
-    expect(orgPaused).toBe(false)
-    expect(DEFAULT_NOTIFICATION_SETTINGS.categories.find((c) => c.id === 'rent')?.id).toBe('rent')
+    // Mute is landlord-alert only. Resident cron pause is Organization
+    // `rentCollectionPaused` — mute must not flip or substitute for it.
+    expect(DEFAULT_ORGANIZATION_SETTINGS.rentCollectionPaused).toBe(false)
+    expect(settings.categories.find((c) => c.id === 'rent')).toBeTruthy()
+    // Unmuted defaults still allow landlord alert delivery — proves mute is
+    // what blocks alerts, not a shared resident-send switch.
+    const unmuted = resolveNotificationDelivery({
+      settings: DEFAULT_NOTIFICATION_SETTINGS,
+      eventType: 'rent.rent_reminder',
+      timeZone: 'America/New_York',
+      now: new Date('2026-08-01T15:00:00Z'),
+    })
+    expect(unmuted.allowed).toBe(true)
+    expect(unmuted.channels).toContain('email')
   })
 })
