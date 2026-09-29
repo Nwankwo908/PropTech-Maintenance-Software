@@ -1445,11 +1445,6 @@ async function sendRentCollectionSms(
   return sent.ok
 }
 
-
-export {
-  escalateLatePaymentRuns,
-  escalateLatePaymentRuns as escalateOverdueRentCollections,
-} from "../rentCollectionEscalation.ts"
 export {
   lookupLandlordMainNumber,
   sendRentCollectionSms,

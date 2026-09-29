@@ -1,16 +1,18 @@
 /**
  * Gate resident-facing automated SMS (reminders) through quiet hours + property TZ.
  * Call immediately before send; on hold_quiet_hours do not mark the reminder as sent.
+ *
+ * `shouldSendAutomatedMessage` is loaded dynamically so this module stays out of the
+ * engine registry import cycle (gate → shouldSend → … → runner → registry).
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   loadResidentSendTiming,
   type ResolvedResidentSendTiming,
 } from "./residentSendTiming.ts"
-import {
-  shouldSendAutomatedMessage,
-  type AutomatedMessageType,
-  type ShouldSendDecision,
+import type {
+  AutomatedMessageType,
+  ShouldSendDecision,
 } from "./shouldSendAutomatedMessage.ts"
 
 export type GateResidentReminderResult = {
@@ -39,6 +41,7 @@ export async function gateResidentAutomatedReminder(
     nowMs: params.nowMs,
   })
 
+  const { shouldSendAutomatedMessage } = await import("./shouldSendAutomatedMessage.ts")
   const decision = await shouldSendAutomatedMessage(supabase, {
     landlordId: params.landlordId,
     ticketId: params.ticketId ?? null,
