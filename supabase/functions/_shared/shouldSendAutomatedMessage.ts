@@ -1,17 +1,33 @@
 /**
  * Shared gate for timer-/cron-originated outbound messages.
  * Suppresses stale or colliding automation before SMS goes out.
+ *
+ * Resident quiet hours evaluate per-recipient local time (property TZ precedence).
+ * Routine reminders never bypass quiet hours; only emergency/habitability or
+ * resident-initiated conversation replies may.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { ASK_CLOSING_WORK_STATUSES } from "./closeOpenAsksForTicket.ts"
+import {
+  DEFAULT_QUIET_HOURS_END,
+  DEFAULT_QUIET_HOURS_START,
+  DEFAULT_RESIDENT_TIME_ZONE,
+  isWithinQuietHoursWindow,
+  nextQuietHoursEndMs,
+  resolveQuietHoursWindow,
+  shouldHoldResidentQuietHours,
+  type QuietHoursWindow,
+  type ResidentAutomatedBypass,
+} from "./residentSendTiming.ts"
 
 /** Same recipient + same ticket automated SMS cooldown. */
 export const AUTOMATED_MESSAGE_COOLDOWN_MS = 6 * 60 * 60 * 1000
 
-/** Resident quiet hours in property/landlord local time (inclusive start, exclusive end next day). */
-export const RESIDENT_QUIET_HOUR_START = 21 // 9 PM
-export const RESIDENT_QUIET_HOUR_END = 8 // 8 AM
+/** @deprecated Prefer DEFAULT_QUIET_HOURS_START — kept as alias so call sites stay one source. */
+export const RESIDENT_QUIET_HOUR_START = DEFAULT_QUIET_HOURS_START
+/** @deprecated Prefer DEFAULT_QUIET_HOURS_END — kept as alias so call sites stay one source. */
+export const RESIDENT_QUIET_HOUR_END = DEFAULT_QUIET_HOURS_END
 
 export type AutomatedMessageType =
   | "schedule_fsm_ttl_tenant_confirm"
@@ -20,12 +36,21 @@ export type AutomatedMessageType =
   | "vendor_incident"
   | "workflow_escalation"
   | "lease_renewal"
+  | "rent_reminder"
+  | "tenant_activation_nudge"
   | "vendor_compliance"
   | "vendor_performance"
   | "ops_sms_cron"
   | "other"
 
 export type AutomatedMessageAudience = "vendor" | "resident" | "landlord" | "ops"
+
+const REMINDER_MESSAGE_TYPES = new Set<AutomatedMessageType>([
+  "lease_renewal",
+  "rent_reminder",
+  "tenant_activation_nudge",
+  "ops_sms_cron",
+])
 
 export type ShouldSendAutomatedMessageInput = {
   ticketId?: string | null
@@ -42,6 +67,13 @@ export type ShouldSendAutomatedMessageInput = {
   cooldownMs?: number
   /** IANA TZ for quiet-hours (residents). */
   timeZone?: string | null
+  /** Per-resident quiet window; null fields → DEFAULT_QUIET_HOURS_*. */
+  quietHours?: QuietHoursWindow | null
+  /**
+   * Narrow exception: emergency/habitability or direct reply in a resident-initiated
+   * thread. Reminders ignore this and always honor quiet hours.
+   */
+  bypassQuietHours?: ResidentAutomatedBypass
   /** Recent automated outbound count to this recipient about this ticket. */
   recentAutomatedToRecipient?: number
   currentVendorWorkStatus?: string | null
@@ -50,7 +82,12 @@ export type ShouldSendAutomatedMessageInput = {
 export type ShouldSendDecision =
   | { action: "send" }
   | { action: "suppress"; reason: string }
-  | { action: "hold_quiet_hours"; reason: string }
+  | {
+    action: "hold_quiet_hours"
+    reason: string
+    /** Next local quiet-hours end for this recipient (ISO). */
+    deferUntilIso?: string
+  }
 
 export function isReferencedInstantPast(
   referencedAt: string | null | undefined,
@@ -134,20 +171,15 @@ export function isReferencedWindowTextPast(
 export function isWithinResidentQuietHours(
   nowMs: number,
   timeZone: string,
+  quietHours?: QuietHoursWindow | null,
 ): boolean {
-  try {
-    const hourStr = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hour: "numeric",
-      hour12: false,
-    }).format(new Date(nowMs))
-    let hour = Number(hourStr)
-    if (hour === 24) hour = 0
-    if (!Number.isFinite(hour)) return false
-    return hour >= RESIDENT_QUIET_HOUR_START || hour < RESIDENT_QUIET_HOUR_END
-  } catch {
-    return false
-  }
+  const window = quietHours ?? resolveQuietHoursWindow(null)
+  return isWithinQuietHoursWindow(
+    nowMs,
+    timeZone,
+    window.startHour,
+    window.endHour,
+  )
 }
 
 /**
@@ -195,16 +227,29 @@ export function decideShouldSendAutomatedMessage(
     return { action: "suppress", reason: "recipient_ticket_cooldown" }
   }
 
-  if (
-    input.audience === "resident" &&
-    isWithinResidentQuietHours(
+  if (input.audience === "resident") {
+    const timeZone =
+      input.timeZone?.trim() || DEFAULT_RESIDENT_TIME_ZONE
+    const quietHours = input.quietHours ?? resolveQuietHoursWindow(null)
+    const isReminder = REMINDER_MESSAGE_TYPES.has(input.messageType)
+    const hold = shouldHoldResidentQuietHours({
       nowMs,
-      input.timeZone?.trim() || "America/New_York",
-    )
-  ) {
-    return {
-      action: "hold_quiet_hours",
-      reason: "resident_quiet_hours_21_to_08",
+      timeZone,
+      quietHours,
+      isReminder,
+      bypass: isReminder ? null : input.bypassQuietHours ?? null,
+    })
+    if (hold) {
+      const deferUntil = nextQuietHoursEndMs(
+        nowMs,
+        timeZone,
+        quietHours.endHour,
+      )
+      return {
+        action: "hold_quiet_hours",
+        reason: `resident_quiet_hours_${quietHours.startHour}_to_${quietHours.endHour}`,
+        deferUntilIso: new Date(deferUntil).toISOString(),
+      }
     }
   }
 

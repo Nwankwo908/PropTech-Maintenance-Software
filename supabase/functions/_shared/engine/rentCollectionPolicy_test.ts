@@ -1,6 +1,9 @@
 /// <reference lib="deno.ns" />
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
+  calendarDatePartsInTimeZone,
+  effectiveRentDueDay,
+  isRentCollectionPaused,
   parseRentReminderCadenceDays,
   rentReminderAmountDue,
   rentReminderSlotForToday,
@@ -8,7 +11,6 @@ import {
   shouldAskLandlordRentReceiptToday,
   shouldSendOfflineTenantGraceReminder,
   shouldRunRentCollectionCron,
-  calendarDatePartsInTimeZone,
 } from "./rentCollectionPolicy.ts"
 import { buildRentCollectionPrompt } from "./rentCollectionOutreachCopy.ts"
 
@@ -16,6 +18,40 @@ Deno.test("parseRentReminderCadenceDays sorts descending", () => {
   assertEquals(parseRentReminderCadenceDays("5, 3, 1 days before"), [5, 3, 1])
   assertEquals(parseRentReminderCadenceDays("3, 1 days before"), [3, 1])
   assertEquals(parseRentReminderCadenceDays("2, 5, 1 day before"), [5, 2, 1])
+})
+
+Deno.test("effectiveRentDueDay prefers resident profile over portfolio default", () => {
+  assertEquals(effectiveRentDueDay(15, 1), 15)
+  assertEquals(effectiveRentDueDay(null, 5), 5)
+  assertEquals(effectiveRentDueDay(undefined, 5), 5)
+  assertEquals(effectiveRentDueDay(0, 5), 5)
+  assertEquals(effectiveRentDueDay(32, 5), 5)
+  assertEquals(effectiveRentDueDay(-1, 5), 5)
+  assertEquals(effectiveRentDueDay(1, 10), 1)
+  assertEquals(effectiveRentDueDay(31, 1), 31)
+  assertEquals(effectiveRentDueDay(null, 0), 1)
+})
+
+Deno.test("isRentCollectionPaused is only true when explicitly enabled", () => {
+  assertEquals(isRentCollectionPaused(true), true)
+  assertEquals(isRentCollectionPaused(false), false)
+  assertEquals(isRentCollectionPaused(null), false)
+  assertEquals(isRentCollectionPaused(undefined), false)
+})
+
+Deno.test("resident due day shifts reminder slot vs portfolio default", () => {
+  const cadence = [5, 3, 1]
+  // Aug 5 local: portfolio due day 10 → 5 days before; resident due day 15 → not a slot.
+  const day = new Date(2026, 7, 5)
+  const portfolio = 10
+  const resident = effectiveRentDueDay(15, portfolio)
+  assertEquals(rentReminderSlotForToday(portfolio, cadence, day), 5)
+  assertEquals(rentReminderSlotForToday(resident, cadence, day), null)
+  // Aug 10: resident due day 15 → 5 days before.
+  assertEquals(
+    rentReminderSlotForToday(resident, cadence, new Date(2026, 7, 10)),
+    5,
+  )
 })
 
 Deno.test("rentReminderSlotForToday uses landlord timezone across UTC midnight", () => {

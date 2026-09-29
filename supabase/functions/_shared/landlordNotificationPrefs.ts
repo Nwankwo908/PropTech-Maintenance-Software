@@ -36,6 +36,8 @@ export type EdgeOperationalSettings = {
   quietHoursStart: string
   quietHoursEnd: string
   timeZone: string
+  /** When true, stop resident-facing rent SMS/email (new + in-flight). */
+  rentCollectionPaused: boolean
 }
 
 export type LandlordApprovalLimits = {
@@ -254,6 +256,8 @@ export async function loadLandlordOperationalSettings(
       typeof landlord?.time_zone === "string" && landlord.time_zone.trim()
         ? landlord.time_zone.trim()
         : "America/Los_Angeles",
+    rentCollectionPaused: operational.rentCollectionPaused === true ||
+      organization.rentCollectionPaused === true,
   }
 }
 

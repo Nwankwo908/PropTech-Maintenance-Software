@@ -958,6 +958,15 @@ export function AdminOrganizationSettings() {
                     }))}
                   />
                 </FormField>
+                <div className="sm:col-span-2">
+                  <SettingsToggle
+                    id="org-rent-collection-paused"
+                    checked={draft.rentCollectionPaused}
+                    onChange={(rentCollectionPaused) => updateDraft({ rentCollectionPaused })}
+                    label="Pause rent reminders to residents"
+                    description="Stops new and in-flight rent reminder texts and emails to residents. Does not mute your own rent alert emails in Notification settings."
+                  />
+                </div>
                 <FormField label="Preferred language" htmlFor="org-language">
                   <SettingsSelect
                     id="org-language"

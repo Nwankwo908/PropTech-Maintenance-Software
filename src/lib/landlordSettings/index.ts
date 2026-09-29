@@ -228,6 +228,11 @@ export function mergeOrganizationForm(input: {
   if (asTrimmed(savedOperational.rentReminderCadence)) {
     next.rentReminderCadence = normalizeRentReminderCadence(savedOperational.rentReminderCadence)
   }
+  if (typeof savedOperational.rentCollectionPaused === 'boolean') {
+    next.rentCollectionPaused = savedOperational.rentCollectionPaused
+  } else if (typeof input.accountSettings.organization?.rentCollectionPaused === 'boolean') {
+    next.rentCollectionPaused = input.accountSettings.organization.rentCollectionPaused
+  }
   const savedRentDueDay =
     normalizeRentDueDaySetting(savedOperational.rentDueDay) ||
     normalizeRentDueDaySetting(input.accountSettings.organization?.rentDueDay) ||
@@ -276,6 +281,7 @@ export function normalizeOrganizationSettings(settings: OrganizationSettingsForm
     ...settings,
     rentReminderCadence: normalizeRentReminderCadence(settings.rentReminderCadence),
     rentDueDay: normalizeRentDueDaySetting(settings.rentDueDay),
+    rentCollectionPaused: settings.rentCollectionPaused === true,
     quietHoursStart: normalizeQuietHoursTime(settings.quietHoursStart),
     quietHoursEnd: normalizeQuietHoursTime(settings.quietHoursEnd, '8:00 AM'),
     communicationStyle: normalizeCommunicationStyle(settings.communicationStyle),
@@ -434,6 +440,7 @@ export async function saveLandlordOrganizationSettings(
     allowAiDispatch: settings.allowAiDispatch,
     rentReminderCadence: settings.rentReminderCadence,
     rentDueDay: normalizeRentDueDaySetting(settings.rentDueDay),
+    rentCollectionPaused: settings.rentCollectionPaused === true,
     preferredLanguage: settings.preferredLanguage,
     quietHoursEnabled: settings.quietHours,
     quietHoursStart: normalizeQuietHoursTime(settings.quietHoursStart),

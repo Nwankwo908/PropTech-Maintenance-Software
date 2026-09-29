@@ -89,13 +89,19 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettingsState = {
     },
     {
       id: 'rent',
-      title: 'Rent collection',
-      description: 'Reminders, payments, delinquency, and escalation events.',
+      title: 'Rent alerts to you',
+      description:
+        'Email and SMS to your team about rent events. This does not stop texts to residents — use Pause rent reminders in Organization settings for that.',
       events: [
-        event('rent_reminder', 'Rent reminder sent', { email: true, sms: false }),
-        event('payment_received', 'Payment received', { email: true, sms: false }),
-        event('overdue_rent', 'Overdue rent', { email: true, sms: true, push: true }, true),
-        event('rent_escalated', 'Rent collection escalated', { email: true, sms: true, push: true }, true),
+        event('rent_reminder', 'Rent reminder sent (alert to you)', { email: true, sms: false }),
+        event('payment_received', 'Payment received (alert to you)', { email: true, sms: false }),
+        event('overdue_rent', 'Overdue rent (alert to you)', { email: true, sms: true, push: true }, true),
+        event(
+          'rent_escalated',
+          'Rent collection escalated (alert to you)',
+          { email: true, sms: true, push: true },
+          true,
+        ),
       ],
     },
     {

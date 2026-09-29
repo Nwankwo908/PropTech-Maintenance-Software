@@ -5,6 +5,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../delivery.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
+import { gateResidentAutomatedReminder } from "../gateResidentAutomatedReminder.ts"
 import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import {
   findOrCreateConversation,
@@ -17,7 +19,7 @@ import {
   buildOfflineTenantGraceReminderEmail,
   buildOfflineTenantGraceReminderSms,
 } from "./rentCollectionOutreachCopy.ts"
-import { shouldSendOfflineTenantGraceReminder } from "./rentCollectionPolicy.ts"
+import { shouldSendOfflineTenantGraceReminder, isRentCollectionPaused } from "./rentCollectionPolicy.ts"
 import {
   getWorkflowRunById,
   linkConversationToWorkflowRun,
@@ -71,6 +73,11 @@ export async function maybeSendOfflineTenantGraceReminder(
     }
   },
 ): Promise<{ smsSent: boolean; emailSent: boolean }> {
+  const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
+  if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+    return { smsSent: false, emailSent: false }
+  }
+
   const run = await getWorkflowRunById(supabase, params.runId)
   if (!run) return { smsSent: false, emailSent: false }
 
@@ -121,6 +128,19 @@ export async function maybeSendOfflineTenantGraceReminder(
   const main = phone ? await lookupLandlordMainNumber(supabase, params.landlordId) : null
 
   if (phone && main) {
+    const gate = await gateResidentAutomatedReminder(supabase, {
+      landlordId: params.landlordId,
+      residentId: params.resident.id,
+      messageType: "rent_reminder",
+      recipientPhone: phone,
+    })
+    if (gate.decision.action === "hold_quiet_hours") {
+      return { smsSent: false, emailSent: false }
+    }
+    if (gate.decision.action === "suppress") {
+      return { smsSent: false, emailSent: false }
+    }
+
     const identity = await upsertSmsIdentityForPhone(supabase, {
       phone,
       landlordId: params.landlordId,

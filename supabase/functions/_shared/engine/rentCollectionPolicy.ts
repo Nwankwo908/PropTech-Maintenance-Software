@@ -67,6 +67,39 @@ function clampRentDueDay(rentDueDay: number): number {
   return Math.min(Math.max(Math.trunc(rentDueDay), 1), 28)
 }
 
+/**
+ * Effective rent due day for a resident.
+ * Profile `users.rent_due_day` (1–31) wins when set; otherwise portfolio default.
+ * Calendar helpers still clamp to 1–28 for month-length safety.
+ */
+export function effectiveRentDueDay(
+  residentRentDueDay: number | null | undefined,
+  portfolioRentDueDay: number,
+): number {
+  const raw = typeof residentRentDueDay === "number"
+    ? residentRentDueDay
+    : Number(residentRentDueDay)
+  if (Number.isFinite(raw)) {
+    const day = Math.trunc(raw)
+    if (day >= 1 && day <= 31) return day
+  }
+  const portfolio = Math.trunc(Number(portfolioRentDueDay))
+  if (Number.isFinite(portfolio) && portfolio >= 1 && portfolio <= 31) {
+    return portfolio
+  }
+  return 1
+}
+
+/**
+ * Landlord-level pause for resident-facing rent collection SMS/email.
+ * Independent of Notification Settings mute (landlord alerts only).
+ */
+export function isRentCollectionPaused(
+  value: boolean | null | undefined,
+): boolean {
+  return value === true
+}
+
 function daysBetweenCalendarDates(
   from: CalendarDateParts,
   to: CalendarDateParts,

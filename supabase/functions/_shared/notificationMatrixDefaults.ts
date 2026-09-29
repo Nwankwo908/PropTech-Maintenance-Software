@@ -53,13 +53,19 @@ export const DEFAULT_NOTIFICATION_MATRIX_CATEGORIES: MatrixCategory[] = [
   },
   {
     id: "rent",
-    title: "Rent collection",
-    description: "Reminders, payments, delinquency, and escalation events.",
+    title: "Rent alerts to you",
+    description:
+      "Email and SMS to your team about rent events. Does not stop texts to residents.",
     events: [
-      matrixEvent("rent_reminder", "Rent reminder sent", { email: true, sms: false }),
-      matrixEvent("payment_received", "Payment received", { email: true, sms: false }),
-      matrixEvent("overdue_rent", "Overdue rent", { email: true, sms: true, push: true }, true),
-      matrixEvent("rent_escalated", "Rent collection escalated", { email: true, sms: true, push: true }, true),
+      matrixEvent("rent_reminder", "Rent reminder sent (alert to you)", { email: true, sms: false }),
+      matrixEvent("payment_received", "Payment received (alert to you)", { email: true, sms: false }),
+      matrixEvent("overdue_rent", "Overdue rent (alert to you)", { email: true, sms: true, push: true }, true),
+      matrixEvent(
+        "rent_escalated",
+        "Rent collection escalated (alert to you)",
+        { email: true, sms: true, push: true },
+        true,
+      ),
     ],
   },
   {

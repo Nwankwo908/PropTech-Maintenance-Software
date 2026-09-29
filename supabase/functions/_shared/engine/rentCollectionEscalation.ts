@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
 import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
+import { gateResidentAutomatedReminder } from "../gateResidentAutomatedReminder.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import { sendResendEmail } from "../delivery.ts"
 import {
   logRentCollectionGraphEvent,
   logRentCollectionLedgerWithGraph,
@@ -23,6 +26,9 @@ import {
   runStepState,
   updateWorkflowRun,
 } from "./workflowRuns.ts"
+import {
+  isRentCollectionPaused,
+} from "./rentCollectionPolicy.ts"
 import type { RentCollectionState } from "./templates/rentCollection.ts"
 
 export type RentCollectionEscalationResult = {
@@ -40,6 +46,7 @@ type ResidentContactRow = {
   email: string | null
   phone: string | null
   unit: string | null
+  building: string | null
 }
 
 function formatCurrency(amount: number): string {
@@ -116,7 +123,7 @@ async function loadResidentContact(
 
   const { data, error } = await supabase
     .from("users")
-    .select("id, full_name, email, phone, unit")
+    .select("id, full_name, email, phone, unit, building")
     .eq("id", residentId)
     .maybeSingle()
 
@@ -133,6 +140,7 @@ async function loadResidentContact(
     email: data.email == null ? null : String(data.email),
     phone: data.phone == null ? null : String(data.phone),
     unit: data.unit == null ? null : String(data.unit),
+    building: data.building == null ? null : String(data.building),
   }
 }
 
@@ -145,8 +153,19 @@ async function sendLatePaymentNotice(
     state: RentCollectionState
     paymentLink?: string | null
     graphScope: ReturnType<typeof rentCollectionGraphScopeFromRun>
+    /** When true, skip resident SMS/email (landlord pause). */
+    skipResidentOutreach?: boolean
   },
-): Promise<{ smsSent: boolean; emailSent: boolean }> {
+): Promise<{
+  smsSent: boolean
+  emailSent: boolean
+  quietHoursDeferred?: boolean
+  quietHoursDeferredUntil?: string | null
+}> {
+  if (params.skipResidentOutreach) {
+    return { smsSent: false, emailSent: false }
+  }
+
   const { lookupLandlordMainNumber, sendRentCollectionSms } = await import(
     "./templates/rentCollection.ts"
   )
@@ -156,6 +175,28 @@ async function sendLatePaymentNotice(
 
   const phone = String(params.resident.phone ?? "").trim()
   const email = String(params.resident.email ?? "").trim()
+
+  if (phone || email) {
+    const gate = await gateResidentAutomatedReminder(supabase, {
+      landlordId: params.landlordId,
+      residentId: params.resident.id,
+      building: params.resident.building,
+      messageType: "rent_reminder",
+      recipientPhone: phone || null,
+    })
+    if (gate.decision.action === "hold_quiet_hours") {
+      return {
+        smsSent: false,
+        emailSent: false,
+        quietHoursDeferred: true,
+        quietHoursDeferredUntil: gate.decision.deferUntilIso ?? null,
+      }
+    }
+    if (gate.decision.action === "suppress") {
+      return { smsSent: false, emailSent: false }
+    }
+  }
+
   const mainLine = phone
     ? await lookupLandlordMainNumber(supabase, params.landlordId)
     : null
@@ -271,6 +312,39 @@ export async function escalateRentCollectionRun(
   const state = runStepState<RentCollectionState>(params.run)
   if (params.run.status !== "active") return null
 
+  const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
+  const paused = isRentCollectionPaused(operational.rentCollectionPaused)
+  const paymentsOn = landlordHasPayments(params.landlordId)
+  const resident = await loadResidentContact(supabase, params.run.resident_id)
+
+  // Quiet hours: defer escalation + late notice until the window opens so the
+  // resident SMS is not lost after status flips to escalated.
+  if (resident && paymentsOn && !paused) {
+    const phone = String(resident.phone ?? "").trim()
+    const email = String(resident.email ?? "").trim()
+    if (phone || email) {
+      const gate = await gateResidentAutomatedReminder(supabase, {
+        landlordId: params.landlordId,
+        residentId: resident.id,
+        building: resident.building,
+        messageType: "rent_reminder",
+        recipientPhone: phone || null,
+      })
+      if (gate.decision.action === "hold_quiet_hours") {
+        await updateWorkflowRun(supabase, params.run.id, {
+          metadata: {
+            quiet_hours_deferred_until: gate.decision.deferUntilIso ?? null,
+            quiet_hours_deferred_notice: "late_payment",
+          },
+          pipelineStage: "escalate",
+          eventMessage: "Late rent notice held for quiet hours",
+          eventStep: "late_payment_deferred",
+        })
+        return null
+      }
+    }
+  }
+
   const reason = params.reason ?? "unpaid_after_due_date_and_grace_period"
   const rentDueDate =
     state.rent_due_date ??
@@ -307,11 +381,14 @@ export async function escalateRentCollectionRun(
     metadata: {
       escalated_at: new Date().toISOString(),
       escalation_reason: reason,
+      rent_collection_paused: paused || undefined,
       ...classificationMeta,
       step_state: nextState,
     },
     pipelineStage: "escalate",
-    eventMessage: "Late payment escalated",
+    eventMessage: paused
+      ? "Late payment escalated (resident outreach paused)"
+      : "Late payment escalated",
     eventStep: "late_payment",
   })
 
@@ -329,6 +406,7 @@ export async function escalateRentCollectionRun(
       amount_due: amountDue,
       billing_period: billingPeriod,
       rent_due_date: rentDueDate || null,
+      rent_collection_paused: paused,
     },
   })
 
@@ -342,6 +420,7 @@ export async function escalateRentCollectionRun(
       amount_due: amountDue,
       billing_period: billingPeriod,
       rent_due_date: rentDueDate || null,
+      rent_collection_paused: paused,
     },
   })
 
@@ -358,15 +437,17 @@ export async function escalateRentCollectionRun(
     runId: params.run.id,
     stage: "escalate",
     step: "late_payment",
-    message: "Late payment escalated",
+    message: paused
+      ? "Late payment escalated (resident outreach paused)"
+      : "Late payment escalated",
     metadata: {
       reason,
       rent_classification: classification,
+      rent_collection_paused: paused,
     },
   })
 
-  const resident = await loadResidentContact(supabase, params.run.resident_id)
-  const paymentProvider = resident
+  const paymentProvider = resident && paymentsOn
     ? await resolveRentPaymentLink(supabase, {
       landlordId: params.landlordId,
       residentId: resident.id,
@@ -378,7 +459,7 @@ export async function escalateRentCollectionRun(
     })
     : null
 
-  const notice = resident && landlordHasPayments(params.landlordId)
+  const notice = resident && paymentsOn
     ? await sendLatePaymentNotice(supabase, {
       landlordId: params.landlordId,
       runId: params.run.id,
@@ -386,6 +467,7 @@ export async function escalateRentCollectionRun(
       state: nextState,
       paymentLink: paymentProvider?.paymentLink ?? null,
       graphScope,
+      skipResidentOutreach: paused,
     })
     : { smsSent: false, emailSent: false }
 

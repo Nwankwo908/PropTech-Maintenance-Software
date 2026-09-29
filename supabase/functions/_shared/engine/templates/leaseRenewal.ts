@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../../graph/logGraphEvent.ts"
+import { gateResidentAutomatedReminder } from "../../gateResidentAutomatedReminder.ts"
 import { notifyLandlordNeedsAttention } from "../../landlordAttentionNotify.ts"
 import { sendInboundAutoReply } from "../../sms/inboundReply.ts"
 import {
@@ -770,6 +771,16 @@ async function sendLeaseRenewalOutreach(
     smsNumberId: string
   },
 ): Promise<boolean> {
+  const gate = await gateResidentAutomatedReminder(supabase, {
+    landlordId: params.landlordId,
+    residentId: params.residentId,
+    messageType: "lease_renewal",
+    recipientPhone: params.phone,
+  })
+  if (gate.decision.action !== "send") {
+    return false
+  }
+
   const identity = await upsertSmsIdentityForPhone(supabase, {
     phone: params.phone,
     landlordId: params.landlordId,

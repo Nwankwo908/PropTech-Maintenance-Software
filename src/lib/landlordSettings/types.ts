@@ -20,6 +20,8 @@ export type LandlordOperationalSettings = {
   quietHoursEnabled: boolean
   quietHoursStart: string
   quietHoursEnd: string
+  /** Pause all resident-facing rent SMS/email for this landlord. */
+  rentCollectionPaused: boolean
 }
 
 export type LandlordWorkspaceSettings = {
@@ -81,6 +83,7 @@ export const DEFAULT_OPERATIONAL_SETTINGS: LandlordOperationalSettings = {
   quietHoursEnabled: true,
   quietHoursStart: '10:00 PM',
   quietHoursEnd: '8:00 AM',
+  rentCollectionPaused: false,
 }
 
 export const DEFAULT_WORKSPACE_SETTINGS: LandlordWorkspaceSettings = {

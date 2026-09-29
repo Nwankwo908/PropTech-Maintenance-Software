@@ -155,29 +155,13 @@ export async function checkRentCollection(
       preferred_language: operational.preferredLanguage,
       time_zone: timeZone,
       source: "check-rent-collection",
+      note:
+        "Always runs engine hourly; each resident is gated by property timezone + quiet hours + own rent_due_day (org default fallback)",
     },
   })
 
-  const emptyResult: CheckRentCollectionResult = {
-    landlord_id: params.landlordId,
-    billing_period: billingPeriod,
-    rent_due_date: rentDueDate,
-    rent_due_day: timing.rentDueDay,
-    late_payment_grace_days: timing.latePaymentGraceDays,
-    rent_due_window: rentDueWindow,
-    candidates: 0,
-    started: 0,
-    skipped: 0,
-    reminders_sent: 0,
-    late_payment_escalated: 0,
-    started_runs: [],
-    errors: [],
-  }
-
-  if (!rentDueWindow) {
-    return emptyResult
-  }
-
+  // Hourly cron: always evaluate per-resident local cadence + quiet hours.
+  // Do not early-return on landlord TZ alone (properties may span zones).
   const engineResult = await runRentCollectionCronViaEngine(supabase, {
     landlordId: params.landlordId,
     rentDueDay: timing.rentDueDay,
@@ -187,8 +171,13 @@ export async function checkRentCollection(
   const meta = engineResult.metadata ?? {}
 
   return {
-    ...emptyResult,
-    rent_due_window: true,
+    landlord_id: params.landlordId,
+    billing_period: billingPeriod,
+    rent_due_date: rentDueDate,
+    rent_due_day: timing.rentDueDay,
+    late_payment_grace_days: timing.latePaymentGraceDays,
+    rent_due_window: rentDueWindow || Number(meta.reminders_sent ?? 0) > 0 ||
+      Number(meta.started ?? 0) > 0,
     candidates: Number(meta.candidates ?? 0),
     started: Number(meta.started ?? 0),
     skipped: Number(meta.skipped ?? 0),

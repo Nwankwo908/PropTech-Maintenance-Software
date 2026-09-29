@@ -80,6 +80,8 @@ export type OrganizationSettingsForm = {
   rentReminderCadence: string
   /** Day of month 1–31, or empty when unset. */
   rentDueDay: string
+  /** Pause resident-facing rent reminder SMS/email for this portfolio. */
+  rentCollectionPaused: boolean
   preferredLanguage: string
   /** Tone for Ulo-generated operational SMS and email. */
   communicationStyle: CommunicationStyle
@@ -169,6 +171,7 @@ export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
   quietHoursEnd: '8:00 AM',
   rentReminderCadence: DEFAULT_RENT_REMINDER_CADENCE,
   rentDueDay: '',
+  rentCollectionPaused: false,
   preferredLanguage: 'English (US)',
   communicationStyle: DEFAULT_COMMUNICATION_STYLE,
 }

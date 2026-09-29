@@ -1,0 +1,35 @@
+---
+description: Autofix factory reset soft-fail — never navigate/welcome-hub on wipe failure; hard-delete residents (no archived_at fallback).
+globs: src/components/AdminLayout.tsx,src/lib/onboarding/reset.ts,src/lib/onboarding/factoryResetOutcome.ts,src/lib/residentDeletion.ts
+alwaysApply: false
+---
+
+# Factory reset — fail closed, hard-delete only
+
+**Symptom:** After **Factory reset**, the app returns to the welcome hub even when the wipe failed, or residents remain as soft-archived (`archived_at`) instead of deleted.
+
+## Rule
+
+| Path | Required |
+|---|---|
+| `AdminLayout` `handleResetOnboarding` | Navigate to `/admin/onboarding` **only** when `restartNewLandlordOnboarding().ok === true`. On failure: alert, clear reset guard, stay put. |
+| Resident wipe in `resetOnboardingPortfolio` | Hard-delete via `deleteResidentsForLandlord`. On failure → `ok: false`. **Never** fall back to `archived_at`. |
+| Post-wipe assert | Fail unless tickets, active runs, **properties, units, residents, vendors** are all 0. |
+| `clearOnboardingPortfolioSession` | If `resetOnboardingPortfolio` fails → return `ok: false` (do not save a fake clean welcome draft). |
+| Start setup (`beginOnboarding`) | Clear wizard snapshot + pass `extractionReview: null` so prior Fast Track draft is not re-persisted. |
+| `archiveOrClearPriorOnboardingResidents` | Hard-delete only; never soft-archive on Start. |
+
+## Autofix (Bugbot)
+
+1. Remove unconditional `window.location.assign('/admin/onboarding')` after a failed or thrown reset.
+2. Delete any `archived_at` soft-archive branch in factory-reset or Start prior-resident clear.
+3. Do not `console.warn` + continue as success when portfolio wipe fails in session clear.
+4. Assert portfolio roster counts (not only tickets/runs) before `ok: true`.
+5. On Start, clear `wizardSnapshotRef` upload/extraction before `goTo`, and pass `extractionReview: null`.
+6. Keep `reportFactoryResetFailureToUser` as the primary failure surface.
+
+## Do not
+
+- Soft-archive residents to “finish” a factory reset
+- Hard-reload to the welcome hub when `ok: false`
+- Treat delete `ok: true` alone as proof without asserting empty ops where already required
