@@ -50,6 +50,22 @@ import {
   tryHandleVendorAvailabilityProbeInbound,
 } from "../vendorAvailabilityProbe.ts"
 import {
+  canHandleResidentQuietHoursCommand,
+  tryHandleResidentQuietHoursInbound,
+} from "./residentQuietHoursInbound.ts"
+import {
+  canHandleTenantRentReply,
+  canHandleTenantRentReportConfirmation,
+  handleTenantRentReply,
+  handleTenantRentReportConfirmationReply,
+  loadActiveRentCollectionForTenant,
+  readAwaitingTenantRentAmount,
+} from "./tenantRentReply.ts"
+import {
+  canHandleTenantDistress,
+  handleTenantDistress,
+} from "./tenantDistress.ts"
+import {
   canHandleHqsConfirm,
   canHandleHqsUnitReply,
   tryHandleHqsConfirmInbound,
@@ -263,6 +279,188 @@ async function tryLandlordRentReceiptHandler(
   }
 }
 
+async function tryTenantRentReportConfirmationHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    !canHandleTenantRentReportConfirmation({
+      identityType: ctx.identity.identity_type,
+      intakeState: conv?.intake_state,
+    })
+  ) {
+    return { handled: false }
+  }
+
+  const result = await handleTenantRentReportConfirmationReply(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    messageId: ctx.messageId,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "tenant_rent_report_confirmation",
+    workflowMetadata: { action: result.action },
+    reply: {
+      body: result.replyBody,
+      source: `tenant_rent_report_confirmation_${result.action}`,
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryTenantRentReplyHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const residentId = ctx.identity.resident_id?.trim()
+  if (ctx.identity.identity_type !== "resident" || !residentId) {
+    return { handled: false }
+  }
+
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  const intakeState = conv?.intake_state
+
+  let hasActiveRentRun = Boolean(readAwaitingTenantRentAmount(intakeState))
+  if (!hasActiveRentRun) {
+    const run = await loadActiveRentCollectionForTenant(ctx.supabase, {
+      landlordId: ctx.landlordId,
+      residentId,
+      conversationId: ctx.conversationId,
+    })
+    hasActiveRentRun = Boolean(run)
+  }
+
+  if (
+    !canHandleTenantRentReply({
+      identityType: ctx.identity.identity_type,
+      residentId,
+      intakeState,
+      hasActiveRentRun,
+    })
+  ) {
+    return { handled: false }
+  }
+
+  const result = await handleTenantRentReply(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    residentId,
+    messageId: ctx.messageId,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "tenant_rent_reply",
+    reply: {
+      body: result.replyBody,
+      source: "tenant_rent_reply",
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryTenantDistressHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  if (ctx.identity.identity_type !== "resident") return { handled: false }
+
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  const intakeState = conv?.intake_state
+
+  if (
+    !canHandleTenantDistress({
+      identityType: ctx.identity.identity_type,
+      body: ctx.inbound.body,
+      intakeState,
+    })
+  ) {
+    return { handled: false }
+  }
+
+  let residentName: string | null = null
+  if (ctx.identity.resident_id) {
+    const { data: user } = await ctx.supabase
+      .from("users")
+      .select("full_name")
+      .eq("id", ctx.identity.resident_id)
+      .maybeSingle()
+    residentName = typeof user?.full_name === "string" ? user.full_name : null
+  }
+
+  const result = await handleTenantDistress(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    body: ctx.inbound.body,
+    residentId: ctx.identity.resident_id,
+    unitId: ctx.identity.unit_id ?? null,
+    residentName,
+    intakeState,
+  })
+
+  return {
+    handled: true,
+    workflowRoute: "tenant_distress",
+    reply: {
+      body: result.replyBody,
+      source: "tenant_distress",
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryHqsUnitReplyHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (!canHandleHqsUnitReply({ intakeState: conv?.intake_state })) {
+    return { handled: false }
+  }
+  return tryHandleHqsUnitReplyInbound(ctx)
+}
+
+async function tryHqsConfirmHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    !canHandleHqsConfirm({
+      intakeState: conv?.intake_state,
+      body: ctx.inbound.body,
+    })
+  ) {
+    return { handled: false }
+  }
+  return tryHandleHqsConfirmInbound(ctx)
+}
+
 async function tryInvoicePaidConfirmationHandler(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
@@ -406,6 +604,38 @@ async function tryVendorRescheduleHandler(
   }
 }
 
+async function tryResidentQuietHoursHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  if (
+    !canHandleResidentQuietHoursCommand({
+      identityType: ctx.identity.identity_type,
+      body: ctx.inbound.body,
+    })
+  ) {
+    return { handled: false }
+  }
+
+  const result = await tryHandleResidentQuietHoursInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    residentId: ctx.identity.resident_id,
+    identityType: ctx.identity.identity_type,
+    body: ctx.inbound.body,
+    conversationId: ctx.conversationId,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "resident_quiet_hours",
+    reply: {
+      body: result.replyBody,
+      source: "resident_quiet_hours",
+      skipGenericFallback: true,
+    },
+  }
+}
+
 async function tryVendorCapacityHandler(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
@@ -488,39 +718,6 @@ async function tryVendorTenantProxyHandler(
   }
 }
 
-async function tryHqsUnitReplyHandler(
-  ctx: InboundSmsHandlerContext,
-): Promise<InboundSmsHandlerResult> {
-  const { data: conv } = await ctx.supabase
-    .from("sms_conversations")
-    .select("intake_state")
-    .eq("id", ctx.conversationId)
-    .maybeSingle()
-  if (!canHandleHqsUnitReply({ intakeState: conv?.intake_state })) {
-    return { handled: false }
-  }
-  return tryHandleHqsUnitReplyInbound(ctx)
-}
-
-async function tryHqsConfirmHandler(
-  ctx: InboundSmsHandlerContext,
-): Promise<InboundSmsHandlerResult> {
-  const { data: conv } = await ctx.supabase
-    .from("sms_conversations")
-    .select("intake_state")
-    .eq("id", ctx.conversationId)
-    .maybeSingle()
-  if (
-    !canHandleHqsConfirm({
-      intakeState: conv?.intake_state,
-      body: ctx.inbound.body,
-    })
-  ) {
-    return { handled: false }
-  }
-  return tryHandleHqsConfirmInbound(ctx)
-}
-
 /** Documented pending gates — contract tests require every registry id to be listed. */
 export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   Record<string, string>
@@ -534,10 +731,16 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3… — roster or nearby external vendors)",
   landlord_rent_receipt:
     "intake_state.awaiting_landlord_rent_receipt, awaiting_landlord_rent_amount, or awaiting_landlord_rent_method (YES/NO/PARTIAL then amount/method)",
+  tenant_rent_report_confirmation:
+    "intake_state.awaiting_tenant_rent_report_confirmation (YES/NO or corrected $ for tenant-reported rent)",
   invoice_paid_confirmation:
     "intake_state.awaiting_invoice_paid_confirmation (YES/NO paid confirmation for the invoice id stored in the ask)",
   invoice_payment:
     "SMS_ADMIN_NOTIFY phone + recent maintenance.invoice_payment_options_sent event",
+  tenant_rent_reply:
+    "active rent_collection run (payment_reminder_sent / awaiting_payment) or intake_state.awaiting_tenant_rent_amount (PAID/PARTIAL/QUESTIONS)",
+  tenant_distress:
+    "Resident identity + distress signals (profanity, stop-texting language, or intake_state.outbound_identical_reply_loop_at)",
   hqs_unit_reply:
     "intake_state.awaiting_hqs_unit (landlord replies with unit for HQS letter mapping)",
   hqs_confirm:
@@ -546,8 +749,10 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "users.activation_status === waiting + YES or NO",
   tenant_activation_hold:
     "users.activation_status === waiting + any other inbound (park request, remind YES/NO)",
+  resident_quiet_hours:
+    "Resident identity + QUIET / QUIET OFF command (set quiet-hours window)",
   vendor_availability_probe:
-    "intake_state.awaiting_vendor_probe on vendor thread (slot / NO before landlord assigns)",
+    "intake_state.awaiting_vendor_probes[] (or legacy awaiting_vendor_probe) on vendor thread — slot / NO before landlord assigns; multi-ticket replies match WO-XXXX or ask which job",
   vendor_reschedule:
     "Reschedule intent (shouldAttemptVendorRescheduleInbound) → dispatch vendor_job_response workflow",
   vendor_capacity: "Vendor identity + PAUSE / RESUME / JOBS MAX command",
@@ -574,11 +779,26 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
   { id: "landlord_rent_receipt", priority: 22, try: tryLandlordRentReceiptHandler },
   {
+    id: "tenant_rent_report_confirmation",
+    priority: 23,
+    try: tryTenantRentReportConfirmationHandler,
+  },
+  {
     id: "invoice_paid_confirmation",
     priority: 24,
     try: tryInvoicePaidConfirmationHandler,
   },
   { id: "invoice_payment", priority: 25, try: tryInvoicePaymentHandler },
+  {
+    id: "tenant_rent_reply",
+    priority: 26,
+    try: tryTenantRentReplyHandler,
+  },
+  {
+    id: "tenant_distress",
+    priority: 27,
+    try: tryTenantDistressHandler,
+  },
   {
     id: "hqs_unit_reply",
     priority: 28,
@@ -600,6 +820,11 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
     try: tryTenantActivationHoldHandler,
   },
   {
+    id: "resident_quiet_hours",
+    priority: 34,
+    try: tryResidentQuietHoursHandler,
+  },
+  {
     id: "vendor_availability_probe",
     priority: 38,
     try: tryVendorAvailabilityProbeHandler,
@@ -613,7 +838,7 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
 export async function tryInboundSmsHandlers(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
-  // Invoice paid ask + another bare-YES ask → clarify instead of priority race.
+  // Multiple bare-YES pending asks → clarify instead of priority race.
   if (isBareYesInvoicePaidReply(ctx.inbound.body)) {
     const { data: conv } = await ctx.supabase
       .from("sms_conversations")
@@ -630,7 +855,15 @@ export async function tryInboundSmsHandlers(
       conversationType: ctx.conversationType,
       intakeState,
     })
-    if (invoicePending && vendorChoicePending) {
+    const rentReportPending = canHandleTenantRentReportConfirmation({
+      identityType: ctx.identity.identity_type,
+      intakeState,
+    })
+    const yesAskCount =
+      Number(invoicePending) +
+      Number(vendorChoicePending) +
+      Number(rentReportPending)
+    if (yesAskCount >= 2) {
       return {
         handled: true,
         workflowRoute: "ambiguous_yes_pending_asks",

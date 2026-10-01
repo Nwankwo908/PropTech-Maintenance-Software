@@ -41,6 +41,8 @@ export type AutomatedMessageType =
   | "vendor_compliance"
   | "vendor_performance"
   | "ops_sms_cron"
+  | "maintenance_stall_follow_up"
+  | "intake_silence_nudge"
   | "other"
 
 export type AutomatedMessageAudience = "vendor" | "resident" | "landlord" | "ops"
@@ -50,6 +52,9 @@ const REMINDER_MESSAGE_TYPES = new Set<AutomatedMessageType>([
   "rent_reminder",
   "tenant_activation_nudge",
   "ops_sms_cron",
+  // Resident stall nudges always honor overnight quiet hours (never bypass).
+  "maintenance_stall_follow_up",
+  "intake_silence_nudge",
 ])
 
 export type ShouldSendAutomatedMessageInput = {
