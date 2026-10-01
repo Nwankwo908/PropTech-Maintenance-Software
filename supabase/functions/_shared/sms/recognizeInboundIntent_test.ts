@@ -156,7 +156,7 @@ Deno.test("intake confirms a weak reading in its first question", () => {
 
 Deno.test("summaries drop greetings and lead-ins", () => {
   assertEquals(summarizeIssueText("Hi, I have no hot water"), "no hot water")
-  assertEquals(summarizeIssueText("There's a leak under the sink"), "leak under the sink")
+  assertEquals(summarizeIssueText("There's a leak under the sink"), "plumbing leak")
 })
 
 Deno.test("the LLM layer only runs on fresh, still-undecided threads", async () => {

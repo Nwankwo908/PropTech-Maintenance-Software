@@ -20,6 +20,7 @@ import {
   matchDeterministicRules,
   matchEmergencyNet,
 } from "../../../../shared/maintenance/deterministicRules.ts"
+import { generateIssueSummary } from "../../../../shared/maintenance/generateIssueSummary.ts"
 import { resolveAmbiguousMaintenance } from "../../../../shared/maintenance/ambiguityResolution.ts"
 import type { EmergencyType } from "../../../../shared/maintenance/classificationTypes.ts"
 import { semanticMatchDescription } from "../maintenance_classification/semanticMap.ts"
@@ -95,22 +96,18 @@ export function isRepairRecognition(
   return recognition.intent === "repair" || recognition.intent === "emergency"
 }
 
-/** Filler that shouldn't lead the confirmation line back to the resident. */
-const SUMMARY_PREFIX =
-  /^(hi|hello|hey|good\s*(morning|afternoon|evening))[,!.\s]+/i
-const SUMMARY_LEAD =
-  /^(i\s+(?:have|think|need|wanted?\s+to\s+(?:report|say))|there(?:['’]s|\s+(?:is|are))|we\s+have|my\s+unit\s+has|can\s+(?:you|someone)\s+(?:fix|look\s+at|send\s+someone\s+for))\s+/i
-
 /** Short, plain-language echo of the problem for the confirm-back question. */
 export function summarizeIssueText(text: string): string | null {
-  let summary = text.trim().replace(/\s+/g, " ")
-  if (!summary) return null
-  summary = summary.replace(SUMMARY_PREFIX, "").replace(SUMMARY_LEAD, "")
-  summary = summary.replace(/^(a|an|the)\s+/i, "")
-  summary = summary.split(/(?<=[.!?])\s+/)[0] ?? summary
-  summary = summary.replace(/[.!?]+$/, "").trim()
-  if (!summary) return null
-  if (summary.length > 70) summary = `${summary.slice(0, 67).trimEnd()}...`
+  const raw = text.trim().replace(/\s+/g, " ")
+  if (!raw) return null
+  const summary = generateIssueSummary(raw, {
+    format: "summary",
+    maxWords: 15,
+  })
+    .replace(/^(?:an?|the)\s+/i, "")
+    .replace(/[.!?]+$/, "")
+    .trim()
+  if (!summary || /^maintenance issue$/i.test(summary)) return null
   return summary.charAt(0).toLowerCase() + summary.slice(1)
 }
 

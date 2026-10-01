@@ -1,3 +1,4 @@
+import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
 export type PropertyVendorTicket = {
@@ -68,7 +69,11 @@ function humanizeWorkStatus(status: string): string {
 function workOrderTitle(ticket: PropertyVendorTicket): string {
   const description = ticket.description?.trim()
   if (description) {
-    return description.length > 72 ? `${description.slice(0, 71).trim()}…` : description
+    return generateIssueSummary(description, {
+      format: 'title',
+      category: ticket.issueCategory,
+      maxChars: 50,
+    })
   }
   return formatTrade(ticket.issueCategory)
 }

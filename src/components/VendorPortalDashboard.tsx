@@ -34,6 +34,7 @@ import {
   propertyAccessDisplayRows,
   propertyAccessHasContent,
 } from '@/lib/propertyAccess'
+import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
 
 export type { VendorDbWorkStatus }
 
@@ -203,10 +204,14 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
   const photos = t.photo_paths ?? []
   const signedPreviews = (t.photo_urls ?? []).filter((u): u is string => typeof u === 'string' && u.length > 0)
   const desc = (t.description ?? '').trim()
-  const titleLine = desc.split(/\r?\n/)[0] ?? ''
   const pri = (t.urgency || t.priority || '').trim()
-  const title =
-    titleLine.length > 80 ? `${titleLine.slice(0, 77)}…` : titleLine || `${pri || '—'} — maintenance`
+  const title = desc
+    ? generateIssueSummary(desc, {
+        format: 'title',
+        category: t.issue_category ?? null,
+        maxChars: 50,
+      })
+    : `${pri || '—'} — maintenance`
   const unitStr = t.unit ?? ''
   const roomFromDescription = extractRoomInUnitFromDescription(desc)
   const buildingAddress =
@@ -222,9 +227,12 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
     const d = new Date(dueRaw)
     if (!Number.isNaN(d.getTime())) {
       dueAtIso = d.toISOString()
-      const fmt = d.toLocaleString(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
+      const fmt = d.toLocaleString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
       })
       dueRangeDisplay = fmt
       if (st === 'completed') {
