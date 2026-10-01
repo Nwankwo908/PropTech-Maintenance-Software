@@ -139,17 +139,18 @@ async function sendResidentSms(
   },
 ): Promise<boolean> {
   const line = await findActiveLandlordMainNumber(supabase, params.landlordId)
-  if (!line?.e164) {
+  const fromNumber = line?.phone_number?.trim() || ""
+  if (!fromNumber) {
     console.warn("[intake-silence] no landlord SMS line", params.landlordId)
     return false
   }
   const sent = await sendInboundAutoReply(supabase, {
     conversationId: params.conversationId,
     landlordId: params.landlordId,
-    fromNumber: line.e164,
+    fromNumber,
     toNumber: params.toPhone,
     body: params.body,
-    provider: (line.provider as "twilio" | "telnyx") || "twilio",
+    provider: ((line?.provider as "twilio" | "telnyx") || "twilio"),
     source: params.source,
   })
   return sent.ok
