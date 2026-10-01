@@ -27,10 +27,16 @@
 import {
   EMPTY_LANDLORD_ID,
   FULL_ALPHA_LANDLORD_ID,
-  isRetiredLandlordAccountId,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
 } from '@shared/landlordCapabilities'
+import {
+  DEMO_LANDLORD_ID,
+  LIMITED_ALPHA_1_LOGIN_EMAIL,
+  LIMITED_ALPHA_2_LOGIN_EMAIL,
+  canonicalizeLandlordId,
+  seededLandlordIdForEmail,
+} from '@shared/admin/landlordAccess'
 
 export {
   EMPTY_LANDLORD_ID,
@@ -41,10 +47,7 @@ export {
 
 export const DEFAULT_LANDLORD_ID = LIMITED_ALPHA_1_LANDLORD_ID
 
-export const DEMO_LANDLORD_ID = 'de300000-0000-4000-8000-000000000001'
-
-export const LIMITED_ALPHA_1_LOGIN_EMAIL = 'limitedalpha1@ulohome.io'
-export const LIMITED_ALPHA_2_LOGIN_EMAIL = 'limitedalpha2@ulohome.io'
+export { DEMO_LANDLORD_ID, LIMITED_ALPHA_1_LOGIN_EMAIL, LIMITED_ALPHA_2_LOGIN_EMAIL }
 
 /** Showcase move-out WO-D777 — stable id for lease-renewal kickoff demos. */
 export const DEMO_MOVE_OUT_WO_D777_RUN_ID = 'd7770000-0000-4000-8000-000000000001'
@@ -63,23 +66,9 @@ export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
   { kind: 'demo', id: DEMO_LANDLORD_ID, label: 'Demo Property Management' },
 ]
 
-const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
-  'ceorentalsnj@gmail.com': LIMITED_ALPHA_1_LANDLORD_ID,
-  'iokafor0@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'moreceo@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'nyshaunbrown@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'otbpictures12@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'nwankwo908@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'bfamiloni@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
-  [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,
-  'demo@ulohome.io': DEMO_LANDLORD_ID,
-}
-
 /** True when this address is a seeded portal / Alpha login (not a company support email). */
 export function isSeededLandlordLoginEmail(email: string | null | undefined): boolean {
-  const normalized = email?.trim().toLowerCase() ?? ''
-  return Boolean(normalized) && Object.prototype.hasOwnProperty.call(EMAIL_TO_LANDLORD_ID, normalized)
+  return seededLandlordIdForEmail(email) != null
 }
 
 const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
@@ -87,14 +76,8 @@ const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
 /** Landlord bound to the signed-in account email (null for staff logins). */
 let sessionLandlordId: string | null = null
 
-function canonicalizeLandlordId(landlordId: string): string {
-  if (isRetiredLandlordAccountId(landlordId)) return LIMITED_ALPHA_1_LANDLORD_ID
-  return landlordId
-}
-
 export function setSessionLandlordFromEmail(email: string | null | undefined): void {
-  const normalized = email?.trim().toLowerCase() ?? ''
-  sessionLandlordId = EMAIL_TO_LANDLORD_ID[normalized] ?? null
+  sessionLandlordId = seededLandlordIdForEmail(email)
 }
 
 /** Bind dashboard scope for seeded logins or saved team-member emails. */
@@ -106,7 +89,7 @@ export async function bindSessionLandlordFromEmail(
     sessionLandlordId = null
     return
   }
-  const seeded = EMAIL_TO_LANDLORD_ID[normalized]
+  const seeded = seededLandlordIdForEmail(normalized)
   if (seeded) {
     sessionLandlordId = seeded
     return

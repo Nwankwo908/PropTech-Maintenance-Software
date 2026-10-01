@@ -80,6 +80,7 @@ describe('Limited Alpha 1 capabilities', () => {
   it('classifies payment graph events', () => {
     expect(isPaymentGraphEventType('payment.landlord_connect_ready')).toBe(true)
     expect(isPaymentGraphEventType('rent.payment_received')).toBe(true)
+    expect(isPaymentGraphEventType('rent.ledger_updated')).toBe(false)
     expect(isPaymentGraphEventType('rent.reminder_sent')).toBe(false)
     expect(isPaymentGraphEventType('vendor.assigned')).toBe(false)
   })
@@ -91,6 +92,13 @@ describe('Limited Alpha 1 capabilities', () => {
         eventType: 'rent.payment_received',
       }),
     ).toBe(false)
+    // Off-platform landlord-confirmed rent bookkeeping still records.
+    expect(
+      shouldRecordGraphEvent({
+        landlordId: LIMITED_ALPHA_1_LANDLORD_ID,
+        eventType: 'rent.ledger_updated',
+      }),
+    ).toBe(true)
     expect(
       shouldRecordGraphEvent({
         landlordId: LIMITED_ALPHA_1_LANDLORD_ID,

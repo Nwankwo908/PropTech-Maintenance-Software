@@ -180,10 +180,13 @@ export function isPaymentGraphEventType(eventType: string | null | undefined): b
   if (t.startsWith('plaid.')) return true
   if (t.includes('invoice_payment')) return true
   if (t === 'payment_received' || t === 'payment_requested' || t === 'payment_failed') return true
+  // Stripe checkout / pay-online money movement — block on Limited Alpha.
+  // Off-platform landlord-confirmed rent bookkeeping (rent.ledger_updated,
+  // rent.receipt_*, rent.tenant_payment_report_*) must still record.
   if (t === 'rent.payment_received' || t === 'rent.payment_failed' || t === 'rent.payment_requested') {
     return true
   }
-  if (t === 'rent.ledger_updated' || t === 'rent.payment_plan_offered') return true
+  if (t === 'rent.payment_plan_offered') return true
   if (t === 'maintenance.invoice_paid' || t === 'maintenance.invoice_payment_failed') return true
   if (t.startsWith('landlord.stripe_connect')) return true
   return false

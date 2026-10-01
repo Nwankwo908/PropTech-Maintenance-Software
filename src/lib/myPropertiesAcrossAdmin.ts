@@ -45,7 +45,7 @@ export async function fetchMyPropertiesPortfolio(
       supabase
         .from('maintenance_request_enriched')
         .select(
-          'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, description, due_at',
+          'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, description, due_at, inspection_report_id',
         )
         .eq('landlord_id', landlordId)
         .order('created_at', { ascending: false })
@@ -55,7 +55,7 @@ export async function fetchMyPropertiesPortfolio(
             ? supabase!
                 .from('maintenance_requests')
                 .select(
-                  'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, description, due_at',
+                  'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, description, due_at, inspection_report_id',
                 )
                 .eq('landlord_id', landlordId)
                 .order('created_at', { ascending: false })
