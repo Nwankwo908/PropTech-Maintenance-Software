@@ -12,11 +12,15 @@ const PAUSE_MIGRATION_HINT = 'cron_pause_registry'
 
 function readRequiredCronMigrationSql(): string {
   const migrationsDir = resolve(process.cwd(), 'supabase/migrations')
-  const files = readdirSync(migrationsDir).filter((name) =>
-    name.includes(MIGRATION_GLOB_HINT),
+  const files = readdirSync(migrationsDir).filter(
+    (name) =>
+      name.includes(MIGRATION_GLOB_HINT) ||
+      name.includes('maintenance_stall_follow_up'),
   )
   expect(files.length).toBeGreaterThanOrEqual(1)
-  return readFileSync(resolve(migrationsDir, files[0]!), 'utf8')
+  return files
+    .map((name) => readFileSync(resolve(migrationsDir, name), 'utf8'))
+    .join('\n')
 }
 
 function readPauseRegistryMigrationSql(): string {

@@ -7,11 +7,13 @@ import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import {
   closeOpenAsksForTicket,
   reconcileZombieScheduleAsks,
+  reconcileZombieVendorAvailabilityAsks,
 } from "./closeOpenAsksForTicket.ts"
 import {
   shouldSendAutomatedMessage,
 } from "./shouldSendAutomatedMessage.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
+import { shouldYieldToRecentStallFollowUp } from "../../../shared/ops/maintenanceStallFollowUp.ts"
 import {
   appendOutboundContext,
   createIdleScheduleState,
@@ -134,7 +136,7 @@ export async function processScheduleFsmTtlChecks(
     const { data: ticketRow } = ticketId
       ? await supabase
         .from("maintenance_requests")
-        .select("vendor_work_status, landlord_id")
+        .select("vendor_work_status, landlord_id, stall_follow_up_sent_at")
         .eq("id", ticketId)
         .maybeSingle()
       : { data: null }
@@ -149,6 +151,20 @@ export async function processScheduleFsmTtlChecks(
           ? ticketRow.landlord_id
           : ""),
     )
+
+    // Reverse coordination lock: soft stall nudge owns the SMS episode.
+    if (
+      shouldYieldToRecentStallFollowUp({
+        stallFollowUpSentAt:
+          typeof ticketRow?.stall_follow_up_sent_at === "string"
+            ? ticketRow.stall_follow_up_sent_at
+            : null,
+        nowMs: now.getTime(),
+      })
+    ) {
+      skipped++
+      continue
+    }
 
     // Ticket already past scheduling — close quietly, never message.
     if (
@@ -360,6 +376,10 @@ export async function processScheduleFsmTtlChecks(
     limit: 40,
     dryRun,
   })
+  const reconcileProbes = await reconcileZombieVendorAvailabilityAsks(supabase, {
+    limit: 40,
+    dryRun,
+  })
 
   return {
     scanned,
@@ -368,7 +388,7 @@ export async function processScheduleFsmTtlChecks(
     skipped,
     suppressed,
     quietExpired,
-    reconciled: reconcile.closed,
+    reconciled: reconcile.closed + reconcileProbes.closed,
     dryRun,
     wouldNotify: dryRun ? wouldNotify : undefined,
   }

@@ -17,6 +17,8 @@ import { checkRentCollection } from "../_shared/engine/checkRentCollection.ts"
 import { reportMissingRequiredCronJobs } from "../_shared/missingRequiredCrons.ts"
 import { processTenantActivationRetries } from "../_shared/sms/tenantActivation.ts"
 import { sendNeedsAdminVendorDigest } from "../_shared/needsAdminVendorDigest.ts"
+import { processTenantRentReportConfirmTtl } from "../_shared/tenantRentReportTtl.ts"
+import { processIntakeSilenceFollowUps } from "../_shared/sms/intakeSilenceFollowUpProcess.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -125,6 +127,22 @@ serve(async (req) => {
       scopedLandlordId || null,
     )
 
+    const rentReportTtl = await processTenantRentReportConfirmTtl(supabase, {
+      landlordId: scopedLandlordId || null,
+    })
+
+    let intakeSilence: Record<string, unknown> = {}
+    try {
+      intakeSilence = await processIntakeSilenceFollowUps(supabase, {
+        landlordId: scopedLandlordId || null,
+      })
+    } catch (err) {
+      console.error("[run-ops-sms-crons] intake silence", err)
+      intakeSilence = {
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+
     const landlordIds = scopedLandlordId
       ? [scopedLandlordId]
       : await listLandlordIdsForCron(supabase)
@@ -175,6 +193,8 @@ serve(async (req) => {
         edge_function: j.edgeFunction,
       })),
       tenant_activation: activation,
+      tenant_rent_report_confirm_ttl: rentReportTtl,
+      intake_silence_follow_up: intakeSilence,
       rent_collection: {
         landlords: landlordIds.length,
         reminders_sent: rentRemindersSent,
@@ -192,4 +212,3 @@ serve(async (req) => {
     )
   }
 })
-

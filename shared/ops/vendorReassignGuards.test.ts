@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest'
+import { URGENCY_SLA_MINUTES } from '../maintenance/urgencyPolicy.ts'
 import {
   AWAITING_LANDLORD_CHOICE_DWELL_MS,
+  AWAITING_VENDOR_AVAILABILITY_PROBE_DWELL_MS,
   AUTO_REASSIGN_LOOP_COUNT_THRESHOLD,
   LANDLORD_CHOICE_COOLDOWN_MS,
+  PENDING_ACCEPT_STALE_MS,
   autoReassignOutcomeSignature,
   decideAutoReassignGuard,
   nextAutoReassignRepeatState,
   shouldSkipReopenAfterRecentLandlordChoice,
   simulateWo5fa6GuardSequence,
   awaitingLandlordChoiceDwellExceeded,
+  triggerConditionFirstMetMs,
 } from './vendorReassignGuards.ts'
+import { NO_VENDOR_RESPONSE_FOLLOW_UP_MS } from './maintenanceStallFollowUp.ts'
 
-const HOUR = 60 * 60 * 1000
+const MINUTE = 60 * 1000
+const HOUR = 60 * MINUTE
 
 describe('shouldSkipReopenAfterRecentLandlordChoice', () => {
   it('suppresses a second automated choice within the cool-down after resolve+notify', () => {
@@ -168,6 +174,164 @@ describe('awaiting landlord choice dwell + escalate', () => {
       awaitingVendorAvailabilityAt: null,
     })
     expect(decision.action).toBe('short_circuit_awaiting')
+  })
+
+  it('urgent landlord-choice escalates at emergencyLifeSafety (1h), not 48h', () => {
+    const setAt = '2026-03-10T13:11:00.000Z'
+    const at1h = Date.parse(setAt) + URGENCY_SLA_MINUTES.emergencyLifeSafety * MINUTE
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: at1h,
+        awaitingLandlordChoice: true,
+        awaitingLandlordChoiceAt: setAt,
+        urgency: 'emergency',
+      }),
+    ).toEqual({
+      action: 'escalate_awaiting_stale',
+      reason: 'awaiting_choice_dwell_exceeded',
+    })
+    // Still short-circuits before 1h on urgent.
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: Date.parse(setAt) + 30 * MINUTE,
+        awaitingLandlordChoice: true,
+        awaitingLandlordChoiceAt: setAt,
+        urgency: 'emergency',
+      }).action,
+    ).toBe('short_circuit_awaiting')
+  })
+
+  it('routine landlord-choice still uses 48h dwell', () => {
+    const setAt = '2026-03-10T13:11:00.000Z'
+    const at2h = Date.parse(setAt) + 2 * HOUR
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: at2h,
+        awaitingLandlordChoice: true,
+        awaitingLandlordChoiceAt: setAt,
+        urgency: 'normal',
+      }).action,
+    ).toBe('short_circuit_awaiting')
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: Date.parse(setAt) + AWAITING_LANDLORD_CHOICE_DWELL_MS,
+        awaitingLandlordChoice: true,
+        awaitingLandlordChoiceAt: setAt,
+        urgency: 'normal',
+      }),
+    ).toEqual({
+      action: 'escalate_awaiting_stale',
+      reason: 'awaiting_choice_dwell_exceeded',
+    })
+  })
+
+  it('urgent probe dwell escalates at emergencyWater (2h)', () => {
+    const setAt = '2026-03-10T13:11:00.000Z'
+    const at2h = Date.parse(setAt) + URGENCY_SLA_MINUTES.emergencyWater * MINUTE
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: at2h,
+        awaitingLandlordChoice: false,
+        awaitingVendorAvailabilityProbe: true,
+        awaitingVendorAvailabilityAt: setAt,
+        urgency: 'emergency',
+      }),
+    ).toEqual({
+      action: 'escalate_awaiting_stale',
+      reason: 'awaiting_probe_dwell_exceeded',
+    })
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: Date.parse(setAt) + HOUR,
+        awaitingLandlordChoice: false,
+        awaitingVendorAvailabilityProbe: true,
+        awaitingVendorAvailabilityAt: setAt,
+        urgency: 'emergency',
+      }).action,
+    ).toBe('short_circuit_awaiting')
+  })
+
+  it('routine probe still uses 48h dwell', () => {
+    const setAt = '2026-03-10T13:11:00.000Z'
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: Date.parse(setAt) + 2 * HOUR,
+        awaitingLandlordChoice: false,
+        awaitingVendorAvailabilityProbe: true,
+        awaitingVendorAvailabilityAt: setAt,
+        urgency: 'normal',
+      }).action,
+    ).toBe('short_circuit_awaiting')
+    expect(
+      decideAutoReassignGuard({
+        trigger: 'sla_expired',
+        nowMs: Date.parse(setAt) + AWAITING_VENDOR_AVAILABILITY_PROBE_DWELL_MS,
+        awaitingLandlordChoice: false,
+        awaitingVendorAvailabilityProbe: true,
+        awaitingVendorAvailabilityAt: setAt,
+        urgency: 'normal',
+      }),
+    ).toEqual({
+      action: 'escalate_awaiting_stale',
+      reason: 'awaiting_probe_dwell_exceeded',
+    })
+  })
+})
+
+describe('pending_accept rematch timing stays flat regardless of urgency', () => {
+  it('keeps 48h rematch / 24h stall soft-nudge defaults (urgency does not scale them)', () => {
+    expect(PENDING_ACCEPT_STALE_MS).toBe(48 * HOUR)
+    expect(NO_VENDOR_RESPONSE_FOLLOW_UP_MS).toBe(24 * HOUR)
+
+    const assignedAt = '2026-03-08T12:00:00.000Z'
+    const assignedMs = Date.parse(assignedAt)
+    // triggerConditionFirstMetMs is when rematch becomes eligible — still +48h.
+    expect(
+      triggerConditionFirstMetMs({
+        trigger: 'pending_accept_stale',
+        assignedAt,
+        nowMs: assignedMs + PENDING_ACCEPT_STALE_MS,
+      }),
+    ).toBe(assignedMs + PENDING_ACCEPT_STALE_MS)
+
+    // Urgent ticket without awaiting flags: guard proceeds (rematch path),
+    // not escalate_awaiting — urgency must not invent a shorter pending_accept dwell.
+    const urgentProceed = decideAutoReassignGuard({
+      trigger: 'pending_accept_stale',
+      nowMs: assignedMs + PENDING_ACCEPT_STALE_MS,
+      assignedAt,
+      awaitingLandlordChoice: false,
+      urgency: 'emergency',
+      severity: 'critical',
+      dueAt: new Date(assignedMs + URGENCY_SLA_MINUTES.emergencyLifeSafety * MINUTE)
+        .toISOString(),
+      createdAt: assignedAt,
+    })
+    expect(urgentProceed.action).toBe('proceed')
+
+    const beforeStale = decideAutoReassignGuard({
+      trigger: 'pending_accept_stale',
+      nowMs: assignedMs + 24 * HOUR,
+      assignedAt,
+      awaitingLandlordChoice: false,
+      urgency: 'emergency',
+    })
+    // Guard itself does not gate on assigned_at age — cron selects stale rows.
+    // Assert constants used by cron/stall stay 48h/24h even when urgency is emergency.
+    expect(beforeStale.action).toBe('proceed')
+    expect(PENDING_ACCEPT_STALE_MS).not.toBe(
+      URGENCY_SLA_MINUTES.emergencyLifeSafety * MINUTE,
+    )
+    expect(PENDING_ACCEPT_STALE_MS).not.toBe(
+      URGENCY_SLA_MINUTES.emergencyWater * MINUTE,
+    )
   })
 })
 

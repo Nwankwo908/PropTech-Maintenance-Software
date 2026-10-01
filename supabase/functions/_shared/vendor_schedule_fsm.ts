@@ -4,8 +4,15 @@
  * States: idle → awaiting_availability → awaiting_confirmation →
  *         awaiting_tenant_confirmation → scheduled
  * Cross-cutting: TTL expiry, context window, revision for out-of-order guards.
+ *
+ * Tenant-confirm TTL scales by ticket urgency (60m / 120m). Vendor
+ * earliest-availability ask stays on SCHEDULE_TTL_MS (~24h) on purpose.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  tenantConfirmTtlMsForTicket,
+  type TicketUrgencySnapshot,
+} from "../../../shared/maintenance/urgencyScaledTimeouts.ts"
 
 export const VENDOR_SCHEDULE_KEY = "vendor_schedule"
 export const SCHEDULE_FSM_VERSION = 1 as const
@@ -16,6 +23,8 @@ export const SCHEDULE_TTL_MS = 24 * 60 * 60 * 1000
 export const CONFIRM_TTL_MS = 2 * 60 * 60 * 1000
 export const CONTEXT_WINDOW_MAX = 12
 export const RECENT_OUTBOUND_MAX = 6
+
+export type { TicketUrgencySnapshot }
 
 export type VendorScheduleStep =
   | "idle"
@@ -47,6 +56,11 @@ export type VendorScheduleFsmState = {
   pendingSince?: string
   /** How many vague/unbounded clarify prompts we've sent on this thread. */
   clarifyAttempts?: number
+  /** Persisted ticket urgency for tenant-confirm TTL scaling. */
+  urgency?: string | null
+  severity?: string | null
+  dueAt?: string | null
+  createdAt?: string | null
   contextWindow: ScheduleContextTurn[]
   recentOutboundNorm: string[]
 }
@@ -57,6 +71,10 @@ export type ScheduleFsmEvent =
     ticketId: string
     at: string
     inboundSid?: string
+    urgency?: string | null
+    severity?: string | null
+    dueAt?: string | null
+    createdAt?: string | null
   }
   | {
     type: "AVAILABILITY_TEXT"
@@ -66,6 +84,10 @@ export type ScheduleFsmEvent =
     scheduledAt: string | null
     endAt?: string | null
     outcome: "resolved" | "needs_confirmation" | "needs_clarification"
+    urgency?: string | null
+    severity?: string | null
+    dueAt?: string | null
+    createdAt?: string | null
   }
   | {
     type: "CONFIRM_YES"
@@ -276,6 +298,62 @@ function enterStep(
   }
 }
 
+function urgencySnapFromState(
+  state: Pick<
+    VendorScheduleFsmState,
+    "urgency" | "severity" | "dueAt" | "createdAt"
+  >,
+): TicketUrgencySnapshot {
+  return {
+    urgency: state.urgency,
+    severity: state.severity,
+    dueAt: state.dueAt,
+    createdAt: state.createdAt,
+  }
+}
+
+function mergeUrgencyFields(
+  state: VendorScheduleFsmState,
+  fields: {
+    urgency?: string | null
+    severity?: string | null
+    dueAt?: string | null
+    createdAt?: string | null
+  },
+): VendorScheduleFsmState {
+  return {
+    ...state,
+    urgency: fields.urgency !== undefined ? fields.urgency : state.urgency,
+    severity: fields.severity !== undefined ? fields.severity : state.severity,
+    dueAt: fields.dueAt !== undefined ? fields.dueAt : state.dueAt,
+    createdAt:
+      fields.createdAt !== undefined ? fields.createdAt : state.createdAt,
+  }
+}
+
+/** TTL for awaiting_tenant_confirmation — urgency-scaled; routine stays 24h. */
+export function tenantConfirmTtlMsFromScheduleState(
+  state: Pick<
+    VendorScheduleFsmState,
+    "urgency" | "severity" | "dueAt" | "createdAt"
+  >,
+): number {
+  return tenantConfirmTtlMsForTicket(urgencySnapFromState(state), SCHEDULE_TTL_MS)
+}
+
+/** Attach ticket urgency onto an FSM state (call sites that load the ticket). */
+export function withScheduleTicketUrgency(
+  state: VendorScheduleFsmState,
+  snap: TicketUrgencySnapshot,
+): VendorScheduleFsmState {
+  return mergeUrgencyFields(state, {
+    urgency: snap.urgency ?? null,
+    severity: snap.severity ?? null,
+    dueAt: snap.dueAt ?? null,
+    createdAt: snap.createdAt ?? null,
+  })
+}
+
 /**
  * Pure FSM transition. Caller persists `state` and executes `effect`.
  */
@@ -402,10 +480,15 @@ export function reduceScheduleFsm(
 
   switch (event.type) {
     case "JOB_ACCEPTED": {
+      // Availability ask stays on SCHEDULE_TTL_MS — do not compress for urgency.
       const next = enterStep(
         {
           ...base,
           ticketId: event.ticketId,
+          urgency: event.urgency ?? base.urgency ?? null,
+          severity: event.severity ?? base.severity ?? null,
+          dueAt: event.dueAt ?? base.dueAt ?? null,
+          createdAt: event.createdAt ?? base.createdAt ?? null,
           pendingWindowText: undefined,
           pendingScheduledAt: undefined,
           pendingEndAt: undefined,
@@ -485,7 +568,7 @@ export function reduceScheduleFsm(
           },
           "awaiting_tenant_confirmation",
           event.at,
-          SCHEDULE_TTL_MS,
+          tenantConfirmTtlMsFromScheduleState(base),
         )
         return {
           state: next,
@@ -583,10 +666,22 @@ export function reduceScheduleFsm(
         }
       }
 
+      const withUrgency = mergeUrgencyFields(base, {
+        urgency: event.urgency,
+        severity: event.severity,
+        dueAt: event.dueAt,
+        createdAt: event.createdAt,
+      })
+
       const stepped =
-        base.step === "idle"
-          ? enterStep(base, "awaiting_availability", event.at, SCHEDULE_TTL_MS)
-          : base
+        withUrgency.step === "idle"
+          ? enterStep(
+            withUrgency,
+            "awaiting_availability",
+            event.at,
+            SCHEDULE_TTL_MS,
+          )
+          : withUrgency
 
       const withInbound: VendorScheduleFsmState = {
         ...stepped,
@@ -637,7 +732,7 @@ export function reduceScheduleFsm(
         },
         "awaiting_tenant_confirmation",
         event.at,
-        SCHEDULE_TTL_MS,
+        tenantConfirmTtlMsFromScheduleState(withInbound),
       )
       return {
         state: next,
@@ -784,6 +879,24 @@ export function parseVendorScheduleFsm(
       typeof obj.clarifyAttempts === "number" && Number.isFinite(obj.clarifyAttempts)
         ? Math.max(0, Math.floor(obj.clarifyAttempts))
         : undefined,
+    urgency: typeof obj.urgency === "string" ? obj.urgency : obj.urgency === null
+      ? null
+      : undefined,
+    severity: typeof obj.severity === "string"
+      ? obj.severity
+      : obj.severity === null
+      ? null
+      : undefined,
+    dueAt: typeof obj.dueAt === "string"
+      ? obj.dueAt
+      : obj.dueAt === null
+      ? null
+      : undefined,
+    createdAt: typeof obj.createdAt === "string"
+      ? obj.createdAt
+      : obj.createdAt === null
+      ? null
+      : undefined,
     contextWindow,
     recentOutboundNorm,
   }

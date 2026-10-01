@@ -31,6 +31,7 @@ import {
   detectNeedsAdminCycle,
   type VendorReassignGuardTrigger,
 } from "../../../../../shared/ops/vendorReassignGuards.ts"
+import { shouldYieldToRecentStallFollowUp } from "../../../../../shared/ops/maintenanceStallFollowUp.ts"
 import { recordActivityLog } from "../../graph/recordActivityLog.ts"
 import { staffAlertRecipients } from "../../smsRecipients.ts"
 import { getSMSProviderForSend } from "../../sms/providerFactory.ts"
@@ -490,7 +491,7 @@ async function processMaintenanceAutoReassign(
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
     .select(
-      "unit, vendor_work_status, vendor_notify_error, due_at, assigned_at, assigned_vendor_id, vendor_notified_at, awaiting_landlord_choice_at, awaiting_vendor_availability_at, landlord_vendor_choice_resolved_at, auto_reassign_last_outcome, auto_reassign_same_outcome_count, auto_reassign_same_outcome_since, auto_reassign_needs_admin_entries",
+      "unit, vendor_work_status, vendor_notify_error, urgency, severity, created_at, due_at, assigned_at, assigned_vendor_id, vendor_notified_at, awaiting_landlord_choice_at, awaiting_vendor_availability_at, landlord_vendor_choice_resolved_at, auto_reassign_last_outcome, auto_reassign_same_outcome_count, auto_reassign_same_outcome_since, auto_reassign_needs_admin_entries, stall_follow_up_sent_at",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -531,9 +532,35 @@ async function processMaintenanceAutoReassign(
       ? ticketRow.auto_reassign_needs_admin_entries
       : 0
   const guardTrigger = input.trigger as VendorReassignGuardTrigger
+  const nowMs = Date.now()
+  // Reverse coordination lock: soft stall nudge owns the episode until escalate
+  // (or the yield window elapses). Applies to every stall kind, not only
+  // pending_accept — rematch must not reassign/SMS over a recent follow-up.
+  if (
+    shouldYieldToRecentStallFollowUp({
+      stallFollowUpSentAt:
+        typeof ticketRow?.stall_follow_up_sent_at === "string"
+          ? ticketRow.stall_follow_up_sent_at
+          : null,
+      nowMs,
+    })
+  ) {
+    return {
+      templateId: "maintenance_request",
+      route: workflowRouteForTemplate("maintenance_request"),
+      metadata: {
+        action: "auto_reassign",
+        outcome: "skipped",
+        reason: "recent_stall_follow_up",
+        ticket_id: ticketId,
+        trigger: input.trigger,
+        dry_run: dryRun || undefined,
+      },
+    }
+  }
   const guard = decideAutoReassignGuard({
     trigger: guardTrigger,
-    nowMs: Date.now(),
+    nowMs,
     dueAt: typeof ticketRow?.due_at === "string" ? ticketRow.due_at : null,
     assignedAt:
       typeof ticketRow?.assigned_at === "string" ? ticketRow.assigned_at : null,
@@ -568,6 +595,11 @@ async function processMaintenanceAutoReassign(
       typeof ticketRow?.auto_reassign_same_outcome_since === "string"
         ? ticketRow.auto_reassign_same_outcome_since
         : null,
+    urgency: typeof ticketRow?.urgency === "string" ? ticketRow.urgency : null,
+    severity:
+      typeof ticketRow?.severity === "string" ? ticketRow.severity : null,
+    createdAt:
+      typeof ticketRow?.created_at === "string" ? ticketRow.created_at : null,
   })
 
   if (guard.action === "escalate_awaiting_stale") {

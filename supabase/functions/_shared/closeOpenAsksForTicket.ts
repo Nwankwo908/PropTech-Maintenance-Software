@@ -18,6 +18,10 @@ import {
 } from "./vendorLandlordChoice.ts"
 import { AWAITING_SCHEDULE_CONFIRM_KEY } from "./sms/tenantScheduleConfirm.ts"
 
+/** Keep in sync with vendorAvailabilityProbe.AWAITING_VENDOR_AVAILABILITY_PROBE */
+const AWAITING_VENDOR_AVAILABILITY_PROBE =
+  "Awaiting vendor availability before landlord choice"
+
 export const ASK_CLOSING_WORK_STATUSES = new Set([
   "in_progress",
   "completed",
@@ -61,6 +65,25 @@ function conversationTouchesTicket(
   return false
 }
 
+function notifyHasAvailabilityProbe(
+  vendorNotifyError: string | null | undefined,
+): boolean {
+  return (vendorNotifyError ?? "").includes(AWAITING_VENDOR_AVAILABILITY_PROBE)
+}
+
+function clearStaleProbeNotifyError(
+  vendorNotifyError: string | null | undefined,
+): string | null {
+  const raw = typeof vendorNotifyError === "string" ? vendorNotifyError : ""
+  if (!notifyHasAvailabilityProbe(raw)) return raw || null
+  const next = raw
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part && !part.includes(AWAITING_VENDOR_AVAILABILITY_PROBE))
+    .join("; ")
+  return next || null
+}
+
 /**
  * Close open schedule / confirmation asks for a ticket that has moved on.
  * Idempotent: safe to call repeatedly.
@@ -76,16 +99,26 @@ export async function closeOpenAsksForTicket(
 
   const { data: ticket } = await supabase
     .from("maintenance_requests")
-    .select("id, landlord_id, vendor_work_status, vendor_notify_error")
+    .select(
+      "id, landlord_id, vendor_work_status, vendor_notify_error, assigned_vendor_id, awaiting_vendor_availability_at",
+    )
     .eq("id", id)
     .maybeSingle()
 
   const landlordId =
     typeof ticket?.landlord_id === "string" ? ticket.landlord_id.trim() : ""
   const workStatus = String(ticket?.vendor_work_status ?? "").toLowerCase()
+  const assignedVendorId =
+    typeof ticket?.assigned_vendor_id === "string"
+      ? ticket.assigned_vendor_id.trim()
+      : ""
   const closeEstimates = workStatus === "completed" ||
     workStatus === "cancelled" ||
     workStatus === "archived"
+  // Soft-probe clock is moot once a vendor is bound or work has advanced past
+  // availability matching (see stale assigned+flagged HQS / WO-C2FF orphans).
+  const clearAvailabilityProbe =
+    Boolean(assignedVendorId) || ASK_CLOSING_WORK_STATUSES.has(workStatus)
 
   const { data: convos } = await supabase
     .from("sms_conversations")
@@ -209,6 +242,34 @@ export async function closeOpenAsksForTicket(
     ticket.vendor_notify_error.includes(AWAITING_LANDLORD_VENDOR_CHOICE)
   ) {
     closed.push("awaiting_vendor_choice")
+  }
+
+  if (clearAvailabilityProbe) {
+    const hasProbeClock =
+      typeof ticket?.awaiting_vendor_availability_at === "string" &&
+      Boolean(ticket.awaiting_vendor_availability_at.trim())
+    const notifyRaw =
+      typeof ticket?.vendor_notify_error === "string"
+        ? ticket.vendor_notify_error
+        : null
+    const hasProbeNotify = notifyHasAvailabilityProbe(notifyRaw)
+    if (hasProbeClock || hasProbeNotify) {
+      const patch: Record<string, unknown> = {}
+      if (hasProbeClock) patch.awaiting_vendor_availability_at = null
+      if (hasProbeNotify) {
+        patch.vendor_notify_error = clearStaleProbeNotifyError(notifyRaw)
+      }
+      // Flag-only cleanup — never touch vendor_work_status / assigned_vendor_id.
+      const { error: probeClearErr } = await supabase
+        .from("maintenance_requests")
+        .update(patch)
+        .eq("id", id)
+      if (probeClearErr) {
+        console.error("[closeOpenAsks] clear availability probe flag", probeClearErr)
+      } else {
+        closed.push("awaiting_vendor_availability")
+      }
+    }
   }
 
   if (closed.length > 0 && landlordId) {
@@ -343,6 +404,87 @@ export async function reconcileZombieScheduleAsks(
       `reconciliation: ticket already ${z.vendorWorkStatus}`,
     )
     if (result.closed.length > 0) closed += 1
+  }
+  return {
+    scanned: zombies.length,
+    closed,
+    dryRun: opts?.dryRun === true,
+    samples: samples.slice(0, 20),
+  }
+}
+
+/** Open tickets still carrying the soft-probe clock after a vendor is already bound. */
+export async function findZombieVendorAvailabilityAsks(
+  supabase: SupabaseClient,
+  opts?: { limit?: number },
+): Promise<
+  Array<{
+    ticketId: string
+    kind: "awaiting_vendor_availability"
+    vendorWorkStatus: string
+    assignedVendorId: string
+  }>
+> {
+  const limit = opts?.limit ?? 100
+  const { data: rows } = await supabase
+    .from("maintenance_requests")
+    .select(
+      "id, vendor_work_status, assigned_vendor_id, awaiting_vendor_availability_at",
+    )
+    .not("awaiting_vendor_availability_at", "is", null)
+    .not("assigned_vendor_id", "is", null)
+    .order("awaiting_vendor_availability_at", { ascending: true })
+    .limit(Math.max(limit * 3, 100))
+
+  const out: Array<{
+    ticketId: string
+    kind: "awaiting_vendor_availability"
+    vendorWorkStatus: string
+    assignedVendorId: string
+  }> = []
+
+  for (const row of rows ?? []) {
+    if (out.length >= limit) break
+    const ticketId = typeof row?.id === "string" ? row.id.trim() : ""
+    const assignedVendorId =
+      typeof row?.assigned_vendor_id === "string"
+        ? row.assigned_vendor_id.trim()
+        : ""
+    if (!ticketId || !assignedVendorId) continue
+    const status = String(row?.vendor_work_status ?? "").toLowerCase()
+    if (status === "completed" || status === "cancelled" || status === "archived") {
+      // Still clear via closeOpenAsks — include them.
+    }
+    out.push({
+      ticketId,
+      kind: "awaiting_vendor_availability",
+      vendorWorkStatus: status || "unknown",
+      assignedVendorId,
+    })
+  }
+  return out
+}
+
+export async function reconcileZombieVendorAvailabilityAsks(
+  supabase: SupabaseClient,
+  opts?: { limit?: number; dryRun?: boolean },
+): Promise<{ scanned: number; closed: number; dryRun: boolean; samples: string[] }> {
+  const zombies = await findZombieVendorAvailabilityAsks(supabase, {
+    limit: opts?.limit ?? 50,
+  })
+  const samples: string[] = []
+  let closed = 0
+  for (const z of zombies) {
+    samples.push(
+      `${z.ticketId.slice(0, 8)}:${z.kind}:${z.vendorWorkStatus}`,
+    )
+    if (opts?.dryRun) continue
+    const result = await closeOpenAsksForTicket(
+      supabase,
+      z.ticketId,
+      `reconciliation: vendor already assigned (${z.vendorWorkStatus})`,
+    )
+    if (result.closed.includes("awaiting_vendor_availability")) closed += 1
   }
   return {
     scanned: zombies.length,

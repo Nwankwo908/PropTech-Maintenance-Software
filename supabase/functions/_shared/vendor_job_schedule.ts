@@ -29,11 +29,29 @@ import {
   readVendorScheduleFsm,
   reduceScheduleFsm,
   SCHEDULE_TTL_MS,
+  type TicketUrgencySnapshot,
   type VendorScheduleFsmState,
   type VendorScheduleStep,
   withVendorScheduleFsm,
 } from "./vendor_schedule_fsm.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+
+async function loadTicketUrgencySnapshot(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<TicketUrgencySnapshot> {
+  const { data } = await supabase
+    .from("maintenance_requests")
+    .select("urgency, severity, due_at, created_at")
+    .eq("id", ticketId)
+    .maybeSingle()
+  return {
+    urgency: typeof data?.urgency === "string" ? data.urgency : null,
+    severity: typeof data?.severity === "string" ? data.severity : null,
+    dueAt: typeof data?.due_at === "string" ? data.due_at : null,
+    createdAt: typeof data?.created_at === "string" ? data.created_at : null,
+  }
+}
 
 export { parseAvailabilityToScheduledAt } from "./vendor_availability_parse.ts"
 export type { VendorScheduleFsmState, VendorScheduleStep }
@@ -179,10 +197,15 @@ export async function setVendorAwaitingAvailability(
   const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
   const prev = readVendorScheduleFsm(intake)
   const at = new Date().toISOString()
+  const urgency = await loadTicketUrgencySnapshot(supabase, params.ticketId)
   const transition = reduceScheduleFsm(prev, {
     type: "JOB_ACCEPTED",
     ticketId: params.ticketId,
     at,
+    urgency: urgency.urgency,
+    severity: urgency.severity,
+    dueAt: urgency.dueAt,
+    createdAt: urgency.createdAt,
   })
   await persistVendorScheduleFsm(supabase, {
     conversationId: params.conversationId,
@@ -234,6 +257,7 @@ export async function beginTenantConfirmForProposedWindow(
       readVendorScheduleFsm(intake) ??
       createIdleScheduleState(params.ticketId)
     const at = new Date().toISOString()
+    const urgency = await loadTicketUrgencySnapshot(supabase, params.ticketId)
     const transition = reduceScheduleFsm(
       { ...prev, ticketId: params.ticketId },
       {
@@ -242,6 +266,10 @@ export async function beginTenantConfirmForProposedWindow(
         windowText,
         scheduledAt: params.scheduledAt ?? null,
         outcome: "resolved",
+        urgency: urgency.urgency,
+        severity: urgency.severity,
+        dueAt: urgency.dueAt,
+        createdAt: urgency.createdAt,
       },
     )
     await persistVendorScheduleFsm(supabase, {
@@ -288,7 +316,7 @@ export async function beginVendorAvailabilityAsk(
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
     .select(
-      "landlord_id, resident_availability_text, scheduled_window_text, scheduled_at, schedule_confirmed_at",
+      "landlord_id, resident_availability_text, scheduled_window_text, scheduled_at, schedule_confirmed_at, urgency, severity, due_at, created_at",
     )
     .eq("id", params.ticketId)
     .maybeSingle()
@@ -296,6 +324,14 @@ export async function beginVendorAvailabilityAsk(
     typeof ticketRow?.landlord_id === "string"
       ? ticketRow.landlord_id.trim()
       : null
+  const ticketUrgency: TicketUrgencySnapshot = {
+    urgency: typeof ticketRow?.urgency === "string" ? ticketRow.urgency : null,
+    severity:
+      typeof ticketRow?.severity === "string" ? ticketRow.severity : null,
+    dueAt: typeof ticketRow?.due_at === "string" ? ticketRow.due_at : null,
+    createdAt:
+      typeof ticketRow?.created_at === "string" ? ticketRow.created_at : null,
+  }
   const residentAvail =
     typeof ticketRow?.resident_availability_text === "string"
       ? ticketRow.resident_availability_text.trim()
@@ -394,6 +430,10 @@ export async function beginVendorAvailabilityAsk(
       type: "JOB_ACCEPTED",
       ticketId: params.ticketId,
       at,
+      urgency: ticketUrgency.urgency,
+      severity: ticketUrgency.severity,
+      dueAt: ticketUrgency.dueAt,
+      createdAt: ticketUrgency.createdAt,
     })
     if (send.ok) {
       transition = {

@@ -5,15 +5,27 @@
  * 1. SLA rematch reopening a choice right after a landlord choice + notify
  * 2. Permanent awaiting_landlord_choice short-circuit with no escalation
  * 3. Silent identical auto_reassign outcome loops
+ *
+ * Landlord-choice / probe dwells scale by ticket urgency (see
+ * urgencyScaledTimeouts). pending_accept_stale stays flat by design —
+ * sla_expired already covers urgent rematch via due_at.
  */
+
+import {
+  landlordChoiceDwellMsForTicket,
+  probeDwellMsForTicket,
+  ROUTINE_LANDLORD_CHOICE_DWELL_MS,
+  ROUTINE_PROBE_DWELL_MS,
+  type TicketUrgencySnapshot,
+} from '../maintenance/urgencyScaledTimeouts.ts'
 
 export const PENDING_ACCEPT_STALE_MS = 48 * 60 * 60 * 1000
 
-/** How long to wait for a landlord YES/1/2 before escalating the stuck flag. */
-export const AWAITING_LANDLORD_CHOICE_DWELL_MS = 48 * 60 * 60 * 1000
+/** Routine landlord YES/1/2 dwell (urgent tickets use emergencyLifeSafety / 1h). */
+export const AWAITING_LANDLORD_CHOICE_DWELL_MS = ROUTINE_LANDLORD_CHOICE_DWELL_MS
 
-/** How long an availability probe may run before SLA rematch escalates it. */
-export const AWAITING_VENDOR_AVAILABILITY_PROBE_DWELL_MS = 48 * 60 * 60 * 1000
+/** Routine probe dwell (urgent tickets use emergencyWater / 2h). */
+export const AWAITING_VENDOR_AVAILABILITY_PROBE_DWELL_MS = ROUTINE_PROBE_DWELL_MS
 
 /**
  * Absolute cool-down after a landlord choice is resolved before automation may
@@ -308,17 +320,41 @@ export function decideAutoReassignGuard(input: {
   lastOutcomeSignature?: string | null
   sameOutcomeCount?: number | null
   sameOutcomeSince?: string | null
+  /** Explicit override; otherwise derived from urgency / due_at / created_at. */
   dwellMs?: number
+  /** Explicit override; otherwise derived from urgency / due_at / created_at. */
   probeDwellMs?: number
   cooldownMs?: number
+  urgency?: string | null
+  severity?: string | null
+  createdAt?: string | null
 }): AutoReassignGuardDecision {
+  const urgencySnap: TicketUrgencySnapshot = {
+    urgency: input.urgency,
+    severity: input.severity,
+    dueAt: input.dueAt,
+    createdAt: input.createdAt,
+  }
+  const dwellMs =
+    input.dwellMs ??
+    landlordChoiceDwellMsForTicket(
+      urgencySnap,
+      AWAITING_LANDLORD_CHOICE_DWELL_MS,
+    )
+  const probeDwellMs =
+    input.probeDwellMs ??
+    probeDwellMsForTicket(
+      urgencySnap,
+      AWAITING_VENDOR_AVAILABILITY_PROBE_DWELL_MS,
+    )
+
   if (input.awaitingVendorAvailabilityProbe) {
     if (
       awaitingVendorAvailabilityProbeDwellExceeded({
         nowMs: input.nowMs,
         awaitingVendorAvailabilityProbe: true,
         awaitingVendorAvailabilityAt: input.awaitingVendorAvailabilityAt,
-        dwellMs: input.probeDwellMs,
+        dwellMs: probeDwellMs,
       })
     ) {
       return {
@@ -366,7 +402,7 @@ export function decideAutoReassignGuard(input: {
         nowMs: input.nowMs,
         awaitingLandlordChoice: true,
         awaitingLandlordChoiceAt: input.awaitingLandlordChoiceAt,
-        dwellMs: input.dwellMs,
+        dwellMs,
       })
     ) {
       return {

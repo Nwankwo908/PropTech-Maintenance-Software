@@ -8,8 +8,11 @@ import {
   isStaleInbound,
   normalizeSmsBody,
   reduceScheduleFsm,
+  SCHEDULE_TTL_MS,
+  tenantConfirmTtlMsFromScheduleState,
   wouldLoopOutbound,
 } from "./vendor_schedule_fsm.ts"
+import { URGENCY_SLA_MINUTES } from "../../../shared/maintenance/urgencyPolicy.ts"
 import {
   buildVendorAvailabilityAskSms,
   buildVendorScheduleSoftConfirmSms,
@@ -262,4 +265,77 @@ Deno.test("stale schedule ticket differs from current job", () => {
   })
   assertEquals(started.state.ticketId, "old-ticket")
   assertEquals(started.state.ticketId === "new-ticket", false)
+})
+
+Deno.test("FSM: urgent tenant-confirm expires at 60–120m; availability ask stays 24h", () => {
+  const at = "2026-07-20T20:00:00.000Z"
+  const lifeSafety = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t-urgent",
+    at,
+    urgency: "emergency",
+    severity: "critical",
+  })
+  // Vendor earliest-availability ask must not compress.
+  assertEquals(lifeSafety.state.step, "awaiting_availability")
+  assertEquals(
+    new Date(lifeSafety.state.expiresAt).getTime() - Date.parse(at),
+    SCHEDULE_TTL_MS,
+  )
+
+  const proposed = reduceScheduleFsm(lifeSafety.state, {
+    type: "AVAILABILITY_TEXT",
+    at: "2026-07-20T20:05:00.000Z",
+    windowText: "Tonight 8pm",
+    scheduledAt: "2026-07-21T00:00:00.000Z",
+    outcome: "resolved",
+  })
+  assertEquals(proposed.state.step, "awaiting_tenant_confirmation")
+  const lifeSafetyTtl =
+    new Date(proposed.state.expiresAt).getTime() -
+    Date.parse("2026-07-20T20:05:00.000Z")
+  assertEquals(
+    lifeSafetyTtl,
+    URGENCY_SLA_MINUTES.emergencyLifeSafety * 60 * 1000,
+  )
+  assertEquals(
+    tenantConfirmTtlMsFromScheduleState(lifeSafety.state),
+    URGENCY_SLA_MINUTES.emergencyLifeSafety * 60 * 1000,
+  )
+
+  const water = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t-water",
+    at,
+    urgency: "emergency",
+  })
+  const waterProposed = reduceScheduleFsm(water.state, {
+    type: "AVAILABILITY_TEXT",
+    at: "2026-07-20T20:05:00.000Z",
+    windowText: "Tonight 9pm",
+    scheduledAt: "2026-07-21T01:00:00.000Z",
+    outcome: "resolved",
+  })
+  const waterTtl =
+    new Date(waterProposed.state.expiresAt).getTime() -
+    Date.parse("2026-07-20T20:05:00.000Z")
+  assertEquals(waterTtl, URGENCY_SLA_MINUTES.emergencyWater * 60 * 1000)
+
+  const routine = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t-routine",
+    at,
+    urgency: "normal",
+  })
+  const routineProposed = reduceScheduleFsm(routine.state, {
+    type: "AVAILABILITY_TEXT",
+    at: "2026-07-20T20:05:00.000Z",
+    windowText: "Wed 2pm",
+    scheduledAt: "2026-07-22T18:00:00.000Z",
+    outcome: "resolved",
+  })
+  const routineTtl =
+    new Date(routineProposed.state.expiresAt).getTime() -
+    Date.parse("2026-07-20T20:05:00.000Z")
+  assertEquals(routineTtl, SCHEDULE_TTL_MS)
 })

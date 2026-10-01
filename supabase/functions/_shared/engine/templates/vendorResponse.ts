@@ -42,6 +42,7 @@ import {
   persistVendorScheduleFsm,
   readVendorScheduleFsm,
   reduceScheduleFsm,
+  withScheduleTicketUrgency,
   type ScheduleFsmEffect,
   type VendorScheduleFsmState,
   wouldLoopOutbound,
@@ -469,13 +470,31 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
 
     const { data: ticketStatusRow } = await supabase
       .from("maintenance_requests")
-      .select("vendor_work_status, landlord_id")
+      .select("vendor_work_status, landlord_id, urgency, severity, due_at, created_at")
       .eq("id", ticketId)
       .maybeSingle()
     const ticketWorkStatus =
       typeof ticketStatusRow?.vendor_work_status === "string"
         ? ticketStatusRow.vendor_work_status
         : ""
+    const ticketUrgencySnap = {
+      urgency:
+        typeof ticketStatusRow?.urgency === "string"
+          ? ticketStatusRow.urgency
+          : null,
+      severity:
+        typeof ticketStatusRow?.severity === "string"
+          ? ticketStatusRow.severity
+          : null,
+      dueAt:
+        typeof ticketStatusRow?.due_at === "string"
+          ? ticketStatusRow.due_at
+          : null,
+      createdAt:
+        typeof ticketStatusRow?.created_at === "string"
+          ? ticketStatusRow.created_at
+          : null,
+    }
 
     // Ticket already past scheduling — never start/continue a resident confirm ask.
     if (
@@ -540,6 +559,8 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
     // Stale FSM from a prior job on this SMS thread must not steal YES / times
     // from a new assignment (skips accept + "Earliest availability?").
     let schedulePrev = prev
+      ? withScheduleTicketUrgency(prev, ticketUrgencySnap)
+      : prev
     let inScheduleFlow = Boolean(prevInScheduleSteps && !staleSchedule && prev)
 
     // After WO clarification, re-apply the original message (e.g. "tomorrow at 10")
@@ -550,7 +571,10 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
       !inScheduleFlow &&
       stripWorkOrderRefFromSms(effectiveBody).length >= 3
     ) {
-      schedulePrev = createIdleScheduleState(ticketId)
+      schedulePrev = withScheduleTicketUrgency(
+        createIdleScheduleState(ticketId),
+        ticketUrgencySnap,
+      )
       inScheduleFlow = true
     }
 

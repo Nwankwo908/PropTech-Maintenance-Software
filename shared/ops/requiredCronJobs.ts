@@ -24,7 +24,7 @@ export const REQUIRED_CRON_JOBS: readonly RequiredCronJob[] = [
     edgeFunction: "run-ops-sms-crons",
     schedule: "10 * * * *",
     description:
-      "Hourly tenant activation silence/delivery retries and rent reminder cadence",
+      "Hourly tenant activation silence/delivery retries, mid-intake silence nudge/resolve, and rent reminder cadence",
   },
   {
     jobname: "ulo-vendor-delayed-auto-reassign",
@@ -51,6 +51,13 @@ export const REQUIRED_CRON_JOBS: readonly RequiredCronJob[] = [
     edgeFunction: "check-schedule-fsm-ttl",
     schedule: "*/15 * * * *",
     description: "Every 15 minutes — expire stalled vendor schedule FSM threads",
+  },
+  {
+    jobname: "ulo-maintenance-stall-follow-up",
+    edgeFunction: "check-maintenance-stall-follow-up",
+    schedule: "35 * * * *",
+    description:
+      "Hourly stall follow-up for unfinished maintenance (vendor/resident; not rent)",
   },
   {
     jobname: "ulo-vendor-compliance-expiry",
