@@ -296,7 +296,13 @@ function formatDueAtDisplay(iso: string | null | undefined): string | undefined 
   if (iso == null || String(iso).trim() === '') return undefined
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return undefined
-  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return d.toLocaleString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function formatDateTimeLocalInputValue(

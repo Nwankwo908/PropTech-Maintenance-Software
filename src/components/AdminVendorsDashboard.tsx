@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal, type VendorManagementRow } from '@/components/VendorFormModal'
@@ -144,7 +145,10 @@ function formatAvgResponse(minutes: number | null): string {
   return `${Math.round(hours / 24)} d`
 }
 
-function SourceInfoIcon() {
+const VENDOR_RATING_INFO =
+  'Based on resident reviews, completed jobs, response time, and how often work needs to be redone. One rating doesn’t tell the whole story.'
+
+function ColumnInfoIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5" aria-hidden>
       <circle cx="12" cy="12" r="9" />
@@ -153,25 +157,93 @@ function SourceInfoIcon() {
   )
 }
 
-function SourceInfoTip() {
+function ColumnInfoTip({
+  label,
+  copy,
+  maxWidth = 280,
+}: {
+  label: string
+  copy: string
+  maxWidth?: number
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+
+  const updatePosition = useCallback(() => {
+    const el = triggerRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const width = Math.min(maxWidth, window.innerWidth - 24)
+    let left = rect.left
+    if (left + width > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - width - 12)
+    }
+    setCoords({ top: rect.bottom + 6, left })
+  }, [maxWidth])
+
+  useEffect(() => {
+    if (!open) return
+    updatePosition()
+    const onReposition = () => updatePosition()
+    window.addEventListener('scroll', onReposition, true)
+    window.addEventListener('resize', onReposition)
+    return () => {
+      window.removeEventListener('scroll', onReposition, true)
+      window.removeEventListener('resize', onReposition)
+    }
+  }, [open, updatePosition])
+
   return (
-    <span className="group/source-info relative inline-flex shrink-0">
+    <span
+      className="relative inline-flex shrink-0"
+      onMouseEnter={() => {
+        updatePosition()
+        setOpen(true)
+      }}
+      onMouseLeave={() => setOpen(false)}
+    >
       <button
+        ref={triggerRef}
         type="button"
         tabIndex={0}
         className="inline-flex rounded-full p-0.5 text-[#9ca3af] outline-none hover:text-[#6a7282] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
-        aria-label={VENDOR_SOURCE_INFO}
+        aria-label={label}
+        aria-expanded={open}
+        onFocus={() => {
+          updatePosition()
+          setOpen(true)
+        }}
+        onBlur={() => setOpen(false)}
       >
-        <SourceInfoIcon />
+        <ColumnInfoIcon />
       </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute left-0 top-full z-30 mt-1.5 w-[min(240px,calc(100vw-3rem))] rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-left text-[12px] font-medium leading-4 text-[#475569] opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/source-info:opacity-100 group-focus-within/source-info:opacity-100"
-      >
-        {VENDOR_SOURCE_INFO}
-      </span>
+      {open && coords
+        ? createPortal(
+            <span
+              role="tooltip"
+              className="pointer-events-none fixed z-[80] rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-left text-[12px] font-medium leading-4 text-[#475569] shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+              style={{
+                top: coords.top,
+                left: coords.left,
+                width: `min(${maxWidth}px, calc(100vw - 1.5rem))`,
+              }}
+            >
+              {copy}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   )
+}
+
+function SourceInfoTip() {
+  return <ColumnInfoTip label={VENDOR_SOURCE_INFO} copy={VENDOR_SOURCE_INFO} maxWidth={240} />
+}
+
+function RatingInfoTip() {
+  return <ColumnInfoTip label={VENDOR_RATING_INFO} copy={VENDOR_RATING_INFO} maxWidth={280} />
 }
 
 function StarIcon() {
@@ -1021,7 +1093,12 @@ export function AdminVendorsDashboard() {
                     <SourceInfoTip />
                   </span>
                 </th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rating</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">
+                  <span className="inline-flex items-center gap-1">
+                    Rating
+                    <RatingInfoTip />
+                  </span>
+                </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Avg. response</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
