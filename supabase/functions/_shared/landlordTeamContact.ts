@@ -1,12 +1,16 @@
 /**
  * Team member (backup contact) stored on onboarding / organization settings.
  *
- * Client / Vite source of truth (`@shared/landlordTeamContact`). Edge Functions
- * use `supabase/functions/_shared/landlordTeamContact.ts` — keep both in sync.
+ * Edge-local copy of `shared/landlordTeamContact.ts`. The Supabase functions
+ * bundler builds a VFS rooted at the parent of this repo (`…/Documents`) when
+ * any import escapes `supabase/functions/`; for some entry graphs that VFS
+ * then fails to load `shared/landlordTeamContact.ts` ("Module not found") even
+ * though the file exists and `deno info` resolves it. Keep this file in sync
+ * with `shared/landlordTeamContact.ts`.
  */
 
 function asTrimmed(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
+  return typeof value === "string" ? value.trim() : ""
 }
 
 export type LandlordTeamMemberContact = {
@@ -20,12 +24,12 @@ export function teamMemberContactFromOnboarding(onboarding: {
   account_settings?: unknown
 } | null | undefined): LandlordTeamMemberContact {
   const draft =
-    onboarding?.draft_state && typeof onboarding.draft_state === 'object'
+    onboarding?.draft_state && typeof onboarding.draft_state === "object"
       ? (onboarding.draft_state as Record<string, unknown>)
       : {}
   const account = (draft.accountSetup ?? {}) as Record<string, unknown>
   const settings =
-    onboarding?.account_settings && typeof onboarding.account_settings === 'object'
+    onboarding?.account_settings && typeof onboarding.account_settings === "object"
       ? (onboarding.account_settings as Record<string, unknown>)
       : {}
   const org = {

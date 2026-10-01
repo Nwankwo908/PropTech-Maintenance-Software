@@ -6,7 +6,7 @@
  *   compliance / performance / incident staff alerts.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { teamMemberContactFromOnboarding } from "../../../shared/landlordTeamContact.ts"
+import { teamMemberContactFromOnboarding } from "./landlordTeamContact.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 import {
   filterVendorPhonesFromOpsRecipients,

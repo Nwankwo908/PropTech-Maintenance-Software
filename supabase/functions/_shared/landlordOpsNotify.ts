@@ -6,7 +6,7 @@
  * through `sendLandlordOpsEmail` or `resolveLandlordOpsEmails`.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { teamMemberContactFromOnboarding } from "../../../shared/landlordTeamContact.ts"
+import { teamMemberContactFromOnboarding } from "./landlordTeamContact.ts"
 import { sendResendEmail } from "./delivery.ts"
 
 export function normalizeOpsEmail(raw: string): string | null {
