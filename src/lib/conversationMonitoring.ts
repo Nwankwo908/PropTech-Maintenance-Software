@@ -308,6 +308,24 @@ export function formatResidentFeedbackPreview(rating: number): string {
   return label ? `Tenant rated ${rating}/5 — ${label}` : `Tenant rated ${rating}/5`
 }
 
+/**
+ * Resident post-repair ratings belong on the resident SMS thread only.
+ * Vendor / landlord threads often share the same ticket id and would otherwise
+ * incorrectly show "logged repair rating → N/5" even though the tenant replied
+ * on a different conversation.
+ */
+export function conversationShowsResidentRepairRating(
+  conversationType: string | null | undefined,
+): boolean {
+  const type = (conversationType ?? '').trim().toLowerCase()
+  if (!type) return true
+  if (type === 'vendor_alert') return false
+  if (type.startsWith('vendor')) return false
+  if (type === 'landlord_update') return false
+  if (type === 'ai_copilot') return false
+  return true
+}
+
 /** Vendor verification invite SMS/email (not a maintenance work-order thread). */
 export function isVendorOnboardingInvite(text: string): boolean {
   return (
@@ -370,11 +388,17 @@ function deriveRisk(ctx: ConversationContext): { level: MonitoringRiskLevel | nu
     return { level: 'low', label: 'AUTO-HANDLED' }
   }
 
-  if (ctx.residentFeedbackRating != null) {
+  if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
+    ctx.residentFeedbackRating != null
+  ) {
     return { level: 'low', label: 'RATED' }
   }
 
-  if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combinedText)) {
+  if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
+    (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combinedText))
+  ) {
     return { level: 'low', label: 'AWAITING RATING' }
   }
 
@@ -444,13 +468,19 @@ function buildTitle(ctx: ConversationContext): string {
     return location ? `Rent confirmation · ${location}` : 'Rent confirmation'
   }
 
-  if (ctx.residentFeedbackRating != null) {
+  if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
+    ctx.residentFeedbackRating != null
+  ) {
     return location
       ? `Repair rating · ${location}`
       : `Repair rating · ${ctx.residentFeedbackRating}/5`
   }
 
-  if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combinedText)) {
+  if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
+    (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combinedText))
+  ) {
     return location ? `Awaiting rating · ${location}` : 'Awaiting repair rating'
   }
 
@@ -572,11 +602,19 @@ function buildSummary(ctx: ConversationContext): string {
   const tenant = ctx.residentName || 'the resident'
   const place = buildingShortName(ctx.building) || 'this property'
 
-  if (ctx.residentFeedbackRating != null) {
+  if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
+    ctx.residentFeedbackRating != null
+  ) {
     return `${formatResidentFeedbackPreview(ctx.residentFeedbackRating)}. Ulo logged the score for vendor quality — no further action needed.`
   }
 
-  if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combined) || isResidentFeedbackAskBody(latest)) {
+  if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
+    (ctx.awaitingResidentFeedback ||
+      isResidentFeedbackAskBody(combined) ||
+      isResidentFeedbackAskBody(latest))
+  ) {
     return `Ulo asked ${tenant} to rate their repair at ${place} (1–5). Waiting for their reply — no landlord action required.`
   }
 
@@ -790,13 +828,18 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
       media: message.media.length > 0 ? message.media : undefined,
     })
 
-    if (inboundRating != null) {
+    const showResidentRating = conversationShowsResidentRepairRating(
+      ctx.conversationType,
+    )
+
+    if (inboundRating != null && showResidentRating) {
       items.push({
         type: 'tool_action',
         label: `logged repair rating → ${inboundRating}/5`,
         timestampMs: message.createdAtMs + 1,
       })
     } else if (
+      showResidentRating &&
       ctx.residentFeedbackRating != null &&
       inbound &&
       parseResidentFeedbackRatingBody(message.body) === ctx.residentFeedbackRating &&
@@ -828,8 +871,10 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
     }
   }
 
-  // If rating is recorded but the inbound digit isn't in the thread, still surface it.
+  // If rating is recorded but the inbound digit isn't in this resident thread,
+  // still surface it — never on vendor/landlord threads for the same ticket.
   if (
+    conversationShowsResidentRepairRating(ctx.conversationType) &&
     ctx.residentFeedbackRating != null &&
     !items.some(
       (i) =>

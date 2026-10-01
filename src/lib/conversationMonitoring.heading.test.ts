@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyMonitoringHeadingName,
   buildAdminMonitoringSummary,
+  conversationShowsResidentRepairRating,
   looksLikeResidentConfirmedResolved,
   resolveMonitoringRailHeading,
   type ConversationMonitoringDetail,
@@ -142,5 +143,40 @@ describe('buildAdminMonitoringSummary', () => {
         'Hi and thank you I was trying to see if an exterminator can come out to spray the property',
       ),
     ).toBe(false)
+  })
+})
+
+describe('conversationShowsResidentRepairRating', () => {
+  it('is true for resident intake threads', () => {
+    expect(conversationShowsResidentRepairRating('resident_intake')).toBe(true)
+  })
+
+  it('is false for vendor and landlord threads that share the ticket', () => {
+    expect(conversationShowsResidentRepairRating('vendor_alert')).toBe(false)
+    expect(conversationShowsResidentRepairRating('vendor_setup')).toBe(false)
+    expect(conversationShowsResidentRepairRating('landlord_update')).toBe(false)
+  })
+})
+
+describe('resident repair rating summary scope', () => {
+  it('mentions the logged rating on the resident thread', () => {
+    const summary = buildAdminMonitoringSummary({
+      conversationType: 'resident_intake',
+      residentName: 'Jordan Lee',
+      residentFeedbackRating: 5,
+      messages: [{ direction: 'inbound', body: '5' }],
+    })
+    expect(summary).toMatch(/Tenant rated 5\/5/i)
+  })
+
+  it('does not describe a repair rating on the vendor thread for the same ticket', () => {
+    const summary = buildAdminMonitoringSummary({
+      conversationType: 'vendor_alert',
+      vendorName: 'Mecus Handman',
+      residentFeedbackRating: 5,
+      messages: [{ direction: 'outbound', body: 'Job update for WO-ABCD' }],
+    })
+    expect(summary).not.toMatch(/Tenant rated 5\/5/i)
+    expect(summary).not.toMatch(/logged the score/i)
   })
 })
