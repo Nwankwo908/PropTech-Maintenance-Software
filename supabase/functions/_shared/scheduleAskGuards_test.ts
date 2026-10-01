@@ -4,8 +4,13 @@ import {
   ASK_CLOSING_WORK_STATUSES,
   closeOpenAsksForTicket,
   findZombieScheduleAsks,
+  findZombieVendorAvailabilityAsks,
   reconcileZombieScheduleAsks,
+  reconcileZombieVendorAvailabilityAsks,
 } from "./closeOpenAsksForTicket.ts"
+
+const AWAITING_VENDOR_AVAILABILITY_PROBE =
+  "Awaiting vendor availability before landlord choice"
 import {
   decideShouldSendAutomatedMessage,
   isReferencedWindowTextPast,
@@ -43,6 +48,8 @@ type Ticket = {
   landlord_id: string
   vendor_work_status: string
   vendor_notify_error?: string | null
+  assigned_vendor_id?: string | null
+  awaiting_vendor_availability_at?: string | null
 }
 
 function mockSupabase(state: {
@@ -67,7 +74,10 @@ function mockSupabase(state: {
       inFilters.push({ col, vals })
       return chain()
     }
-    api.not = () => chain()
+    api.not = (col: string, op: string, _val?: unknown) => {
+      if (op === "is") filters.push({ col, val: { __not_null: true } })
+      return chain()
+    }
     api.or = (expr: string) => {
       orFilter = expr
       return chain()
@@ -87,6 +97,14 @@ function mockSupabase(state: {
     }
     api.maybeSingle = async () => {
       if (table === "maintenance_requests") {
+        if (pendingUpdate) {
+          const id = String(filters.find((f) => f.col === "id")?.val ?? "")
+          const row = state.tickets.find((t) => t.id === id)
+          if (row) Object.assign(row, pendingUpdate)
+          const applied = pendingUpdate
+          pendingUpdate = null
+          return { data: row ? { ...row, ...applied } : null, error: null }
+        }
         const id = String(filters.find((f) => f.col === "id")?.val ?? "")
         const row = state.tickets.find((t) => t.id === id)
         return { data: row ?? null, error: null }
@@ -121,10 +139,33 @@ function mockSupabase(state: {
           resolve({ data: null, error: null })
           return
         }
-        if (table === "maintenance_requests") {
+        if (pendingUpdate && table === "maintenance_requests") {
           const id = String(filters.find((f) => f.col === "id")?.val ?? "")
           const row = state.tickets.find((t) => t.id === id)
-          resolve({ data: row ?? null, error: null })
+          if (row) Object.assign(row, pendingUpdate)
+          pendingUpdate = null
+          resolve({ data: null, error: null })
+          return
+        }
+        if (table === "maintenance_requests") {
+          let rows = [...state.tickets]
+          for (const f of filters) {
+            if (
+              f.val &&
+              typeof f.val === "object" &&
+              (f.val as { __not_null?: boolean }).__not_null
+            ) {
+              rows = rows.filter((t) => {
+                const v = (t as Record<string, unknown>)[f.col]
+                return v != null && v !== ""
+              })
+              continue
+            }
+            if (f.col === "id") {
+              rows = rows.filter((t) => t.id === f.val)
+            }
+          }
+          resolve({ data: rows, error: null })
           return
         }
         if (table === "sms_conversations") {
@@ -320,6 +361,108 @@ Deno.test("reconciliation sweep closes B347-style zombie and is idempotent", asy
 
   const second = await reconcileZombieScheduleAsks(supabase, { limit: 10 })
   assertEquals(second.closed, 0)
+})
+
+Deno.test("availability-probe sweep clears flag only on assigned stale tickets", async () => {
+  const staleIds = [
+    "c2ffb48d-5e86-48ef-97be-adf496c83fb3",
+    "5e0a2017-0b4a-4016-9e1a-c0a8cbffadc3",
+  ]
+  const liveProbeOnly = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  const state = {
+    tickets: [
+      {
+        id: staleIds[0]!,
+        landlord_id: "ll-1",
+        vendor_work_status: "pending_accept",
+        assigned_vendor_id: "vendor-michael",
+        awaiting_vendor_availability_at: "2026-09-28T00:38:43.749Z",
+        vendor_notify_error: null,
+      },
+      {
+        id: staleIds[1]!,
+        landlord_id: "ll-1",
+        vendor_work_status: "pending_accept",
+        assigned_vendor_id: "vendor-michael",
+        awaiting_vendor_availability_at: "2026-09-29T13:21:43.000Z",
+        vendor_notify_error: AWAITING_VENDOR_AVAILABILITY_PROBE,
+      },
+      {
+        id: liveProbeOnly,
+        landlord_id: "ll-1",
+        vendor_work_status: "unassigned",
+        assigned_vendor_id: null,
+        awaiting_vendor_availability_at: "2026-09-30T12:00:00.000Z",
+        vendor_notify_error: AWAITING_VENDOR_AVAILABILITY_PROBE,
+      },
+    ],
+    convos: [] as Convo[],
+  }
+  const supabase = mockSupabase(state)
+
+  const zombies = await findZombieVendorAvailabilityAsks(supabase, { limit: 20 })
+  assertEquals(zombies.length, 2)
+  assert(zombies.every((z) => staleIds.includes(z.ticketId)))
+
+  const beforeStatuses = state.tickets.map((t) => ({
+    id: t.id,
+    status: t.vendor_work_status,
+    assigned: t.assigned_vendor_id,
+  }))
+
+  const first = await reconcileZombieVendorAvailabilityAsks(supabase, {
+    limit: 20,
+  })
+  assertEquals(first.closed, 2)
+  for (const id of staleIds) {
+    const row = state.tickets.find((t) => t.id === id)!
+    assertEquals(row.awaiting_vendor_availability_at, null)
+    assertEquals(row.vendor_notify_error, null)
+  }
+  // Live unassigned probe untouched
+  const live = state.tickets.find((t) => t.id === liveProbeOnly)!
+  assertEquals(live.awaiting_vendor_availability_at, "2026-09-30T12:00:00.000Z")
+  assertEquals(live.vendor_notify_error, AWAITING_VENDOR_AVAILABILITY_PROBE)
+
+  // Flag cleanup only — status / assignment unchanged
+  assertEquals(
+    state.tickets.map((t) => ({
+      id: t.id,
+      status: t.vendor_work_status,
+      assigned: t.assigned_vendor_id,
+    })),
+    beforeStatuses,
+  )
+
+  const second = await reconcileZombieVendorAvailabilityAsks(supabase, {
+    limit: 20,
+  })
+  assertEquals(second.closed, 0)
+})
+
+Deno.test("closeOpenAsksForTicket clears awaiting_vendor_availability_at when assigned", async () => {
+  const ticketId = "new-assign-0001-0000-0000-000000000001"
+  const state = {
+    tickets: [{
+      id: ticketId,
+      landlord_id: "ll-1",
+      vendor_work_status: "pending_accept",
+      assigned_vendor_id: "vendor-1",
+      awaiting_vendor_availability_at: "2026-09-30T15:00:00.000Z",
+      vendor_notify_error: AWAITING_VENDOR_AVAILABILITY_PROBE,
+    }],
+    convos: [] as Convo[],
+  }
+  const result = await closeOpenAsksForTicket(
+    mockSupabase(state),
+    ticketId,
+    "assigned_vendor_id set (test)",
+  )
+  assert(result.closed.includes("awaiting_vendor_availability"))
+  assertEquals(state.tickets[0]!.awaiting_vendor_availability_at, null)
+  assertEquals(state.tickets[0]!.vendor_notify_error, null)
+  assertEquals(state.tickets[0]!.vendor_work_status, "pending_accept")
+  assertEquals(state.tickets[0]!.assigned_vendor_id, "vendor-1")
 })
 
 Deno.test("shouldSendAutomatedMessage suppresses advanced ticket + past window + cooldown", () => {

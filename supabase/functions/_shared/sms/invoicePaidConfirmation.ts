@@ -193,7 +193,7 @@ export function buildInvoicePaidMarkedSms(input: {
 export function buildAmbiguousYesPendingAsksSms(): string {
   return [
     "You have more than one yes/no question waiting.",
-    "Reply with what you mean — for example which vendor to send, or which invoice you paid — so we don't guess.",
+    "Reply with what you mean — for example which vendor to send, which invoice you paid, or which rent payment to confirm — so we don't guess.",
   ].join("\n")
 }
 

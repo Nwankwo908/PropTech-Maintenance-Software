@@ -14,14 +14,16 @@ import {
 export type StartMaintenanceRequestRunParams = {
   landlordId: string
   ticketId: string
-  residentId: string
+  /** Owner-responsibility / HQS tickets may have no resident. */
+  residentId?: string | null
   unitId?: string | null
+  propertyId?: string | null
   triggerType: WorkflowTriggerType
   dueAt: string
   issueCategory: string
   severity: string
   unitLabel?: string | null
-  source: "web_form" | "sms_intake"
+  source: "web_form" | "sms_intake" | "hqs_letter"
   intakeRunId?: string | null
   conversationId?: string | null
   vendorAssigned?: boolean
@@ -69,6 +71,8 @@ export async function startMaintenanceRequestRun(
 
   const currentStep = params.vendorAssigned ? "pending_accept" : "unassigned"
 
+  const residentId = params.residentId?.trim() || null
+
   const run = await createWorkflowRun(supabase, {
     templateId: "maintenance_request",
     landlordId: params.landlordId,
@@ -76,8 +80,9 @@ export async function startMaintenanceRequestRun(
     currentStep,
     entityType: "maintenance_request",
     entityId: params.ticketId,
-    residentId: params.residentId,
+    residentId,
     unitId: params.unitId ?? null,
+    propertyId: params.propertyId ?? null,
     metadata: {
       due_at: params.dueAt,
       issue_category: params.issueCategory,
@@ -104,15 +109,20 @@ export async function startMaintenanceRequestRun(
     },
   })
 
+  const submittedMessage =
+    params.source === "sms_intake"
+      ? "Ticket created from SMS intake"
+      : params.source === "hqs_letter"
+      ? "Ticket created from inspection letter"
+      : "Ticket submitted from web form"
+
   await logPipelineStageEvent(supabase, {
     runId: run.id,
     stage: "act",
     step: "submitted",
-    actorType: "resident",
-    actorId: params.residentId,
-    message: params.source === "sms_intake"
-      ? "Ticket created from SMS intake"
-      : "Ticket submitted from web form",
+    actorType: residentId ? "resident" : "system",
+    actorId: residentId,
+    message: submittedMessage,
     metadata: {
       maintenance_request_id: params.ticketId,
     },

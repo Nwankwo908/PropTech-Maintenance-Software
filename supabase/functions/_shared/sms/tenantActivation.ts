@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { gateResidentAutomatedReminder } from "../gateResidentAutomatedReminder.ts"
 import { isLimitedAlphaLandlord } from "../../../../shared/landlordCapabilities.ts"
 import { resolveOutboundLandlordSmsLine } from "./landlordSmsOnboarding.ts"
 import {
@@ -488,6 +489,21 @@ export async function sendTenantActivation(
           tenantName: row.full_name,
           companyName: params.companyName,
         })
+
+      // Automated silence nudges / delivery retries honor quiet hours.
+      // Manual Start onboarding / Resend is landlord-initiated and sends now.
+      if (params.automaticNudge || params.automaticRetry) {
+        const gate = await gateResidentAutomatedReminder(supabase, {
+          landlordId,
+          residentId: row.id,
+          building: typeof row.building === "string" ? row.building : null,
+          messageType: "tenant_activation_nudge",
+          recipientPhone: phone,
+        })
+        if (gate.decision.action !== "send") {
+          continue
+        }
+      }
 
       const sent = await sendInboundAutoReply(supabase, {
         conversationId,

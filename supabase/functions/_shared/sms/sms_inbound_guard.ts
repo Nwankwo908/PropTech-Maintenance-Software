@@ -10,7 +10,11 @@ import {
 /** Collapse rapid successive texts on the same thread. */
 export const INBOUND_DEBOUNCE_MS = 2_500
 /** How far back we look for duplicate / loop outbound bodies. */
-export const OUTBOUND_LOOP_LOOKBACK_MS = 15 * 60 * 1000
+export const OUTBOUND_LOOP_LOOKBACK_MS = 60 * 60 * 1000
+/**
+ * Trip after this many identical recent outbounds already exist.
+ * 1 → if one matching body was already sent, suppress the next (2nd) send.
+ */
 export const OUTBOUND_LOOP_MAX_SAME = 1
 
 export type SaveInboundResult = {
@@ -84,6 +88,41 @@ export async function decideInboundDebounce(
   return { action: "process" }
 }
 
+/** Pure: how many recent outbound bodies match the candidate (normalized). */
+export function countIdenticalRecentOutbounds(
+  recentOutboundBodies: readonly string[],
+  candidateBody: string,
+): number {
+  const norm = normalizeSmsBody(candidateBody)
+  if (!norm) return 0
+  let hits = 0
+  for (const body of recentOutboundBodies) {
+    if (typeof body !== "string") continue
+    if (normalizeSmsBody(body) === norm) hits += 1
+  }
+  return hits
+}
+
+/**
+ * Pure loop gate for tests and call sites.
+ * Trips when identical body was already sent `maxSame` times in the window
+ * (default: one prior send → suppress the second).
+ */
+export function shouldSuppressIdenticalOutbound(params: {
+  recentOutboundBodies: readonly string[]
+  candidateBody: string
+  maxSame?: number
+}): { trip: boolean; reason?: string; hits: number } {
+  const body = params.candidateBody.trim()
+  if (!body) return { trip: true, reason: "empty", hits: 0 }
+  const maxSame = params.maxSame ?? OUTBOUND_LOOP_MAX_SAME
+  const hits = countIdenticalRecentOutbounds(params.recentOutboundBodies, body)
+  if (hits >= maxSame) {
+    return { trip: true, reason: "identical_reply_loop", hits }
+  }
+  return { trip: false, hits }
+}
+
 /**
  * Circuit breaker: suppress outbound if the same normalized body was
  * recently *sent* on this conversation (sms_messages).
@@ -102,14 +141,13 @@ export async function shouldTripOutboundCircuit(
     lookbackMs?: number
     maxSame?: number
   },
-): Promise<{ trip: boolean; reason?: string }> {
+): Promise<{ trip: boolean; reason?: string; hits?: number }> {
   const body = params.body.trim()
-  if (!body) return { trip: true, reason: "empty" }
+  if (!body) return { trip: true, reason: "empty", hits: 0 }
 
   const maxSame = params.maxSame ?? OUTBOUND_LOOP_MAX_SAME
   const lookbackMs = params.lookbackMs ?? OUTBOUND_LOOP_LOOKBACK_MS
   const since = new Date(Date.now() - lookbackMs).toISOString()
-  const norm = normalizeSmsBody(body)
 
   const { data: rows } = await supabase
     .from("sms_messages")
@@ -120,15 +158,14 @@ export async function shouldTripOutboundCircuit(
     .order("created_at", { ascending: false })
     .limit(20)
 
-  let hits = 0
-  for (const row of rows ?? []) {
-    if (typeof row.body !== "string") continue
-    if (normalizeSmsBody(row.body) === norm) hits += 1
-    if (hits >= maxSame) {
-      return { trip: true, reason: "db_recent_outbound" }
-    }
-  }
-  return { trip: false }
+  const recent = (rows ?? [])
+    .map((row) => (typeof row.body === "string" ? row.body : ""))
+    .filter(Boolean)
+  return shouldSuppressIdenticalOutbound({
+    recentOutboundBodies: recent,
+    candidateBody: body,
+    maxSame,
+  })
 }
 
 /** Extract best-effort inbound timestamp from provider payload. */
