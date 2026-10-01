@@ -536,7 +536,12 @@ export function WorkflowPipelineDetailPanel({
                 <h2 id={titleId} className="mt-3 text-[24px] font-semibold leading-8 tracking-[-0.3px] text-[#0a0a0a]">
                   {detail.title}
                 </h2>
-                <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                {detail.locationLine ? (
+                  <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                    {detail.locationLine}
+                  </p>
+                ) : null}
+                <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">
                   {detail.createdLine}
                 </p>
               </>
@@ -668,7 +673,12 @@ export function WorkflowPipelineDetailPanel({
 
               <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
                 <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Overview</h3>
-                <p className="mt-3 text-[14px] leading-6 text-[#364153]">{detail.description}</p>
+                <p className="mt-3 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
+                  {detail.description}
+                </p>
+                {detail.statusContext ? (
+                  <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">{detail.statusContext}</p>
+                ) : null}
                 <div className="mt-5 border-t border-[#f3f4f6] pt-5">
                   <FieldGrid fields={detail.overviewFields} />
                 </div>

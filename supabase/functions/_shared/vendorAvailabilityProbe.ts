@@ -33,6 +33,7 @@ import {
   upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
+import { applyVendorStatusTransition } from "./vendor_workflow.ts"
 import {
   resolveVendorAvailability,
   type ResolvedAvailability,
@@ -1764,6 +1765,25 @@ export async function tryHandleVendorAvailabilityProbeInbound(
           message: `${vendorName} declined the availability ask for ${formatWorkOrderRef(ticketId)}.`,
         },
       })
+      // Soft probes usually leave the ticket unassigned. When a race (or
+      // parallel assign) left this vendor on pending_accept, persist the NO so
+      // Active Tasks / Overview do not keep saying "waiting to accept."
+      const declined = await applyVendorStatusTransition(supabase, {
+        ticketId,
+        vendorId,
+        action: "decline",
+        source: "sms",
+        conversationId: params.conversationId,
+        askAvailability: false,
+        skipAutoReassign: true,
+      })
+      if (!declined.ok && declined.reason !== "not_assigned_to_vendor") {
+        console.warn(
+          "[vendor-probe] decline status transition",
+          ticketId,
+          declined.reason,
+        )
+      }
     }
     await supabase
       .from("sms_conversations")

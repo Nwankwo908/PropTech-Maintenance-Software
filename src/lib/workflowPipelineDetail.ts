@@ -17,6 +17,10 @@ import {
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
 import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
+import {
+  formatLandlordEscalationReason,
+  looksLikeInternalEscalationCode,
+} from '@/lib/maintenanceAdminVendor'
 import { extractStructuredIssueDetails } from '@shared/maintenance/structuredIssueDetails.ts'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatTicketRequestNumber, formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
@@ -125,6 +129,8 @@ export type WorkflowPipelineDetail = {
   createdLine: string
   locationLine: string
   description: string
+  /** Plain-language “what’s happening now” under the issue summary. */
+  statusContext: string | null
   progressSteps: WorkflowPipelineStep[]
   progressCaption: string
   overviewFields: WorkflowPipelineField[]
@@ -265,6 +271,112 @@ function formatDueLabel(iso: string | null | undefined): string {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function formatVisitLabel(
+  scheduledAt: string | null | undefined,
+  scheduleConfirmedAt: string | null | undefined,
+): string {
+  if (!scheduledAt?.trim()) return '—'
+  const date = new Date(scheduledAt)
+  if (Number.isNaN(date.getTime())) return '—'
+  const when = date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  return scheduleConfirmedAt?.trim() ? `${when} · confirmed` : `${when} · pending confirm`
+}
+
+/** Landlord-facing one-liner for the Active Tasks Overview section. */
+export function buildMaintenanceOverviewStatusContext(input: {
+  vendorWorkStatus: string | null
+  vendorName: string | null
+  stageLabel: string
+  lastEventMessage: string | null
+  escalationReason: string | null
+  runStatus: string
+  scheduledAt: string | null
+  scheduleConfirmedAt: string | null
+  issueCategory?: string | null
+  /** Ticket is blocked on landlord YES / 1 / 2 vendor pick. */
+  awaitingLandlordChoice?: boolean
+}): string {
+  const vendor = input.vendorName?.trim() || 'the vendor'
+  const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
+  const visit = formatVisitLabel(input.scheduledAt, input.scheduleConfirmedAt)
+
+  if ((input.runStatus ?? '').trim().toLowerCase() === 'escalated') {
+    const plain = formatLandlordEscalationReason(
+      input.escalationReason,
+      input.issueCategory,
+    )
+    if (plain) return plain
+  }
+
+  // Landlord choice wins over stale pending_accept (e.g. probe NO that didn't
+  // flip vendor_work_status yet, or status lag after decline).
+  if (input.awaitingLandlordChoice) {
+    if (vws === 'declined' || vws === 'pending_accept') {
+      return input.vendorName?.trim()
+        ? `${vendor} declined. Waiting for you to choose a replacement vendor.`
+        : 'Waiting for you to choose a vendor for this work order.'
+    }
+    return 'Waiting for you to choose a vendor for this work order.'
+  }
+
+  if (visit !== '—') {
+    if (vws === 'in_progress') {
+      return `Repair in progress with ${vendor}. Visit ${visit}.`
+    }
+    if (input.scheduleConfirmedAt?.trim()) {
+      return `Visit confirmed with ${vendor}: ${visit}.`
+    }
+    return `Visit proposed with ${vendor}: ${visit}. Waiting on confirmation.`
+  }
+
+  switch (vws) {
+    case 'pending_accept':
+      return `Waiting for ${vendor} to accept this work order.`
+    case 'accepted':
+      return `${vendor} accepted. Ulo is coordinating a visit time with the resident.`
+    case 'in_progress':
+      return `Repair is in progress with ${vendor}.`
+    case 'declined':
+      return `${vendor} declined. Ulo is looking for another vendor.`
+    case 'completed':
+      return input.vendorName?.trim()
+        ? `Work marked complete by ${vendor}.`
+        : 'Work marked complete.'
+    case 'cancelled':
+      return 'This work order was cancelled.'
+    case 'unassigned':
+    case '':
+      return 'No vendor assigned yet. Ulo is matching someone for this repair.'
+    default:
+      break
+  }
+
+  const last = input.lastEventMessage?.trim()
+  if (last && last.length <= 160) return last
+  return `Current stage: ${input.stageLabel}.`
+}
+
+/** Status chip value for Active Tasks Overview (not the kanban column alone). */
+export function buildMaintenanceOverviewStatusLabel(input: {
+  vendorWorkStatus: string | null
+  awaitingLandlordChoice?: boolean
+}): string {
+  if (input.awaitingLandlordChoice) {
+    const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
+    if (vws === 'declined' || vws === 'pending_accept') {
+      return 'Needs your vendor choice'
+    }
+    return 'Needs your vendor choice'
+  }
+  return vendorWorkStatusChipLabel(input.vendorWorkStatus)
 }
 
 function buildProgressSteps(labels: readonly string[], activeIndex: number): WorkflowPipelineStep[] {
@@ -832,7 +944,7 @@ async function loadTicketEnrichment(
     const { data } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, created_at, description, priority, urgency, issue_category, unit, due_at, vendor_work_status, assigned_vendor_id, assigned_at, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
+        'id, created_at, description, priority, urgency, issue_category, unit, due_at, scheduled_at, schedule_confirmed_at, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
       )
       .eq('landlord_id', landlordId)
       .eq('id', ticketId)
@@ -1352,13 +1464,56 @@ export async function fetchWorkflowPipelineDetail(
       })
     : null
 
+  const issueCategory =
+    asString(ticket?.issue_category) || row.templateType || 'general'
+  const humanEscalation = formatLandlordEscalationReason(
+    row.escalationReason,
+    issueCategory,
+  )
+  const lastEventPlain = (() => {
+    const msg = row.lastEventMessage?.trim() || ''
+    if (!msg || looksLikeInternalEscalationCode(msg)) return null
+    return msg
+  })()
+  const issueDescription =
+    structuredMaintenance?.displayDescription?.trim() ||
+    rawTicketDescription.trim() ||
+    ''
+
   const description = isMoveOut
     ? 'Ulo is coordinating move-out with the resident — instructions, inspection, keys, and deposit review stay in one SMS thread.'
-    : structuredMaintenance?.displayDescription ||
-      rawTicketDescription ||
-      row.lastEventMessage ||
-      row.escalationReason ||
+    : issueDescription ||
+      lastEventPlain ||
+      humanEscalation ||
       'Ulo is coordinating this task in the workflow pipeline. Details will update as steps complete.'
+
+  const scheduledAt = asString(ticket?.scheduled_at) || asString(metadata.scheduled_at)
+  const scheduleConfirmedAt = asString(ticket?.schedule_confirmed_at)
+  const awaitingLandlordChoice = Boolean(
+    asString(ticket?.awaiting_landlord_choice_at) ||
+      /awaiting landlord vendor choice/i.test(asString(ticket?.vendor_notify_error)),
+  )
+  const statusContext = isMaintenance
+    ? buildMaintenanceOverviewStatusContext({
+        vendorWorkStatus:
+          asString(ticket?.vendor_work_status) || row.vendorWorkStatus,
+        vendorName: enrichment.vendorName,
+        stageLabel: stage.label,
+        lastEventMessage: lastEventPlain,
+        escalationReason: row.escalationReason,
+        runStatus: row.status,
+        scheduledAt,
+        scheduleConfirmedAt,
+        issueCategory,
+        awaitingLandlordChoice,
+      })
+    : isMoveOut
+      ? `Move-out is ${moveOutProgress != null ? `${moveOutProgress}% complete` : 'in progress'}${
+          moveOutDateLabel ? ` · target ${moveOutDateLabel}` : ''
+        }.`
+      : lastEventPlain ||
+        humanEscalation ||
+        `Current stage: ${stage.label}.`
 
   const lifecyclePipeline = deriveLifecyclePipeline(row, metadata)
   const pipelineIndex = isMaintenance
@@ -1453,6 +1608,7 @@ export async function fetchWorkflowPipelineDetail(
       .filter(Boolean)
       .join(' · '),
     description,
+    statusContext,
     progressSteps: moveOutProgressSteps ?? buildProgressSteps(pipelineLabels, pipelineIndex),
     progressCaption: moveOutProgressSteps
       ? progressCaptionFromSteps(moveOutProgressSteps)
@@ -1472,21 +1628,28 @@ export async function fetchWorkflowPipelineDetail(
           { label: 'Progress', value: moveOutProgress != null ? `${moveOutProgress}%` : '—' },
         ]
       : [
-      { label: 'Resident', value: residentName || '—' },
-      { label: 'Vendor', value: enrichment.vendorName || '—' },
-      { label: 'Category', value: formatCategoryLabel(asString(ticket?.issue_category) || row.templateType) || '—' },
-      {
-        label: 'Priority',
-        value: priority
-          ? priority.label === 'MEDIUM'
-            ? 'Med'
-            : priority.label[0] + priority.label.slice(1).toLowerCase()
-          : '—',
-      },
-      { label: 'Expected Completion', value: formatDueLabel(dueAt) },
-      { label: 'Estimated Cost', value: formatCurrency(estimatedCost) },
-      { label: 'Approval', value: row.status === 'escalated' ? 'Review Required' : 'Not Required' },
-    ],
+          { label: 'Resident', value: residentName || '—' },
+          { label: 'Property', value: row.propertyLabel || '—' },
+          { label: 'Unit', value: row.unitLabel || asString(ticket?.unit) || '—' },
+          { label: 'Vendor', value: enrichment.vendorName || '—' },
+          {
+            label: 'Status',
+            value: buildMaintenanceOverviewStatusLabel({
+              vendorWorkStatus:
+                asString(ticket?.vendor_work_status) || row.vendorWorkStatus,
+              awaitingLandlordChoice,
+            }),
+          },
+          {
+            label: 'Visit',
+            value: formatVisitLabel(scheduledAt, scheduleConfirmedAt),
+          },
+          { label: 'Expected Completion', value: formatDueLabel(dueAt) },
+          { label: 'Estimated Cost', value: formatCurrency(estimatedCost) },
+          ...(row.status === 'escalated'
+            ? [{ label: 'Approval', value: 'Review Required' }]
+            : []),
+        ],
     maintenanceDetails: isMaintenance
       ? [
           {

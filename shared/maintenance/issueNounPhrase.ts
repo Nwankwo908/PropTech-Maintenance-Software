@@ -94,6 +94,15 @@ function specificIssueNounPhrase(hay: string): string | null {
   if (/\bgas\s*(?:smell|leak)\b|\bsmell(?:s)?\s+(?:of\s+)?gas\b/i.test(hay)) {
     return 'a gas smell'
   }
+  if (
+    /\bdryer\b/i.test(hay) &&
+    /\b(?:caught\s+(?:on\s+)?fire|catch(?:ing)?\s+fire|on\s+fire|fire)\b/i.test(hay)
+  ) {
+    return 'a dryer that caught fire'
+  }
+  if (/\b(?:caught\s+(?:on\s+)?fire|catch(?:ing)?\s+fire|on\s+fire)\b/i.test(hay)) {
+    return 'a fire hazard'
+  }
   return null
 }
 

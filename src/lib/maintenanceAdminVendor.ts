@@ -88,3 +88,40 @@ export function maintenanceAdminVendorAttentionMeta(
       return noRosterVendorsAvailableMessage(issueCategory)
   }
 }
+
+/** True for engine/metadata codes like `sla_expired_no_vendor` — never show raw to landlords. */
+export function looksLikeInternalEscalationCode(value: string | null | undefined): boolean {
+  const t = (value ?? '').trim()
+  if (!t) return false
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/i.test(t)
+}
+
+/**
+ * Plain-language escalation copy for landlord rails (Active Tasks Overview, etc.).
+ * Never returns snake_case reason codes.
+ */
+export function formatLandlordEscalationReason(
+  reason: string | null | undefined,
+  issueCategory?: string | null,
+): string | null {
+  const raw = (reason ?? '').trim()
+  if (!raw) return null
+
+  if (isMaintenanceAdminVendorEscalationReason(raw)) {
+    const title = maintenanceAdminVendorAttentionTitle(raw)
+    const meta = maintenanceAdminVendorAttentionMeta(raw, issueCategory)
+    if (raw === 'sla_expired_no_vendor') {
+      return `${meta} No vendor on your roster could take this — find a replacement vendor.`
+    }
+    if (raw === 'vendor_declined_no_vendor') {
+      return `The assigned vendor declined. ${meta} Find a replacement vendor.`
+    }
+    return `${title}. ${meta}`
+  }
+
+  if (looksLikeInternalEscalationCode(raw)) {
+    return 'This task needs your attention — Ulo could not finish vendor matching automatically.'
+  }
+
+  return raw
+}

@@ -19,7 +19,10 @@ import {
   isVendorOnboardingInvite,
   parseResidentFeedbackRatingBody,
 } from '@/lib/conversationMonitoring'
-import { deleteCommunicationConversationsForLandlord } from '@/lib/deleteCommunicationConversations'
+import {
+  deleteCommunicationConversationsForLandlord,
+  isCommunicationInboxIdDismissed,
+} from '@/lib/deleteCommunicationConversations'
 import {
   classifyLimitedAlphaMessageLane,
   looksLikeNonOnboardingInboundSms,
@@ -1244,6 +1247,7 @@ export function AdminCommunicationDashboard() {
       const existingIds = new Set(mapped.map((entry) => entry.id))
       for (const workOrder of workOrderInboxRows) {
         if (existingIds.has(workOrder.id)) continue
+        if (isCommunicationInboxIdDismissed(workOrder.id, landlordId)) continue
         if (workOrder.uloThread.conversationId && existingIds.has(workOrder.uloThread.conversationId)) {
           continue
         }

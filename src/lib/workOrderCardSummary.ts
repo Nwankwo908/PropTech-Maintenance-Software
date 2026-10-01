@@ -60,6 +60,14 @@ const PHRASE_RULES: PhraseRule[] = [
   { test: /\b(fridge|refrigerator).{0,24}(not cool|warm|broken)/i, phrase: 'Fridge not cooling' },
   { test: /\b(washer|washing machine).{0,24}(not drain|leak|broken)/i, phrase: 'Washer not draining' },
   { test: /\bdryer.{0,16}(not heat|broken)/i, phrase: 'Dryer not heating' },
+  {
+    test: /\bdryer.{0,28}(caught\s+(?:on\s+)?fire|catch(?:ing)?\s+fire|on\s+fire|fire)/i,
+    phrase: 'Dryer caught fire',
+  },
+  {
+    test: /\b(caught\s+(?:on\s+)?fire|catch(?:ing)?\s+fire|on\s+fire)\b/i,
+    phrase: 'Fire hazard reported',
+  },
   { test: /\b(oven|stove).{0,16}(not heat|broken)/i, phrase: 'Oven not heating' },
   { test: /\bdrain.{0,16}clog|clogged drain/i, phrase: 'Drain is clogged' },
   { test: /\b(lock|deadbolt|door).{0,16}(broken|won'?t|jam|stuck)/i, phrase: 'Door lock broken' },

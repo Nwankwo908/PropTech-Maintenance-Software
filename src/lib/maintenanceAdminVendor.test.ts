@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatLandlordEscalationReason,
   isMaintenanceAdminVendorEscalationReason,
+  looksLikeInternalEscalationCode,
   maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
   shouldSkipSlaReassignForNeedsAdminVendor,
@@ -27,5 +29,12 @@ describe('maintenanceAdminVendor', () => {
       maintenanceAdminVendorAttentionTitle('vendor_declined_no_vendor'),
     ).toBe('Find a Replacement Vendor')
     expect(isMaintenanceAdminVendorEscalationReason('unassigned')).toBe(false)
+  })
+
+  it('formats sla_expired_no_vendor in plain language', () => {
+    expect(looksLikeInternalEscalationCode('sla_expired_no_vendor')).toBe(true)
+    const plain = formatLandlordEscalationReason('sla_expired_no_vendor', 'appliance')
+    expect(plain).toMatch(/response time has passed/i)
+    expect(plain).not.toMatch(/sla_expired/i)
   })
 })

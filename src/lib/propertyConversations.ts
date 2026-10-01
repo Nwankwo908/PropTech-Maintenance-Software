@@ -372,10 +372,14 @@ export async function fetchPropertyConversations(
   }
 
   const { fetchCommunicationWorkOrderInboxRows } = await import('@/lib/workflowPipelineDetail')
+  const { isCommunicationInboxIdDismissed } = await import(
+    '@/lib/deleteCommunicationConversations'
+  )
   const workOrderRows = await fetchCommunicationWorkOrderInboxRows().catch(() => [])
   for (const workOrder of workOrderRows) {
     if (normalizeBuildingKey(workOrder.uloThread.propertyLabel) !== buildingKey) continue
     if (seenIds.has(workOrder.id)) continue
+    if (isCommunicationInboxIdDismissed(workOrder.id, landlordId)) continue
     if (workOrder.uloThread.conversationId && seenIds.has(workOrder.uloThread.conversationId)) continue
 
     const vendorName =

@@ -120,6 +120,11 @@ export async function applyVendorStatusTransition(
     /** When true (default), ask earliest availability over SMS after accept. */
     askAvailability?: boolean
     conversationId?: string | null
+    /**
+     * When true, skip tryAutoReassignAfterDecline (e.g. availability-probe
+     * decline already routes to landlord vendor choice).
+     */
+    skipAutoReassign?: boolean
   },
 ): Promise<VendorStatusTransitionResult> {
   const { data: row, error: rowErr } = await supabase
@@ -228,7 +233,7 @@ export async function applyVendorStatusTransition(
     }
   }
 
-  if (next === "declined") {
+  if (next === "declined" && params.skipAutoReassign !== true) {
     try {
       await tryAutoReassignAfterDecline(supabase, params.ticketId, params.vendorId)
     } catch (e) {
