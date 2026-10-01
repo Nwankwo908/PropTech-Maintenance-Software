@@ -25,6 +25,10 @@ export type FactoryResetActivityFeed = {
 export type FactoryResetOpsCounts = {
   remainingTickets: number | null
   remainingActiveWorkflowRuns: number | null
+  remainingProperties?: number | null
+  remainingUnits?: number | null
+  remainingResidents?: number | null
+  remainingVendors?: number | null
   countError?: string
   /**
    * Import-lineage tickets that still trip HARD_DELETE_FORBIDDEN after archive prep.
@@ -65,10 +69,16 @@ export function isFactoryResetActivityFeedEmpty(feed: FactoryResetActivityFeed):
 
 /** True only when ticket + active workflow run counts are exactly 0. */
 export function isFactoryResetOpsEmpty(ops: FactoryResetOpsCounts): boolean {
+  const portfolioOk =
+    (ops.remainingProperties == null || ops.remainingProperties === 0) &&
+    (ops.remainingUnits == null || ops.remainingUnits === 0) &&
+    (ops.remainingResidents == null || ops.remainingResidents === 0) &&
+    (ops.remainingVendors == null || ops.remainingVendors === 0)
   return (
     !ops.countError &&
     ops.remainingTickets === 0 &&
-    ops.remainingActiveWorkflowRuns === 0
+    ops.remainingActiveWorkflowRuns === 0 &&
+    portfolioOk
   )
 }
 
@@ -104,6 +114,18 @@ export function formatFactoryResetFailureAlert(
     lines.push(
       `active workflow_runs: ${formatRemaining(ops.remainingActiveWorkflowRuns)} remaining`,
     )
+    if (ops.remainingProperties != null) {
+      lines.push(`properties: ${formatRemaining(ops.remainingProperties)} remaining`)
+    }
+    if (ops.remainingUnits != null) {
+      lines.push(`units: ${formatRemaining(ops.remainingUnits)} remaining`)
+    }
+    if (ops.remainingResidents != null) {
+      lines.push(`residents: ${formatRemaining(ops.remainingResidents)} remaining`)
+    }
+    if (ops.remainingVendors != null) {
+      lines.push(`vendors: ${formatRemaining(ops.remainingVendors)} remaining`)
+    }
     if (ops.archiveFailed && ops.archiveFailed.count > 0) {
       lines.push(
         `archiveFailed: ${ops.archiveFailed.count} — ${ops.archiveFailed.ticketIds.join(', ')}`,
@@ -117,7 +139,7 @@ export function formatFactoryResetFailureAlert(
   }
   lines.push(`Ops purge path: ${result.opsPurgePath}.`)
   lines.push('')
-  lines.push('Returning to the setup choice screen.')
+  lines.push('Staying on this screen — fix the wipe or try Factory reset again.')
   return lines.join('\n')
 }
 

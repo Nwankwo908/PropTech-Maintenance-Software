@@ -54,7 +54,7 @@ describe('formatFactoryResetFailureAlert', () => {
     expect(alert).toContain('maintenance_requests: 344 remaining')
     expect(alert).toContain('active workflow_runs: 12 remaining')
     expect(alert).toContain('Ops purge path: client_fallback.')
-    expect(alert).toContain('Returning to the setup choice screen.')
+    expect(alert).toContain('Staying on this screen')
   })
 
   it('reflects count-query failure without omitting opsPurgePath', () => {

@@ -51,12 +51,12 @@ export async function archiveOrClearPriorOnboardingResidents(params: {
   for (const row of data ?? []) {
     const id = String((row as { id?: string }).id ?? '').trim()
     if (!id) continue
-    if ((row as { archived_at?: string | null }).archived_at) continue
     const sessionId =
       typeof (row as { onboarding_session_id?: string | null }).onboarding_session_id === 'string'
         ? String((row as { onboarding_session_id: string }).onboarding_session_id).trim()
         : ''
     if (sessionId === currentSessionId) continue
+    // Include archived leftovers from older soft-archive paths — Start must hard-delete them.
     staleIds.push(id)
   }
 
@@ -88,20 +88,13 @@ export async function archiveOrClearPriorOnboardingResidents(params: {
     residentIds: staleIds,
   })
   if (!removed.ok) {
-    const { error: archiveError } = await supabase
-      .from('users')
-      .update({ archived_at: new Date().toISOString() })
-      .eq('landlord_id', landlordId)
-      .in('id', staleIds)
-    if (!archiveError) {
-      return { ok: true, cleared: 0, archived: staleIds.length }
+    // Fail closed — never soft-archive. Leftover residents must be deleted or Start reports failure.
+    return {
+      ok: false,
+      error: removed.error ?? 'Could not clear residents from the previous setup run.',
+      cleared: 0,
+      archived: 0,
     }
-    if (/archived_at|column/i.test(archiveError.message)) {
-      // Cannot delete or archive — wipe already ran; do not block Start setup.
-      console.warn('[onboarding] prior residents remain', removed.error, archiveError.message)
-      return { ok: true, cleared: 0, archived: 0 }
-    }
-    return { ok: false, error: removed.error, cleared: 0, archived: 0 }
   }
 
   return { ok: true, cleared: removed.deletedCount, archived: 0 }

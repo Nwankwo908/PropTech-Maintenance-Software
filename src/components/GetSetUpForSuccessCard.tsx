@@ -2,7 +2,7 @@ import { useId, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import welcomeTextsIcon from '@/assets/invitation.png'
 import verifyVendorsIcon from '@/assets/verify-vendors.png'
-import propertyAccessIcon from '@/assets/property-access.png'
+import propertyAccessIcon from '@/assets/noun_propertykey_8436012.svg'
 import propertyIntelligenceIcon from '@/assets/property-details.png'
 import propertyInsuranceIcon from '@/assets/property-insurance.png'
 import maintenancePrefsIcon from '@/assets/settings.png'
@@ -34,6 +34,8 @@ const MUTED_ITEM_ICONS = new Set<SetupSuccessItemId>([
 type GetSetUpForSuccessCardProps = {
   progress: SetupSuccessProgress
   onClose: () => void
+  /** Hide for this tab only when a checklist step is started (survives until refresh / Profile setup). */
+  onMinimize?: () => void
   /** Deep-link property setup steps to the first property when available. */
   resolveItemTo?: (itemId: SetupSuccessItemId) => string | undefined
 }
@@ -188,6 +190,7 @@ function SetupCopy({ titleId }: { titleId: string }) {
 export function GetSetUpForSuccessCard({
   progress,
   onClose,
+  onMinimize,
   resolveItemTo,
 }: GetSetUpForSuccessCardProps) {
   const titleId = useId()
@@ -215,7 +218,7 @@ export function GetSetUpForSuccessCard({
         <SetupChecklist
           progress={progress}
           resolveItemTo={resolveItemTo}
-          onActionItemSelect={onClose}
+          onActionItemSelect={onMinimize ?? onClose}
         />
       </div>
     </section>

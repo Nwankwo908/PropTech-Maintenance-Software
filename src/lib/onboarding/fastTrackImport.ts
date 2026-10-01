@@ -8,8 +8,11 @@ import {
 } from '@/lib/onboardingDocumentUpload'
 import {
   accountSetupFromReviewManual,
+  mergeReviewManualAccount,
+  preserveReviewContactName,
   validateReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
+import { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
 import { resolveOnboardingPropertyType } from '@/lib/onboarding/propertyType'
 import { supabase } from '@/lib/supabase'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
@@ -37,6 +40,16 @@ export type CommitFastTrackImportInput = {
   onImported?: (patch: Partial<LandlordOnboardingState>) => void
 }
 
+/** Person-shaped label for "Your name" — not portfolio placeholders or company names. */
+function personLikeLandlordLabel(raw: string | null | undefined): string {
+  const value = (raw ?? '').trim()
+  if (!value) return ''
+  if (!usableOnboardingCompanyName(value)) return ''
+  if (/\b(llc|inc|corp|management|properties|rentals)\b/i.test(value)) return ''
+  if (value.split(/\s+/).filter(Boolean).length < 2) return ''
+  return value
+}
+
 export async function commitFastTrackImport(
   input: CommitFastTrackImportInput,
 ): Promise<boolean> {
@@ -46,33 +59,38 @@ export async function commitFastTrackImport(
     return false
   }
 
-  let accountSeed = input.accountSetup
+  // Prefer the review-form account (what the user sees) over wizard accountSetup.
+  let accountSeed = mergeReviewManualAccount(input.review.account, input.accountSetup)
   if (!accountSeed.contactName.trim() && supabase) {
     const { data: landlord } = await supabase
       .from('landlords')
-      .select('contact_name, email, phone, name')
+      .select('contact_name, email, phone, name, display_name')
       .eq('id', scope.landlordId)
       .maybeSingle()
     const contactName =
-      typeof landlord?.contact_name === 'string' ? landlord.contact_name.trim() : ''
-    if (contactName) {
-      accountSeed = {
-        ...accountSeed,
+      (typeof landlord?.contact_name === 'string' ? landlord.contact_name.trim() : '') ||
+      personLikeLandlordLabel(
+        typeof landlord?.display_name === 'string' ? landlord.display_name : '',
+      ) ||
+      personLikeLandlordLabel(typeof landlord?.name === 'string' ? landlord.name : '')
+    if (contactName || landlord) {
+      accountSeed = mergeReviewManualAccount(accountSeed, {
         contactName,
-        email:
-          accountSeed.email.trim() ||
-          (typeof landlord?.email === 'string' ? landlord.email.trim() : ''),
-        phone:
-          accountSeed.phone.trim() ||
-          (typeof landlord?.phone === 'string' ? landlord.phone.trim() : ''),
+        email: typeof landlord?.email === 'string' ? landlord.email.trim() : '',
+        phone: typeof landlord?.phone === 'string' ? landlord.phone.trim() : '',
         companyName:
-          accountSeed.companyName.trim() ||
-          (typeof landlord?.name === 'string' ? landlord.name.trim() : ''),
-      }
+          typeof landlord?.name === 'string'
+            ? usableOnboardingCompanyName(landlord.name)
+            : '',
+      })
     }
   }
 
   const normalized = normalizeExtractionReview(input.review, accountSeed)
+  normalized.account = preserveReviewContactName(
+    normalized.account,
+    mergeReviewManualAccount(accountSeed, input.review.account),
+  )
   const accountCheck = validateReviewManualAccount(normalized.account)
   if (!accountCheck.ok) {
     input.onError(accountCheck.error)

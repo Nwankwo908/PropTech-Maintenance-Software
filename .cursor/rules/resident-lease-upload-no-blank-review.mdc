@@ -1,14 +1,16 @@
 ---
-description: Profile lease uploads must never write blank extractionReview / wipe onboarding account — Autofix if "Enter your name." appears after Edit Resident lease save.
-globs: src/lib/residentLeaseDocuments.ts,src/lib/organizationSettings.ts,src/lib/onboarding/fastTrackImport.ts,src/lib/onboardingReviewManual.ts,src/components/EditResidentModal.tsx,src/components/AdminResidentsDashboard.tsx,src/components/AdminPropertyResidentDetailDashboard.tsx,src/components/onboarding/onboardingAccountForm.ts
+description: Autofix "Enter your name." on Fast Track Continue / Edit Resident lease save — never blank or wipe review.account.contactName before validateReviewManualAccount.
+globs: src/lib/residentLeaseDocuments.ts,src/lib/organizationSettings.ts,src/lib/onboarding/fastTrackImport.ts,src/lib/onboardingReviewManual.ts,src/lib/onboardingDocumentUpload.ts,src/components/EditResidentModal.tsx,src/components/AdminResidentsDashboard.tsx,src/components/AdminPropertyResidentDetailDashboard.tsx,src/components/onboarding/onboardingAccountForm.ts,src/components/onboarding/useOnboardingWizard.ts
 alwaysApply: false
 ---
 
-# Resident lease upload — never blank AI-review account
+# Fast Track / lease upload — never wipe "Your name" before Continue
 
-**Symptom:** After uploading a lease on **Edit Resident → Save**, the UI shows **Enter your name.** (or Fast Track Continue fails with that message).
+**Symptom:** Fast Track AI Review **Continue** (or Edit Resident lease **Save**) shows **Enter your name.**
 
-**Cause:** Writing `emptyExtractionReview()` / blank `formDraft.extractionReview.account.contactName` into `landlord_onboarding` draft or `ulo.landlordOnboarding.*` localStorage. `validateReviewManualAccount` then returns `Enter your name.`
+**Causes (either):**
+1. Writing `emptyExtractionReview()` / blank `formDraft.extractionReview.account.contactName` into draft/localStorage (profile lease upload path).
+2. `normalizeExtractionReview` / `placeAccountAndTenantNames` clearing a non-empty review-form `contactName` (e.g. matches a resident) **before** `validateReviewManualAccount` on Continue.
 
 ## Rule
 
@@ -17,29 +19,32 @@ alwaysApply: false
 | Persist profile lease files | Use `draft_state.residentLeaseDocuments` + `ulo.residentLeaseDocs.{landlordId}` only |
 | Matching on profile / Settings | Prefer `extractedPayload` on the file; do not invent an AI review |
 | Heal leftover stubs | Strip blank-account review stubs (empty portfolio or profile-only `ext-lease-*-0` rows) |
-| Fast Track Continue | Seed `contactName` from `accountSetup` / `landlords.contact_name` before `validateReviewManualAccount` |
+| Fast Track Continue | Merge review-form account + `accountSetup` + `landlords.contact_name`; after normalize, **preserve** non-empty review `contactName` / SMS consent; then validate |
 
 ## Autofix (Bugbot)
 
-On PR review (or when this symptom appears in chat), if lease upload or related draft code can recreate a blank AI-review account:
+On PR review (or when this symptom appears in chat):
 
 1. Stop calling `emptyExtractionReview()` / writing `formDraft.extractionReview` from Edit Resident lease save.
-2. Persist uploads under `residentLeaseDocuments` (draft + dedicated localStorage key) — **not** by merging into Fast Track `formDraft.uploadDocuments` in a way that rewrites extraction review.
-3. Do **not** rewrite all of `ulo.landlordOnboarding.{id}` from lease upload (that can wipe `onboardingStatus` / `accountSetup`). Only delete a blank `formDraft.extractionReview` stub in place.
-4. Ensure `commitFastTrackImport` / Continue still fills blank `contactName` from landlord profile before validating.
-5. Keep `Enter your name.` only on account-setup / AI-review Continue — never throw it from `uploadResidentLeaseDocuments`.
+2. Persist uploads under `residentLeaseDocuments` — **not** by rewriting Fast Track `extractionReview`.
+3. Do **not** rewrite all of `ulo.landlordOnboarding.{id}` from lease upload. Only delete a blank `formDraft.extractionReview` stub in place.
+4. In `commitFastTrackImport`: seed from `review.account` first; after `normalizeExtractionReview`, call `preserveReviewContactName` (or equivalent) so a typed/shown name survives tenant-collision cleanup; **then** `validateReviewManualAccount`.
+5. Keep a unit test: normalize clears contact that matches a resident → preserve restores review-form name → validate ok when SMS consent present.
+6. Keep `Enter your name.` only on account-setup / AI-review Continue — never throw it from `uploadResidentLeaseDocuments`.
 
-**Note:** Cursor Bugbot runs on pull requests. It does not auto-run while debugging locally — agents must apply this rule when the symptom appears in chat or PR.
+**Note:** Cursor Bugbot Autofix runs on PRs when enabled in the Bugbot dashboard. Agents must apply this rule when the symptom appears in chat or PR.
 
 ## Where it lives
 
 - Upload + heal: `src/lib/residentLeaseDocuments.ts` → `uploadResidentLeaseDocuments`
 - Archive load (ignore stubs): `src/lib/organizationSettings.ts` → `loadOnboardingDocumentArchive`
-- Continue validation: `src/lib/onboarding/fastTrackImport.ts` + `validateReviewManualAccount`
-- Error string sources: `onboardingAccountForm.ts`, `onboardingReviewManual.ts`
+- Continue: `src/lib/onboarding/fastTrackImport.ts` → `commitFastTrackImport`
+- Preserve + validate: `src/lib/onboardingReviewManual.ts` → `preserveReviewContactName` / `validateReviewManualAccount`
+- Placement wipe risk: `shared/onboarding/typedDocumentExtract/placeFields.ts` → `placeAccountAndTenantNames`
 
 ## Do not
 
 - Call `emptyExtractionReview()` from profile lease upload
+- Validate after normalize without preserving the review-form `contactName`
 - Spread-write local onboarding state with only `{ formDraft }` (drops completed status)
 - Rely on inventing `extractionReview` leases for profile document matching

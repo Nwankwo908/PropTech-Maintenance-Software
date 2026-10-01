@@ -768,15 +768,29 @@ export function useOnboardingWizard() {
   }
 
   function resetOnboardingForms() {
-    setPropertyForms([createEmptyPropertyForm()])
-    setVendorForms([createEmptyVendorForm()])
-    setResidentForms([createEmptyResidentForm()])
+    const emptyProperty = createEmptyPropertyForm()
+    const emptyVendor = createEmptyVendorForm()
+    const emptyResident = createEmptyResidentForm()
+    setPropertyForms([emptyProperty])
+    setVendorForms([emptyVendor])
+    setResidentForms([emptyResident])
     setReviewData(null)
     setUploadDocuments([])
     uploadDocumentsReadyRef.current = false
     setUploadError(null)
     setExtractionReview(null)
     setSmsConsentAccepted(false)
+    // Clear the sync snapshot immediately — React setState is async, and goTo()
+    // reads this ref before the next render (Start setup was re-persisting the
+    // previous Fast Track extractionReview into formDraft).
+    wizardSnapshotRef.current = {
+      ...wizardSnapshotRef.current,
+      propertyForms: [emptyProperty],
+      vendorForms: [emptyVendor],
+      residentForms: [emptyResident],
+      uploadDocuments: [],
+      extractionReview: null,
+    }
   }
 
   async function returnToWelcomeHub(): Promise<void> {
@@ -834,20 +848,30 @@ export function useOnboardingWizard() {
       mode: 'clear',
     })
     if (!priorCleared.ok) {
-      console.warn('[onboarding] prior resident clear skipped', priorCleared.error)
+      setError(
+        priorCleared.error ??
+          'Could not clear residents from the previous setup run. Try Factory reset, then Start again.',
+      )
+      return
     }
 
     resetOnboardingForms()
     // Leave the welcome hub on the first click. Do not wipe-to-entry first —
     // that kept status at `not_started` and pinned the display on `entry`.
-    await goTo(targetStep, {
-      onboardingStatus: 'in_progress',
-      setupPath: path,
-      properties: [],
-      onboardingSessionId: session.onboardingSessionId,
-      onboardingSessionStartedAt: session.onboardingSessionStartedAt,
-      completedAt: null,
-    })
+    // Explicit null extractionReview clears any leftover Fast Track AI review
+    // from draft_state / localStorage on Start.
+    await goTo(
+      targetStep,
+      {
+        onboardingStatus: 'in_progress',
+        setupPath: path,
+        properties: [],
+        onboardingSessionId: session.onboardingSessionId,
+        onboardingSessionStartedAt: session.onboardingSessionStartedAt,
+        completedAt: null,
+      },
+      { extractionReview: null },
+    )
     trackProductEventOnce('signup_started', 'onboarding')
   }
 

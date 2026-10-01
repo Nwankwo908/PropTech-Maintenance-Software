@@ -12,7 +12,8 @@ import {
 } from '@/lib/propertyRoutes'
 import {
   dismissSetupSuccessCard,
-  isSetupSuccessCardDismissed,
+  isSetupSuccessCardHidden,
+  minimizeSetupSuccessCard,
   SETUP_SUCCESS_COLLAPSED_EVENT,
   SETUP_SUCCESS_PROGRESS_CHANGED_EVENT,
   shouldShowSetupSuccessCard,
@@ -23,7 +24,7 @@ import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 
 /**
  * Global Get set up for success overlay — every admin route, not only Overview.
- * Profile setup in the sidebar clears dismiss and this host shows the card again.
+ * Profile setup in the sidebar clears dismiss/minimize and this host shows the card again.
  */
 export function SetupSuccessCardHost() {
   const location = useLocation()
@@ -32,19 +33,19 @@ export function SetupSuccessCardHost() {
     isLimitedAlphaLandlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
 
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
-  const [dismissed, setDismissed] = useState(isSetupSuccessCardDismissed)
+  const [hidden, setHidden] = useState(() => isSetupSuccessCardHidden(landlordId))
   const [firstPropertyId, setFirstPropertyId] = useState<string | null>(null)
 
   useEffect(() => {
-    const syncDismissed = () => setDismissed(isSetupSuccessCardDismissed())
-    syncDismissed()
-    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncDismissed)
-    window.addEventListener('storage', syncDismissed)
+    const syncHidden = () => setHidden(isSetupSuccessCardHidden(landlordId))
+    syncHidden()
+    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncHidden)
+    window.addEventListener('storage', syncHidden)
     return () => {
-      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncDismissed)
-      window.removeEventListener('storage', syncDismissed)
+      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncHidden)
+      window.removeEventListener('storage', syncHidden)
     }
-  }, [])
+  }, [landlordId])
 
   useEffect(() => {
     if (!eligible) {
@@ -98,7 +99,7 @@ export function SetupSuccessCardHost() {
     [firstPropertyId],
   )
 
-  if (!progress || dismissed || !shouldShowSetupSuccessCard(progress, landlordId)) {
+  if (!progress || hidden || !shouldShowSetupSuccessCard(progress, landlordId)) {
     return null
   }
 
@@ -107,8 +108,12 @@ export function SetupSuccessCardHost() {
       progress={progress}
       resolveItemTo={resolveItemTo}
       onClose={() => {
-        dismissSetupSuccessCard()
-        setDismissed(true)
+        dismissSetupSuccessCard(landlordId)
+        setHidden(true)
+      }}
+      onMinimize={() => {
+        minimizeSetupSuccessCard(landlordId)
+        setHidden(true)
       }}
     />
   )

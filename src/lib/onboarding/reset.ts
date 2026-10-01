@@ -437,11 +437,27 @@ async function cancelLandlordWorkflowRuns(
 
 async function countLandlordOps(
   landlordId: string,
-): Promise<{ tickets: number; workflowRuns: number; activeWorkflowRuns: number }> {
+): Promise<{
+  tickets: number
+  workflowRuns: number
+  activeWorkflowRuns: number
+  properties: number
+  units: number
+  residents: number
+  vendors: number
+}> {
   if (!supabase) {
-    return { tickets: 0, workflowRuns: 0, activeWorkflowRuns: 0 }
+    return {
+      tickets: 0,
+      workflowRuns: 0,
+      activeWorkflowRuns: 0,
+      properties: 0,
+      units: 0,
+      residents: 0,
+      vendors: 0,
+    }
   }
-  const [tickets, runs, activeRuns] = await Promise.all([
+  const [tickets, runs, activeRuns, properties, units, residents, vendors] = await Promise.all([
     supabase
       .from('maintenance_requests')
       .select('id', { count: 'exact', head: true })
@@ -455,8 +471,32 @@ async function countLandlordOps(
       .select('id', { count: 'exact', head: true })
       .eq('landlord_id', landlordId)
       .in('status', ['active', 'escalated']),
+    supabase
+      .from('properties')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId),
+    supabase
+      .from('units')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId),
+    supabase
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId),
+    supabase
+      .from('vendors')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId),
   ])
-  return { tickets: tickets.count ?? 0, workflowRuns: runs.count ?? 0, activeWorkflowRuns: activeRuns.count ?? 0 }
+  return {
+    tickets: tickets.count ?? 0,
+    workflowRuns: runs.count ?? 0,
+    activeWorkflowRuns: activeRuns.count ?? 0,
+    properties: properties.count ?? 0,
+    units: units.count ?? 0,
+    residents: residents.count ?? 0,
+    vendors: vendors.count ?? 0,
+  }
 }
 
 const CLEARED_LANDLORD_PAYOUTS = {
@@ -656,9 +696,9 @@ async function assertFactoryResetActivityFeedEmpty(
 }
 
 /**
- * Fail closed unless maintenance_requests + active workflow_runs are 0.
- * Covers Fast Track document-import tickets — feed emptiness alone is not enough
- * to treat the Open Repairs count as cleared.
+ * Fail closed unless maintenance_requests + active workflow_runs + portfolio roster are 0.
+ * Covers Fast Track document-import tickets and leftover properties/residents/vendors —
+ * ticket emptiness alone is not enough after a factory reset.
  */
 async function assertFactoryResetOpsEmpty(
   landlordId: string,
@@ -668,11 +708,15 @@ async function assertFactoryResetOpsEmpty(
     const opsCounts: FactoryResetOpsCounts = {
       remainingTickets: remaining.tickets,
       remainingActiveWorkflowRuns: remaining.activeWorkflowRuns,
+      remainingProperties: remaining.properties,
+      remainingUnits: remaining.units,
+      remainingResidents: remaining.residents,
+      remainingVendors: remaining.vendors,
     }
     if (!isFactoryResetOpsEmpty(opsCounts)) {
       return {
         ok: false,
-        error: `Open ops still remain after reset (maintenance_requests: ${remaining.tickets}, active workflow_runs: ${remaining.activeWorkflowRuns}).`,
+        error: `Portfolio still remains after reset (maintenance_requests: ${remaining.tickets}, active workflow_runs: ${remaining.activeWorkflowRuns}, properties: ${remaining.properties}, units: ${remaining.units}, residents: ${remaining.residents}, vendors: ${remaining.vendors}).`,
         opsCounts,
       }
     }
@@ -684,6 +728,10 @@ async function assertFactoryResetOpsEmpty(
       opsCounts: {
         remainingTickets: null,
         remainingActiveWorkflowRuns: null,
+        remainingProperties: null,
+        remainingUnits: null,
+        remainingResidents: null,
+        remainingVendors: null,
         countError: getErrorMessage(error, 'count failed'),
       },
     }
@@ -1025,18 +1073,11 @@ export async function resetOnboardingPortfolio(
       residentIds,
     })
     if (!removedResidents.ok) {
-      // Soft-archive leftovers when hard delete is blocked (FK / RESTRICT).
-      // Missing archived_at column (migration not applied) is non-fatal — continue wipe.
-      const { error: archiveError } = await supabase
-        .from('users')
-        .update({ archived_at: new Date().toISOString() })
-        .eq('landlord_id', scope.landlordId)
-        .in('id', residentIds)
-      if (archiveError && !/archived_at|column/i.test(archiveError.message)) {
-        return { ok: false, error: removedResidents.error, opsPurgePath }
-      }
-      if (archiveError) {
-        console.warn('[landlordOnboarding] resident archive skipped', archiveError.message)
+      // Fail closed — never soft-archive. Factory reset must hard-delete or report failure.
+      return {
+        ok: false,
+        error: removedResidents.error ?? 'Could not delete residents during factory reset.',
+        opsPurgePath,
       }
     }
   }
@@ -1267,11 +1308,14 @@ export async function clearOnboardingPortfolioSession(
     }
   }
 
-  // Best-effort portfolio wipe. Back / return-to-hub must not fail when staff-only
-  // tables refuse client DELETE — session isolation covers leftovers on the next run.
+  // Portfolio wipe must succeed — do not return a clean welcome hub when rows remain.
   const reset = await resetOnboardingPortfolio(scope.landlordId)
   if (!reset.ok) {
-    console.warn('[landlordOnboarding] portfolio wipe skipped', reset.error)
+    return {
+      ok: false,
+      error: reset.error ?? 'Could not clear previous portfolio data.',
+      state: defaultOnboardingState(scope.landlordId),
+    }
   }
 
   const draft = await readLandlordOnboardingDraft(scope.landlordId)

@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_2_LANDLORD_ID } from '@shared/landlordCapabilities'
 import { markLimitedAlphaPostOnboardingWelcomeSeen } from './postOnboardingWelcome'
 import {
   clearSetupSuccessCardDismissed,
+  clearSetupSuccessCardMinimized,
   clearSetupSuccessNavPercentBaseline,
   clearSetupSuccessTestDelivery,
   dismissSetupSuccessCard,
   isSetupSuccessCardDismissed,
+  isSetupSuccessCardHidden,
+  isSetupSuccessCardMinimized,
   isSetupSuccessTestDeliveryComplete,
   markSetupSuccessTestDeliveryComplete,
+  minimizeSetupSuccessCard,
   resolveSetupSuccessProgress,
   setupSuccessNavPercentGain,
   setupSuccessPercent,
@@ -33,6 +37,7 @@ function progressInput(
 }
 
 const memory = new Map<string, string>()
+const sessionMemory = new Map<string, string>()
 const localStorageMock = {
   getItem: (key: string) => memory.get(key) ?? null,
   setItem: (key: string, value: string) => {
@@ -45,14 +50,27 @@ const localStorageMock = {
     memory.clear()
   },
 }
+const sessionStorageMock = {
+  getItem: (key: string) => sessionMemory.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    sessionMemory.set(key, value)
+  },
+  removeItem: (key: string) => {
+    sessionMemory.delete(key)
+  },
+  clear: () => {
+    sessionMemory.clear()
+  },
+}
 Object.defineProperty(globalThis, 'window', {
-  value: { localStorage: localStorageMock },
+  value: { localStorage: localStorageMock, sessionStorage: sessionStorageMock },
   configurable: true,
 })
 
 describe('setupSuccessChecklist', () => {
   beforeEach(() => {
     memory.clear()
+    sessionMemory.clear()
   })
   it('marks welcome texts complete after at least one tenant onboarding starts', () => {
     expect(welcomeTextsComplete([])).toBe(false)
@@ -168,6 +186,17 @@ describe('setupSuccessChecklist', () => {
     expect(isSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     clearSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)
     expect(isSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+  })
+
+  it('minimizes for the tab only — not a lasting dismiss', () => {
+    clearSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCardMinimized(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    minimizeSetupSuccessCard(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCardMinimized(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(isSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(isSetupSuccessCardHidden(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    clearSetupSuccessCardMinimized(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCardHidden(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 
   it('reports percent complete for the collapsed nav hint', () => {

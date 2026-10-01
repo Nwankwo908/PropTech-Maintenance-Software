@@ -147,9 +147,14 @@ export function notifySetupSuccessProgressChanged(): void {
 }
 
 const DISMISSED_KEY_PREFIX = 'ulo.setupSuccessCardDismissed.'
+const MINIMIZED_KEY_PREFIX = 'ulo.setupSuccessCardMinimized.'
 
 function dismissedKey(landlordId: string): string {
   return `${DISMISSED_KEY_PREFIX}${landlordId}`
+}
+
+function minimizedKey(landlordId: string): string {
+  return `${MINIMIZED_KEY_PREFIX}${landlordId}`
 }
 
 export function isSetupSuccessCardDismissed(
@@ -162,6 +167,23 @@ export function isSetupSuccessCardDismissed(
   }
 }
 
+/** Session-only hide after starting a checklist step — does not survive a full page refresh. */
+export function isSetupSuccessCardMinimized(
+  landlordId: string = getActiveLandlordId(),
+): boolean {
+  try {
+    return window.sessionStorage.getItem(minimizedKey(landlordId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function isSetupSuccessCardHidden(
+  landlordId: string = getActiveLandlordId(),
+): boolean {
+  return isSetupSuccessCardDismissed(landlordId) || isSetupSuccessCardMinimized(landlordId)
+}
+
 export function dismissSetupSuccessCard(
   landlordId: string = getActiveLandlordId(),
 ): void {
@@ -170,7 +192,30 @@ export function dismissSetupSuccessCard(
   } catch {
     // private mode
   }
+  clearSetupSuccessCardMinimized(landlordId)
   emitSetupSuccessCollapsedChange()
+}
+
+/** Hide for this tab only (checklist row click). Refresh brings the card back. */
+export function minimizeSetupSuccessCard(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.sessionStorage.setItem(minimizedKey(landlordId), '1')
+  } catch {
+    // private mode
+  }
+  emitSetupSuccessCollapsedChange()
+}
+
+export function clearSetupSuccessCardMinimized(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.sessionStorage.removeItem(minimizedKey(landlordId))
+  } catch {
+    // private mode
+  }
 }
 
 export function clearSetupSuccessCardDismissed(
@@ -181,6 +226,7 @@ export function clearSetupSuccessCardDismissed(
   } catch {
     // private mode
   }
+  clearSetupSuccessCardMinimized(landlordId)
   emitSetupSuccessCollapsedChange()
 }
 
@@ -230,7 +276,7 @@ export function shouldShowSetupSuccessCard(
   return (
     isLimitedAlphaLandlord(landlordId) &&
     hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
-    !isSetupSuccessCardDismissed(landlordId) &&
+    !isSetupSuccessCardHidden(landlordId) &&
     progress.doneCount < progress.total
   )
 }

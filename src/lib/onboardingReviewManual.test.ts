@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   emptyReviewManualAccount,
   mergeReviewManualAccount,
+  preserveReviewContactName,
   usableOnboardingCompanyName,
   validateReviewManualAccount,
 } from './onboardingReviewManual'
@@ -35,6 +36,65 @@ describe('validateReviewManualAccount', () => {
         smsConsentAcceptedAt: '2026-09-09T12:00:00.000Z',
       }),
     ).toEqual({ ok: false, error: 'Enter your name.' })
+  })
+})
+
+describe('preserveReviewContactName', () => {
+  it('restores a review-form name cleared by extraction cleanup', () => {
+    expect(
+      preserveReviewContactName(
+        {
+          companyName: 'Acme',
+          contactName: '',
+          email: '',
+          phone: '',
+          backupContactName: '',
+          backupContactPhone: '',
+          backupContactEmail: '',
+          smsConsentAcceptedAt: null,
+        },
+        {
+          companyName: 'Acme',
+          contactName: 'Alex Rivera',
+          email: '',
+          phone: '',
+          backupContactName: '',
+          backupContactPhone: '',
+          backupContactEmail: '',
+          smsConsentAcceptedAt: '2026-09-09T12:00:00.000Z',
+        },
+      ),
+    ).toMatchObject({
+      contactName: 'Alex Rivera',
+      smsConsentAcceptedAt: '2026-09-09T12:00:00.000Z',
+    })
+  })
+
+  it('does not overwrite a normalized contact name', () => {
+    expect(
+      preserveReviewContactName(
+        {
+          companyName: '',
+          contactName: 'Sam Lee',
+          email: '',
+          phone: '',
+          backupContactName: '',
+          backupContactPhone: '',
+          backupContactEmail: '',
+          smsConsentAcceptedAt: '2026-09-09T12:00:00.000Z',
+        },
+        {
+          companyName: '',
+          contactName: 'Alex Rivera',
+          email: '',
+          phone: '',
+          backupContactName: '',
+          backupContactPhone: '',
+          backupContactEmail: '',
+          smsConsentAcceptedAt: null,
+        },
+      ).contactName,
+    ).toBe('Sam Lee')
   })
 })
 

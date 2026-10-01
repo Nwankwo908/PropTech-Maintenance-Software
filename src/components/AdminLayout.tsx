@@ -22,6 +22,7 @@ import {
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
 import {
+  clearOnboardingResetGuard,
   isOnboardingLandlordAccount,
   markOnboardingResetInProgress,
   reportFactoryResetFailureToUser,
@@ -162,15 +163,18 @@ function AdminTopBar() {
       const result = await restartNewLandlordOnboarding()
       if (!result.ok) {
         reportFactoryResetFailureToUser(result)
-      } else {
-        reportFactoryResetSuccessToConsole(result)
+        clearOnboardingResetGuard()
+        setResettingOnboarding(false)
+        return
       }
+      reportFactoryResetSuccessToConsole(result)
+      window.location.assign('/admin/onboarding')
     } catch (err) {
       console.error('[AdminLayout] factory reset failed', err)
       window.alert(getErrorMessage(err, 'Could not complete factory reset.'))
+      clearOnboardingResetGuard()
+      setResettingOnboarding(false)
     }
-    // Always hard-reload so the welcome hub remounts on not_started / entry.
-    window.location.assign('/admin/onboarding')
   }
 
   return (
