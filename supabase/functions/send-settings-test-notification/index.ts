@@ -112,6 +112,8 @@ serve(async (req) => {
       channel?: "email" | "sms"
       toEmail?: string
       toPhone?: string
+      /** Optional ops/outreach body — when set, replaces the default settings-test SMS. */
+      customSmsBody?: string
     } = {}
     try {
       body = await req.json()
@@ -170,7 +172,10 @@ serve(async (req) => {
     }
 
     const provider = getSMSProvider()
-    const bodyText =
+    const customSms = typeof body.customSmsBody === "string"
+      ? body.customSmsBody.trim()
+      : ""
+    const bodyText = customSms ||
       "This is a test notification from Ulo. If you received this, SMS delivery is working for your account."
     const send = await provider.sendMessage({
       to,
@@ -185,10 +190,17 @@ serve(async (req) => {
     try {
       await recordActivityLog(supabase, {
         landlordId,
-        eventType: "settings.test_sms_sent",
-        source: "dashboard",
-        actorType: "landlord",
-        metadata: { message: "Test SMS sent to the account phone." },
+        eventType: customSms
+          ? "sms.hqs_intake_outreach_sent"
+          : "settings.test_sms_sent",
+        source: customSms ? "automation" : "dashboard",
+        actorType: customSms ? "system" : "landlord",
+        metadata: {
+          message: customSms
+            ? "Told the landlord that HQS inspection letters can be texted as a photo or PDF (links not supported yet)."
+            : "Test SMS sent to the account phone.",
+          recipient_phone: to,
+        },
       })
     } catch (logErr) {
       console.warn("[send-settings-test-notification] activity log", logErr)
@@ -196,7 +208,13 @@ serve(async (req) => {
 
     return jsonResponse({
       ok: true,
-      message: `Test SMS sent to ${to} from ${from}.`,
+      message: customSms
+        ? `SMS sent to ${to} from ${from}.`
+        : `Test SMS sent to ${to} from ${from}.`,
+      to,
+      from,
+      providerMessageSid: send.providerMessageSid ?? send.messageId ?? null,
+      body: bodyText,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
