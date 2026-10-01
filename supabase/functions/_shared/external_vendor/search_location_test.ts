@@ -95,6 +95,105 @@ Deno.test("resolveExternalVendorSearchContext matches street address for city/st
   }
 })
 
+Deno.test("resolveExternalVendorSearchContext prefers propertyId address over building name", async () => {
+  const supabase = {
+    from(table: string) {
+      if (table === "properties") {
+        return {
+          select: () => ({
+            eq: (_col: string, val: string) => {
+              if (_col === "landlord_id") {
+                return {
+                  order: () => ({
+                    limit: () =>
+                      Promise.resolve({
+                        data: [
+                          {
+                            id: "prop-correct",
+                            name: "646 Bartlett",
+                            street_address: "646 Bartlett Ave",
+                            city: "Baltimore",
+                            state: "MD",
+                            zip_code: "21218",
+                            property_type: "multifamily",
+                            year_built: null,
+                            unit_count: null,
+                            latitude: null,
+                            longitude: null,
+                          },
+                          {
+                            id: "prop-wrong",
+                            name: "14 Maple",
+                            street_address: "14 Maple Ave",
+                            city: "Hillsboro",
+                            state: "OR",
+                            zip_code: "97124",
+                            property_type: "multifamily",
+                            year_built: null,
+                            unit_count: null,
+                            latitude: null,
+                            longitude: null,
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                }
+              }
+              if (_col === "id" && val === "prop-correct") {
+                return {
+                  maybeSingle: () =>
+                    Promise.resolve({
+                      data: {
+                        id: "prop-correct",
+                        name: "646 Bartlett",
+                        street_address: "646 Bartlett Ave",
+                        city: "Baltimore",
+                        state: "MD",
+                        zip_code: "21218",
+                        landlord_id: "landlord-1",
+                      },
+                      error: null,
+                    }),
+                }
+              }
+              return {
+                order: () => ({
+                  limit: () => Promise.resolve({ data: [], error: null }),
+                }),
+                maybeSingle: () => Promise.resolve({ data: null, error: null }),
+              }
+            },
+          }),
+        }
+      }
+      if (table === "landlord_onboarding") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: null }),
+            }),
+          }),
+        }
+      }
+      throw new Error(`unexpected table: ${table}`)
+    },
+  }
+
+  const result = await resolveExternalVendorSearchContext(supabase as never, {
+    unit: "1",
+    building: "14 Maple", // wrong/stale building text must not win
+    landlordId: "landlord-1",
+    propertyId: "prop-correct",
+  })
+  if (!result.searchLocation.includes("646 Bartlett") || !result.searchLocation.includes("21218")) {
+    throw new Error(`expected Bartlett address, got ${result.searchLocation}`)
+  }
+  if (result.areaLabel !== "Baltimore, MD 21218") {
+    throw new Error(`unexpected area label: ${result.areaLabel}`)
+  }
+})
+
 Deno.test("resolveExternalVendorSearchContext falls back to building name without landlord", async () => {
   const result = await resolveExternalVendorSearchContext(
     { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null }) }) }) }) } as never,

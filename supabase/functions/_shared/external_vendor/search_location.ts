@@ -56,6 +56,32 @@ async function propertyRecordForBuilding(
   return records.find((r) => (r.streetAddress ?? "").trim().toLowerCase() === q) ?? null
 }
 
+async function propertyRecordById(
+  supabase: SupabaseClient,
+  propertyId: string,
+  landlordId: string | null,
+) {
+  const id = propertyId.trim()
+  if (!id) return null
+  if (landlordId?.trim()) {
+    const records = await loadLandlordPropertyRecords(supabase, landlordId.trim())
+    const hit = records.find((r) => r.id === id)
+    if (hit) return hit
+  }
+  const { data, error } = await supabase
+    .from("properties")
+    .select(
+      "id, name, street_address, city, state, zip_code, property_type, year_built, unit_count, latitude, longitude, landlord_id",
+    )
+    .eq("id", id)
+    .maybeSingle()
+  if (error || !data) return null
+  const owner = typeof data.landlord_id === "string" ? data.landlord_id.trim() : ""
+  if (!owner) return null
+  const records = await loadLandlordPropertyRecords(supabase, owner)
+  return records.find((r) => r.id === id) ?? null
+}
+
 export function formatVendorSetupLocationLabel(unit: string, building: string): string {
   const u = unit.trim()
   const b = building.trim()
@@ -92,31 +118,49 @@ export async function resolveExternalVendorSearchContext(
     unit: string
     building: string | null
     landlordId: string | null
+    /** Canonical properties.id — preferred over building-name match. */
+    propertyId?: string | null
   },
 ): Promise<ResolvedVendorSearchContext> {
   const unit = input.unit.trim()
   const building = input.building?.trim() ?? ""
-  const locationLabel = formatVendorSetupLocationLabel(unit, building)
+  const propertyId = input.propertyId?.trim() ?? ""
+  let locationLabel = formatVendorSetupLocationLabel(unit, building)
 
   let addressLine: string | null = null
   let areaLabel: string | null = null
 
-  if (input.landlordId && building) {
-    const { data } = await supabase
-      .from("landlord_onboarding")
-      .select("draft_state")
-      .eq("landlord_id", input.landlordId)
-      .maybeSingle()
-    const fromDraft = pickOnboardingDraftProperty(building, data?.draft_state)
-    addressLine = fromDraft?.addressLine ?? null
-    areaLabel = fromDraft?.areaLabel ?? null
+  // 1) Prefer the ticket's canonical property address (street / city / state / ZIP).
+  if (propertyId) {
+    const byId = await propertyRecordById(supabase, propertyId, input.landlordId)
+    if (byId) {
+      addressLine = formatPropertyAddressLine(byId)
+      areaLabel = formatPropertyCityStateZip(byId)
+      if (byId.name && !building) {
+        locationLabel = formatVendorSetupLocationLabel(unit, byId.name)
+      } else if (byId.name && building && byId.name.toLowerCase() !== building.toLowerCase()) {
+        locationLabel = formatVendorSetupLocationLabel(unit, byId.name)
+      }
+    }
+  }
+
+  // 2) Fall back to live properties table by building name, then onboarding draft.
+  if ((!addressLine || !areaLabel) && input.landlordId && building) {
+    const matched = await propertyRecordForBuilding(supabase, input.landlordId, building)
+    if (matched) {
+      addressLine = addressLine ?? formatPropertyAddressLine(matched)
+      areaLabel = areaLabel ?? formatPropertyCityStateZip(matched)
+    }
 
     if (!addressLine || !areaLabel) {
-      const matched = await propertyRecordForBuilding(supabase, input.landlordId, building)
-      if (matched) {
-        addressLine = addressLine ?? formatPropertyAddressLine(matched)
-        areaLabel = areaLabel ?? formatPropertyCityStateZip(matched)
-      }
+      const { data } = await supabase
+        .from("landlord_onboarding")
+        .select("draft_state")
+        .eq("landlord_id", input.landlordId)
+        .maybeSingle()
+      const fromDraft = pickOnboardingDraftProperty(building, data?.draft_state)
+      addressLine = addressLine ?? fromDraft?.addressLine ?? null
+      areaLabel = areaLabel ?? fromDraft?.areaLabel ?? null
     }
   }
 

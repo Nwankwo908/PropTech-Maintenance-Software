@@ -277,58 +277,82 @@ export async function discoverExternalVendorsForTicket(
   let unit = ""
   let building: string | null = null
   let landlordId: string | null = null
+  let propertyId: string | null = null
 
-  const enriched = await supabase
-    .from("maintenance_request_enriched")
-    .select("id, issue_category, description, unit, landlord_id, building")
+  const { data: ticket, error: ticketError } = await supabase
+    .from("maintenance_requests")
+    .select("id, issue_category, description, unit, unit_id, property_id, landlord_id")
     .eq("id", ticketId)
     .maybeSingle()
 
-  if (enriched.error) {
-    console.warn("[external-vendor] enriched ticket load", enriched.error)
+  if (ticketError) {
+    console.error("[external-vendor] load ticket", ticketError)
+    return { error: "Load ticket failed" }
+  }
+  if (!ticket) return { error: "Ticket not found" }
+
+  issueCategory = ticket.issue_category == null ? null : String(ticket.issue_category)
+  jobDescription = ticket.description == null ? null : String(ticket.description)
+  unit = ticket.unit == null ? "" : String(ticket.unit).trim()
+  landlordId = ticket.landlord_id == null ? null : String(ticket.landlord_id)
+  propertyId = typeof ticket.property_id === "string" && ticket.property_id.trim()
+    ? ticket.property_id.trim()
+    : null
+
+  const ticketUnitId = typeof ticket.unit_id === "string" && ticket.unit_id.trim()
+    ? ticket.unit_id.trim()
+    : null
+  if (ticketUnitId) {
+    const { data: unitRow } = await supabase
+      .from("units")
+      .select("unit_label, building, property_id")
+      .eq("id", ticketUnitId)
+      .maybeSingle()
+    if (unitRow) {
+      if (typeof unitRow.unit_label === "string" && unitRow.unit_label.trim()) {
+        unit = unitRow.unit_label.trim()
+      }
+      if (typeof unitRow.building === "string" && unitRow.building.trim()) {
+        building = unitRow.building.trim()
+      }
+      if (!propertyId && typeof unitRow.property_id === "string" && unitRow.property_id.trim()) {
+        propertyId = unitRow.property_id.trim()
+      }
+    }
   }
 
-  if (enriched.data) {
-    issueCategory = enriched.data.issue_category == null
-      ? null
-      : String(enriched.data.issue_category)
-    jobDescription = enriched.data.description == null
-      ? null
-      : String(enriched.data.description)
-    unit = enriched.data.unit == null ? "" : String(enriched.data.unit).trim()
-    building = enriched.data.building == null ? null : String(enriched.data.building).trim()
-    landlordId = enriched.data.landlord_id == null ? null : String(enriched.data.landlord_id)
-  } else {
-    const { data: ticket, error } = await supabase
-      .from("maintenance_requests")
-      .select("id, issue_category, description, unit, landlord_id")
+  // Enriched view can fill building when unit_id is missing (label join) — never override
+  // a canonical property_id already resolved from the ticket/unit.
+  if (!building || !landlordId) {
+    const enriched = await supabase
+      .from("maintenance_request_enriched")
+      .select("building, landlord_id, property_id")
       .eq("id", ticketId)
       .maybeSingle()
-
-    if (error) {
-      console.error("[external-vendor] load ticket", error)
-      return { error: "Load ticket failed" }
+    if (enriched.data) {
+      if (!building && enriched.data.building != null) {
+        building = String(enriched.data.building).trim() || null
+      }
+      if (!landlordId && enriched.data.landlord_id != null) {
+        landlordId = String(enriched.data.landlord_id)
+      }
+      if (!propertyId && typeof enriched.data.property_id === "string" && enriched.data.property_id.trim()) {
+        propertyId = enriched.data.property_id.trim()
+      }
+    } else if (enriched.error) {
+      console.warn("[external-vendor] enriched ticket load", enriched.error)
     }
-    if (!ticket) return { error: "Ticket not found" }
-
-    issueCategory = ticket.issue_category == null
-      ? null
-      : String(ticket.issue_category)
-    jobDescription = ticket.description == null
-      ? null
-      : String(ticket.description)
-    unit = ticket.unit == null ? "" : String(ticket.unit).trim()
-    landlordId = ticket.landlord_id == null ? null : String(ticket.landlord_id)
   }
 
   const fromWorkflow = await loadWorkflowLocationForTicket(supabase, ticketId)
-  if (fromWorkflow.unit) unit = fromWorkflow.unit
-  if (fromWorkflow.building) building = fromWorkflow.building
+  if (!unit && fromWorkflow.unit) unit = fromWorkflow.unit
+  if (!building && fromWorkflow.building) building = fromWorkflow.building
+  if (!propertyId && fromWorkflow.propertyId) propertyId = fromWorkflow.propertyId
 
   const normalizedCategory = normalizeIssueCategoryForSearch(issueCategory)
   const { searchLocation, locationLabel, areaLabel } = await resolveExternalVendorSearchContext(
     supabase,
-    { unit, building, landlordId },
+    { unit, building, landlordId, propertyId },
   )
 
   const allowMock = await landlordAllowsMockExternalVendors(supabase, landlordId)
@@ -432,7 +456,7 @@ export function workflowLocationHintFromRuns(
 async function loadWorkflowLocationForTicket(
   supabase: SupabaseClient,
   ticketId: string,
-): Promise<{ unit: string | null; building: string | null }> {
+): Promise<{ unit: string | null; building: string | null; propertyId: string | null }> {
   const select = "unit_id, metadata, updated_at"
   const queries = [
     supabase.from("workflow_runs").select(select).eq("entity_id", ticketId)
@@ -463,7 +487,7 @@ async function loadWorkflowLocationForTicket(
   if (hint.unitId) {
     const { data: unitRow } = await supabase
       .from("units")
-      .select("unit_label, building")
+      .select("unit_label, building, property_id")
       .eq("id", hint.unitId)
       .maybeSingle()
     if (unitRow) {
@@ -472,9 +496,12 @@ async function loadWorkflowLocationForTicket(
         building: typeof unitRow.building === "string" && unitRow.building.trim()
           ? unitRow.building.trim()
           : hint.building,
+        propertyId: typeof unitRow.property_id === "string" && unitRow.property_id.trim()
+          ? unitRow.property_id.trim()
+          : null,
       }
     }
   }
 
-  return { unit: hint.unitLabel, building: hint.building }
+  return { unit: hint.unitLabel, building: hint.building, propertyId: null }
 }
