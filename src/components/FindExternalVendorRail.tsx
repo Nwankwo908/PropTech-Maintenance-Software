@@ -422,6 +422,11 @@ export function FindExternalVendorRail({
   const displayRows = applyVendorDistanceMiles(baseRows, measuredMiles)
   const searchQuery = buildExternalSearchQueryLabel(issueCategory, areaLabel ?? '')
   const resultCount = displayRows.length
+  const propertyAddressCopy =
+    originAddress ||
+    jobContext?.propertyAddress?.trim() ||
+    areaLabel?.trim() ||
+    'this property'
   const isSheet = presentation === 'sheet'
   const handleBack = onBack ?? onClose
   const handleDismiss = !isSheet && panelOnly && onBack ? onBack : onClose
@@ -1133,7 +1138,7 @@ export function FindExternalVendorRail({
             <p className="mt-2 text-[11px] leading-[15px] text-[#717182]">
               {loading
                 ? 'Searching…'
-                : `${resultCount} business${resultCount === 1 ? '' : 'es'} found · not on your roster`}
+                : `${resultCount} business${resultCount === 1 ? '' : 'es'} found near ${propertyAddressCopy}`}
             </p>
             {thumbtackConnected === false ? (
               <p className="mt-2 text-[11px] leading-[15px] text-[#717182]">

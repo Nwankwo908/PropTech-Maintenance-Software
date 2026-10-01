@@ -203,6 +203,9 @@ export type AwaitingVendorChoice = {
   issueCategory?: string | null
   issueSummary?: string | null
   urgency?: string | null
+  /** Inspection visit: YES assigns every ticket in this list. */
+  visitTicketIds?: string[]
+  inspectionReportId?: string | null
 }
 
 function asRole(raw: unknown, source?: unknown): "specialist" | "generalist" | "external" {
@@ -296,6 +299,11 @@ export function readAwaitingVendorChoice(
     }
   }
   if (options.length === 0) return null
+  const visitTicketIds = Array.isArray(row.visit_ticket_ids)
+    ? row.visit_ticket_ids
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      .map((id) => id.trim())
+    : undefined
   return {
     ticketId,
     options,
@@ -306,6 +314,11 @@ export function readAwaitingVendorChoice(
     issueSummary:
       typeof row.issue_summary === "string" ? row.issue_summary : null,
     urgency: typeof row.urgency === "string" ? row.urgency : null,
+    visitTicketIds,
+    inspectionReportId:
+      typeof row.inspection_report_id === "string" && row.inspection_report_id.trim()
+        ? row.inspection_report_id.trim()
+        : null,
   }
 }
 
@@ -318,6 +331,8 @@ export function serializeAwaitingVendorChoice(
     issue_category: awaiting.issueCategory ?? null,
     issue_summary: awaiting.issueSummary ?? null,
     urgency: awaiting.urgency ?? null,
+    visit_ticket_ids: awaiting.visitTicketIds ?? null,
+    inspection_report_id: awaiting.inspectionReportId ?? null,
     options: awaiting.options.map((row) => ({
       id: row.id,
       name: row.name,
@@ -725,6 +740,10 @@ export async function notifyLandlordVendorChoice(
       string,
       { windowLabel?: string | null; estimateNote?: string | null }
     >
+    visitTicketIds?: string[] | null
+    inspectionReportId?: string | null
+    visitItems?: Array<{ label: string; workOrderRef?: string }> | null
+    visitVendorName?: string | null
   },
 ): Promise<{ sent: number }> {
   let choiceOptions = optionsFromAssignment(params.options)
@@ -779,18 +798,43 @@ export async function notifyLandlordVendorChoice(
     }
   }
 
-  const smsBody = buildLandlordVendorChoiceSms({
-    landlordFirstName,
-    companyName: companyName || null,
-    workOrderRef: wo,
-    unit: params.unit,
-    tradeLabel: tradeLabelFromCategory(params.issueCategory),
-    options: choiceOptions,
-    adminUrl: uloAppUrl.adminWorkOrder(wo),
-    reason: params.reason ?? "assign",
-    issueHeadline,
-    locationLabel,
-  })
+  const visitTicketIds = (params.visitTicketIds ?? [])
+    .map((id) => id.trim())
+    .filter(Boolean)
+  const isVisit =
+    visitTicketIds.length > 1 &&
+    Array.isArray(params.visitItems) &&
+    params.visitItems.length > 0
+
+  let smsBody: string
+  if (isVisit) {
+    const { buildLandlordInspectionVisitChoiceSms } = await import(
+      "./vendorAvailabilityProbe.ts"
+    )
+    const primary = choiceOptions[0]
+    smsBody = buildLandlordInspectionVisitChoiceSms({
+      landlordFirstName,
+      vendorName: params.visitVendorName?.trim() || primary?.name || "your vendor",
+      locationLabel,
+      windowLabel: primary?.windowLabel ?? null,
+      estimateNote: primary?.estimateNote ?? null,
+      items: params.visitItems!,
+      adminUrl: uloAppUrl.adminWorkOrder(wo),
+    })
+  } else {
+    smsBody = buildLandlordVendorChoiceSms({
+      landlordFirstName,
+      companyName: companyName || null,
+      workOrderRef: wo,
+      unit: params.unit,
+      tradeLabel: tradeLabelFromCategory(params.issueCategory),
+      options: choiceOptions,
+      adminUrl: uloAppUrl.adminWorkOrder(wo),
+      reason: params.reason ?? "assign",
+      issueHeadline,
+      locationLabel,
+    })
+  }
 
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
   const provider = getSMSProviderForSend({
@@ -799,6 +843,12 @@ export async function notifyLandlordVendorChoice(
   })
   const { phones } = await resolveLandlordOpsPhones(supabase, params.landlordId)
   let sent = 0
+  const awaiting: AwaitingVendorChoice = {
+    ticketId: params.ticketId,
+    options: choiceOptions,
+    visitTicketIds: visitTicketIds.length > 0 ? visitTicketIds : undefined,
+    inspectionReportId: params.inspectionReportId ?? null,
+  }
   for (const phone of phones) {
     const sendResult = await provider.sendMessage({
       to: phone,
@@ -815,7 +865,7 @@ export async function notifyLandlordVendorChoice(
         landlordId: params.landlordId,
         phone,
         body: smsBody,
-        awaiting: { ticketId: params.ticketId, options: choiceOptions },
+        awaiting,
         providerMessageSid:
           sendResult.providerMessageSid ??
           sendResult.messageId ??
@@ -840,11 +890,15 @@ export async function notifyLandlordVendorChoice(
     actorType: "system",
     maintenanceRequestId: params.ticketId,
     metadata: {
-      message: rematch
+      message: isVisit
+        ? `Asked the landlord to confirm the inspection visit (${visitTicketIds.length} items) with ${names}.`
+        : rematch
         ? `Asked the landlord to confirm a replacement vendor for ${wo}: ${names}.`
         : `Asked the landlord to confirm vendor assignment for ${wo}: ${names}.`,
       option_ids: choiceOptions.map((row) => row.id),
       reason: params.reason ?? "assign",
+      visit_ticket_ids: visitTicketIds.length > 0 ? visitTicketIds : undefined,
+      inspection_report_id: params.inspectionReportId ?? undefined,
     },
   })
 
@@ -1046,30 +1100,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
       : ""
 
   // #region agent log
-  fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "5d0562",
-    },
-    body: JSON.stringify({
-      sessionId: "5d0562",
-      runId: "pre-fix",
-      hypothesisId: "A",
-      location: "vendorLandlordChoice.ts:tryHandle",
-      message: "landlord choice ticket state",
-      data: {
-        ticketId: awaiting.ticketId,
-        chosenId: chosen.id,
-        assignedId: assignedId || null,
-        workStatus,
-        vendorNotifiedAt: vendorNotifiedAt || null,
-        hasAwaiting: true,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-  // #endregion
+// #endregion
 
   if (assignedId && !isExternalVendorChoice(chosen)) {
     if (assignedId === chosen.id) {
@@ -1077,23 +1108,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
       // If the vendor was never notified, treat YES as assign+notify — not a no-op.
       if (!vendorNotifiedAt) {
         // #region agent log
-        fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "5d0562",
-          },
-          body: JSON.stringify({
-            sessionId: "5d0562",
-            runId: "pre-fix",
-            hypothesisId: "B",
-            location: "vendorLandlordChoice.ts:sameVendorUnnotified",
-            message: "same vendor but never notified — reassign+notify",
-            data: { ticketId: awaiting.ticketId, vendorId: assignedId },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {})
-        // #endregion
+// #endregion
         const { reassignVendorByIdAndNotify } = await import(
           "../submit-maintenance-request/vendor_notify.ts"
         )
@@ -1137,23 +1152,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
         }
       }
       // #region agent log
-      fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "5d0562",
-        },
-        body: JSON.stringify({
-          sessionId: "5d0562",
-          runId: "pre-fix",
-          hypothesisId: "B",
-          location: "vendorLandlordChoice.ts:sameVendorAlreadyNotified",
-          message: "keep short-circuit — vendor already notified",
-          data: { ticketId: awaiting.ticketId, vendorId: assignedId },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {})
-      // #endregion
+// #endregion
       await clearAwaitingVendorChoice(
         supabase,
         conversationId,
@@ -1298,36 +1297,66 @@ export async function tryHandleLandlordVendorChoiceInbound(
     "../submit-maintenance-request/vendor_notify.ts"
   )
   const displayName = vendorChoiceDisplayName(chosen.name)
-  const result = await assignVendorAndNotify(supabase, {
-    ticketId: awaiting.ticketId,
-    priority: typeof ticket.priority === "string" && ticket.priority.trim()
-      ? ticket.priority
-      : "normal",
-    unit: typeof ticket.unit === "string" ? ticket.unit : "",
-    description: typeof ticket.description === "string" ? ticket.description : "",
-    issueHeadline: typeof ticket.issue_headline === "string"
-      ? ticket.issue_headline
-      : null,
-    entryOkIfAbsent: typeof ticket.entry_ok_if_absent === "boolean"
-      ? ticket.entry_ok_if_absent
-      : null,
-    urgency: typeof ticket.urgency === "string" ? ticket.urgency : null,
-    severity: typeof ticket.severity === "string" ? ticket.severity : null,
-    dueAt: typeof ticket.due_at === "string" ? ticket.due_at : null,
-    estimatedMinutes: typeof ticket.estimated_minutes === "number"
-      ? ticket.estimated_minutes
-      : null,
-    landlordId: params.landlordId,
-    preferVendorId: chosen.id,
-    landlordAcknowledged: true,
-    residentAvailabilityText:
-      typeof ticket.resident_availability_text === "string"
-        ? ticket.resident_availability_text
-        : null,
-    retryIfUnassigned: true,
-  })
+  const visitIds = [
+    ...new Set(
+      [
+        awaiting.ticketId,
+        ...(awaiting.visitTicketIds ?? []),
+      ].map((id) => id.trim()).filter(Boolean),
+    ),
+  ]
 
-  if (!result.assigned) {
+  let assignedPrimary = false
+  for (const ticketId of visitIds) {
+    const { data: row } = ticketId === awaiting.ticketId
+      ? { data: ticket }
+      : await supabase
+        .from("maintenance_requests")
+        .select(
+          "id, priority, unit, description, issue_headline, entry_ok_if_absent, urgency, severity, due_at, estimated_minutes, resident_availability_text",
+        )
+        .eq("id", ticketId)
+        .maybeSingle()
+    if (!row) continue
+    const result = await assignVendorAndNotify(supabase, {
+      ticketId,
+      priority: typeof row.priority === "string" && row.priority.trim()
+        ? row.priority
+        : "normal",
+      unit: typeof row.unit === "string" ? row.unit : "",
+      description: typeof row.description === "string" ? row.description : "",
+      issueHeadline: typeof row.issue_headline === "string"
+        ? row.issue_headline
+        : null,
+      entryOkIfAbsent: typeof row.entry_ok_if_absent === "boolean"
+        ? row.entry_ok_if_absent
+        : null,
+      urgency: typeof row.urgency === "string" ? row.urgency : null,
+      severity: typeof row.severity === "string" ? row.severity : null,
+      dueAt: typeof row.due_at === "string" ? row.due_at : null,
+      estimatedMinutes: typeof row.estimated_minutes === "number"
+        ? row.estimated_minutes
+        : null,
+      landlordId: params.landlordId,
+      preferVendorId: chosen.id,
+      landlordAcknowledged: true,
+      residentAvailabilityText:
+        typeof row.resident_availability_text === "string"
+          ? row.resident_availability_text
+          : null,
+      retryIfUnassigned: true,
+    })
+    if (ticketId === awaiting.ticketId) assignedPrimary = result.assigned
+    else if (!result.assigned) {
+      console.warn(
+        "[landlord-vendor-choice] visit sibling assign failed",
+        ticketId,
+        result.skipReason,
+      )
+    }
+  }
+
+  if (!assignedPrimary) {
     return {
       handled: true,
       ticketId: awaiting.ticketId,
@@ -1337,7 +1366,8 @@ export async function tryHandleLandlordVendorChoiceInbound(
     }
   }
 
-  // If this vendor offered a window during the availability probe, seed the schedule.
+  // If this vendor offered a window during the availability probe, seed the schedule
+  // on every ticket in the inspection visit group.
   try {
     const { findProbeOfferForVendor } = await import("./vendorAvailabilityProbe.ts")
     const offer = await findProbeOfferForVendor(
@@ -1351,23 +1381,28 @@ export async function tryHandleLandlordVendorChoiceInbound(
       if (offer.windowLabel.trim()) {
         patch.scheduled_window_text = offer.windowLabel.trim()
       }
+      // Landlord YES locks the proposed visit window across the group.
+      patch.schedule_confirmed_at = new Date().toISOString()
       if (Object.keys(patch).length > 0) {
         await supabase
           .from("maintenance_requests")
           .update(patch)
-          .eq("id", awaiting.ticketId)
+          .in("id", visitIds)
       }
     }
   } catch (e) {
     console.warn("[landlord-vendor-choice] apply probe offer window", e)
   }
 
+  for (const ticketId of visitIds) {
+    await clearLandlordVendorChoiceTicketFlag(supabase, ticketId)
+  }
   await clearAwaitingVendorChoice(
-        supabase,
-        conversationId,
-        priorIntake,
-        awaiting.ticketId,
-      )
+    supabase,
+    conversationId,
+    priorIntake,
+    awaiting.ticketId,
+  )
   await recordActivityLog(supabase, {
     landlordId: params.landlordId,
     eventType: "maintenance.vendor_choice_selected",
@@ -1377,7 +1412,10 @@ export async function tryHandleLandlordVendorChoiceInbound(
     maintenanceRequestId: awaiting.ticketId,
     conversationId,
     metadata: {
-      message: `Assigned ${displayName} after the landlord confirmed.`,
+      message: visitIds.length > 1
+        ? `Assigned ${displayName} to the inspection visit (${visitIds.length} items) after the landlord confirmed.`
+        : `Assigned ${displayName} after the landlord confirmed.`,
+      visit_ticket_ids: visitIds.length > 1 ? visitIds : undefined,
     },
   })
 
@@ -1385,6 +1423,8 @@ export async function tryHandleLandlordVendorChoiceInbound(
     handled: true,
     ticketId: awaiting.ticketId,
     vendorId: chosen.id,
-    replyBody: `Got it — we'll send this to ${displayName} now and ask them to take the job. We'll text you when they reply.`,
+    replyBody: visitIds.length > 1
+      ? `Got it — we'll send the inspection visit to ${displayName} now and ask them to take the jobs. We'll text you when they reply.`
+      : `Got it — we'll send this to ${displayName} now and ask them to take the job. We'll text you when they reply.`,
   }
 }

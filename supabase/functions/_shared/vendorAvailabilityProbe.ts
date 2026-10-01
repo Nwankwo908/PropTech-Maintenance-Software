@@ -17,9 +17,12 @@ import type {
   VendorAssignmentRow,
 } from "./vendor_assignment.ts"
 import {
+  extractWorkOrderRefFromSms,
   formatWorkOrderRef,
+  stripWorkOrderRefFromSms,
   titleCaseCompanyName,
   vendorCompanyName,
+  workOrderRefMatchesTicket,
 } from "./vendor_outreach_copy.ts"
 import { loadLandlordDisplayName } from "./landlordDisplayName.ts"
 import { sanitizeResidentAvailabilityForVendor } from "./sms/residentAvailabilityExtract.ts"
@@ -95,25 +98,33 @@ export type VendorAvailabilityProbe = {
   /** Insight inspector path: assign on first offer (no landlord YES/1/2). */
   insightAutoAssign?: boolean
   insightSchedulingRequestId?: string | null
+  /** Shared HQS / inspection letter — visit-level probe when multiple tickets. */
+  inspectionReportId?: string | null
+  /** All ticket ids covered by one visit probe SMS (includes ticketId). */
+  visitTicketIds?: string[]
 }
 
 export type AwaitingVendorProbe = {
   ticketId: string
   vendorId: string
   sentAt: string
+  /** Optional display fields for multi-ticket disambiguation SMS. */
+  workOrderRef?: string
+  issueHeadline?: string | null
+  /** When set, bare day/window replies apply to the whole inspection visit group. */
+  inspectionReportId?: string | null
 }
 
-export function ticketIsAwaitingVendorAvailabilityProbe(
-  vendorNotifyError?: string | null,
-): boolean {
-  return (vendorNotifyError ?? "").includes(AWAITING_VENDOR_AVAILABILITY_PROBE)
+export type AwaitingVendorProbeClarify = {
+  options: Array<{
+    ticketId: string
+    workOrderRef: string
+    label: string
+  }>
+  askedAt: string
 }
 
-export function readAwaitingVendorProbe(
-  intakeState: unknown,
-): AwaitingVendorProbe | null {
-  if (!intakeState || typeof intakeState !== "object") return null
-  const raw = (intakeState as Record<string, unknown>).awaiting_vendor_probe
+function parseAwaitingProbeRow(raw: unknown): AwaitingVendorProbe | null {
   if (!raw || typeof raw !== "object") return null
   const row = raw as Record<string, unknown>
   const ticketId = typeof row.ticket_id === "string" ? row.ticket_id.trim() : ""
@@ -123,7 +134,403 @@ export function readAwaitingVendorProbe(
     ticketId,
     vendorId,
     sentAt: typeof row.sent_at === "string" ? row.sent_at : "",
+    workOrderRef:
+      typeof row.work_order_ref === "string" && row.work_order_ref.trim()
+        ? row.work_order_ref.trim()
+        : formatWorkOrderRef(ticketId),
+    issueHeadline:
+      typeof row.issue_headline === "string" ? row.issue_headline.trim() : null,
+    inspectionReportId:
+      typeof row.inspection_report_id === "string" && row.inspection_report_id.trim()
+        ? row.inspection_report_id.trim()
+        : null,
   }
+}
+
+function serializeAwaitingProbe(probe: AwaitingVendorProbe): Record<string, unknown> {
+  return {
+    ticket_id: probe.ticketId,
+    vendor_id: probe.vendorId,
+    sent_at: probe.sentAt,
+    work_order_ref: probe.workOrderRef ?? formatWorkOrderRef(probe.ticketId),
+    issue_headline: probe.issueHeadline ?? null,
+    inspection_report_id: probe.inspectionReportId ?? null,
+  }
+}
+
+/**
+ * Pending vendor soft-offers on a conversation.
+ *
+ * Historically a single `awaiting_vendor_probe` object (last-write-wins).
+ * Now also stored as `awaiting_vendor_probes` (list keyed by ticket_id).
+ * Readers merge both so older threads still resolve.
+ */
+export function readAwaitingVendorProbes(
+  intakeState: unknown,
+): AwaitingVendorProbe[] {
+  if (!intakeState || typeof intakeState !== "object") return []
+  const state = intakeState as Record<string, unknown>
+  const byTicket = new Map<string, AwaitingVendorProbe>()
+
+  const listRaw = state.awaiting_vendor_probes
+  if (Array.isArray(listRaw)) {
+    for (const item of listRaw) {
+      const parsed = parseAwaitingProbeRow(item)
+      if (parsed) byTicket.set(parsed.ticketId, parsed)
+    }
+  }
+
+  const legacy = parseAwaitingProbeRow(state.awaiting_vendor_probe)
+  if (legacy && !byTicket.has(legacy.ticketId)) {
+    byTicket.set(legacy.ticketId, legacy)
+  }
+
+  return [...byTicket.values()].sort((a, b) =>
+    (a.sentAt || "").localeCompare(b.sentAt || "")
+  )
+}
+
+/** Single pending probe (legacy + multi). Prefer explicit WO match via resolve helpers. */
+export function readAwaitingVendorProbe(
+  intakeState: unknown,
+): AwaitingVendorProbe | null {
+  const all = readAwaitingVendorProbes(intakeState)
+  return all.length === 1 ? all[0]! : all.length > 0 ? all[all.length - 1]! : null
+}
+
+export function readAwaitingVendorProbeClarify(
+  intakeState: unknown,
+): AwaitingVendorProbeClarify | null {
+  if (!intakeState || typeof intakeState !== "object") return null
+  const raw = (intakeState as Record<string, unknown>).awaiting_vendor_probe_clarify
+  if (!raw || typeof raw !== "object") return null
+  const row = raw as Record<string, unknown>
+  const optionsRaw = Array.isArray(row.options) ? row.options : []
+  const options: AwaitingVendorProbeClarify["options"] = []
+  for (const opt of optionsRaw) {
+    if (!opt || typeof opt !== "object") continue
+    const o = opt as Record<string, unknown>
+    const ticketId = typeof o.ticket_id === "string" ? o.ticket_id.trim() : ""
+    const workOrderRef =
+      typeof o.work_order_ref === "string" ? o.work_order_ref.trim() : ""
+    const label = typeof o.label === "string" ? o.label.trim() : workOrderRef
+    if (!ticketId || !workOrderRef) continue
+    options.push({ ticketId, workOrderRef, label })
+  }
+  if (options.length === 0) return null
+  return {
+    options,
+    askedAt: typeof row.asked_at === "string" ? row.asked_at : "",
+  }
+}
+
+/** Upsert one ticket into the pending-probe list (no last-write-wins wipe). */
+export function upsertAwaitingVendorProbeOnIntake(
+  intakeState: Record<string, unknown>,
+  probe: AwaitingVendorProbe,
+): Record<string, unknown> {
+  const existing = readAwaitingVendorProbes(intakeState).filter(
+    (p) => p.ticketId !== probe.ticketId,
+  )
+  const next = [...existing, probe]
+  const serialized = next.map(serializeAwaitingProbe)
+  return {
+    ...intakeState,
+    awaiting_vendor_probes: serialized,
+    // Keep legacy single as the most recent for older readers.
+    awaiting_vendor_probe: serializeAwaitingProbe(probe),
+  }
+}
+
+export function removeAwaitingVendorProbeFromIntake(
+  intakeState: Record<string, unknown>,
+  ticketId: string,
+): Record<string, unknown> {
+  const remaining = readAwaitingVendorProbes(intakeState).filter(
+    (p) => p.ticketId !== ticketId,
+  )
+  const next = { ...intakeState }
+  delete next.awaiting_vendor_probe_clarify
+  if (remaining.length === 0) {
+    delete next.awaiting_vendor_probe
+    delete next.awaiting_vendor_probes
+  } else {
+    next.awaiting_vendor_probes = remaining.map(serializeAwaitingProbe)
+    next.awaiting_vendor_probe = serializeAwaitingProbe(
+      remaining[remaining.length - 1]!,
+    )
+  }
+  return next
+}
+
+export function setAwaitingVendorProbeClarifyOnIntake(
+  intakeState: Record<string, unknown>,
+  clarify: AwaitingVendorProbeClarify,
+): Record<string, unknown> {
+  return {
+    ...intakeState,
+    awaiting_vendor_probe_clarify: {
+      asked_at: clarify.askedAt,
+      options: clarify.options.map((o) => ({
+        ticket_id: o.ticketId,
+        work_order_ref: o.workOrderRef,
+        label: o.label,
+      })),
+    },
+  }
+}
+
+/**
+ * Pick which pending probe an inbound vendor SMS applies to.
+ * Explicit WO-XXXX wins; numbered reply works after a clarify ask;
+ * a single pending probe resolves without a WO; multiple sharing one
+ * inspection_report_id resolve as one visit; otherwise → ambiguous.
+ */
+export function resolveVendorProbeTicketFromReply(input: {
+  body: string
+  probes: AwaitingVendorProbe[]
+  clarify?: AwaitingVendorProbeClarify | null
+}):
+  | { kind: "matched"; probe: AwaitingVendorProbe; bodyForParse: string }
+  | {
+    kind: "visit_group"
+    probes: AwaitingVendorProbe[]
+    inspectionReportId: string
+    bodyForParse: string
+  }
+  | { kind: "ambiguous"; probes: AwaitingVendorProbe[] }
+  | { kind: "none" } {
+  const probes = input.probes
+  if (probes.length === 0) return { kind: "none" }
+
+  const body = input.body.trim()
+  const woRef = extractWorkOrderRefFromSms(body)
+  if (woRef) {
+    const hit = probes.find((p) => workOrderRefMatchesTicket(woRef, p.ticketId))
+    if (hit) {
+      return {
+        kind: "matched",
+        probe: hit,
+        bodyForParse: stripWorkOrderRefFromSms(body),
+      }
+    }
+  }
+
+  const clarify = input.clarify
+  if (clarify && clarify.options.length > 0) {
+    const normalized = body.toLowerCase().replace(/[.!]+$/g, "").replace(/\s+/g, " ")
+    const numbered = normalized.match(/^(?:option |reply |job )?(\d+)$/)
+    if (numbered) {
+      const index = Number(numbered[1]) - 1
+      const opt = clarify.options[index]
+      if (opt) {
+        const hit = probes.find((p) => p.ticketId === opt.ticketId)
+        if (hit) {
+          return { kind: "matched", probe: hit, bodyForParse: body }
+        }
+      }
+    }
+    if (woRef) {
+      const opt = clarify.options.find((o) =>
+        o.workOrderRef.toUpperCase() === woRef.toUpperCase()
+      )
+      if (opt) {
+        const hit = probes.find((p) => p.ticketId === opt.ticketId)
+        if (hit) {
+          return {
+            kind: "matched",
+            probe: hit,
+            bodyForParse: stripWorkOrderRefFromSms(body),
+          }
+        }
+      }
+    }
+    return { kind: "ambiguous", probes }
+  }
+
+  if (probes.length === 1) {
+    return {
+      kind: "matched",
+      probe: probes[0]!,
+      bodyForParse: woRef ? stripWorkOrderRefFromSms(body) : body,
+    }
+  }
+
+  const reportIds = [
+    ...new Set(
+      probes
+        .map((p) => p.inspectionReportId?.trim() || "")
+        .filter((id) => id.length > 0),
+    ),
+  ]
+  if (reportIds.length === 1 && probes.every((p) => p.inspectionReportId === reportIds[0])) {
+    return {
+      kind: "visit_group",
+      probes,
+      inspectionReportId: reportIds[0]!,
+      bodyForParse: body,
+    }
+  }
+
+  return { kind: "ambiguous", probes }
+}
+
+/** Landlord-facing / vendor checklist line from a ticket description. */
+export function checklistLabelFromTicketDescription(
+  description: string | null | undefined,
+): string {
+  const first = String(description ?? "").split("\n")[0]?.trim() || ""
+  const hqs = first.match(/^HQS fail:\s*(.+)$/i)
+  if (hqs?.[1]) {
+    return hqs[1].replace(/\s+-\s+/g, " — ").trim() || "Inspection item"
+  }
+  return first || "Repair item"
+}
+
+export function buildVendorInspectionVisitProbeSms(input: {
+  vendorName: string
+  companyName?: string | null
+  location?: string | null
+  urgent?: boolean
+  items: Array<{ label: string; workOrderRef: string }>
+  inspectionRef?: string | null
+}): string {
+  const vendor = vendorCompanyName(input.vendorName)
+  const company = titleCaseCompanyName(input.companyName) || "Ulo"
+  const loc = (input.location ?? "").trim()
+  const where = loc ? ` at ${loc}` : ""
+  const urgentMark = input.urgent ? " — URGENT" : ""
+  const lines = [
+    `Hi ${vendor} — inspection visit${where}${urgentMark}`,
+    company,
+    "",
+  ]
+  const ref = (input.inspectionRef ?? "").trim()
+  if (ref) {
+    lines.push(`Inspection ${ref}`)
+    lines.push("")
+  }
+  lines.push("Here's what needs doing on this visit:")
+  for (const item of input.items) {
+    const label = item.label.trim() || "Repair item"
+    const wo = item.workOrderRef.trim()
+    lines.push(wo ? `• ${label} (${wo})` : `• ${label}`)
+  }
+  lines.push(
+    "",
+    "Reply with one day + window for the whole visit (ex: Wed 9am–12pm).",
+    "Can't take a specific item? Reply NO + that WO code (ex: NO WO-D154).",
+    "Can't take the visit? Reply NO.",
+  )
+  return lines.join("\n")
+}
+
+export function buildVendorInspectionVisitAckSms(input: {
+  windowLabel: string
+  itemCount: number
+}): string {
+  const when = input.windowLabel.trim() || "that window"
+  const n = Math.max(1, input.itemCount)
+  return [
+    `Thanks — we have you down for ${when} for the inspection visit (${n} item${n === 1 ? "" : "s"}).`,
+    "",
+    "We'll text you if the property team confirms.",
+  ].join("\n")
+}
+
+export function buildLandlordInspectionVisitChoiceSms(input: {
+  landlordFirstName?: string | null
+  vendorName: string
+  locationLabel?: string | null
+  windowLabel?: string | null
+  estimateNote?: string | null
+  items: Array<{ label: string; workOrderRef?: string }>
+  adminUrl?: string | null
+}): string {
+  const first = input.landlordFirstName?.trim()
+  const greeting = first ? `Hi ${first}` : "Hi"
+  const vendor = vendorCompanyName(input.vendorName)
+  const loc = (input.locationLabel ?? "").trim()
+  const where = loc ? ` at ${loc}` : ""
+  const lines = [
+    `${greeting} — ${vendor} is available for the inspection visit${where}.`,
+  ]
+  const window = (input.windowLabel ?? "").trim()
+  const estimate = (input.estimateNote ?? "").trim()
+  if (window || estimate) {
+    lines.push("")
+    if (window) lines.push(window)
+    if (estimate) lines.push(estimate)
+  }
+  if (input.items.length > 0) {
+    lines.push("", "Items on this visit:")
+    for (const item of input.items) {
+      const label = item.label.trim() || "Repair item"
+      const wo = (item.workOrderRef ?? "").trim()
+      lines.push(wo ? `• ${label} (${wo})` : `• ${label}`)
+    }
+  }
+  lines.push("", `Reply YES to send the visit to ${vendor}.`)
+  const adminUrl = input.adminUrl?.trim() ?? ""
+  if (adminUrl) {
+    lines.push("", "View details:", adminUrl)
+  }
+  return lines.join("\n")
+}
+
+export function buildVendorProbeWhichJobSms(
+  probes: AwaitingVendorProbe[],
+): string {
+  const lines = [
+    "Thanks — which job is this for?",
+    "",
+  ]
+  probes.forEach((p, i) => {
+    const wo = p.workOrderRef ?? formatWorkOrderRef(p.ticketId)
+    const issue = (p.issueHeadline ?? "").trim()
+    lines.push(
+      issue
+        ? `${i + 1} — ${wo} · ${issue}`
+        : `${i + 1} — ${wo}`,
+    )
+  })
+  lines.push(
+    "",
+    "Reply with the number or the WO code (e.g. WO-D154), then your day/window or NO.",
+  )
+  return lines.join("\n")
+}
+
+export function buildVendorOpenProbesReminderSms(input: {
+  vendorName: string
+  probes: Array<{ workOrderRef: string; issueHeadline?: string | null }>
+}): string {
+  const vendor = vendorCompanyName(input.vendorName)
+  const lines = [
+    `Hi ${vendor} — quick follow-up.`,
+    "",
+    `We still need availability on ${input.probes.length} open jobs:`,
+    "",
+  ]
+  input.probes.forEach((p, i) => {
+    const issue = (p.issueHeadline ?? "").trim()
+    lines.push(
+      issue
+        ? `${i + 1} — ${p.workOrderRef} · ${issue}`
+        : `${i + 1} — ${p.workOrderRef}`,
+    )
+  })
+  lines.push(
+    "",
+    "Reply with the WO code + earliest day/window (e.g. WO-D154 Wed 9am–12pm), or NO + WO code if you can't take that one.",
+  )
+  return lines.join("\n")
+}
+
+export function ticketIsAwaitingVendorAvailabilityProbe(
+  vendorNotifyError?: string | null,
+): boolean {
+  return (vendorNotifyError ?? "").includes(AWAITING_VENDOR_AVAILABILITY_PROBE)
 }
 
 export function canHandleVendorAvailabilityProbe(input: {
@@ -131,7 +538,10 @@ export function canHandleVendorAvailabilityProbe(input: {
   intakeState: unknown
 }): boolean {
   if (input.identityType !== "vendor") return false
-  return readAwaitingVendorProbe(input.intakeState) != null
+  return (
+    readAwaitingVendorProbes(input.intakeState).length > 0 ||
+    readAwaitingVendorProbeClarify(input.intakeState) != null
+  )
 }
 
 /** @deprecated Prefer titleCaseCompanyName from vendor_outreach_copy.ts */
@@ -343,6 +753,8 @@ function serializeProbe(probe: VendorAvailabilityProbe): Record<string, unknown>
     landlord_notified_at: probe.landlordNotifiedAt,
     insight_auto_assign: probe.insightAutoAssign === true,
     insight_scheduling_request_id: probe.insightSchedulingRequestId ?? null,
+    inspection_report_id: probe.inspectionReportId ?? null,
+    visit_ticket_ids: probe.visitTicketIds ?? [probe.ticketId],
   }
 }
 
@@ -425,6 +837,15 @@ export function readVendorAvailabilityProbe(
       typeof row.insight_scheduling_request_id === "string"
         ? row.insight_scheduling_request_id
         : null,
+    inspectionReportId:
+      typeof row.inspection_report_id === "string" && row.inspection_report_id.trim()
+        ? row.inspection_report_id.trim()
+        : null,
+    visitTicketIds: Array.isArray(row.visit_ticket_ids)
+      ? row.visit_ticket_ids
+        .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        .map((id) => id.trim())
+      : [ticketId],
   }
 }
 
@@ -620,6 +1041,11 @@ function probeOffersAvailabilityByVendorId(
 /**
  * Soft-offer every matchable vendor. Landlord choice waits until at least one
  * returns a slot (or all decline → fall through elsewhere).
+ *
+ * When the ticket shares an inspection_report_id with other open siblings,
+ * sends one visit-framed SMS covering the whole group and upserts a pending
+ * probe per ticket (siblings that already await the probe are skipped by
+ * assignVendorAndNotify).
  */
 export async function startVendorAvailabilityProbe(
   supabase: SupabaseClient,
@@ -652,70 +1078,179 @@ export async function startVendorAvailabilityProbe(
     return { probed: 0, skipReason: "no_vendor" }
   }
 
+  const { data: ticketRow } = await supabase
+    .from("maintenance_requests")
+    .select(
+      "id, inspection_report_id, description, issue_category, vendor_notify_error, status, vendor_work_status",
+    )
+    .eq("id", params.ticketId)
+    .maybeSingle()
+
+  const inspectionReportId =
+    typeof ticketRow?.inspection_report_id === "string" &&
+      ticketRow.inspection_report_id.trim()
+      ? ticketRow.inspection_report_id.trim()
+      : null
+
+  type VisitItem = {
+    ticketId: string
+    description: string
+    issueCategory: string | null
+    issueHeadline: string | null
+  }
+
+  let visitItems: VisitItem[] = [{
+    ticketId: params.ticketId,
+    description: params.description,
+    issueCategory: params.issueCategory,
+    issueHeadline: params.issueHeadline?.trim() || null,
+  }]
+
+  if (inspectionReportId) {
+    const { data: siblings } = await supabase
+      .from("maintenance_requests")
+      .select(
+        "id, description, issue_category, issue_headline, vendor_notify_error, status, vendor_work_status",
+      )
+      .eq("inspection_report_id", inspectionReportId)
+      .eq("landlord_id", params.landlordId)
+
+    const openSiblings = (siblings ?? []).filter((row) => {
+      const id = typeof row.id === "string" ? row.id : ""
+      if (!id) return false
+      const status = String(row.status ?? "").toLowerCase()
+      if (status === "completed" || status === "cancelled" || status === "closed") {
+        return false
+      }
+      const vws = String(row.vendor_work_status ?? "").toLowerCase()
+      if (vws === "completed" || vws === "cancelled") return false
+      // Already in a visit probe from an earlier sibling dispatch — skip restart.
+      if (
+        id !== params.ticketId &&
+        ticketIsAwaitingVendorAvailabilityProbe(
+          typeof row.vendor_notify_error === "string" ? row.vendor_notify_error : null,
+        )
+      ) {
+        return false
+      }
+      return true
+    })
+
+    if (openSiblings.length > 1) {
+      visitItems = openSiblings.map((row) => {
+        const id = String(row.id)
+        const description = String(row.description ?? "")
+        const headline =
+          (typeof row.issue_headline === "string" && row.issue_headline.trim()) ||
+          description.split("\n")[0]?.trim() ||
+          null
+        return {
+          ticketId: id,
+          description,
+          issueCategory:
+            typeof row.issue_category === "string" ? row.issue_category : null,
+          issueHeadline: headline,
+        }
+      })
+      // Ensure the triggering ticket is included first for stable primary id.
+      visitItems.sort((a, b) => {
+        if (a.ticketId === params.ticketId) return -1
+        if (b.ticketId === params.ticketId) return 1
+        return a.ticketId.localeCompare(b.ticketId)
+      })
+    }
+  }
+
+  const isVisitGroup = visitItems.length > 1 && Boolean(inspectionReportId)
+  const visitTicketIds = visitItems.map((v) => v.ticketId)
+
   const companyName = await loadLandlordDisplayName(supabase, params.landlordId)
   const residentAvailabilityText = sanitizeResidentAvailabilityForVendor(
     params.residentAvailabilityText,
     [params.description, params.issueHeadline],
   )
 
-  const wo = formatWorkOrderRef(params.ticketId)
-  const issueHeadline = params.issueHeadline?.trim() || null
+  const primary = visitItems[0]!
+  const wo = formatWorkOrderRef(primary.ticketId)
+  const issueHeadline = primary.issueHeadline?.trim() || null
   const entryOkIfAbsent = typeof params.entryOkIfAbsent === "boolean"
     ? params.entryOkIfAbsent
     : null
   const urgent = params.urgent === true
   const locationLabel = await resolveVendorProbeLocationLabel(supabase, {
     landlordId: params.landlordId,
-    ticketId: params.ticketId,
+    ticketId: primary.ticketId,
     unitFallback: params.unit,
   })
-  const probe: VendorAvailabilityProbe = {
-    ticketId: params.ticketId,
-    landlordId: params.landlordId,
-    unit: locationLabel || params.unit,
-    issueCategory: params.issueCategory,
-    description: params.description,
-    issueHeadline,
-    entryOkIfAbsent,
-    urgent,
-    residentAvailabilityText,
-    candidates,
-    offers: [],
-    declinedVendorIds: [],
-    status: "probing",
-    startedAt: new Date().toISOString(),
-    firstOfferAt: null,
-    statusSmsSentAt: null,
-    holdUntil: null,
-    landlordNotifiedAt: null,
-    insightAutoAssign: params.insightAutoAssign === true,
-    insightSchedulingRequestId: params.insightSchedulingRequestId ?? null,
-  }
 
-  const host = await loadLandlordProbeConversation(
-    supabase,
-    params.landlordId,
-    params.ticketId,
-  )
-  if (host) {
-    await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
+  const inspectionRef = inspectionReportId
+    ? `IR-${inspectionReportId.replace(/-/g, "").slice(0, 4).toUpperCase()}`
+    : null
+
+  // Persist a probe host state per ticket so landlord/vendor progress stays
+  // independently trackable, while visitTicketIds links them for fan-out.
+  for (const item of visitItems) {
+    const probe: VendorAvailabilityProbe = {
+      ticketId: item.ticketId,
+      landlordId: params.landlordId,
+      unit: locationLabel || params.unit,
+      issueCategory: item.issueCategory,
+      description: item.description,
+      issueHeadline: item.issueHeadline,
+      entryOkIfAbsent,
+      urgent,
+      residentAvailabilityText,
+      candidates,
+      offers: [],
+      declinedVendorIds: [],
+      status: "probing",
+      startedAt: new Date().toISOString(),
+      firstOfferAt: null,
+      statusSmsSentAt: null,
+      holdUntil: null,
+      landlordNotifiedAt: null,
+      insightAutoAssign: params.insightAutoAssign === true,
+      insightSchedulingRequestId: params.insightSchedulingRequestId ?? null,
+      inspectionReportId,
+      visitTicketIds,
+    }
+    const host = await loadLandlordProbeConversation(
+      supabase,
+      params.landlordId,
+      item.ticketId,
+    )
+    if (host) {
+      await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
+    }
   }
 
   let probed = 0
   for (const candidate of candidates) {
     if (!candidate.phone) continue
-    const body = buildVendorAvailabilityProbeSms({
-      vendorName: candidate.name,
-      companyName: companyName || null,
-      workOrderRef: wo,
-      location: locationLabel || params.unit,
-      issueHeadline,
-      entryOkIfAbsent,
-      urgent,
-      residentAvailabilityText,
-    })
+    const body = isVisitGroup
+      ? buildVendorInspectionVisitProbeSms({
+        vendorName: candidate.name,
+        companyName: companyName || null,
+        location: locationLabel || params.unit,
+        urgent,
+        inspectionRef,
+        items: visitItems.map((item) => ({
+          label: checklistLabelFromTicketDescription(item.description),
+          workOrderRef: formatWorkOrderRef(item.ticketId),
+        })),
+      })
+      : buildVendorAvailabilityProbeSms({
+        vendorName: candidate.name,
+        companyName: companyName || null,
+        workOrderRef: wo,
+        location: locationLabel || params.unit,
+        issueHeadline,
+        entryOkIfAbsent,
+        urgent,
+        residentAvailabilityText,
+      })
     const sent = await sendVendorJobAlert(supabase, {
-      ticketId: params.ticketId,
+      ticketId: primary.ticketId,
       vendorId: candidate.vendorId,
       vendorPhone: candidate.phone,
       body,
@@ -734,22 +1269,26 @@ export async function startVendorAvailabilityProbe(
       .select("intake_state")
       .eq("id", sent.conversationId)
       .maybeSingle()
-    const prior =
+    let nextIntake =
       conv?.intake_state && typeof conv.intake_state === "object"
         ? { ...(conv.intake_state as Record<string, unknown>) }
         : {}
+    const sentAt = new Date().toISOString()
+    for (const item of visitItems) {
+      nextIntake = upsertAwaitingVendorProbeOnIntake(nextIntake, {
+        ticketId: item.ticketId,
+        vendorId: candidate.vendorId,
+        sentAt,
+        workOrderRef: formatWorkOrderRef(item.ticketId),
+        issueHeadline: item.issueHeadline,
+        inspectionReportId,
+      })
+    }
     await supabase
       .from("sms_conversations")
       .update({
-        intake_state: {
-          ...prior,
-          awaiting_vendor_probe: {
-            ticket_id: params.ticketId,
-            vendor_id: candidate.vendorId,
-            sent_at: new Date().toISOString(),
-          },
-        },
-        maintenance_request_id: params.ticketId,
+        intake_state: nextIntake,
+        maintenance_request_id: primary.ticketId,
         updated_at: new Date().toISOString(),
       })
       .eq("id", sent.conversationId)
@@ -761,21 +1300,26 @@ export async function startVendorAvailabilityProbe(
       vendor_notify_error: AWAITING_VENDOR_AVAILABILITY_PROBE,
       awaiting_vendor_availability_at: new Date().toISOString(),
     })
-    .eq("id", params.ticketId)
+    .in("id", visitTicketIds)
 
   await recordActivityLog(supabase, {
     landlordId: params.landlordId,
     eventType: "maintenance.vendor_availability_probed",
     source: "automation",
     actorType: "system",
-    maintenanceRequestId: params.ticketId,
+    maintenanceRequestId: primary.ticketId,
     metadata: {
-      message:
-        probed === 1
-          ? `Asked 1 vendor for availability on ${wo} before assigning.`
-          : `Asked ${probed} vendors for availability on ${wo} before assigning.`,
+      message: isVisitGroup
+        ? probed === 1
+          ? `Asked 1 vendor for availability on an inspection visit (${visitTicketIds.length} items) before assigning.`
+          : `Asked ${probed} vendors for availability on an inspection visit (${visitTicketIds.length} items) before assigning.`
+        : probed === 1
+        ? `Asked 1 vendor for availability on ${wo} before assigning.`
+        : `Asked ${probed} vendors for availability on ${wo} before assigning.`,
       probed,
       candidate_ids: candidates.map((c) => c.vendorId),
+      inspection_report_id: inspectionReportId,
+      visit_ticket_ids: visitTicketIds,
     },
   })
 
@@ -907,13 +1451,37 @@ export async function finalizeLandlordProbeDecision(
   probe.landlordNotifiedAt = nowIso
   probe.status = "awaiting_landlord"
 
-  const host = await loadLandlordProbeConversation(
-    supabase,
-    probe.landlordId,
-    probe.ticketId,
-  )
-  if (host) {
-    await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
+  const visitTicketIds =
+    probe.visitTicketIds && probe.visitTicketIds.length > 0
+      ? probe.visitTicketIds
+      : [probe.ticketId]
+  const isVisit = visitTicketIds.length > 1 && Boolean(probe.inspectionReportId)
+
+  // Mirror decision state onto every visit sibling so cron doesn't re-SMS.
+  for (const ticketId of visitTicketIds) {
+    const host = await loadLandlordProbeConversation(
+      supabase,
+      probe.landlordId,
+      ticketId,
+    )
+    if (!host) continue
+    const sibling = ticketId === probe.ticketId
+      ? probe
+      : (await loadVendorAvailabilityProbeForTicket(supabase, ticketId)) ?? {
+        ...probe,
+        ticketId,
+      }
+    sibling.landlordNotifiedAt = nowIso
+    sibling.status = "awaiting_landlord"
+    sibling.offers = probe.offers
+    sibling.visitTicketIds = visitTicketIds
+    sibling.inspectionReportId = probe.inspectionReportId ?? null
+    await saveProbeOnLandlordThread(
+      supabase,
+      host.conversationId,
+      host.intake,
+      sibling,
+    )
   }
 
   const enriched = probeOffersToChoiceNames(probe.offers)
@@ -923,19 +1491,51 @@ export async function finalizeLandlordProbeDecision(
     unitFallback: probe.unit,
   })
 
-  await notifyLandlordVendorChoice(supabase, {
-    landlordId: probe.landlordId,
-    ticketId: probe.ticketId,
-    unit: probe.unit,
-    issueCategory: probe.issueCategory,
-    options: enriched,
-    reason: "availability",
-    issueHeadline: probe.issueHeadline,
-    locationLabel,
-    availabilityByVendorId: probeOffersAvailabilityByVendorId(probe.offers),
-  })
+  if (isVisit) {
+    const { data: tickets } = await supabase
+      .from("maintenance_requests")
+      .select("id, description, issue_headline")
+      .in("id", visitTicketIds)
+    const items = (tickets ?? []).map((t) => ({
+      label: checklistLabelFromTicketDescription(
+        (typeof t.issue_headline === "string" && t.issue_headline.trim()) ||
+          String(t.description ?? ""),
+      ),
+      workOrderRef: formatWorkOrderRef(String(t.id)),
+    }))
+    const primaryOffer = probe.offers[0]
+    await notifyLandlordVendorChoice(supabase, {
+      landlordId: probe.landlordId,
+      ticketId: probe.ticketId,
+      unit: probe.unit,
+      issueCategory: probe.issueCategory,
+      options: enriched,
+      reason: "availability",
+      issueHeadline: `inspection visit (${visitTicketIds.length} items)`,
+      locationLabel,
+      availabilityByVendorId: probeOffersAvailabilityByVendorId(probe.offers),
+      visitTicketIds,
+      inspectionReportId: probe.inspectionReportId ?? null,
+      visitItems: items,
+      visitVendorName: primaryOffer?.name ?? enriched[0]?.vendor?.name ?? null,
+    })
+  } else {
+    await notifyLandlordVendorChoice(supabase, {
+      landlordId: probe.landlordId,
+      ticketId: probe.ticketId,
+      unit: probe.unit,
+      issueCategory: probe.issueCategory,
+      options: enriched,
+      reason: "availability",
+      issueHeadline: probe.issueHeadline,
+      locationLabel,
+      availabilityByVendorId: probeOffersAvailabilityByVendorId(probe.offers),
+    })
+  }
 
-  await markAwaitingLandlordVendorChoice(supabase, probe.ticketId)
+  for (const ticketId of visitTicketIds) {
+    await markAwaitingLandlordVendorChoice(supabase, ticketId)
+  }
 
   return { sent: true }
 }
@@ -1049,17 +1649,59 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     .select("intake_state")
     .eq("id", params.conversationId)
     .maybeSingle()
-  const intake =
+  let intake =
     conv?.intake_state && typeof conv.intake_state === "object"
       ? { ...(conv.intake_state as Record<string, unknown>) }
       : {}
-  const pending = readAwaitingVendorProbe(intake)
-  if (!pending) return { handled: false }
+  const pendingList = readAwaitingVendorProbes(intake)
+  const clarify = readAwaitingVendorProbeClarify(intake)
+  if (pendingList.length === 0 && !clarify) return { handled: false }
 
-  const vendorId = params.vendorId?.trim() || pending.vendorId
-  const probe = await loadVendorAvailabilityProbeForTicket(supabase, pending.ticketId)
+  const resolved = resolveVendorProbeTicketFromReply({
+    body: params.body,
+    probes: pendingList,
+    clarify,
+  })
+
+  if (resolved.kind === "none") return { handled: false }
+
+  if (resolved.kind === "ambiguous") {
+    const options = resolved.probes.map((p) => ({
+      ticketId: p.ticketId,
+      workOrderRef: p.workOrderRef ?? formatWorkOrderRef(p.ticketId),
+      label: (p.issueHeadline ?? "").trim() ||
+        (p.workOrderRef ?? formatWorkOrderRef(p.ticketId)),
+    }))
+    intake = setAwaitingVendorProbeClarifyOnIntake(intake, {
+      options,
+      askedAt: new Date().toISOString(),
+    })
+    await supabase
+      .from("sms_conversations")
+      .update({ intake_state: intake, updated_at: new Date().toISOString() })
+      .eq("id", params.conversationId)
+    return {
+      handled: true,
+      replyBody: buildVendorProbeWhichJobSms(resolved.probes),
+    }
+  }
+
+  const targetProbes: AwaitingVendorProbe[] =
+    resolved.kind === "visit_group" ? resolved.probes : [resolved.probe]
+  const bodyForParse = resolved.bodyForParse
+  const primaryPending = targetProbes[0]!
+  // Clear clarify once a ticket or visit group is chosen.
+  delete intake.awaiting_vendor_probe_clarify
+
+  const vendorId = params.vendorId?.trim() || primaryPending.vendorId
+  const probe = await loadVendorAvailabilityProbeForTicket(
+    supabase,
+    primaryPending.ticketId,
+  )
   if (!probe) {
-    delete intake.awaiting_vendor_probe
+    for (const p of targetProbes) {
+      intake = removeAwaitingVendorProbeFromIntake(intake, p.ticketId)
+    }
     await supabase
       .from("sms_conversations")
       .update({ intake_state: intake, updated_at: new Date().toISOString() })
@@ -1071,48 +1713,68 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     }
   }
 
+  const visitTicketIds =
+    (probe.visitTicketIds && probe.visitTicketIds.length > 0
+      ? probe.visitTicketIds
+      : targetProbes.map((p) => p.ticketId))
+  const isVisitReply = resolved.kind === "visit_group" || visitTicketIds.length > 1
   const wo = formatWorkOrderRef(probe.ticketId)
   const candidate = probe.candidates.find((c) => c.vendorId === vendorId)
   const vendorName = candidate?.name || "Vendor"
   const role = candidate?.role || "specialist"
 
-  if (looksLikeProbeDecline(params.body)) {
-    if (!probe.declinedVendorIds.includes(vendorId)) {
-      probe.declinedVendorIds.push(vendorId)
+  if (looksLikeProbeDecline(bodyForParse)) {
+    // WO-scoped matched decline → one ticket; visit_group / bare NO → whole visit.
+    const declineIds = resolved.kind === "matched"
+      ? [resolved.probe.ticketId]
+      : visitTicketIds
+
+    for (const ticketId of declineIds) {
+      const ticketProbe = ticketId === probe.ticketId
+        ? probe
+        : await loadVendorAvailabilityProbeForTicket(supabase, ticketId) ?? probe
+      if (!ticketProbe.declinedVendorIds.includes(vendorId)) {
+        ticketProbe.declinedVendorIds.push(vendorId)
+      }
+      intake = removeAwaitingVendorProbeFromIntake(intake, ticketId)
+      const host = await loadLandlordProbeConversation(
+        supabase,
+        ticketProbe.landlordId,
+        ticketId,
+      )
+      if (host) {
+        await saveProbeOnLandlordThread(
+          supabase,
+          host.conversationId,
+          host.intake,
+          { ...ticketProbe, ticketId },
+        )
+      }
+      await recordActivityLog(supabase, {
+        landlordId: probe.landlordId,
+        eventType: "maintenance.vendor_probe_declined",
+        source: "sms",
+        actorType: "vendor",
+        actorId: vendorId,
+        vendorId,
+        maintenanceRequestId: ticketId,
+        conversationId: params.conversationId,
+        messageId: params.messageId,
+        metadata: {
+          message: `${vendorName} declined the availability ask for ${formatWorkOrderRef(ticketId)}.`,
+        },
+      })
     }
-    delete intake.awaiting_vendor_probe
     await supabase
       .from("sms_conversations")
       .update({ intake_state: intake, updated_at: new Date().toISOString() })
       .eq("id", params.conversationId)
 
-    const host = await loadLandlordProbeConversation(
-      supabase,
-      probe.landlordId,
-      probe.ticketId,
-    )
-    if (host) await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
-
-    await recordActivityLog(supabase, {
-      landlordId: probe.landlordId,
-      eventType: "maintenance.vendor_probe_declined",
-      source: "sms",
-      actorType: "vendor",
-      actorId: vendorId,
-      vendorId,
-      maintenanceRequestId: probe.ticketId,
-      conversationId: params.conversationId,
-      messageId: params.messageId,
-      metadata: {
-        message: `${vendorName} declined the availability ask for ${wo}.`,
-      },
-    })
-
     const allDeclined =
       probe.offers.length === 0 &&
       probe.candidates.length > 0 &&
       probe.candidates.every((c) => probe.declinedVendorIds.includes(c.vendorId))
-    if (allDeclined) {
+    if (allDeclined && declineIds.includes(probe.ticketId)) {
       if (probe.insightAutoAssign) {
         const requestId = probe.insightSchedulingRequestId?.trim()
         if (requestId) {
@@ -1127,7 +1789,7 @@ export async function tryHandleVendorAvailabilityProbeInbound(
             vendor_notify_error: null,
             awaiting_vendor_availability_at: null,
           })
-          .eq("id", probe.ticketId)
+          .in("id", declineIds)
       } else {
         const fallbackOptions: VendorAssignmentOption[] = probe.candidates.map((c) => ({
           vendor: {
@@ -1152,24 +1814,28 @@ export async function tryHandleVendorAvailabilityProbeInbound(
           options: fallbackOptions,
           reason: "declined",
         })
-        await markAwaitingLandlordVendorChoice(supabase, probe.ticketId)
+        for (const ticketId of declineIds) {
+          await markAwaitingLandlordVendorChoice(supabase, ticketId)
+        }
       }
     } else if (
       !probe.insightAutoAssign &&
       probe.offers.length > 0 &&
       shouldFinalizeVendorProbeHold(probe)
     ) {
-      // Remaining vendors declined — finalize with whoever offered.
       await finalizeLandlordProbeDecision(supabase, probe)
     }
 
+    const declineLabel = declineIds.length > 1
+      ? "the inspection visit"
+      : formatWorkOrderRef(declineIds[0]!)
     return {
       handled: true,
-      replyBody: `Got it — thanks for letting us know about ${wo}.`,
+      replyBody: `Got it — thanks for letting us know about ${declineLabel}.`,
     }
   }
 
-  const resolved = await resolveVendorAvailability(params.body, {
+  const resolvedAvail = await resolveVendorAvailability(bodyForParse, {
     conversationContext: undefined,
     clarifyAttempts: 0,
     timeZone: await (async () => {
@@ -1188,22 +1854,23 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     })(),
   })
 
-  if (resolved.status === "needs_clarification") {
+  if (resolvedAvail.status === "needs_clarification") {
     return {
       handled: true,
-      replyBody: resolved.softPrompt ||
-        "Thanks — what day and time works best? For example: Tomorrow 9am–12pm.",
+      replyBody: resolvedAvail.softPrompt ||
+        (isVisitReply
+          ? "Thanks — what day and time works for the whole visit? For example: Tomorrow 9am–12pm."
+          : `Thanks — what day and time works best for ${wo}? For example: Tomorrow 9am–12pm.`),
     }
   }
 
-  const value: ResolvedAvailability = resolved.value
+  const value: ResolvedAvailability = resolvedAvail.value
   const windowLabel =
     value.entity?.display_text?.trim() ||
     value.windowLabel?.trim() ||
     "the window you shared"
-  const estimateNote = extractEstimateNote(params.body)
+  const estimateNote = extractEstimateNote(bodyForParse)
 
-  const existingIdx = probe.offers.findIndex((o) => o.vendorId === vendorId)
   const offer: VendorProbeOffer = {
     vendorId,
     name: vendorName,
@@ -1214,40 +1881,83 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     estimateNote,
     receivedAt: new Date().toISOString(),
   }
-  if (existingIdx >= 0) probe.offers[existingIdx] = offer
-  else probe.offers.push(offer)
 
-  delete intake.awaiting_vendor_probe
+  // Visit-group bare window → every pending ticket in the group; WO-scoped → one.
+  const applyIds = resolved.kind === "matched"
+    ? [resolved.probe.ticketId]
+    : visitTicketIds.filter((id) =>
+      targetProbes.some((p) => p.ticketId === id) || visitTicketIds.includes(id)
+    )
+
+  const schedulePatch: Record<string, unknown> = {}
+  if (offer.scheduledAt) schedulePatch.scheduled_at = offer.scheduledAt
+  if (offer.windowLabel.trim()) {
+    schedulePatch.scheduled_window_text = offer.windowLabel.trim()
+  }
+  // Visit window is shared across the inspection group on the vendor's reply.
+  if (applyIds.length > 1 || resolved.kind === "visit_group") {
+    schedulePatch.schedule_confirmed_at = new Date().toISOString()
+  }
+  if (Object.keys(schedulePatch).length > 0) {
+    await supabase
+      .from("maintenance_requests")
+      .update(schedulePatch)
+      .in("id", applyIds)
+  }
+
+  for (const ticketId of applyIds) {
+    const ticketProbe = ticketId === probe.ticketId
+      ? probe
+      : await loadVendorAvailabilityProbeForTicket(supabase, ticketId)
+    const active = ticketProbe ?? { ...probe, ticketId }
+    const existingIdx = active.offers.findIndex((o) => o.vendorId === vendorId)
+    if (existingIdx >= 0) active.offers[existingIdx] = offer
+    else active.offers.push(offer)
+    intake = removeAwaitingVendorProbeFromIntake(intake, ticketId)
+    const host = await loadLandlordProbeConversation(
+      supabase,
+      active.landlordId,
+      ticketId,
+    )
+    if (host) {
+      await saveProbeOnLandlordThread(
+        supabase,
+        host.conversationId,
+        host.intake,
+        { ...active, visitTicketIds, inspectionReportId: probe.inspectionReportId },
+      )
+    }
+    await recordActivityLog(supabase, {
+      landlordId: probe.landlordId,
+      eventType: "maintenance.vendor_probe_offer",
+      source: "sms",
+      actorType: "vendor",
+      actorId: vendorId,
+      vendorId,
+      maintenanceRequestId: ticketId,
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      metadata: {
+        message: `${vendorName} offered ${windowLabel} for ${formatWorkOrderRef(ticketId)}.`,
+        window_label: windowLabel,
+        estimate_note: estimateNote,
+        inspection_report_id: probe.inspectionReportId ?? null,
+      },
+    })
+  }
+
   await supabase
     .from("sms_conversations")
     .update({ intake_state: intake, updated_at: new Date().toISOString() })
     .eq("id", params.conversationId)
 
-  const host = await loadLandlordProbeConversation(
-    supabase,
-    probe.landlordId,
-    probe.ticketId,
-  )
-  if (host) {
-    await saveProbeOnLandlordThread(supabase, host.conversationId, host.intake, probe)
-  }
-
-  await recordActivityLog(supabase, {
-    landlordId: probe.landlordId,
-    eventType: "maintenance.vendor_probe_offer",
-    source: "sms",
-    actorType: "vendor",
-    actorId: vendorId,
-    vendorId,
-    maintenanceRequestId: probe.ticketId,
-    conversationId: params.conversationId,
-    messageId: params.messageId,
-    metadata: {
-      message: `${vendorName} offered ${windowLabel} for ${wo}.`,
-      window_label: windowLabel,
-      estimate_note: estimateNote,
-    },
-  })
+  // Keep primary probe offers in sync for landlord progress.
+  const primaryExistingIdx = probe.offers.findIndex((o) => o.vendorId === vendorId)
+  if (primaryExistingIdx >= 0) probe.offers[primaryExistingIdx] = offer
+  else probe.offers.push(offer)
+  probe.visitTicketIds = visitTicketIds
+  probe.inspectionReportId = probe.inspectionReportId ??
+    (resolved.kind === "visit_group" ? resolved.inspectionReportId : null)
 
   // Insight inspector path: auto-assign immediately (landlord already tapped Schedule).
   if (probe.insightAutoAssign) {
@@ -1257,66 +1967,66 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     const { markInsightSchedulingAccepted } = await import(
       "./insightInspectorScheduling.ts"
     )
-    const assignResult = await assignVendorAndNotify(supabase, {
-      ticketId: probe.ticketId,
-      priority: "normal",
-      unit: probe.unit,
-      description: probe.description,
-      issueHeadline: probe.issueHeadline,
-      entryOkIfAbsent: probe.entryOkIfAbsent,
-      urgency: null,
-      severity: null,
-      dueAt: null,
-      estimatedMinutes: null,
-      landlordId: probe.landlordId,
-      preferVendorId: vendorId,
-      landlordAcknowledged: true,
-      residentAvailabilityText: probe.residentAvailabilityText,
-      retryIfUnassigned: true,
-    })
-
-    const patch: Record<string, unknown> = {}
-    if (offer.scheduledAt) patch.scheduled_at = offer.scheduledAt
-    if (offer.windowLabel.trim()) {
-      patch.scheduled_window_text = offer.windowLabel.trim()
-    }
-    if (Object.keys(patch).length > 0) {
-      await supabase
-        .from("maintenance_requests")
-        .update(patch)
-        .eq("id", probe.ticketId)
+    for (const ticketId of applyIds) {
+      const ticketProbe = await loadVendorAvailabilityProbeForTicket(supabase, ticketId)
+      await assignVendorAndNotify(supabase, {
+        ticketId,
+        priority: "normal",
+        unit: (ticketProbe ?? probe).unit,
+        description: (ticketProbe ?? probe).description,
+        issueHeadline: (ticketProbe ?? probe).issueHeadline,
+        entryOkIfAbsent: (ticketProbe ?? probe).entryOkIfAbsent,
+        urgency: null,
+        severity: null,
+        dueAt: null,
+        estimatedMinutes: null,
+        landlordId: probe.landlordId,
+        preferVendorId: vendorId,
+        landlordAcknowledged: true,
+        residentAvailabilityText: probe.residentAvailabilityText,
+        retryIfUnassigned: true,
+      })
     }
 
     const requestId = probe.insightSchedulingRequestId?.trim()
-    if (requestId && assignResult.assigned) {
+    if (requestId) {
       await markInsightSchedulingAccepted(supabase, {
         requestId,
         inspectorName: vendorName,
         confirmedWindow: offer.windowLabel.trim() || null,
         vendorId,
       })
-    } else if (requestId && !assignResult.assigned) {
-      const { markInsightSchedulingNeedsExternal } = await import(
-        "./insightInspectorScheduling.ts"
-      )
-      await markInsightSchedulingNeedsExternal(supabase, requestId)
     }
 
     return {
       handled: true,
-      replyBody: buildVendorProbeAckSms({
-        windowLabel: windowLabel,
-        workOrderRef: wo,
-      }),
+      replyBody: applyIds.length > 1
+        ? buildVendorInspectionVisitAckSms({
+          windowLabel,
+          itemCount: applyIds.length,
+        })
+        : buildVendorProbeAckSms({
+          windowLabel,
+          workOrderRef: formatWorkOrderRef(applyIds[0]!),
+        }),
     }
   }
 
   // Multi-vendor: status-only → hold → one decision SMS (no mid-flight YES→1/2).
+  // Visit groups finalize once against the primary probe (covers all ticket ids).
   await progressLandlordProbeAfterOffer(supabase, probe)
 
   return {
     handled: true,
-    replyBody: buildVendorProbeAckSms({ windowLabel, workOrderRef: wo }),
+    replyBody: applyIds.length > 1
+      ? buildVendorInspectionVisitAckSms({
+        windowLabel,
+        itemCount: applyIds.length,
+      })
+      : buildVendorProbeAckSms({
+        windowLabel,
+        workOrderRef: formatWorkOrderRef(applyIds[0]!),
+      }),
   }
 }
 
@@ -1329,4 +2039,130 @@ export async function findProbeOfferForVendor(
   const probe = await loadVendorAvailabilityProbeForTicket(supabase, ticketId)
   if (!probe) return null
   return probe.offers.find((o) => o.vendorId === vendorId) ?? null
+}
+
+/**
+ * Rebuild multi-ticket pending probes on a vendor thread from open ticket rows,
+ * and optionally send one consolidated reminder listing every WO still waiting.
+ * Use after a last-write-wins batch (e.g. HQS letter) clobbered the single slot.
+ */
+export async function remediateOpenVendorProbesOnThread(
+  supabase: SupabaseClient,
+  params: {
+    conversationId: string
+    landlordId: string
+    vendorId: string
+    ticketIds: string[]
+    sendReminderSms?: boolean
+  },
+): Promise<{
+  synced: number
+  reminderSent: boolean
+  probes: AwaitingVendorProbe[]
+}> {
+  const { data: tickets } = await supabase
+    .from("maintenance_requests")
+    .select("id, description, assigned_vendor_id, vendor_notify_error")
+    .in("id", params.ticketIds)
+
+  const openProbeTickets = (tickets ?? []).filter((t) => {
+    const id = typeof t.id === "string" ? t.id : ""
+    if (!id) return false
+    if (!ticketIsAwaitingVendorAvailabilityProbe(
+      typeof t.vendor_notify_error === "string" ? t.vendor_notify_error : null,
+    )) {
+      return false
+    }
+    const assigned =
+      typeof t.assigned_vendor_id === "string" ? t.assigned_vendor_id.trim() : ""
+    return !assigned || assigned === params.vendorId
+  })
+
+  const { data: conv } = await supabase
+    .from("sms_conversations")
+    .select("intake_state, external_phone_number, vendor_id")
+    .eq("id", params.conversationId)
+    .maybeSingle()
+
+  let intake =
+    conv?.intake_state && typeof conv.intake_state === "object"
+      ? { ...(conv.intake_state as Record<string, unknown>) }
+      : {}
+
+  const probes: AwaitingVendorProbe[] = []
+  const now = new Date().toISOString()
+  for (const t of openProbeTickets) {
+    const ticketId = String(t.id)
+    const headline = String(t.description ?? "").split("\n")[0]?.trim() || null
+    const probe: AwaitingVendorProbe = {
+      ticketId,
+      vendorId: params.vendorId,
+      sentAt: now,
+      workOrderRef: formatWorkOrderRef(ticketId),
+      issueHeadline: headline,
+    }
+    intake = upsertAwaitingVendorProbeOnIntake(intake, probe)
+    probes.push(probe)
+  }
+
+  // Drop clarify so the consolidated list is the source of truth.
+  delete intake.awaiting_vendor_probe_clarify
+
+  await supabase
+    .from("sms_conversations")
+    .update({
+      intake_state: intake,
+      updated_at: now,
+      vendor_id: params.vendorId,
+    })
+    .eq("id", params.conversationId)
+
+  let reminderSent = false
+  if (params.sendReminderSms !== false && probes.length > 0) {
+    const { data: vendor } = await supabase
+      .from("vendors")
+      .select("name, phone")
+      .eq("id", params.vendorId)
+      .maybeSingle()
+    const phone =
+      (typeof vendor?.phone === "string" && vendor.phone.trim()) ||
+      (typeof conv?.external_phone_number === "string"
+        ? conv.external_phone_number.trim()
+        : "")
+    if (phone) {
+      const body = buildVendorOpenProbesReminderSms({
+        vendorName: typeof vendor?.name === "string" ? vendor.name : "there",
+        probes: probes.map((p) => ({
+          workOrderRef: p.workOrderRef ?? formatWorkOrderRef(p.ticketId),
+          issueHeadline: p.issueHeadline,
+        })),
+      })
+      const sent = await sendVendorJobAlert(supabase, {
+        ticketId: probes[probes.length - 1]!.ticketId,
+        vendorId: params.vendorId,
+        vendorPhone: phone,
+        body,
+        landlordId: params.landlordId,
+        bindAssignment: false,
+      })
+      reminderSent = sent.ok
+      if (sent.ok) {
+        await recordActivityLog(supabase, {
+          landlordId: params.landlordId,
+          eventType: "maintenance.vendor_probe_batch_reminder",
+          source: "automation",
+          actorType: "system",
+          vendorId: params.vendorId,
+          conversationId: params.conversationId,
+          metadata: {
+            message:
+              `Sent a consolidated availability reminder covering ${probes.length} open work orders.`,
+            ticket_ids: probes.map((p) => p.ticketId),
+          },
+        })
+      }
+    }
+  }
+
+  return { synced: probes.length, reminderSent, probes }
 }

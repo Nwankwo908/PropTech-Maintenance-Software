@@ -30,6 +30,7 @@ import { uloAppOrigin, uloAppUrl } from "../_shared/uloAppUrl.ts"
 import { emitServerProductEvent } from "../_shared/ga4MeasurementProtocol.ts"
 import {
   AWAITING_LANDLORD_VENDOR_CHOICE,
+  markAwaitingLandlordVendorChoice,
   notifyLandlordVendorChoice,
 } from "../_shared/vendorLandlordChoice.ts"
 import {
@@ -38,6 +39,7 @@ import {
   ticketIsUrgentForVendorProbe,
 } from "../_shared/vendorAvailabilityProbe.ts"
 import { resumeMaintenanceWorkflowAfterVendorAssigned } from "../_shared/maintenance_admin_escalation.ts"
+import { closeOpenAsksForTicket } from "../_shared/closeOpenAsksForTicket.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -562,29 +564,7 @@ export async function assignVendorAndNotify(
     !alreadyNotified
   if (existingVendorId && !landlordNeedsNotify) {
     // #region agent log
-    fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "5d0562",
-      },
-      body: JSON.stringify({
-        sessionId: "5d0562",
-        runId: "pre-fix",
-        hypothesisId: "D",
-        location: "vendor_notify.ts:existingVendorEarlyReturn",
-        message: "assignVendorAndNotify early return existing assignment",
-        data: {
-          ticketId: payload.ticketId,
-          existingVendorId,
-          preferVendorId: preferVendorId || null,
-          alreadyNotified,
-          landlordAcknowledged: payload.landlordAcknowledged === true,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
+// #endregion
     try {
       await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
         ticketId: payload.ticketId,
@@ -598,27 +578,7 @@ export async function assignVendorAndNotify(
   }
   if (landlordNeedsNotify) {
     // #region agent log
-    fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "5d0562",
-      },
-      body: JSON.stringify({
-        sessionId: "5d0562",
-        runId: "pre-fix",
-        hypothesisId: "D",
-        location: "vendor_notify.ts:landlordNeedsNotify",
-        message: "continuing assign+notify despite existing assignment",
-        data: {
-          ticketId: payload.ticketId,
-          existingVendorId,
-          preferVendorId,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
+// #endregion
   }
   if (ticket.vendor_notified_at && !payload.retryIfUnassigned) {
     console.log("[vendor-notify] skip, already notified", payload.ticketId)
@@ -760,10 +720,7 @@ export async function assignVendorAndNotify(
           issueCategory,
           options: decision.options,
         })
-        await supabase
-          .from("maintenance_requests")
-          .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
-          .eq("id", payload.ticketId)
+        await markAwaitingLandlordVendorChoice(supabase, payload.ticketId)
         return {
           assigned: false,
           vendorId: null,
@@ -796,10 +753,7 @@ export async function assignVendorAndNotify(
           issueCategory,
           options: decision.options,
         })
-        await supabase
-          .from("maintenance_requests")
-          .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
-          .eq("id", payload.ticketId)
+        await markAwaitingLandlordVendorChoice(supabase, payload.ticketId)
         return {
           assigned: false,
           vendorId: null,
@@ -848,6 +802,7 @@ export async function assignVendorAndNotify(
       vendor_work_status: "pending_accept",
       issue_category: issueCategory ?? vendor.category ?? null,
       vendor_notify_error: null,
+      awaiting_vendor_availability_at: null,
     })
     .eq("id", payload.ticketId)
 
@@ -874,6 +829,16 @@ export async function assignVendorAndNotify(
   })
 
   await touchVendorLastAssignedAt(supabase, vendor.id, landlordId)
+
+  try {
+    await closeOpenAsksForTicket(
+      supabase,
+      payload.ticketId,
+      "assigned_vendor_id set (availability probe no longer pending)",
+    )
+  } catch (e) {
+    console.error("[vendor-notify] close open asks after assignment", e)
+  }
 
   try {
     await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
@@ -1108,6 +1073,7 @@ export async function reassignVendorByIdAndNotify(
       vendor_work_status: "pending_accept",
       vendor_notified_at: null,
       vendor_notify_error: null,
+      awaiting_vendor_availability_at: null,
       issue_category: existingIssueCat ?? vendor.category ?? null,
       due_at: newDueAtIso,
       estimated_minutes: estMin,
@@ -1117,6 +1083,16 @@ export async function reassignVendorByIdAndNotify(
   if (upAssign) {
     console.error("[vendor-notify] reassign update failed", upAssign)
     return { error: upAssign.message ?? "Update failed" }
+  }
+
+  try {
+    await closeOpenAsksForTicket(
+      supabase,
+      ticketId,
+      "assigned_vendor_id set on reassignment (availability probe no longer pending)",
+    )
+  } catch (e) {
+    console.error("[vendor-notify] close open asks after reassignment", e)
   }
 
   if (previousVendorId !== vendor.id) {

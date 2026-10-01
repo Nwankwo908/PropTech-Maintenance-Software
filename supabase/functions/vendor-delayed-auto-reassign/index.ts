@@ -235,6 +235,7 @@ serve(async (req) => {
             row.reason === "recent_choice_after_trigger" ||
             row.reason === "recently_escalated_needs_admin" ||
             row.reason === "needs_admin_vendor_sticky" ||
+            row.reason === "recent_stall_follow_up" ||
             row.reason === "awaiting_choice_dwell_exceeded" ||
             row.reason === "awaiting_probe_dwell_exceeded" ||
             row.reason === "identical_outcome_loop"))
