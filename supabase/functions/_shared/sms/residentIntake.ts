@@ -23,6 +23,7 @@ import {
 import { processUnknownContactIntakeTurn } from "./unknownContactIntake.ts"
 import {
   beginMultiIssueSharedIntake,
+  buildMediaEvidenceAck,
   buildMultiIssueConfirmSms,
   buildMultiIssueSubmittedSms,
   buildRequestSubmittedSms,
@@ -543,14 +544,21 @@ async function finishIntakeQuestion(
   if (repeated.shouldHandoff) {
     return handOffStuckIntake(supabase, ctx, repeated.state)
   }
-  await saveIntakeState(supabase, ctx.conversationId, repeated.state)
+  const stamped: SmsIntakeState = {
+    ...repeated.state,
+    open_question_asked_at: new Date().toISOString(),
+    // Fresh ask — silence nudge/resolve clocks restart for this question.
+    intake_silence_nudge_sent_at: undefined,
+    intake_silence_resolved_at: undefined,
+  }
+  await saveIntakeState(supabase, ctx.conversationId, stamped)
   return {
     route: "resident_maintenance_intake",
     replyHint,
     metadata: {
       ...metadata,
       intakeStep: step,
-      promptRepeatCount: repeated.state.prompt_repeat_count,
+      promptRepeatCount: stamped.prompt_repeat_count,
     },
   }
 }
@@ -934,7 +942,7 @@ export async function processResidentMaintenanceIntake(
           supabase,
           ctx,
           state,
-          buildMultiIssueConfirmSms(multiIssues),
+          buildMultiIssueConfirmSms(multiIssues, seedBody),
           {
             started: true,
             multiIssue: true,
@@ -981,11 +989,18 @@ export async function processResidentMaintenanceIntake(
       },
     })
     const replyHint = questionForStep(state, state.step as IntakeStep)
+    const mediaAck =
+      ctx.inbound.mediaUrls.length === 0
+        ? buildMediaEvidenceAck(seedBody)
+        : null
+    const replyWithMediaAck = mediaAck
+      ? `${replyHint}\n\n${mediaAck}`
+      : replyHint
     const { outbound, emergency } = await prependEmergencySafetyIfNeeded(
       supabase,
       ctx,
       state,
-      replyHint,
+      replyWithMediaAck,
       residentId,
     )
     console.info("[sms-intake] started new intake", {
@@ -1404,11 +1419,13 @@ export async function processResidentMaintenanceIntake(
     }
   }
   const headline = issueSummaryBullet(state)
+  const priorVisitKnown = Boolean(state.prior_related_ticket_id?.trim())
   const headlineNote = state.step === "awaiting_confirm"
     ? null
     : headlineUpdateLine(state.acknowledged_headline, headline, {
-      recurring: Boolean(state.resident_reported_recurring),
-      priorVisitKnown: Boolean(state.prior_related_ticket_id),
+      // Language-only "repeatedly" must not claim a prior visit without a ticket.
+      recurring: priorVisitKnown,
+      priorVisitKnown,
     })
   state.acknowledged_headline = headline
 

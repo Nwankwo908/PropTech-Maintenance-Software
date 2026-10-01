@@ -65,10 +65,17 @@ import {
 } from "./maintenanceTicketContext.ts"
 import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
 import {
+  isRecentClarifyMenuAsk,
+  parseClarifyMenuSelection,
+} from "./clarifyMenuIntakeSeed.ts"
+import {
   isRepairRecognition,
   recognizeInboundIntentSync,
   upgradeUnmatchedRecognition,
 } from "./recognizeInboundIntent.ts"
+import {
+  shouldSuppressTicketAppendAsk,
+} from "./tenantDistress.ts"
 
 const TICKET_LOOKUP_STATUSES = [
   "unassigned",
@@ -260,8 +267,12 @@ async function loadOpenTickets(
     landlordId: string
     conversationTicketId?: string | null
     draftTicketId?: string | null
+    /** Prefer resident-owned tickets — never bare unit label across properties. */
+    residentId?: string | null
     unit?: string | null
     phone?: string | null
+    unitId?: string | null
+    propertyId?: string | null
   },
 ): Promise<OpenTicket[]> {
   const ids = [params.conversationTicketId, params.draftTicketId]
@@ -269,14 +280,38 @@ async function loadOpenTickets(
     .filter((id): id is string => Boolean(id))
 
   const select =
-    "id, unit, description, vendor_work_status, scheduled_at, scheduled_window_text, assigned_vendor_id, access_instructions, priority, issue_category, created_at"
+    "id, unit, unit_id, property_id, description, vendor_work_status, scheduled_at, scheduled_window_text, assigned_vendor_id, access_instructions, priority, issue_category, created_at, resident_id, resident_user_id, resident_phone"
 
   const rows: OpenTicket[] = []
   const seen = new Set<string>()
+  const phone = params.phone?.trim() || null
+  const residentId = params.residentId?.trim() || null
+  // unitId / propertyId / unitLabel retained on the params API for callers but
+  // must not scope open tickets alone (P0 — same fail-closed as resolveOpen).
+  void params.unitId
+  void params.propertyId
+  void params.unit
+
+  const ownedByResident = (row: Record<string, unknown>): boolean => {
+    if (phone) {
+      const rowPhone = typeof row.resident_phone === "string" ? row.resident_phone.trim() : ""
+      if (rowPhone && rowPhone === phone) return true
+    }
+    if (residentId) {
+      const rid = typeof row.resident_id === "string" ? row.resident_id : ""
+      const ruid = typeof row.resident_user_id === "string" ? row.resident_user_id : ""
+      if (rid === residentId || ruid === residentId) return true
+    }
+    // Never treat unit_id / unit-label alone as ownership — fail closed (P0).
+    // No resident scope available — allow only for unknown contacts (legacy).
+    if (!phone && !residentId) return true
+    return false
+  }
 
   const push = (row: Record<string, unknown> | null | undefined) => {
     const id = typeof row?.id === "string" ? row.id : ""
     if (!id || seen.has(id)) return
+    if (!ownedByResident(row as Record<string, unknown>)) return
     seen.add(id)
     rows.push({
       id,
@@ -311,7 +346,7 @@ async function loadOpenTickets(
     if (data) push(data as Record<string, unknown>)
   }
 
-  // Prefer open tickets by unit/phone even when a cancelled draft id was linked.
+  // Resident-scoped open tickets — never landlord-wide unit_id / unit-label alone.
   let query = supabase
     .from("maintenance_requests")
     .select(select)
@@ -320,15 +355,18 @@ async function loadOpenTickets(
     .order("created_at", { ascending: false })
     .limit(8)
 
-  if (params.unit?.trim()) {
-    query = query.eq("unit", params.unit.trim())
-  } else if (params.phone?.trim()) {
-    query = query.eq("resident_phone", params.phone.trim())
+  let scoped = false
+  if (phone) {
+    query = query.eq("resident_phone", phone)
+    scoped = true
+  } else if (residentId) {
+    query = query.or(`resident_id.eq.${residentId},resident_user_id.eq.${residentId}`)
+    scoped = true
   } else if (ids.length === 0) {
     return rows
   }
 
-  if (params.unit?.trim() || params.phone?.trim()) {
+  if (scoped) {
     const { data } = await query
     for (const row of data ?? []) {
       push(row as Record<string, unknown>)
@@ -1213,6 +1251,22 @@ async function handleMaintenanceUpdate(
     interpretation.extractedSlots.update?.trim() ||
     ctx.inbound.body.trim()
   ) + photoNote
+
+  // Distress language must never become a YES/NO append-to-ticket ask.
+  if (
+    shouldSuppressTicketAppendAsk({
+      body: ctx.inbound.body,
+      intakeState: intake,
+    })
+  ) {
+    await logOutcome(ctx, {
+      eventType: "sms.distress_ticket_append_suppressed",
+      message: "Skipped asking to add distressed text to a work order.",
+      maintenanceRequestId: ticket.id,
+    })
+    return { handled: false }
+  }
+
   await patchIntakeState(ctx.supabase, ctx.conversationId, {
     awaiting_ticket_update_confirm: true,
     pending_ticket_update_id: ticket.id,
@@ -1932,6 +1986,74 @@ async function handleOther(
     return { handled: false }
   }
   const who = firstName(residentName)
+
+  // Verbatim / near-verbatim clarify-menu option → treat as a selection, not unclear.
+  if (isRecentClarifyMenuAsk(intake.clarify_menu_shown_at)) {
+    const selection = parseClarifyMenuSelection(ctx.inbound.body)
+    if (selection === "repair") {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        clarify_menu_shown_at: undefined,
+      })
+      await logOutcome(ctx, {
+        eventType: "sms.clarify_menu_selection",
+        message: "Resident chose repair from the clarify menu.",
+        extra: { selection: "repair" },
+      })
+      return {
+        handled: false,
+        interpretation: {
+          addressesPending: false,
+          intent: "maintenance_new",
+          extractedSlots: { contextual_action: "new_issue", clarify_menu_selection: "repair" },
+          needsClarification: false,
+          source: "heuristic",
+        },
+      }
+    }
+    if (selection === "rent_or_lease") {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        clarify_menu_shown_at: undefined,
+      })
+      await logOutcome(ctx, {
+        eventType: "sms.clarify_menu_selection",
+        message: "Resident chose rent or lease from the clarify menu.",
+        extra: { selection: "rent_or_lease" },
+      })
+      return handled(
+        "sms_clarify_menu_rent_lease",
+        [
+          `Hi ${who},`,
+          "",
+          "Got it — rent or lease.",
+          "",
+          "Is this about your rent balance, a late payment, or your lease dates? Reply with a short note and I'll help.",
+        ].join("\n"),
+        { selection: "rent_or_lease" },
+      )
+    }
+    if (selection === "something_else") {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        clarify_menu_shown_at: undefined,
+      })
+      await logOutcome(ctx, {
+        eventType: "sms.clarify_menu_selection",
+        message: "Resident chose something else from the clarify menu.",
+        extra: { selection: "something_else" },
+      })
+      return handled(
+        "sms_clarify_menu_something_else",
+        [
+          `Hi ${who},`,
+          "",
+          "Got it.",
+          "",
+          "Tell me what you need in a sentence or two and I'll help from there.",
+        ].join("\n"),
+        { selection: "something_else" },
+      )
+    }
+  }
+
   const plan = planAssistantOtherReply({
     body: ctx.inbound.body,
     activeIntake,
@@ -2108,6 +2230,16 @@ export async function tryHandleInterpretedInbound(
 
   const residentId = ctx.identity.resident_id
   const profile = await loadResidentProfile(ctx.supabase, residentId)
+  let propertyId: string | null = null
+  const unitId = ctx.identity.unit_id?.trim() || null
+  if (unitId) {
+    const { data: unitRow } = await ctx.supabase
+      .from("units")
+      .select("property_id")
+      .eq("id", unitId)
+      .maybeSingle()
+    propertyId = typeof unitRow?.property_id === "string" ? unitRow.property_id : null
+  }
   const loadedTickets = await loadOpenTickets(ctx.supabase, {
     landlordId: ctx.landlordId,
     conversationTicketId: ctx.maintenanceRequestId,
@@ -2115,8 +2247,11 @@ export async function tryHandleInterpretedInbound(
       intake.pending_ticket_update_id ??
       intake.pending_ticket_cancel_id ??
       intake.pending_related_ticket_id,
+    residentId,
     unit: profile?.unit,
     phone: profile?.phone,
+    unitId,
+    propertyId,
   })
   // Spurious tickets minted from status questions are not real repairs.
   const tickets = loadedTickets.filter(

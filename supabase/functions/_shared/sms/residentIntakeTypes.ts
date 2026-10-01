@@ -8,11 +8,7 @@ import {
   matchesWaterOutage,
   matchesWholeHomeWaterOutage,
 } from "../../../../shared/maintenance/deterministicRules.ts"
-import {
-  containsGreetingOrPleasantry,
-  extractIssueNounPhrase,
-  stripTenantMessageFiller,
-} from "../../../../shared/maintenance/issueNounPhrase.ts"
+import { generateIssueSummary } from "../../../../shared/maintenance/generateIssueSummary.ts"
 import {
   buildIntakeUnderstandingConfirm,
   detectRecurringIssueSignal,
@@ -174,6 +170,15 @@ export type SmsIntakeState = {
   resident_reported_recurring?: boolean
   /** Prior ticket id for the same unit + trade, when found during intake. */
   prior_related_ticket_id?: string
+  /**
+   * When the current open intake question was last sent (ISO). Drives silence
+   * nudge / resolve TTL — cleared when the resident answers.
+   */
+  open_question_asked_at?: string
+  /** When the one silence nudge for the current open question was sent. */
+  intake_silence_nudge_sent_at?: string
+  /** When silence resolve auto-completed or handed off this open question. */
+  intake_silence_resolved_at?: string
   urgency_alert_tier?: UrgencyAlertTier
   urgency_alert_sent_at?: string
   /** Off-topic SMS parked until the resident replies YES or NO to welcome. */
@@ -709,6 +714,12 @@ export function entryOkIfAbsentFromIntake(
   if (!raw) return null
   const t = raw.toLowerCase()
   if (
+    t === "not_sure" ||
+    /^(not\s+sure|unsure|idk|i\s*don'?t\s+know|dont\s+know|unknown|maybe)\b/.test(t)
+  ) {
+    return null
+  }
+  if (
     /^(y|yes|yeah|yep|yup|yea)\b/.test(t) ||
     /\b(ok to enter|can enter|fine to enter|you can enter)\b/.test(t)
   ) {
@@ -806,17 +817,16 @@ export function issueSummaryBullet(state: SmsIntakeState): string {
   if (/\bfront door\b/.test(all) && /\block/.test(all)) return "Front door won't lock"
   if (/\broach/.test(all)) return room ? `${place}roach sighting`.trim() : "Roach sighting"
 
-  // Same extraction as admin Messages — never fall back to greeting-heavy raw text.
+  // Same generateIssueSummary as work-order titles / admin / multi-issue labels.
   const authored = stripSystemIntakeText(tenantAuthoredText(state))
   const category = resolveIntakeIssueCategory(state)
-  const extracted = extractIssueNounPhrase(authored, category)
-  let phrase = extracted.phrase.trim()
-  if (containsGreetingOrPleasantry(phrase) || /tenant update:/i.test(phrase)) {
-    phrase = extractIssueNounPhrase(stripTenantMessageFiller(authored), category).phrase.trim()
-  }
+  const phrase = generateIssueSummary(authored, {
+    format: "title",
+    category,
+    maxChars: 50,
+  })
   if (phrase && !/^maintenance issue$/i.test(phrase)) {
-    const withoutArticle = phrase.replace(/^an?\s+/i, "")
-    return withoutArticle.charAt(0).toUpperCase() + withoutArticle.slice(1)
+    return phrase
   }
   if (room && issue) return `${place}${formatIssueTypeLabel(state.issue_type).toLowerCase()} issue`.trim()
   if (issue) return `${formatIssueTypeLabel(state.issue_type)} issue`
@@ -898,7 +908,11 @@ function narrativeSummary(state: SmsIntakeState): string {
   // Prefer classified noun phrases over raw description (greetings / Tenant update).
   const authored = stripSystemIntakeText(tenantAuthoredText(state))
   const category = resolveIntakeIssueCategory(state)
-  const phrase = extractIssueNounPhrase(authored, category).phrase.replace(/^an?\s+/i, "")
+  const phrase = generateIssueSummary(authored, {
+    format: "summary",
+    category,
+    maxWords: 18,
+  }).replace(/^an?\s+/i, "")
   if (phrase && !/^maintenance issue$/i.test(phrase)) {
     const room = resolveRoomLabel(state)
     const safety = state.safety_concerns?.trim()
@@ -944,7 +958,10 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   const facts = state.diagnostic_facts ?? {}
   const authored = tenantAuthoredText(state)
-  const recurring =
+  // Only claim a prior visit when a real prior ticket was attached — language
+  // like "repeatedly" alone can mean frequency, not ticket history.
+  const recurringPriorVisit = Boolean(state.prior_related_ticket_id?.trim())
+  const frequencyLanguage =
     Boolean(state.resident_reported_recurring) || detectRecurringIssueSignal(authored)
 
   const header = pending.length >= 2
@@ -971,7 +988,7 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
 
   const bullets: string[] = []
 
-  if (recurring) {
+  if (recurringPriorVisit) {
     const issue = issueSummaryBullet(state).replace(/\.$/, "").toLowerCase()
     bullets.push(`• Recurring issue — ${issue} has come up before`)
   }
@@ -995,8 +1012,8 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     }
   }
 
-  // Pest frequency: never dump raw narrative; recurring is already stated above.
-  if (!recurring) {
+  // Pest frequency: never dump raw narrative; prior-visit bullet already covers it.
+  if (!recurringPriorVisit && !frequencyLanguage) {
     const pestFreq = facts.pest_frequency?.trim()
     if (pestFreq && isCleanDiagnosticFact(pestFreq, state)) {
       bullets.push(`• ${pestFreq}`)
@@ -1010,6 +1027,11 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
       bullets.push("• OK to enter if not home")
     } else if (/^(n|no)\b/.test(lower)) {
       bullets.push("• Do not enter if not home")
+    } else if (
+      lower === "not_sure" ||
+      /^(not\s+sure|unsure)\b/.test(lower)
+    ) {
+      bullets.push("• Entry if not home: unconfirmed — confirm in person")
     } else if (isCleanDiagnosticFact(entry, state)) {
       bullets.push(`• Entry if not home: ${entry}`)
     }

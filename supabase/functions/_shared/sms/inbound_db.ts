@@ -1113,25 +1113,23 @@ export async function resolveOpenMaintenanceRequestId(
     if (ticket?.id) return ticket.id as string
   }
 
-  if (identity.resident_id) {
-    const { data: user } = await supabase
-      .from("users")
-      .select("unit, email")
-      .eq("id", identity.resident_id)
-      .maybeSingle()
-
-    if (user?.unit && identity.landlord_id) {
-      const { data: ticket } = await supabase
-        .from("maintenance_requests")
-        .select("id")
-        .eq("unit", user.unit)
-        .eq("landlord_id", identity.landlord_id)
-        .in("vendor_work_status", OPEN_WORK_ORDER_STATUSES)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (ticket?.id) return ticket.id as string
+  // Resident-owned tickets only — never resolve by unit_id / unit label alone
+  // (same P0 as loadOpenTickets: fail closed rather than guessing a neighbor's WO).
+  if (identity.resident_id?.trim()) {
+    const residentId = identity.resident_id.trim()
+    let residentQuery = supabase
+      .from("maintenance_requests")
+      .select("id")
+      .or(`resident_id.eq.${residentId},resident_user_id.eq.${residentId}`)
+      .in("vendor_work_status", OPEN_WORK_ORDER_STATUSES)
+    if (identity.landlord_id) {
+      residentQuery = residentQuery.eq("landlord_id", identity.landlord_id)
     }
+    const { data: ticket } = await residentQuery
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (ticket?.id) return ticket.id as string
   }
 
   return null
