@@ -150,6 +150,13 @@ export type AskUloOk = {
   visualContext?: AskUloVisualContext | null
   legalAudit?: AskUloLegalAudit | null
   safetyBoundary?: AskUloSafetyBoundary | null
+  supportTicket?: {
+    id: string
+    created: boolean
+    repeatCount: number
+    summary: string
+    notifyStatus: 'pending' | 'sent' | 'failed' | 'skipped'
+  } | null
 }
 
 export function resolveAskUloUrl(): string | null {
@@ -197,11 +204,19 @@ async function invokeAskUlo(payload: Record<string, unknown>): Promise<InvokeAsk
     )
   }
 
+  const { data: sessionData } = await supabase.auth.getSession()
+  const accessToken = sessionData.session?.access_token?.trim() || ''
+  if (!accessToken) {
+    console.error('[ask-ulo] missing user session access token')
+    throw new Error('Ask Ulo: sign in required')
+  }
+
   try {
     const { data, error } = await supabase.functions.invoke('ask-ulo', {
       body: payload,
       headers: {
         'x-admin-reassign-secret': secret,
+        'x-ulo-access-token': accessToken,
       },
     })
 
@@ -328,6 +343,30 @@ function parseAskUloOk(body: unknown): AskUloOk {
     visualContext: parseVisualContext(ok.visualContext),
     legalAudit: parseLegalAudit(ok.legalAudit),
     safetyBoundary: parseSafetyBoundary(ok.safetyBoundary),
+    supportTicket: parseSupportTicket(ok.supportTicket),
+  }
+}
+
+function parseSupportTicket(
+  raw: unknown,
+): AskUloOk['supportTicket'] {
+  if (!raw || typeof raw !== 'object') return null
+  const t = raw as Record<string, unknown>
+  const id = typeof t.id === 'string' ? t.id : ''
+  if (!id) return null
+  const notify =
+    t.notifyStatus === 'pending' ||
+    t.notifyStatus === 'sent' ||
+    t.notifyStatus === 'failed' ||
+    t.notifyStatus === 'skipped'
+      ? t.notifyStatus
+      : 'pending'
+  return {
+    id,
+    created: t.created === true,
+    repeatCount: typeof t.repeatCount === 'number' ? t.repeatCount : 1,
+    summary: typeof t.summary === 'string' ? t.summary : '',
+    notifyStatus: notify,
   }
 }
 

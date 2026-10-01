@@ -143,4 +143,12 @@ export type AskUloResponse = {
   legalAudit: AskUloLegalAudit | null
   /** Set when the user asked Ulo to auto-execute a blocked consequential action. */
   safetyBoundary: AskUloSafetyBoundary | null
+  /** Present when a product-support ticket was created or bumped this turn. */
+  supportTicket?: {
+    id: string
+    created: boolean
+    repeatCount: number
+    summary: string
+    notifyStatus: "pending" | "sent" | "failed" | "skipped"
+  } | null
 }

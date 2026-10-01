@@ -1,13 +1,14 @@
 /**
  * Ask Ulo traffic controller — one clear sequence per question:
  *
- *   understand → classify → safety → plan → retrieve → prefer → write → check → audit
+ *   understand → job classify → (product_support | safety → plan → retrieve → …)
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { buildAskUloContext } from "./core/context.ts"
 import type { AskUloResponse, AskUloRunInput } from "./core/types.ts"
 import { classifyQuestion } from "./routing/classifyQuestion.ts"
+import { classifyAskUloJob } from "./routing/classifyAskUloJob.ts"
 import { checkSafetyRules } from "./guards/checkSafetyRules.ts"
 import { planAskUloTurn } from "./routing/planAskUloTurn.ts"
 import { executeSelectedTools } from "./retrieval/executeSelectedTools.ts"
@@ -15,6 +16,7 @@ import { resolvePreferPacket, preferPacketBagFromEvidence } from "./retrieval/re
 import { synthesizeAnswer } from "./synthesis/synthesizeAnswerStage.ts"
 import { validateFinalAnswer } from "./quality/validateFinalAnswerStage.ts"
 import { auditAskUloTurn } from "./audit/auditAskUloTurn.ts"
+import { runProductSupportTurn } from "./support/runProductSupportTurn.ts"
 
 export type {
   AskUloResponse,
@@ -32,6 +34,12 @@ export async function runAskUlo(
 ): Promise<AskUloResponse> {
   // 1. Understand the question (who / where / history / scope)
   const context = await buildAskUloContext(supabase, input)
+
+  // 1b. Job split: product-support vs portfolio-analyst vs legal
+  const job = classifyAskUloJob(context.question, context.priorUserTurns)
+  if (job.job === "product_support") {
+    return await runProductSupportTurn(supabase, input, job)
+  }
 
   // 2. Classification (intent, mode, subject, action, evidence requirements)
   const classification = classifyQuestion({
@@ -88,5 +96,10 @@ export async function runAskUlo(
     safety,
   })
 
-  return validated.response
+  const response = validated.response
+  // Portfolio / legal paths never create support tickets.
+  if (response.supportTicket == null) {
+    response.supportTicket = null
+  }
+  return response
 }

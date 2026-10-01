@@ -1,10 +1,12 @@
 /**
  * POST ask-ulo — RAG answer for Ask Ulo panel, or counsel handoff action.
- * Auth: ADMIN_REASSIGN_SECRET via x-admin-reassign-secret (same as other admin edges).
+ * Auth: ADMIN_REASSIGN_SECRET + user JWT with landlord access check
+ * (shared secret alone is never proof of landlord scope).
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { assertAskUloLandlordAccess } from "../_shared/ask_ulo/auth/assertAskUloLandlordAccess.ts"
 import { runAskUlo } from "../_shared/ask_ulo/runAskUlo.ts"
 import { parseAskUloAgentMode } from "../_shared/ask_ulo/routing/selectMode.ts"
 import { recordCounselHandoff } from "../_shared/ask_ulo/audit/recordCounselHandoff.ts"
@@ -15,12 +17,12 @@ import {
 
 /**
  * Explicit CORS for browser → Edge (localhost and deployed admin UI).
- * Includes x-admin-reassign-secret so preflight accepts the admin auth header.
+ * Includes x-admin-reassign-secret + x-ulo-access-token for preflight.
  */
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-admin-reassign-secret",
+    "authorization, x-client-info, apikey, content-type, x-admin-reassign-secret, x-ulo-access-token",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Max-Age": "86400",
 }
@@ -48,9 +50,8 @@ serve(async (req) => {
     if (req.method !== "POST") {
       return jsonResponse({ error: "Method not allowed" }, 405)
     }
-  const adminAuth = requireAdminReassignAuth(req, "[ask-ulo]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
-
+    const adminAuth = requireAdminReassignAuth(req, "[ask-ulo]", corsHeaders)
+    if (!adminAuth.ok) return adminAuth.response
 
     let body: Record<string, unknown>
     try {
@@ -61,18 +62,37 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
-    if (!supabaseUrl || !serviceKey) {
-      console.error("[ask-ulo] missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")?.trim()
+    if (!supabaseUrl || !serviceKey || !anonKey) {
+      console.error("[ask-ulo] missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or SUPABASE_ANON_KEY")
       return jsonResponse({ error: "Server misconfiguration" }, 500)
     }
 
     const supabase = createClient(supabaseUrl, serviceKey)
     const action = asString(body.action)
+    const landlordIdEarly =
+      asString(body.landlordId) ?? asString(body.landlord_id)
+
+    if (!landlordIdEarly) {
+      return jsonResponse({ error: "landlordId is required" }, 400)
+    }
+
+    const access = await assertAskUloLandlordAccess({
+      req,
+      supabase,
+      supabaseUrl,
+      anonKey,
+      landlordId: landlordIdEarly,
+    })
+    if (!access.ok) {
+      return jsonResponse({ error: access.error }, access.status)
+    }
+
+    const landlordId = access.landlordId
+    const authUserId = access.user.id
 
     if (action === "counsel_handoff") {
-      const landlordId = asString(body.landlordId) ?? asString(body.landlord_id)
       const expertRole = asString(body.expertRole) ?? asString(body.expert_role)
-      if (!landlordId) return jsonResponse({ error: "landlordId is required" }, 400)
       if (!expertRole) return jsonResponse({ error: "expertRole is required" }, 400)
 
       const topicsRaw = body.sensitiveTopicIds ?? body.sensitive_topics
@@ -114,10 +134,8 @@ serve(async (req) => {
     }
 
     if (action === "feedback") {
-      const landlordId = asString(body.landlordId) ?? asString(body.landlord_id)
       const evalId = asString(body.evalId) ?? asString(body.eval_id)
       const ratingRaw = asString(body.rating)
-      if (!landlordId) return jsonResponse({ error: "landlordId is required" }, 400)
       if (!evalId) return jsonResponse({ error: "evalId is required" }, 400)
       if (ratingRaw !== "up" && ratingRaw !== "down") {
         return jsonResponse({ error: "rating must be up or down" }, 400)
@@ -144,19 +162,10 @@ serve(async (req) => {
     }
 
     const question = asString(body.question)
-    const landlordId = asString(body.landlordId) ?? asString(body.landlord_id)
-    const userId =
-      asString(body.userId) ??
-      asString(body.user_id) ??
-      asString(body.authUserId) ??
-      asString(body.auth_user_id)
     const conversationId = asString(body.conversationId) ?? asString(body.conversation_id)
     const agentMode = parseAskUloAgentMode(body.agentMode ?? body.agent_mode)
     if (!question) {
       return jsonResponse({ error: "question is required" }, 400)
-    }
-    if (!landlordId) {
-      return jsonResponse({ error: "landlordId is required" }, 400)
     }
     if (question.length > 4000) {
       return jsonResponse({ error: "question is too long" }, 400)
@@ -181,7 +190,7 @@ serve(async (req) => {
       const result = await runAskUlo(supabase, {
         question,
         landlordId,
-        userId,
+        userId: authUserId,
         history,
         conversationId,
         agentMode,
@@ -199,6 +208,7 @@ serve(async (req) => {
         visualContext: result.visualContext,
         legalAudit: result.legalAudit,
         safetyBoundary: result.safetyBoundary,
+        supportTicket: result.supportTicket ?? null,
       })
     } catch (err) {
       console.error("[ask-ulo] failed", err)
