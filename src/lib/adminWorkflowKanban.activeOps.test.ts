@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  collectAdminWorkflowRuns,
   isWorkflowRunActiveAt,
   snapshotActiveOperations,
 } from './adminWorkflowKanban'
@@ -63,5 +64,34 @@ describe('snapshotActiveOperations', () => {
         Date.now(),
       ),
     ).toBe(false)
+  })
+
+  it('excludes rent collection reminder runs from Active Tasks', () => {
+    const rent = run({
+      id: 'r1',
+      templateId: 'rent_collection',
+      lastEventType: 'rent.reminder_sent',
+      currentStep: 'reminder_sent',
+    })
+    const empty = emptyAdminWorkflowDashboardData()
+    const data: AdminWorkflowDashboardData = {
+      ...empty,
+      active: [run({ id: 'm1', templateId: 'maintenance_request' })],
+      rentCollection: {
+        ...empty.rentCollection,
+        runs: [rent as AdminWorkflowDashboardData['rentCollection']['runs'][number]],
+        reminderSent: [rent as AdminWorkflowDashboardData['rentCollection']['runs'][number]],
+        stats: {
+          ...empty.rentCollection.stats,
+          reminderSentCount: 1,
+        },
+      },
+    }
+
+    expect(collectAdminWorkflowRuns(data).map((row) => row.id)).toEqual(['m1'])
+    expect(snapshotActiveOperations(data).total).toBe(1)
+    expect(snapshotActiveOperations(data).lines).toEqual([
+      { id: 'maintenance', label: 'Maintenance', count: 1 },
+    ])
   })
 })

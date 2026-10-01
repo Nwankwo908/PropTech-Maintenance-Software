@@ -35,28 +35,27 @@ const STAGE_ORDER = WORKFLOW_KANBAN_STAGES
 const CATEGORY_BADGE = WORKFLOW_CATEGORY_BADGE
 type KanbanCard = WorkflowKanbanCard
 
-type WorkflowFilterKey = 'maintenance' | 'lease' | 'payment' | 'critical'
+type WorkflowFilterKey = 'maintenance' | 'lease' | 'critical'
 
 const WORKFLOW_FILTER_OPTIONS: { id: WorkflowFilterKey; label: string }[] = [
   { id: 'maintenance', label: 'Maintenance' },
   { id: 'lease', label: 'Lease' },
-  { id: 'payment', label: 'Payment' },
   { id: 'critical', label: 'Critical' },
 ]
 
-const CATEGORY_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease', 'payment'])
+const CATEGORY_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease'])
 
 function cardMatchesWorkflowFilters(card: KanbanCard, filters: Set<WorkflowFilterKey>): boolean {
   if (filters.size === 0) return true
 
   const categoryFilters = WORKFLOW_FILTER_OPTIONS.filter(
     (option) => CATEGORY_FILTER_KEYS.has(option.id) && filters.has(option.id),
-  ).map((option) => option.id as 'maintenance' | 'lease' | 'payment')
+  ).map((option) => option.id as 'maintenance' | 'lease')
 
   const wantsCritical = filters.has('critical')
   const categoryOk =
     categoryFilters.length === 0 ||
-    categoryFilters.includes(card.category as 'maintenance' | 'lease' | 'payment')
+    categoryFilters.includes(card.category as 'maintenance' | 'lease')
   const criticalOk = !wantsCritical || card.critical
 
   return categoryOk && criticalOk
@@ -381,60 +380,109 @@ function KanbanCardItem({
   onSelect: (runId: string) => void
 }) {
   const badge = CATEGORY_BADGE[card.category]
+  const [checklistOpen, setChecklistOpen] = useState(false)
+  const checklist = card.inspectionChecklist
+  const hasChecklist = Boolean(checklist && checklist.length > 1)
+
   return (
-    <button
-      type="button"
+    <div
       id={`workflow-card-${card.id}`}
-      onClick={() => onSelect(card.id)}
       style={{ '--sa-stagger': stagger } as CSSProperties}
       className={[
-        'sa-stagger sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
+        'sa-stagger sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
         highlighted
           ? 'border-[#101828] ring-2 ring-[#101828]/20'
           : 'border-[#e5e7eb]',
       ].join(' ')}
     >
-      <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 flex-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
-          {card.title}
-        </p>
-        {card.critical ? (
-          <span className="mt-1 size-2 shrink-0 rounded-full bg-[#fb2c36]" aria-hidden />
-        ) : null}
-      </div>
-      {card.workOrderSummary ? (
-        <p className="truncate text-[13px] font-medium leading-4 text-[#364153]">
-          {card.workOrderSummary}
-        </p>
-      ) : null}
-      {card.context && card.context !== '—' ? (
-        <p className="truncate text-[12px] leading-4 text-[#6a7282]">{card.context}</p>
-      ) : null}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {card.issueCategoryLabel ? (
-            <span className="inline-flex rounded-[6px] bg-[#e8f4f2] px-2 py-0.5 text-[11px] font-medium text-[#146b52]">
-              {card.issueCategoryLabel}
-            </span>
+      <button
+        type="button"
+        onClick={() => onSelect(card.id)}
+        className="flex w-full flex-col gap-2 text-left outline-none hover:opacity-95 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 rounded-[6px]"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <p className="min-w-0 flex-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
+            {card.title}
+          </p>
+          {card.critical ? (
+            <span className="mt-1 size-2 shrink-0 rounded-full bg-[#fb2c36]" aria-hidden />
           ) : null}
-          <span
-            className={`inline-flex rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${badge.className}`}
-          >
-            {badge.label}
-          </span>
         </div>
-        {card.initials ? (
-          <span
-            className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#6366f1] text-[10px] font-semibold text-white"
-            aria-hidden
+        {card.workOrderSummary ? (
+          <p className="truncate text-[13px] font-medium leading-4 text-[#364153]">
+            {card.workOrderSummary}
+          </p>
+        ) : null}
+        {card.context && card.context !== '—' ? (
+          <p className="truncate text-[12px] leading-4 text-[#6a7282]">{card.context}</p>
+        ) : null}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {card.issueCategoryLabel ? (
+              <span className="inline-flex rounded-[6px] bg-[#e8f4f2] px-2 py-0.5 text-[11px] font-medium text-[#146b52]">
+                {card.issueCategoryLabel}
+              </span>
+            ) : null}
+            <span
+              className={`inline-flex rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${badge.className}`}
+            >
+              {badge.label}
+            </span>
+          </div>
+          {card.initials ? (
+            <span
+              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#6366f1] text-[10px] font-semibold text-white"
+              aria-hidden
+            >
+              {card.initials}
+            </span>
+          ) : (
+            <span className="size-6 shrink-0 rounded-full bg-[#e5e7eb]" aria-hidden />
+          )}
+        </div>
+      </button>
+
+      {hasChecklist ? (
+        <div className="border-t border-[#f3f4f6] pt-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setChecklistOpen((open) => !open)
+            }}
+            className="flex w-full items-center justify-between gap-2 rounded-[6px] px-1 py-0.5 text-left text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5]"
+            aria-expanded={checklistOpen}
           >
-            {card.initials}
-          </span>
-        ) : (
-          <span className="size-6 shrink-0 rounded-full bg-[#e5e7eb]" aria-hidden />
-        )}
-      </div>
-    </button>
+            <span>
+              {checklistOpen ? 'Hide' : 'Show'} fail items ({checklist!.length})
+            </span>
+            <span aria-hidden className="text-[#6a7282]">
+              {checklistOpen ? '▴' : '▾'}
+            </span>
+          </button>
+          {checklistOpen ? (
+            <ul className="mt-2 flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+              {checklist!.map((item) => (
+                <li
+                  key={item.ticketId}
+                  className="flex items-start justify-between gap-2 rounded-[6px] bg-[#f9fafb] px-2 py-1.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-[12px] font-medium text-[#0a0a0a]">
+                      {item.label}
+                    </p>
+                    <p className="text-[11px] text-[#6a7282]">{item.workOrderRef}</p>
+                  </div>
+                  <span className="shrink-0 rounded-[4px] bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#364153] ring-1 ring-[#e5e7eb]">
+                    {item.statusLabel}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

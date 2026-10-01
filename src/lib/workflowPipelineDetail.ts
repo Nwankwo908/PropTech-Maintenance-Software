@@ -1,6 +1,7 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchAdminWorkflowDashboard,
+  formatInspectionReportRef,
   workflowTemplateGroupId,
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
@@ -10,9 +11,13 @@ import {
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
   deriveWorkflowKanbanStage,
+  inspectionGroupProgress,
   lifecycleStepKey,
+  vendorWorkStatusChipLabel,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
+import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
+import { extractStructuredIssueDetails } from '@shared/maintenance/structuredIssueDetails.ts'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatTicketRequestNumber, formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
@@ -141,6 +146,19 @@ export type WorkflowPipelineDetail = {
   moveOutProgressPercent?: number
   moveOutDateLabel?: string
   sourceLeaseRenewalRunId?: string | null
+  /** Inspection-report visit: sibling fail items for the report-scoped rail. */
+  inspectionGroup?: {
+    reportId: string
+    reportRef: string
+    progressLabel: string
+    items: Array<{
+      ticketId: string
+      workOrderRef: string
+      label: string
+      statusLabel: string
+      runId: string | null
+    }>
+  } | null
 }
 
 const MAINTENANCE_PIPELINE_LABELS = [
@@ -240,13 +258,13 @@ function formatDueLabel(iso: string | null | undefined): string {
   if (!iso) return '—'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '—'
-  const now = Date.now()
-  const diffHours = Math.round((date.getTime() - now) / 3_600_000)
-  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  if (diffHours < 0) return `Overdue · ${time}`
-  if (diffHours < 24) return `Today · ${time}`
-  if (diffHours < 48) return `Tomorrow · ${time}`
-  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${time}`
+  return date.toLocaleString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function buildProgressSteps(labels: readonly string[], activeIndex: number): WorkflowPipelineStep[] {
@@ -402,49 +420,17 @@ function formatCategoryLabel(raw: string | null | undefined): string {
   return formatVendorTradeLabel(raw, { emptyLabel: 'General' })
 }
 
-const PRIORITY_TITLE_PREFIX =
-  /^(?:\[(?:emergency|urgent|critical|high|medium|low|priority)\]\s*|(?:emergency|urgent|critical|high|medium|low|priority)\s*[:\-–—]\s*)+/i
-
-function firstSentence(text: string): string {
-  return text.split(/[.!?]/)[0]?.trim() ?? ''
-}
-
-function stripPriorityFromTitle(text: string): string {
-  let result = text.trim()
-  for (let i = 0; i < 3; i++) {
-    const next = result.replace(PRIORITY_TITLE_PREFIX, '').trim()
-    if (next === result) break
-    result = next
-  }
-  return result.replace(/^(?:emergency|urgent|critical)\s+/i, '').trim()
-}
-
-function truncateConciseTitle(text: string, maxLen = 64): string {
-  const trimmed = text.trim()
-  if (trimmed.length <= maxLen) return trimmed
-  const cut = trimmed.slice(0, maxLen)
-  const lastSpace = cut.lastIndexOf(' ')
-  if (lastSpace > maxLen * 0.5) return `${cut.slice(0, lastSpace).trim()}…`
-  return `${cut.trim()}…`
-}
-
-function toSentenceCase(text: string): string {
-  const trimmed = text.trim()
-  if (!trimmed) return trimmed
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
-}
-
 function buildConciseWorkOrderTitle(input: {
   description: string
   issueCategory: string
   fallback: string
 }): string {
-  const stripped = stripPriorityFromTitle(firstSentence(input.description))
-  if (stripped) {
-    const concise =
-      stripped.length > 72 && stripped.includes(',') ? stripped.split(',')[0].trim() : stripped
-    return truncateConciseTitle(toSentenceCase(concise))
-  }
+  const summary = generateIssueSummary(input.description, {
+    format: 'title',
+    category: input.issueCategory,
+    maxChars: 50,
+  })
+  if (summary && !/^maintenance issue$/i.test(summary)) return summary
   return formatCategoryLabel(input.issueCategory) || input.fallback || 'Work order'
 }
 
@@ -1327,15 +1313,49 @@ export async function fetchWorkflowPipelineDetail(
 
   const title = isMoveOut
     ? moveOutPipelineTitle()
-    : buildConciseWorkOrderTitle({
-        description: asString(ticket?.description),
-        issueCategory: asString(ticket?.issue_category) || row.templateType || 'general',
-        fallback: row.templateName || 'Workflow',
+    : row.inspectionReportId &&
+        row.inspectionGroupItems &&
+        row.inspectionGroupItems.length > 1
+      ? `Inspection visit · ${formatInspectionReportRef(row.inspectionReportId)}`
+      : buildConciseWorkOrderTitle({
+          description: asString(ticket?.description),
+          issueCategory: asString(ticket?.issue_category) || row.templateType || 'general',
+          fallback: row.templateName || 'Workflow',
+        })
+
+  const inspectionGroup =
+    row.inspectionReportId &&
+    row.inspectionGroupItems &&
+    row.inspectionGroupItems.length > 1
+      ? (() => {
+          const progress = inspectionGroupProgress(row.inspectionGroupItems)
+          return {
+            reportId: row.inspectionReportId,
+            reportRef: formatInspectionReportRef(row.inspectionReportId),
+            progressLabel: `${progress.complete} of ${progress.total} complete`,
+            items: row.inspectionGroupItems.map((item) => ({
+              ticketId: item.ticketId,
+              workOrderRef: item.workOrderRef,
+              label: item.label,
+              statusLabel: vendorWorkStatusChipLabel(item.vendorWorkStatus),
+              runId: item.runId,
+            })),
+          }
+        })()
+      : null
+
+  const rawTicketDescription = asString(ticket?.description)
+  const structuredMaintenance = isMaintenance && rawTicketDescription
+    ? extractStructuredIssueDetails(rawTicketDescription, {
+        category: asString(ticket?.issue_category) || row.templateType || 'general',
+        format: 'summary',
       })
+    : null
 
   const description = isMoveOut
     ? 'Ulo is coordinating move-out with the resident — instructions, inspection, keys, and deposit review stay in one SMS thread.'
-    : asString(ticket?.description) ||
+    : structuredMaintenance?.displayDescription ||
+      rawTicketDescription ||
       row.lastEventMessage ||
       row.escalationReason ||
       'Ulo is coordinating this task in the workflow pipeline. Details will update as steps complete.'
@@ -1452,8 +1472,6 @@ export async function fetchWorkflowPipelineDetail(
           { label: 'Progress', value: moveOutProgress != null ? `${moveOutProgress}%` : '—' },
         ]
       : [
-      { label: 'Property', value: row.propertyLabel || '—' },
-      { label: 'Unit', value: row.unitLabel || asString(ticket?.unit) || '—' },
       { label: 'Resident', value: residentName || '—' },
       { label: 'Vendor', value: enrichment.vendorName || '—' },
       { label: 'Category', value: formatCategoryLabel(asString(ticket?.issue_category) || row.templateType) || '—' },
@@ -1465,7 +1483,6 @@ export async function fetchWorkflowPipelineDetail(
             : priority.label[0] + priority.label.slice(1).toLowerCase()
           : '—',
       },
-      { label: 'Due Date', value: formatDueLabel(dueAt) },
       { label: 'Expected Completion', value: formatDueLabel(dueAt) },
       { label: 'Estimated Cost', value: formatCurrency(estimatedCost) },
       { label: 'Approval', value: row.status === 'escalated' ? 'Review Required' : 'Not Required' },
@@ -1506,5 +1523,6 @@ export async function fetchWorkflowPipelineDetail(
     moveOutProgressPercent: moveOutProgress,
     moveOutDateLabel,
     sourceLeaseRenewalRunId: asString(metadata.source_workflow_run_id),
+    inspectionGroup,
   }
 }

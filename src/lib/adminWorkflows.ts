@@ -5,6 +5,25 @@ import {
   isOnboardingImportLeaseRenewalRun,
   retireOnboardingImportLeaseRenewals,
 } from '@/lib/onboardingImportLeaseRenewal'
+import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
+
+/** Plain checklist label from a ticket description (HQS fail: Room - Issue → Room — Issue). */
+export function checklistLabelFromTicketDescription(
+  description: string | null | undefined,
+): string {
+  const first = String(description ?? '').split('\n')[0]?.trim() || ''
+  const hqs = first.match(/^HQS fail:\s*(.+)$/i)
+  if (hqs?.[1]) {
+    return hqs[1].replace(/\s+-\s+/g, ' — ').trim() || 'Inspection item'
+  }
+  return first || 'Repair item'
+}
+
+/** Short inspection report reference for UI (IR-8AC8). */
+export function formatInspectionReportRef(reportId: string): string {
+  const compact = reportId.replace(/-/g, '').slice(0, 4).toUpperCase()
+  return compact ? `IR-${compact}` : 'Inspection visit'
+}
 
 export type WorkflowRunStatus = 'active' | 'completed' | 'escalated' | 'cancelled'
 
@@ -56,8 +75,27 @@ export type AdminWorkflowRow = {
   vendorWorkStatus: string | null
   /** From linked `maintenance_requests.assigned_vendor_id` when present. */
   assignedVendorId: string | null
+  /**
+   * HQS / inspection letter grouping. When set, Active Tasks collapses sibling
+   * tickets into one visit card.
+   */
+  inspectionReportId?: string | null
+  /**
+   * All fail items under the same inspection_report_id (populated for every
+   * sibling row; kanban dedupe keeps one representative with this list).
+   */
+  inspectionGroupItems?: InspectionGroupTicketItem[] | null
   /** Step log for escalated run review rails. */
   timeline?: AdminWorkflowTimelineEvent[]
+}
+
+/** One fail item inside an inspection-report visit group. */
+export type InspectionGroupTicketItem = {
+  ticketId: string
+  workOrderRef: string
+  label: string
+  vendorWorkStatus: string | null
+  runId: string | null
 }
 
 export type AdminRentCollectionRow = AdminWorkflowRow & {
@@ -985,12 +1023,15 @@ export async function fetchAdminWorkflowDashboard(
       assigned_vendor_id: string | null
       issue_category: string | null
       description: string | null
+      inspection_report_id: string | null
     }
   >()
   if (maintenanceTicketIds.length) {
     const { data: tickets, error: ticketsError } = await supabase
       .from('maintenance_requests')
-      .select('id, vendor_work_status, assigned_vendor_id, issue_category, description')
+      .select(
+        'id, vendor_work_status, assigned_vendor_id, issue_category, description, inspection_report_id',
+      )
       .in('id', maintenanceTicketIds)
     if (ticketsError) {
       console.error(
@@ -1018,7 +1059,57 @@ export async function fetchAdminWorkflowDashboard(
             typeof ticket.description === 'string' && ticket.description.trim()
               ? ticket.description.trim()
               : null,
+          inspection_report_id:
+            typeof ticket.inspection_report_id === 'string' &&
+              ticket.inspection_report_id.trim()
+              ? ticket.inspection_report_id.trim()
+              : null,
         })
+      }
+    }
+  }
+
+  // Load every open fail item under the same inspection reports so group cards
+  // can show N-of-M even when some siblings lack a run row in this page load.
+  const reportIds = [
+    ...new Set(
+      [...ticketById.values()]
+        .map((t) => t.inspection_report_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ]
+  const inspectionTicketsByReportId = new Map<string, InspectionGroupTicketItem[]>()
+  if (reportIds.length > 0) {
+    const { data: groupTickets, error: groupErr } = await supabase
+      .from('maintenance_requests')
+      .select('id, description, vendor_work_status, inspection_report_id, created_at')
+      .in('inspection_report_id', reportIds)
+      .eq('landlord_id', landlordId)
+      .order('created_at', { ascending: true })
+    if (groupErr) {
+      console.error('[admin-workflows] inspection group tickets', groupErr.message)
+    } else {
+      for (const ticket of groupTickets ?? []) {
+        const ticketId = typeof ticket.id === 'string' ? ticket.id : ''
+        const reportId =
+          typeof ticket.inspection_report_id === 'string'
+            ? ticket.inspection_report_id.trim()
+            : ''
+        if (!ticketId || !reportId) continue
+        const list = inspectionTicketsByReportId.get(reportId) ?? []
+        list.push({
+          ticketId,
+          workOrderRef: formatWorkOrderRefFromTicketId(ticketId),
+          label: checklistLabelFromTicketDescription(
+            typeof ticket.description === 'string' ? ticket.description : null,
+          ),
+          vendorWorkStatus:
+            typeof ticket.vendor_work_status === 'string'
+              ? ticket.vendor_work_status
+              : null,
+          runId: null,
+        })
+        inspectionTicketsByReportId.set(reportId, list)
       }
     }
   }
@@ -1077,9 +1168,34 @@ export async function fetchAdminWorkflowDashboard(
         readMetaString(metadata, 'issue_summary'),
       vendorWorkStatus: ticket?.vendor_work_status ?? null,
       assignedVendorId: ticket?.assigned_vendor_id ?? null,
+      inspectionReportId: ticket?.inspection_report_id ?? null,
+      inspectionGroupItems: null,
     }
   })
 
+  // Attach full inspection checklists + run ids onto every sibling row.
+  const runIdByTicketId = new Map<string, string>()
+  for (const row of rows) {
+    const ticketId = maintenanceTicketIdFromWorkflowRun({
+      templateId: row.templateId,
+      entityType: row.entityType,
+      entityId: row.entityId,
+      metadata: {},
+    })
+    if (ticketId && !runIdByTicketId.has(ticketId)) {
+      runIdByTicketId.set(ticketId, row.id)
+    }
+  }
+  for (const row of rows) {
+    const reportId = row.inspectionReportId?.trim()
+    if (!reportId) continue
+    const items = inspectionTicketsByReportId.get(reportId)
+    if (!items?.length) continue
+    row.inspectionGroupItems = items.map((item) => ({
+      ...item,
+      runId: runIdByTicketId.get(item.ticketId) ?? item.runId,
+    }))
+  }
   const active = rows.filter(
     (row) =>
       row.status === 'active' &&

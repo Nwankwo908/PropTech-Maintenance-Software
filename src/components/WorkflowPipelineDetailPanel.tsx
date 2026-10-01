@@ -635,16 +635,39 @@ export function WorkflowPipelineDetailPanel({
                 </section>
               ) : null}
 
+              {detail.inspectionGroup ? (
+                <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                        Inspection fail items
+                      </h3>
+                      <p className="mt-1 text-[13px] text-[#6a7282]">
+                        {detail.inspectionGroup.reportRef} · {detail.inspectionGroup.progressLabel}
+                      </p>
+                    </div>
+                  </div>
+                  <ul className="mt-4 flex flex-col gap-2">
+                    {detail.inspectionGroup.items.map((item) => (
+                      <li
+                        key={item.ticketId}
+                        className="flex items-start justify-between gap-3 rounded-[8px] border border-[#f3f4f6] bg-[#f9fafb] px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[14px] font-medium text-[#0a0a0a]">{item.label}</p>
+                          <p className="mt-0.5 text-[12px] text-[#6a7282]">{item.workOrderRef}</p>
+                        </div>
+                        <span className="shrink-0 rounded-[6px] bg-white px-2 py-0.5 text-[11px] font-medium text-[#364153] ring-1 ring-[#e5e7eb]">
+                          {item.statusLabel}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
               <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
                 <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Overview</h3>
-                <div className="mt-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                    Request number
-                  </p>
-                  <p className="mt-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
-                    {detail.ticketRequestNumber}
-                  </p>
-                </div>
                 <p className="mt-3 text-[14px] leading-6 text-[#364153]">{detail.description}</p>
                 <div className="mt-5 border-t border-[#f3f4f6] pt-5">
                   <FieldGrid fields={detail.overviewFields} />
@@ -654,8 +677,8 @@ export function WorkflowPipelineDetailPanel({
                     <p className="mb-4 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
                       Maintenance Details
                     </p>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      {detail.maintenanceDetails.map((field) => (
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+                      {detail.maintenanceDetails.slice(0, 3).map((field) => (
                         <div key={field.label}>
                           <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
                             {field.label}
@@ -663,6 +686,38 @@ export function WorkflowPipelineDetailPanel({
                           <p className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">{field.value}</p>
                         </div>
                       ))}
+                      <div className="flex min-w-0 flex-col gap-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+                          Actions
+                        </p>
+                        {canSeeThread ? (
+                          <button
+                            type="button"
+                            onClick={() => openThread('resident')}
+                            className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                          >
+                            <ThreadIcon />
+                            See thread
+                          </button>
+                        ) : null}
+                        {canSeeVendorThread ? (
+                          <button
+                            type="button"
+                            onClick={() => openThread('vendor')}
+                            className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                          >
+                            <ThreadIcon />
+                            See vendor thread
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        >
+                          <MailIcon />
+                          Email
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -749,30 +804,6 @@ export function WorkflowPipelineDetailPanel({
                     ) : null}
                   </div>
                 ) : null}
-                {canSeeThread && !detail.resident ? (
-                  <div className="mt-5 border-t border-[#f3f4f6] pt-5">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => openThread('resident')}
-                        className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
-                      >
-                        <ThreadIcon />
-                        See thread
-                      </button>
-                      {canSeeVendorThread ? (
-                        <button
-                          type="button"
-                          onClick={() => openThread('vendor')}
-                          className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
-                        >
-                          <ThreadIcon />
-                          See vendor thread
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
               </section>
 
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -810,33 +841,6 @@ export function WorkflowPipelineDetailPanel({
                         ]}
                       />
                     </div>
-                    <div className="mt-5 flex flex-col gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openThread('resident')}
-                        className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                      >
-                        <ThreadIcon />
-                        See thread
-                      </button>
-                      {canSeeVendorThread ? (
-                        <button
-                          type="button"
-                          onClick={() => openThread('vendor')}
-                          className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                        >
-                          <ThreadIcon />
-                          See vendor thread
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                      >
-                        <MailIcon />
-                        Email
-                      </button>
-                    </div>
                   </section>
                 ) : null}
 
@@ -846,8 +850,6 @@ export function WorkflowPipelineDetailPanel({
                     <FieldGrid
                       columns={2}
                       fields={[
-                        { label: 'Property', value: detail.property.property },
-                        { label: 'Building', value: detail.property.building },
                         { label: 'Address', value: detail.property.address },
                         { label: 'Unit', value: detail.property.unit },
                         { label: 'Manager', value: detail.property.manager },

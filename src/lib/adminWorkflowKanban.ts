@@ -1,9 +1,11 @@
 import {
+  formatInspectionReportRef,
   formatLocationContextLabel,
   isSettledOnActiveTasks,
   workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
   type AdminWorkflowRow,
+  type InspectionGroupTicketItem,
 } from '@/lib/adminWorkflows'
 import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
@@ -82,11 +84,22 @@ export type WorkflowKanbanCard = {
   stage: WorkflowKanbanStageId
   critical: boolean
   initials: string | null
+  /** Present when this card represents an inspection_report visit group. */
+  inspectionReportId?: string | null
+  inspectionProgress?: { complete: number; total: number } | null
+  inspectionChecklist?: Array<{
+    ticketId: string
+    workOrderRef: string
+    label: string
+    statusLabel: string
+    stage: WorkflowKanbanStageId
+    runId: string | null
+  }> | null
 }
 
 /** User-facing helper copy for the workflow pipeline (Operations / Active Tasks). */
 export const WORKFLOW_PIPELINE_PAGE_SUBTITLE =
-  'See everything Ulo is actively coordinating, from maintenance and rent collection to inspections, move ins, move outs, and lease renewals, all in one place.'
+  'See everything Ulo is actively coordinating, from maintenance to inspections, move ins, move outs, and lease renewals, all in one place.'
 
 export const WORKFLOW_PIPELINE_SECTION_HELPER =
   'Each card is one workflow run. Open work orders live on the Work Orders page; maintenance orders Ulo is moving forward also appear here under Maintenance.'
@@ -105,12 +118,16 @@ function maintenanceRunKanbanPriority(row: AdminWorkflowRow): number {
   return score
 }
 
-/** One kanban card per maintenance ticket — prefer the live maintenance_request run over intake. */
+/**
+ * One kanban card per maintenance ticket — prefer the live maintenance_request
+ * run over intake. Tickets sharing an inspection_report_id collapse to one
+ * visit card keyed by that report id.
+ */
 export function dedupeMaintenanceWorkflowRunsForKanban(
   runs: AdminWorkflowRow[],
 ): AdminWorkflowRow[] {
   const passthrough: AdminWorkflowRow[] = []
-  const byTicketId = new Map<string, AdminWorkflowRow>()
+  const byKey = new Map<string, AdminWorkflowRow>()
 
   for (const run of runs) {
     if (
@@ -122,14 +139,95 @@ export function dedupeMaintenanceWorkflowRunsForKanban(
       continue
     }
 
+    const reportId = run.inspectionReportId?.trim() || ''
     const ticketId = run.entityId.trim()
-    const existing = byTicketId.get(ticketId)
+    const key = reportId ? `report:${reportId}` : `ticket:${ticketId}`
+    const existing = byKey.get(key)
     if (!existing || maintenanceRunKanbanPriority(run) > maintenanceRunKanbanPriority(existing)) {
-      byTicketId.set(ticketId, run)
+      // Prefer the higher-priority run but keep the richest checklist list.
+      const groupItems =
+        (run.inspectionGroupItems?.length
+          ? run.inspectionGroupItems
+          : existing?.inspectionGroupItems) ?? run.inspectionGroupItems
+      byKey.set(key, {
+        ...run,
+        inspectionGroupItems: groupItems,
+      })
+    } else if (
+      existing &&
+      (!existing.inspectionGroupItems?.length) &&
+      run.inspectionGroupItems?.length
+    ) {
+      byKey.set(key, {
+        ...existing,
+        inspectionGroupItems: run.inspectionGroupItems,
+      })
     }
   }
 
-  return [...passthrough, ...byTicketId.values()]
+  return [...passthrough, ...byKey.values()]
+}
+
+export function isTerminalVendorWorkStatus(status: string | null | undefined): boolean {
+  const vws = (status ?? '').trim().toLowerCase()
+  return vws === 'completed' || vws === 'cancelled'
+}
+
+export function inspectionGroupProgress(items: InspectionGroupTicketItem[]): {
+  complete: number
+  total: number
+} {
+  const total = items.length
+  const complete = items.filter((item) => isTerminalVendorWorkStatus(item.vendorWorkStatus)).length
+  return { complete, total }
+}
+
+/**
+ * Rollup kanban stage for an inspection visit group.
+ * Completed only when every sibling is terminal (completed/cancelled).
+ */
+export function deriveInspectionGroupKanbanStage(
+  items: InspectionGroupTicketItem[],
+): WorkflowKanbanStageId {
+  if (items.length === 0) return 'new_intake'
+  if (items.every((item) => isTerminalVendorWorkStatus(item.vendorWorkStatus))) {
+    return 'completed'
+  }
+  const statuses = items.map((item) => (item.vendorWorkStatus ?? '').trim().toLowerCase())
+  if (statuses.some((s) => s === 'in_progress' || s === 'accepted')) {
+    return 'in_progress'
+  }
+  if (statuses.some((s) => s === 'pending_accept' || s === 'declined')) {
+    return 'assigned'
+  }
+  if (statuses.some((s) => s === 'unassigned' || !s)) {
+    // Mixed unfinished with some further along still stays out of completed.
+    if (statuses.some((s) => s === 'pending_accept' || s === 'declined' || s === 'accepted' || s === 'in_progress')) {
+      return 'assigned'
+    }
+    return 'new_intake'
+  }
+  return 'assigned'
+}
+
+export function vendorWorkStatusChipLabel(status: string | null | undefined): string {
+  const vws = (status ?? '').trim().toLowerCase()
+  if (vws === 'completed') return 'Complete'
+  if (vws === 'cancelled') return 'Cancelled'
+  if (vws === 'in_progress' || vws === 'accepted') return 'In progress'
+  if (vws === 'pending_accept') return 'Awaiting vendor'
+  if (vws === 'declined') return 'Declined'
+  if (vws === 'unassigned') return 'Unassigned'
+  return 'Open'
+}
+
+export function stageFromVendorWorkStatus(status: string | null | undefined): WorkflowKanbanStageId {
+  const vws = (status ?? '').trim().toLowerCase()
+  if (vws === 'completed' || vws === 'cancelled') return 'completed'
+  if (vws === 'in_progress' || vws === 'accepted') return 'in_progress'
+  if (vws === 'pending_accept' || vws === 'declined') return 'assigned'
+  if (vws === 'unassigned') return 'new_intake'
+  return 'new_intake'
 }
 
 function readKanbanMetaRecord(value: unknown): Record<string, unknown> {
@@ -209,15 +307,19 @@ export function dedupeMoveOutWorkflowRunsForKanban(
   return [...passthrough, ...byScope.values()]
 }
 
+/**
+ * Runs shown on Active Tasks (kanban, nav count, Overview KPI, property/resident lists).
+ * Rent collection reminders live on Overview / rent surfaces — not Active Tasks.
+ */
 export function collectAdminWorkflowRuns(data: AdminWorkflowDashboardData): AdminWorkflowRow[] {
   const byId = new Map<string, AdminWorkflowRow>()
   for (const row of [
     ...data.active,
     ...data.escalated,
     ...data.maintenanceRuns,
-    ...data.rentCollection.runs,
     ...data.lifecycle.runs,
   ]) {
+    if (row.templateId === 'rent_collection') continue
     byId.set(row.id, row)
   }
   return dedupeMoveOutWorkflowRunsForKanban(
@@ -434,6 +536,10 @@ export function deriveWorkflowKanbanStage(
 
   const group = workflowTemplateGroupId(row.templateId)
   if (group === 'maintenance') {
+    const items = row.inspectionGroupItems
+    if (row.inspectionReportId && items && items.length > 1) {
+      return deriveInspectionGroupKanbanStage(items)
+    }
     return deriveMaintenanceKanbanStage(row)
   }
 
@@ -455,9 +561,16 @@ export function buildWorkflowKanbanCard(
   metadata: Record<string, unknown> = {},
 ): WorkflowKanbanCard {
   const category = deriveCategory(row)
+  const groupItems =
+    row.inspectionReportId && row.inspectionGroupItems && row.inspectionGroupItems.length > 1
+      ? row.inspectionGroupItems
+      : null
+
   // Maintenance chip already labels the type — show WO/INT ref as the card title.
-  const title =
-    category === 'maintenance'
+  // Inspection visit groups use a visit-level title instead of a single WO.
+  const title = groupItems
+    ? `Inspection visit · ${formatInspectionReportRef(row.inspectionReportId!)}`
+    : category === 'maintenance'
       ? formatWorkOrderRefForWorkflowRun(
           row.templateId,
           row.id,
@@ -468,10 +581,14 @@ export function buildWorkflowKanbanCard(
         ? 'Move-Out Preparation'
         : row.templateName
 
-  const issueCategoryLabel =
-    category === 'maintenance'
+  const issueCategoryLabel = groupItems
+    ? 'Inspection'
+    : category === 'maintenance'
       ? formatVendorTradeLabel(row.issueCategory, { emptyLabel: '' }).trim() || null
       : null
+
+  const progress = groupItems ? inspectionGroupProgress(groupItems) : null
+  const stage = deriveWorkflowKanbanStage(row, metadata)
 
   return {
     id: row.id,
@@ -483,13 +600,26 @@ export function buildWorkflowKanbanCard(
     }),
     category,
     issueCategoryLabel,
-    workOrderSummary:
-      category === 'maintenance'
+    workOrderSummary: groupItems
+      ? `${progress!.complete} of ${progress!.total} complete`
+      : category === 'maintenance'
         ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
         : null,
-    stage: deriveWorkflowKanbanStage(row, metadata),
+    stage,
     critical: row.status === 'escalated',
     initials: deriveInitials(row),
+    inspectionReportId: groupItems ? row.inspectionReportId : null,
+    inspectionProgress: progress,
+    inspectionChecklist: groupItems
+      ? groupItems.map((item) => ({
+          ticketId: item.ticketId,
+          workOrderRef: item.workOrderRef,
+          label: item.label,
+          statusLabel: vendorWorkStatusChipLabel(item.vendorWorkStatus),
+          stage: stageFromVendorWorkStatus(item.vendorWorkStatus),
+          runId: item.runId,
+        }))
+      : null,
   }
 }
 
