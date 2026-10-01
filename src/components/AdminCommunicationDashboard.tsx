@@ -41,6 +41,10 @@ import {
   type InboxUnitRow,
   type RosterResidentForInboxLink,
 } from '@/lib/linkConversationToRoster'
+import {
+  fetchCommunicationResponseRateKpi,
+  MESSAGE_RESPONSE_RATE_TOOLTIP,
+} from '@/lib/communicationResponseRate'
 
 type ParticipantKind = 'tenant' | 'vendor' | 'ai' | 'landlord'
 
@@ -253,32 +257,6 @@ function failedInWindow(messages: MessageSnapshot[], startMs: number, endMs: num
   return count
 }
 
-function responseRateAt(
-  conversations: ConvSnapshot[],
-  messagesByConv: Map<string, MessageSnapshot[]>,
-  atMs: number,
-): number | null {
-  let total = 0
-  let replied = 0
-  for (const conv of conversations) {
-    if (conv.createdAtMs > atMs) continue
-    const msgs = messagesByConv.get(conv.id)
-    if (!msgs?.length) continue
-    let hasMessage = false
-    let hasOutbound = false
-    for (const message of msgs) {
-      if (message.createdAtMs > atMs) continue
-      hasMessage = true
-      if (message.direction === 'outbound') hasOutbound = true
-    }
-    if (!hasMessage) continue
-    total += 1
-    if (hasOutbound) replied += 1
-  }
-  if (total === 0) return null
-  return Math.round((replied / total) * 100)
-}
-
 function formatUpdatedAt(date: Date): string {
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
@@ -328,6 +306,7 @@ function KpiCard({
   deltaFormatter,
   goodWhenUp = false,
   caption,
+  title,
 }: {
   label: string
   value: string
@@ -336,12 +315,17 @@ function KpiCard({
   deltaFormatter?: (delta: number) => string
   goodWhenUp?: boolean
   caption: string
+  /** Native tooltip — e.g. distinguish Response rate from Vendor Response. */
+  title?: string
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
-    <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div
+      className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+      title={title}
+    >
       <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
@@ -753,35 +737,43 @@ export function AdminCommunicationDashboard() {
       if (cancelled) return
       const allowImportedOperations = dashboardSync.allowImportedOperations
 
-      // KPI metrics — scoped to the active landlord, computed from the full
-      // conversation/message history (not just the 50-row inbox window).
+      // KPI metrics — open/unread/failed still use landlord-scoped conversation
+      // rows; Response rate is a DB aggregate (not the capped message sample).
       void (async () => {
         if (!supabase) return
-        const [allConvResult, allMsgResult] = await Promise.allSettled([
-          supabase
-            .from('sms_conversations')
-            .select('id, status, created_at, updated_at')
-            .eq('landlord_id', landlordId)
-            .limit(2000),
-          supabase
-            .from('sms_messages')
-            .select('conversation_id, direction, provider_status, created_at')
-            .eq('landlord_id', landlordId)
-            .order('created_at', { ascending: false })
-            .limit(5000),
-        ])
-
-        if (cancelled) return
-
         const now = Date.now()
         const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
         const recentStart = now - fourWeeksMs
         const previousStart = now - 2 * fourWeeksMs
 
+        const [allConvResult, allMsgResult, responseRateKpi] = await Promise.all([
+          supabase
+            .from('sms_conversations')
+            .select('id, status, created_at, updated_at')
+            .eq('landlord_id', landlordId)
+            .limit(2000)
+            .then((r) => r),
+          supabase
+            .from('sms_messages')
+            .select('conversation_id, direction, provider_status, created_at')
+            .eq('landlord_id', landlordId)
+            .order('created_at', { ascending: false })
+            .limit(5000)
+            .then((r) => r),
+          fetchCommunicationResponseRateKpi({ landlordId, nowMs: now }).catch(
+            (err) => {
+              console.error('[messages] response rate rpc', err)
+              return null
+            },
+          ),
+        ])
+
+        if (cancelled) return
+
         const conversations: ConvSnapshot[] = []
         const convStatusById = new Map<string, string>()
-        if (allConvResult.status === 'fulfilled' && !allConvResult.value.error) {
-          for (const raw of (allConvResult.value.data ?? []) as Record<string, unknown>[]) {
+        if (!allConvResult.error) {
+          for (const raw of (allConvResult.data ?? []) as Record<string, unknown>[]) {
             const id = asString(raw.id)
             if (!id) continue
             const status = asString(raw.status) || 'open'
@@ -797,11 +789,9 @@ export function AdminCommunicationDashboard() {
 
         const messages: MessageSnapshot[] = []
         const messagesByConv = new Map<string, MessageSnapshot[]>()
-        const latestDirectionByConv = new Map<string, string>()
-        const repliedConversations = new Set<string>()
         let failedDeliveries = 0
-        if (allMsgResult.status === 'fulfilled' && !allMsgResult.value.error) {
-          for (const raw of (allMsgResult.value.data ?? []) as Record<string, unknown>[]) {
+        if (!allMsgResult.error) {
+          for (const raw of (allMsgResult.data ?? []) as Record<string, unknown>[]) {
             const convId = asString(raw.conversation_id)
             const direction = asString(raw.direction)
             const providerStatus = asString(raw.provider_status)
@@ -815,15 +805,12 @@ export function AdminCommunicationDashboard() {
             messages.push(message)
             if (isFailedDelivery(providerStatus)) failedDeliveries += 1
             if (!convId) continue
-            if (!latestDirectionByConv.has(convId)) latestDirectionByConv.set(convId, direction)
-            if (direction === 'outbound') repliedConversations.add(convId)
             const bucket = messagesByConv.get(convId) ?? []
             bucket.push(message)
             messagesByConv.set(convId, bucket)
           }
         }
 
-        const totalConversations = convStatusById.size
         let openConversations = 0
         let unreadMessages = 0
         for (const [id, status] of convStatusById) {
@@ -845,33 +832,21 @@ export function AdminCommunicationDashboard() {
           }
         }
 
-        let repliedCount = 0
-        for (const id of repliedConversations) {
-          if (convStatusById.has(id)) repliedCount += 1
-        }
-
         const currentSnapshot = snapshotAt(conversations, messagesByConv, now)
         const previousSnapshot = snapshotAt(conversations, messagesByConv, recentStart)
         const recentFailed = failedInWindow(messages, recentStart, now)
         const previousFailed = failedInWindow(messages, previousStart, recentStart)
-        const currentResponseRate = responseRateAt(conversations, messagesByConv, now)
-        const previousResponseRate = responseRateAt(conversations, messagesByConv, recentStart)
 
         setMetrics({
           openConversations,
           unreadMessages,
           failedDeliveries,
-          responseRate:
-            totalConversations > 0
-              ? Math.round((repliedCount / totalConversations) * 100)
-              : null,
+          // Same per-inbound formula for snapshot and delta (RPC, full history).
+          responseRate: responseRateKpi?.responseRate ?? null,
           openDelta: currentSnapshot.open - previousSnapshot.open,
           unreadDelta: currentSnapshot.unread - previousSnapshot.unread,
           failedDelta: recentFailed - previousFailed,
-          responseRateDelta:
-            currentResponseRate != null
-              ? currentResponseRate - (previousResponseRate ?? 0)
-              : null,
+          responseRateDelta: responseRateKpi?.responseRateDelta ?? null,
           lastUpdated: new Date(),
         })
       })()
@@ -1568,7 +1543,8 @@ export function AdminCommunicationDashboard() {
               delta={metrics.responseRateDelta}
               deltaFormatter={formatSignedPercent}
               goodWhenUp={true}
-              caption={`Compared to 4 weeks ago · ${updatedCaption}`}
+              caption={`Inbound replies in 24h · vs prior 4 weeks · ${updatedCaption}`}
+              title={MESSAGE_RESPONSE_RATE_TOOLTIP}
             />
           </>
         )}
