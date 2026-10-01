@@ -115,22 +115,6 @@ export function applyFutureMonthProjections(
   })
 }
 
-function ticketSpendAmount(ticket: PropertyAnalyticsTicket): number {
-  if (ticket.totalCost != null && ticket.totalCost > 0) return ticket.totalCost
-  return (ticket.estimatedMinutes ?? 240) * 1.25
-}
-
-function ticketSpendDate(ticket: PropertyAnalyticsTicket): number {
-  const completed = ticket.completedAt ? new Date(ticket.completedAt).getTime() : NaN
-  if (!Number.isNaN(completed)) return completed
-  return new Date(ticket.createdAt).getTime()
-}
-
-function isReactiveUrgency(urgency: string): boolean {
-  const value = urgency.toLowerCase()
-  return value === 'urgent' || value === 'high' || value === 'emergency'
-}
-
 function formatSpend(amount: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
@@ -156,34 +140,16 @@ function spendFromRecognized(
   }, 0)
 }
 
-function spendFromCompletedTickets(
-  tickets: PropertyAnalyticsTicket[],
-  fromMs: number,
-  toMs: number,
-  reactive?: boolean,
-): number {
-  return tickets.reduce((sum, ticket) => {
-    if (ticket.vendorWorkStatus !== 'completed') return sum
-    const at = ticketSpendDate(ticket)
-    if (Number.isNaN(at) || at < fromMs || at >= toMs) return sum
-    const rowReactive = isReactiveUrgency(ticket.urgency)
-    if (reactive != null && rowReactive !== reactive) return sum
-    return sum + ticketSpendAmount(ticket)
-  }, 0)
-}
-
+/** Approved invoice spend only — never the estimated_minutes placeholder. */
 function spendBetween(
   recognized: RecognizedMaintenanceSpend[],
-  tickets: PropertyAnalyticsTicket[],
+  _tickets: PropertyAnalyticsTicket[],
   ticketIds: Set<string>,
   fromMs: number,
   toMs: number,
   reactive?: boolean,
 ): number {
-  const scoped = tickets.filter((ticket) => ticketIds.has(ticket.id))
-  const recognizedTotal = spendFromRecognized(recognized, ticketIds, fromMs, toMs, reactive)
-  if (recognizedTotal > 0) return Math.round(recognizedTotal)
-  return Math.round(spendFromCompletedTickets(scoped, fromMs, toMs, reactive))
+  return Math.round(spendFromRecognized(recognized, ticketIds, fromMs, toMs, reactive))
 }
 
 export function monthToDateWindow(nowMs: number = Date.now()): { fromMs: number; toMs: number } {

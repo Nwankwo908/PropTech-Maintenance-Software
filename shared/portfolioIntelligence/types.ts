@@ -121,6 +121,10 @@ export type PortfolioTicketRow = {
   building?: string | null
   unit?: string | null
   unitId?: string | null
+  /** Canonical property — required for Recurring Issues grouping. */
+  propertyId?: string | null
+  /** Used only when propertyId is missing for scoped unit→building resolve. */
+  landlordId?: string | null
   issueCategory?: string | null
   description?: string | null
   vendorWorkStatus?: string | null
@@ -129,12 +133,19 @@ export type PortfolioTicketRow = {
   urgency?: string | null
   /** Resident said this issue happened before (SMS intake signal). */
   residentReportedRecurring?: boolean | null
+  /**
+   * When set, ticket came from a landlord-initiated inspection letter (HQS).
+   * Excluded from pattern-detection insight cards (Recurring / Risk / Prevent).
+   */
+  inspectionReportId?: string | null
 }
 
 export type PortfolioUnitRow = {
   id?: string | null
   unitLabel?: string | null
   building?: string | null
+  propertyId?: string | null
+  landlordId?: string | null
 }
 
 export type PortfolioWorkflowRow = {

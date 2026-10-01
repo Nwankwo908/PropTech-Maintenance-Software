@@ -89,6 +89,11 @@ export type CalculatePropertyHealthTicket = {
   severity?: string | null
   priority?: string | null
   dueAt?: string | null
+  /**
+   * HQS / compliance inspection letter id when this WO was spawned from a
+   * landlord-initiated inspection batch. Excluded from the Repeat issues factor.
+   */
+  inspectionReportId?: string | null
 }
 
 export type CalculatePropertyHealthAsset = {
@@ -474,6 +479,13 @@ function scoreMaintenance(
   const counts = new Map<string, { total: number; open: number }>()
   for (const ticket of input.tickets) {
     if (isVoided(ticket)) continue
+    // Inspection letter batches are one proactive sweep — not independent
+    // recurring reports. Keep them in open/leak counts; exclude from Repeat.
+    const inspectionReportId =
+      typeof ticket.inspectionReportId === 'string'
+        ? ticket.inspectionReportId.trim()
+        : ''
+    if (inspectionReportId) continue
     const ts = parseTime(ticket.createdAt)
     if (ts == null || ts < windowStart || ts > now) continue
     const unitKey = normalizeHealthUnitLabel(ticket.unit)

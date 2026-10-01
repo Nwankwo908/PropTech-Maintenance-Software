@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
+import { PropertyHealthScoreInfoTip } from '@/components/PropertyHealthScoreInfoTip'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -31,7 +32,7 @@ import {
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
-import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
+import { fetchRecognizedMaintenanceSpend, sumRecognizedSpendBetween, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
 import { propertyDetailPathForBuilding, buildPropertyIdByBuilding } from '@/lib/propertyRoutes'
 import {
@@ -60,6 +61,7 @@ type PropertyTicket = {
   unit: string
   unitId: string | null
   building: string | null
+  propertyId: string | null
   email: string | null
   issueCategory: string | null
   assignedVendorId: string | null
@@ -75,6 +77,7 @@ type PropertyUnit = {
   unitLabel: string
   building: string | null
   status: string
+  propertyId: string | null
 }
 
 function asString(value: unknown): string {
@@ -98,6 +101,8 @@ function asFiniteNumber(value: unknown): number | null {
 function invoiceTotalFromRow(raw: Record<string, unknown>): number | null {
   const total = asFiniteNumber(raw.total_cost ?? raw.invoice_total ?? raw.amount)
   if (total != null) return total
+  const recognized = asFiniteNumber(raw.recognized_spend_amount)
+  if (recognized != null) return recognized
   const labor = asFiniteNumber(raw.labor_cost)
   const material = asFiniteNumber(raw.material_cost ?? raw.materials_cost)
   const tax = asFiniteNumber(raw.tax_amount ?? raw.tax)
@@ -118,6 +123,7 @@ function normalizeTicketRow(raw: Record<string, unknown>): PropertyTicket {
     unit: asString(raw.unit),
     unitId: asString(raw.unit_id) || null,
     building: asString(raw.building) || null,
+    propertyId: asString(raw.property_id) || null,
     email: asString(raw.email) || null,
     issueCategory: asString(raw.issue_category) || null,
     assignedVendorId: asString(raw.assigned_vendor_id) || null,
@@ -134,27 +140,6 @@ function normalizeTicketRow(raw: Record<string, unknown>): PropertyTicket {
       asString(raw.closed_at) ||
       null,
   }
-}
-
-/** Cost proxy: estimated_minutes × $1.25/min, defaulting to 240 minutes. */
-function ticketCostEstimate(ticket: PropertyTicket): number {
-  return (ticket.estimatedMinutes ?? 240) * 1.25
-}
-
-/** Real extracted invoice total when available, else the estimate proxy. */
-function ticketSpend(ticket: PropertyTicket): number {
-  return ticket.totalCost ?? ticketCostEstimate(ticket)
-}
-
-/** Date a job's spend should attribute to (completion date, else created). */
-function ticketSpendDate(ticket: PropertyTicket): number {
-  const completed = ticket.completedAt ? new Date(ticket.completedAt).getTime() : NaN
-  if (!Number.isNaN(completed)) return completed
-  return new Date(ticket.createdAt).getTime()
-}
-
-function isCompletedJob(ticket: PropertyTicket): boolean {
-  return ticket.vendorWorkStatus === 'completed'
 }
 
 function formatSpend(amount: number): string {
@@ -220,70 +205,6 @@ function TrendingDownIcon() {
   )
 }
 
-function KpiInfoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5 text-[#9ca3af]">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function KpiBreakdownInfo({
-  title,
-  description,
-  lines,
-}: {
-  title: string
-  description?: string
-  lines: Array<{ label: string; count?: number; value?: string; detail?: string }>
-}) {
-  if (!lines.length) return null
-
-  return (
-    <span className="group/kpi-info relative inline-flex shrink-0">
-      <button
-        type="button"
-        tabIndex={0}
-        className="inline-flex rounded p-0.5 outline-none hover:text-[#4b5563] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
-        aria-label={`${title} breakdown`}
-      >
-        <KpiInfoIcon />
-      </button>
-      <div
-        role="tooltip"
-        className="pointer-events-none absolute left-0 top-full z-[60] mt-1.5 w-[min(280px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
-      >
-        <p className="text-[11px] font-semibold leading-4 text-[#0a0a0a]">{title}</p>
-        {description ? (
-          <p className="mt-1 text-[10px] leading-[14px] text-[#6a7282]">{description}</p>
-        ) : null}
-        <ul className="mt-2 flex flex-col gap-1.5">
-          {lines.map((line) => {
-            const displayValue =
-              line.value ?? (line.count != null ? String(line.count) : null)
-            return (
-              <li key={line.label} className="flex flex-col gap-0.5">
-                <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
-                  <span className="text-[#364153]">{line.label}</span>
-                  {displayValue != null ? (
-                    <span className="shrink-0 font-semibold tabular-nums text-[#0a0a0a]">
-                      {displayValue}
-                    </span>
-                  ) : null}
-                </div>
-                {line.detail ? (
-                  <p className="text-[10px] leading-[13px] text-[#9ca3af]">{line.detail}</p>
-                ) : null}
-              </li>
-            )
-          })}
-        </ul>
-      </div>
-    </span>
-  )
-}
-
 function KpiCard({
   label,
   value,
@@ -293,9 +214,7 @@ function KpiCard({
   deltaFormatter,
   goodWhenUp = false,
   caption,
-  infoTitle,
-  infoDescription,
-  infoLines,
+  infoContent,
 }: {
   label: string
   value: string
@@ -305,9 +224,7 @@ function KpiCard({
   deltaFormatter?: (delta: number) => string
   goodWhenUp?: boolean
   caption: string
-  infoTitle?: string
-  infoDescription?: string
-  infoLines?: Array<{ label: string; count?: number; value?: string; detail?: string }>
+  infoContent?: ReactNode
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
@@ -318,13 +235,7 @@ function KpiCard({
         <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {label}
         </p>
-        {infoLines?.length ? (
-          <KpiBreakdownInfo
-            title={infoTitle ?? label}
-            description={infoDescription}
-            lines={infoLines}
-          />
-        ) : null}
+        {infoContent}
       </div>
       <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center justify-end' : 'items-end justify-between'}`}>
         {chart ? (
@@ -457,7 +368,7 @@ export function AdminPropertiesDashboard() {
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, description, due_at',
+              'id, created_at, unit, unit_id, building, property_id, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, description, due_at, inspection_report_id',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -465,7 +376,7 @@ export function AdminPropertiesDashboard() {
           supabase
             .from('maintenance_requests')
             .select(
-              'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, completed_at, recognized_spend_amount, description, due_at',
+              'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, completed_at, recognized_spend_amount, recognized_spend_at, description, due_at, inspection_report_id',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -516,6 +427,14 @@ export function AdminPropertiesDashboard() {
             ) {
               merged.total_cost = merged.recognized_spend_amount
             }
+            // Prefer completion timestamp from the base table when the enriched
+            // view omits it — keeps finished jobs out of the Work orders column.
+            if (!merged.completed_at && spend?.completed_at) {
+              merged.completed_at = spend.completed_at
+            }
+            if (!merged.completed_at && spend?.recognized_spend_at) {
+              merged.completed_at = spend.recognized_spend_at
+            }
             return normalizeTicketRow(merged)
           }),
         )
@@ -533,6 +452,7 @@ export function AdminPropertiesDashboard() {
             unitLabel: asString(r.unit_label),
             building: asString(r.building) || null,
             status: asString(r.status).toLowerCase(),
+            propertyId: asString(r.property_id) || null,
           })),
         )
       } else {
@@ -595,7 +515,7 @@ export function AdminPropertiesDashboard() {
     const healthTickets = mapTicketsForPropertyHealth(
       tickets as unknown as Record<string, unknown>[],
     )
-    return buildPropertyHealthReport({
+    const report = buildPropertyHealthReport({
       units: mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[]),
       tickets: healthTickets,
       pmTasks,
@@ -608,6 +528,9 @@ export function AdminPropertiesDashboard() {
       canonicalProperties: canonicalPropertiesForHealth,
       now,
     })
+    // #region agent log
+    // #endregion
+    return report
   }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
 
   useEffect(() => {
@@ -683,17 +606,17 @@ export function AdminPropertiesDashboard() {
     const propertyHealthDelta = healthReport.portfolioDelta
 
     const startOfYear = new Date(new Date().getFullYear(), 0, 1).getTime()
-    const completedJobs = tickets.filter(isCompletedJob)
-    const spendBetween = (fromMs: number, toMs: number): number =>
-      completedJobs.reduce((sum, t) => {
-        const at = ticketSpendDate(t)
-        if (Number.isNaN(at) || at < fromMs || at >= toMs) return sum
-        return sum + ticketSpend(t)
-      }, 0)
-    const ytdMaintenanceCost = Math.round(spendBetween(startOfYear, now))
+    // Approved invoice totals only — no estimated_minutes placeholder.
+    const ytdMaintenanceCost = Math.round(
+      sumRecognizedSpendBetween(recognizedSpend, startOfYear, now),
+    )
     const ytdMaintenanceCostDelta = Math.round(
-      spendBetween(now - fourWeeksMs, now) -
-        spendBetween(now - 2 * fourWeeksMs, now - fourWeeksMs),
+      sumRecognizedSpendBetween(recognizedSpend, now - fourWeeksMs, now) -
+        sumRecognizedSpendBetween(
+          recognizedSpend,
+          now - 2 * fourWeeksMs,
+          now - fourWeeksMs,
+        ),
     )
 
     return {
@@ -705,7 +628,7 @@ export function AdminPropertiesDashboard() {
       ytdMaintenanceCost,
       ytdMaintenanceCostDelta,
     }
-  }, [units, tickets, pmTasks, healthReport, residents, canonicalPropertiesForHealth, now, fourWeeksMs])
+  }, [units, tickets, pmTasks, healthReport, residents, canonicalPropertiesForHealth, recognizedSpend, now, fourWeeksMs])
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
@@ -713,10 +636,7 @@ export function AdminPropertiesDashboard() {
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
     !loading && healthReport.portfolio && healthReport.portfolio.status !== 'pending_setup'
-      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
-          dataCompleteness: healthReport.portfolio.dataCompleteness,
-          topIssues: healthReport.portfolio.topIssues,
-        })
+      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
       : undefined
   const healthKpiValue = loading
     ? '—'
@@ -934,9 +854,11 @@ export function AdminPropertiesDashboard() {
           deltaSuffix="%"
           goodWhenUp
           caption={healthKpiCaption}
-          infoTitle="Property health factors"
-          infoDescription="Condition, maintenance, and risk. Missing information is unknown — it does not lower the score."
-          infoLines={healthFactorBreakdown}
+          infoContent={
+            healthFactorBreakdown?.length ? (
+              <PropertyHealthScoreInfoTip lines={healthFactorBreakdown} />
+            ) : null
+          }
         />
         <KpiCard
           label="YTD Maintenance Cost"

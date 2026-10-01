@@ -115,6 +115,34 @@ describe('calculatePropertyHealth', () => {
     expect(result.rating).toBe(propertyHealthRatingFromScore(result.score!))
   })
 
+  it('does not treat an inspection letter batch as Repeat issues', () => {
+    const hqsTickets = Array.from({ length: 12 }, (_, i) =>
+      ticket({
+        id: `hqs-${i}`,
+        unit: '1',
+        issueCategory: 'general',
+        vendorWorkStatus: 'pending_accept',
+        description: `HQS fail item ${i + 1}`,
+        inspectionReportId: 'insp-report-1',
+      }),
+    )
+    const result = calculatePropertyHealth({
+      trackedUnits: [{ unitLabel: '1', status: 'active' }],
+      tickets: hqsTickets,
+      pmTasks: [],
+      assets: [],
+      inspections: [],
+      damageReports: [],
+      now,
+    })
+
+    const repeat = result.maintenance.factors.find(
+      (factor) => factor.id === 'maintenance.repeat',
+    )
+    expect(repeat?.deduction).toBe(0)
+    expect(repeat?.explanation).toBeNull()
+  })
+
   it('treats smoke detector status as unknown without deducting', () => {
     const result = calculatePropertyHealth({
       trackedUnits: [{ unitLabel: '101', status: 'active' }],

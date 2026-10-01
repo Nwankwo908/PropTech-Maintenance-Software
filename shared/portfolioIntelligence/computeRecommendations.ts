@@ -3,29 +3,32 @@ import {
   isCriticalTicket,
   isOpenTicket,
   resolveTicketBuilding,
+  resolveTicketPropertyId,
   buildUnitBuildingMap,
 } from './helpers.ts'
 import type {
   PortfolioIntelligenceInput,
   PortfolioRecommendation,
+  PortfolioTicketRow,
 } from './types.ts'
 
 const STALLED_DAYS = 10
 const STALLED_MIN_OPEN = 2
 const ESCALATION_STACK_MIN = 3
 
-type BuildingAgg = {
+type PropertyAgg = {
+  propertyId: string
   building: string
-  open: PortfolioIntelligenceInput['tickets']
+  open: PortfolioTicketRow[]
   critical: number
   oldestDays: number
 }
 
-function scoreBuilding(agg: BuildingAgg): number {
+function scoreProperty(agg: PropertyAgg): number {
   return agg.critical * 100 + agg.open.length * 12 + agg.oldestDays * 3
 }
 
-function recommendedActionForBuilding(agg: BuildingAgg): string {
+function recommendedActionForProperty(agg: PropertyAgg): string {
   if (agg.critical > 0) {
     return 'Review critical requests first and confirm resident safety or habitability.'
   }
@@ -38,6 +41,7 @@ function recommendedActionForBuilding(agg: BuildingAgg): string {
 /**
  * Action-oriented proactive signals — distinct from Property Insights pattern cards.
  * Only high-confidence recommendations are surfaced to notifications.
+ * Groups by property_id (not building name) so shared address strings never merge sites.
  */
 export function computePortfolioRecommendations(
   input: PortfolioIntelligenceInput,
@@ -47,31 +51,35 @@ export function computePortfolioRecommendations(
   const openTickets = input.tickets.filter(isOpenTicket)
   const recommendations: PortfolioRecommendation[] = []
 
-  const byBuilding = new Map<string, BuildingAgg>()
+  const byProperty = new Map<string, PropertyAgg>()
   for (const ticket of openTickets) {
-    const building = resolveTicketBuilding(ticket, buildingByUnit)
-    if (!building) continue
-    let agg = byBuilding.get(building)
+    const propertyId = resolveTicketPropertyId(ticket)
+    if (!propertyId) continue
+    const building =
+      resolveTicketBuilding(ticket, buildingByUnit) ?? 'this property'
+    let agg = byProperty.get(propertyId)
     if (!agg) {
-      agg = { building, open: [], critical: 0, oldestDays: 0 }
-      byBuilding.set(building, agg)
+      agg = { propertyId, building, open: [], critical: 0, oldestDays: 0 }
+      byProperty.set(propertyId, agg)
+    } else if (agg.building === 'this property' && building !== 'this property') {
+      agg.building = building
     }
     agg.open.push(ticket)
     if (isCriticalTicket(ticket)) agg.critical += 1
     agg.oldestDays = Math.max(agg.oldestDays, daysSince(ticket.createdAt, now))
   }
 
-  const rankedBuildings = [...byBuilding.values()]
+  const rankedProperties = [...byProperty.values()]
     .filter((agg) => agg.open.length > 0 && (agg.critical > 0 || agg.oldestDays >= STALLED_DAYS))
-    .sort((a, b) => scoreBuilding(b) - scoreBuilding(a))
+    .sort((a, b) => scoreProperty(b) - scoreProperty(a))
 
-  const top = rankedBuildings[0]
+  const top = rankedProperties[0]
   if (top && (top.critical > 0 || top.open.length >= STALLED_MIN_OPEN)) {
-    const action = recommendedActionForBuilding(top)
+    const action = recommendedActionForProperty(top)
     const signature = `critical:${top.critical}|open:${top.open.length}|oldest:${top.oldestDays}`
     recommendations.push({
       kind: 'priority_property',
-      deduplicationKey: `priority_property:${top.building.toLowerCase()}`,
+      deduplicationKey: `priority_property:${top.propertyId}`,
       confidence: top.critical > 0 ? 'high' : 'high',
       severity: top.critical > 0 ? 'critical' : 'warning',
       title: `Start at ${top.building}`,
@@ -84,6 +92,7 @@ export function computePortfolioRecommendations(
       signature,
       metadata: {
         recommendation_kind: 'priority_property',
+        property_id: top.propertyId,
         building: top.building,
         critical_count: top.critical,
         open_count: top.open.length,
@@ -93,13 +102,13 @@ export function computePortfolioRecommendations(
     })
   }
 
-  for (const agg of rankedBuildings) {
+  for (const agg of rankedProperties) {
     if (agg === top) continue
     if (agg.open.length < STALLED_MIN_OPEN || agg.oldestDays < STALLED_DAYS) continue
     const signature = `open:${agg.open.length}|oldest:${agg.oldestDays}`
     recommendations.push({
       kind: 'stalled_maintenance',
-      deduplicationKey: `stalled_maintenance:${agg.building.toLowerCase()}`,
+      deduplicationKey: `stalled_maintenance:${agg.propertyId}`,
       confidence: agg.oldestDays >= 14 ? 'high' : 'medium',
       severity: agg.oldestDays >= 14 ? 'warning' : 'warning',
       title: `Maintenance stalling at ${agg.building}`,
@@ -109,6 +118,7 @@ export function computePortfolioRecommendations(
       signature,
       metadata: {
         recommendation_kind: 'stalled_maintenance',
+        property_id: agg.propertyId,
         building: agg.building,
         open_count: agg.open.length,
         oldest_days: agg.oldestDays,

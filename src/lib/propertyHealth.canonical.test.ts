@@ -292,3 +292,254 @@ describe('countDistinctPortfolioUnits', () => {
     ).toBe(2)
   })
 })
+
+describe('Properties grid work-order counts', () => {
+  it('attributes SMS tickets with no building to the only property', () => {
+    const report = buildPropertyHealthReport({
+      units: [
+        {
+          id: 'u1',
+          unitLabel: '1',
+          building: 'Sunset',
+          status: 'active',
+          propertyId: 'prop-sunset',
+        },
+      ],
+      tickets: [
+        {
+          id: 't1',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          unit: '1',
+          unitId: null,
+          building: null,
+          vendorWorkStatus: 'in_progress',
+        },
+      ],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      assets: [],
+      inspections: [],
+      damageReports: [],
+      residents: [
+        {
+          id: 'r1',
+          fullName: 'Alex',
+          unit: '1',
+          building: 'Sunset',
+          status: 'active',
+        },
+      ],
+      canonicalProperties: [sunsetProperty],
+      now: Date.parse('2026-09-26T00:00:00.000Z'),
+    })
+
+    expect(report.buildings).toHaveLength(1)
+    expect(report.buildings[0]?.openTickets).toBe(1)
+    expect(report.buildings[0]?.workOrderCount).toBe(1)
+  })
+
+  it('excludes completed and archived tickets from the Work orders column', () => {
+    const report = buildPropertyHealthReport({
+      units: [
+        {
+          id: 'u1',
+          unitLabel: '1',
+          building: 'Sunset',
+          status: 'active',
+          propertyId: 'prop-sunset',
+        },
+      ],
+      tickets: [
+        {
+          id: 'open',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          unit: '1',
+          unitId: 'u1',
+          building: 'Sunset',
+          vendorWorkStatus: 'accepted',
+        },
+        {
+          id: 'done',
+          createdAt: '2026-09-02T00:00:00.000Z',
+          unit: '1',
+          unitId: 'u1',
+          building: 'Sunset',
+          vendorWorkStatus: 'in_progress',
+          completedAt: '2026-09-20T00:00:00.000Z',
+        },
+        {
+          id: 'archived',
+          createdAt: '2026-09-03T00:00:00.000Z',
+          unit: '1',
+          unitId: 'u1',
+          building: 'Sunset',
+          vendorWorkStatus: 'archived',
+        },
+      ],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      assets: [],
+      inspections: [],
+      damageReports: [],
+      residents: [],
+      canonicalProperties: [sunsetProperty],
+      now: Date.parse('2026-09-26T00:00:00.000Z'),
+    })
+
+    expect(report.buildings[0]?.openTickets).toBe(1)
+    // Completed still counts as a work order; archived/cancelled do not.
+    expect(report.buildings[0]?.workOrderCount).toBe(2)
+  })
+
+  it('matches tickets by property_id when building text drifted', () => {
+    const report = buildPropertyHealthReport({
+      units: [
+        {
+          id: 'u1',
+          unitLabel: '2B',
+          building: 'Sunset (Austin, TX)',
+          status: 'active',
+          propertyId: 'prop-sunset',
+        },
+      ],
+      tickets: [
+        {
+          id: 't1',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          unit: '2B',
+          unitId: null,
+          building: null,
+          propertyId: 'prop-sunset',
+          vendorWorkStatus: 'pending_accept',
+        },
+      ],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      assets: [],
+      inspections: [],
+      damageReports: [],
+      residents: [],
+      canonicalProperties: [sunsetProperty],
+      now: Date.parse('2026-09-26T00:00:00.000Z'),
+    })
+
+    const row = resolveBuildingHealthRow(report, 'Sunset')
+    expect(row?.openTickets).toBe(1)
+    expect(row?.workOrderCount).toBe(1)
+  })
+
+  it('counts completed jobs in Work orders while Open stays separate', () => {
+    const report = buildPropertyHealthReport({
+      units: [
+        {
+          id: 'u1',
+          unitLabel: '1',
+          building: 'Sunset',
+          status: 'active',
+          propertyId: 'prop-sunset',
+        },
+      ],
+      tickets: [
+        {
+          id: 'done',
+          createdAt: '2026-09-02T00:00:00.000Z',
+          unit: '1',
+          unitId: 'u1',
+          building: 'Sunset',
+          vendorWorkStatus: 'completed',
+          completedAt: '2026-09-20T00:00:00.000Z',
+        },
+      ],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      assets: [],
+      inspections: [],
+      damageReports: [],
+      residents: [],
+      canonicalProperties: [sunsetProperty],
+      now: Date.parse('2026-09-26T00:00:00.000Z'),
+    })
+
+    expect(report.buildings[0]?.openTickets).toBe(0)
+    expect(report.buildings[0]?.workOrderCount).toBe(1)
+  })
+
+  it('does not copy a work order from 35 Maple onto 33 Maple', () => {
+    const prop33: PropertyHealthCanonicalProperty = {
+      id: 'prop-33',
+      name: '33 Maple Street',
+    }
+    const prop35: PropertyHealthCanonicalProperty = {
+      id: 'prop-35',
+      name: '35 Maple St',
+    }
+    const report = buildPropertyHealthReport({
+      units: [
+        {
+          id: 'u33',
+          unitLabel: '1',
+          building: '33 Maple Street',
+          status: 'active',
+          // Shared/wrong property_id must not merge sibling addresses.
+          propertyId: 'prop-35',
+        },
+        {
+          id: 'u35',
+          unitLabel: '1',
+          building: '35 Maple St',
+          status: 'active',
+          propertyId: 'prop-35',
+        },
+      ],
+      tickets: [
+        {
+          id: 'pest',
+          createdAt: '2026-09-02T00:00:00.000Z',
+          unit: '1',
+          unitId: 'u35',
+          building: '35 Maple St',
+          propertyId: 'prop-35',
+          vendorWorkStatus: 'completed',
+          completedAt: '2026-09-20T00:00:00.000Z',
+          // Same email as the resident at 33 — must not move the ticket.
+          email: 'shared@example.com',
+        },
+      ],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      assets: [],
+      inspections: [],
+      damageReports: [],
+      residents: [
+        {
+          id: 'r33',
+          fullName: 'Resident 33',
+          unit: '1',
+          building: '33 Maple Street',
+          status: 'active',
+          email: 'shared@example.com',
+        },
+        {
+          id: 'r35',
+          fullName: 'Resident 35',
+          unit: '1',
+          building: '35 Maple St',
+          status: 'active',
+          email: 'other@example.com',
+        },
+      ],
+      canonicalProperties: [prop33, prop35],
+      now: Date.parse('2026-09-26T00:00:00.000Z'),
+    })
+
+    const row33 = resolveBuildingHealthRow(report, '33 Maple Street')
+    const row35 = resolveBuildingHealthRow(report, '35 Maple St')
+    expect(row33?.workOrderCount).toBe(0)
+    expect(row35?.workOrderCount).toBe(1)
+  })
+})

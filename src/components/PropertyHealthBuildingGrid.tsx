@@ -445,7 +445,7 @@ export function PropertyHealthBuildingGrid({
                         }`}
                       >
                         {!fitContainer ? <WorkOrderIcon /> : null}
-                        <span className="font-medium text-[#0a0a0a]">{b.openTickets}</span>
+                        <span className="font-medium text-[#0a0a0a]">{b.workOrderCount}</span>
                       </span>
                     </td>
                     <td className={`${td} ${numericAlign} tabular-nums`}>

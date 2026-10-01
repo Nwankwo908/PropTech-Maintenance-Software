@@ -13,7 +13,6 @@ import {
   resolveReassignExternalVendorUrl,
 } from '@/api/reassignExternalVendor'
 import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoReassign'
-import feedInfoIcon from '@/assets/noun-information.png'
 import openRepairsIcon from '@/assets/repair-tool.png'
 import scheduledVisitsIcon from '@/assets/calendar.png'
 import propertyHealthIcon from '@/assets/hospital.png'
@@ -63,6 +62,7 @@ import { collectAdminWorkflowRuns } from '@/lib/adminWorkflowKanban'
 import {
   collectCompletedWorkOrderTicketIds,
   shouldOmitEscalatedRunFromNeedsAttention,
+  buildInspectionScopedAttentionCopy,
 } from '@/lib/needsAttentionWorkOrder'
 import {
   fetchVendorYtdPaidTotal,
@@ -100,6 +100,7 @@ import {
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
 import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
+import { PropertyHealthScoreInfoTip } from '@/components/PropertyHealthScoreInfoTip'
 import { ProfileSetupPointingArrow } from '@/components/ProfileSetupPointingArrow'
 import { buildEscalatedWorkflowReview } from '@/lib/escalatedWorkflowReview'
 import {
@@ -133,7 +134,10 @@ import {
 } from '@/lib/slaOverdueActionReview'
 import {
   approveMaintenanceInvoice,
+  fetchRecognizedMaintenanceSpend,
   rejectMaintenanceInvoice,
+  sumRecognizedSpendBetween,
+  type RecognizedMaintenanceSpend,
 } from '@/api/maintenanceInvoice'
 import { completeInvoicePaymentCheckout } from '@/api/invoicePaymentCheckout'
 import {
@@ -151,7 +155,9 @@ import {
   type LeaseRenewalIncentiveBrief,
 } from '@/lib/leaseRenewalIncentiveMessaging'
 import { enrichExternalVendorSuggestions, sanitizeExternalVendorDiscoveryForAccount } from '@/lib/externalVendorDisplay'
+import { VENDOR_JOB_ACCEPTANCE_TOOLTIP } from '@/lib/communicationResponseRate'
 import { loadLeaseInfoMissingAttention, type LeaseInfoMissingAttention } from '@/lib/leaseInfoMissingAttention'
+import { loadSmsNoRecipientsAttention, type SmsNoRecipientsAttention } from '@/lib/smsNoRecipientsAttention'
 import {
   dismissNeedsAttentionItem,
   isNeedsAttentionDismissed,
@@ -190,6 +196,7 @@ type OverviewTicket = {
   vendorWorkStatus: string
   unit: string
   unitId: string | null
+  propertyId: string | null
   building: string | null
   email: string | null
   description: string | null
@@ -205,6 +212,8 @@ type OverviewTicket = {
   completedAt: string | null
   /** Resident said this issue happened before (SMS intake). */
   residentReportedRecurring: boolean
+  /** HQS / compliance inspection letter that spawned this work order, when set. */
+  inspectionReportId: string | null
 }
 
 type OverviewVendor = {
@@ -219,6 +228,7 @@ type OverviewUnit = {
   id: string
   unitLabel: string
   building: string | null
+  propertyId: string | null
   status: string
 }
 
@@ -256,11 +266,19 @@ function overviewTicketToInput(
   ticket: OverviewTicket,
   units: OverviewUnit[],
 ): SlaOverdueTicketInput {
+  const unitKey = normalizeUnitLabel(ticket.unit)
   const building =
     ticket.building ??
-    units.find((u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit))
-      ?.building ??
-    null
+    (ticket.unitId
+      ? units.find((u) => u.id === ticket.unitId)?.building ?? null
+      : null) ??
+    (ticket.propertyId && unitKey
+      ? units.find(
+          (u) =>
+            u.propertyId === ticket.propertyId &&
+            normalizeUnitLabel(u.unitLabel) === unitKey,
+        )?.building ?? null
+      : null)
   return {
     id: ticket.id,
     createdAt: ticket.createdAt,
@@ -318,6 +336,7 @@ function normalizeTicketRow(
     vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
     unit: asString(raw.unit),
     unitId: asString(raw.unit_id) || null,
+    propertyId: asString(raw.property_id) || null,
     building: asString(raw.building) || null,
     email: asString(raw.email) || null,
     description: asString(raw.description) || null,
@@ -337,6 +356,7 @@ function normalizeTicketRow(
       asString(raw.closed_at) ||
       null,
     residentReportedRecurring: raw.resident_reported_recurring === true,
+    inspectionReportId: asString(raw.inspection_report_id) || null,
   }
 }
 
@@ -355,7 +375,12 @@ function asFiniteNumber(value: unknown): number | null {
  * Returns null when no invoice cost exists yet (job not invoiced).
  */
 function invoiceTotalFromRow(raw: Record<string, unknown>): number | null {
-  const total = asFiniteNumber(raw.total_cost ?? raw.invoice_total ?? raw.amount)
+  const total = asFiniteNumber(
+    raw.total_cost ??
+      raw.invoice_total ??
+      raw.amount ??
+      raw.recognized_spend_amount,
+  )
   if (total != null) return total
   const labor = asFiniteNumber(raw.labor_cost)
   const material = asFiniteNumber(raw.material_cost ?? raw.materials_cost)
@@ -364,31 +389,11 @@ function invoiceTotalFromRow(raw: Record<string, unknown>): number | null {
   return (labor ?? 0) + (material ?? 0) + (tax ?? 0)
 }
 
-/**
- * Cost proxy shared with unit_maintenance_cost_view:
- * estimated_minutes × $1.25/min, defaulting to 240 minutes per ticket.
- */
-function ticketCostEstimate(ticket: OverviewTicket): number {
-  return (ticket.estimatedMinutes ?? 240) * 1.25
-}
-
-/**
- * Spend for a single ticket: the real extracted invoice total when available,
- * otherwise the estimate proxy so the figure stays populated pre-invoicing.
- */
-function ticketSpend(ticket: OverviewTicket): number {
-  return ticket.totalCost ?? ticketCostEstimate(ticket)
-}
-
-/** Date a job's spend should be attributed to (completion date, else created). */
+/** Date a job's spend should be attributed to (completion / recognition date). */
 function ticketSpendDate(ticket: OverviewTicket): number {
   const completed = ticket.completedAt ? new Date(ticket.completedAt).getTime() : NaN
   if (!Number.isNaN(completed)) return completed
   return new Date(ticket.createdAt).getTime()
-}
-
-function isCompletedJob(ticket: OverviewTicket): boolean {
-  return ticket.vendorWorkStatus === 'completed'
 }
 
 /** Abbreviated currency, e.g. "$1k", "$48.2k", "$1.2M". */
@@ -566,66 +571,6 @@ function TrendingDownIcon() {
   )
 }
 
-function KpiBreakdownInfo({
-  title,
-  description,
-  lines,
-}: {
-  title: string
-  description?: string
-  lines: Array<{ label: string; count?: number; value?: string; detail?: string }>
-}) {
-  if (!lines.length) return null
-
-  return (
-    <span className="group/kpi-info relative inline-flex shrink-0">
-      <button
-        type="button"
-        tabIndex={0}
-        className="sa-press inline-flex rounded p-0.5 outline-none hover:opacity-70 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
-        aria-label={`${title} breakdown`}
-      >
-        <img
-          src={feedInfoIcon}
-          alt=""
-          aria-hidden
-          className="size-4 opacity-55"
-        />
-      </button>
-      <div
-        role="tooltip"
-        className="pointer-events-none absolute right-0 top-full z-[60] mt-1.5 w-[min(280px,calc(100vw-2.5rem))] max-w-[calc(100vw-2.5rem)] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
-      >
-        <p className="text-[11px] font-semibold leading-4 text-[#0a0a0a]">{title}</p>
-        {description ? (
-          <p className="mt-1 text-[10px] leading-[14px] text-[#6a7282]">{description}</p>
-        ) : null}
-        <ul className="mt-2 flex flex-col gap-1.5">
-          {lines.map((line) => {
-            const displayValue =
-              line.value ?? (line.count != null ? String(line.count) : null)
-            return (
-              <li key={line.label} className="flex flex-col gap-0.5">
-                <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
-                  <span className="text-[#364153]">{line.label}</span>
-                  {displayValue != null ? (
-                    <span className="shrink-0 font-semibold tabular-nums text-[#0a0a0a]">
-                      {displayValue}
-                    </span>
-                  ) : null}
-                </div>
-                {line.detail ? (
-                  <p className="text-[10px] leading-[13px] text-[#9ca3af]">{line.detail}</p>
-                ) : null}
-              </li>
-            )
-          })}
-        </ul>
-      </div>
-    </span>
-  )
-}
-
 function PropertyHealthUnavailableAside({
   onOpenProfileSetup,
 }: {
@@ -696,9 +641,7 @@ function KpiCard({
   deltaFormatter,
   goodWhenUp = false,
   caption,
-  infoTitle,
-  infoDescription,
-  infoLines,
+  infoContent,
   stagger = 0,
 }: {
   label: string
@@ -716,9 +659,8 @@ function KpiCard({
   /** True when an increase is a good trend (e.g. health), false when it's bad (e.g. critical issues). */
   goodWhenUp?: boolean
   caption: string
-  infoTitle?: string
-  infoDescription?: string
-  infoLines?: Array<{ label: string; count?: number; value?: string; detail?: string }>
+  /** Optional ⓘ control rendered next to the label (e.g. Property Health factors). */
+  infoContent?: ReactNode
   stagger?: number
 }) {
   const positive = (delta ?? 0) > 0
@@ -760,13 +702,7 @@ function KpiCard({
       <p className="min-w-0 truncate text-left text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
-      {infoLines?.length ? (
-        <KpiBreakdownInfo
-          title={infoTitle ?? label}
-          description={infoDescription}
-          lines={infoLines}
-        />
-      ) : null}
+      {infoContent}
     </div>
   )
 
@@ -901,7 +837,10 @@ function PropertyInsightRecommendationCard({
     <div className="sa-enter-scale sa-surface flex w-full min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-3 shadow-[0px_1px_3px_rgba(0,0,0,0.08)] sm:p-4">
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 sm:gap-x-6">
         <div className="flex min-w-0 flex-col gap-1.5 self-start">
-          <p className="min-w-0 text-[12px] font-extrabold uppercase leading-4 tracking-[0.04em] text-[#9E439F]">
+          <p
+            className="min-w-0 text-[12px] font-extrabold uppercase leading-4 tracking-[0.04em] text-[#9E439F]"
+            title={card.tag === 'VENDOR RESPONSE' ? VENDOR_JOB_ACCEPTANCE_TOOLTIP : undefined}
+          >
             {title}
           </p>
           <p className="min-w-0 text-[16px] font-normal leading-[1.35] text-[#0f172a]">{card.text}</p>
@@ -1022,6 +961,7 @@ export function AdminOverviewDashboard() {
     ? `${overviewGreetingSalutation()}, ${greetingName}`
     : overviewGreetingSalutation()
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
+  const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [vendors, setVendors] = useState<OverviewVendor[]>([])
   const [units, setUnits] = useState<OverviewUnit[]>([])
   const [workflowData, setWorkflowData] =
@@ -1035,6 +975,7 @@ export function AdminOverviewDashboard() {
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [overviewResidents, setOverviewResidents] = useState<OverviewResident[]>([])
   const [leaseInfoMissing, setLeaseInfoMissing] = useState<LeaseInfoMissingAttention[]>([])
+  const [smsNoRecipients, setSmsNoRecipients] = useState<SmsNoRecipientsAttention[]>([])
   const [dismissedAttention, setDismissedAttention] = useState<DismissedAttentionIds>({
     ticketIds: new Set(),
     runIds: new Set(),
@@ -1161,13 +1102,18 @@ export function AdminOverviewDashboard() {
         const paidInvoiceId = result.invoiceId || invoiceId
         const review =
           invoicePayReviewsRef.current.find((r) => r.invoiceId === paidInvoiceId) ?? null
-        const ytdPaidTotal = review?.vendorId
-          ? await fetchVendorYtdPaidTotal({
-              landlordId: getActiveLandlordId(),
-              vendorId: review.vendorId,
-            })
-          : null
+        const [ytdPaidTotal, spendRows] = await Promise.all([
+          review?.vendorId
+            ? fetchVendorYtdPaidTotal({
+                landlordId: getActiveLandlordId(),
+                vendorId: review.vendorId,
+              })
+            : Promise.resolve(null),
+          fetchRecognizedMaintenanceSpend(),
+        ])
+        if (cancelled) return
 
+        setRecognizedSpend(spendRows)
         setInvoicePayReviews((prev) => prev.filter((r) => r.invoiceId !== paidInvoiceId))
         setInvoicePaySuccess({
           amountPaid: result.amountPaid || review?.totalCost || 0,
@@ -1242,12 +1188,15 @@ export function AdminOverviewDashboard() {
         canonicalPropertiesResult,
         leaseInfoMissingResult,
         dismissedAttentionResult,
+        recognizedSpendResult,
+        mrSpendResult,
+        smsNoRecipientsResult,
       ] = await Promise.all([
           allowImportedOperations
             ? supabase
                 .from('maintenance_request_enriched')
                 .select(
-                  'id, created_at, assigned_at, unit, unit_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+                  'id, created_at, assigned_at, unit, unit_id, property_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at, inspection_report_id, resident_reported_recurring',
                 )
                 .eq('landlord_id', landlordId)
                 .order('created_at', { ascending: false })
@@ -1310,6 +1259,17 @@ export function AdminOverviewDashboard() {
           listPropertiesForLandlord(landlordId),
           loadLeaseInfoMissingAttention(landlordId),
           loadDismissedAttentionIds(landlordId),
+          // Always load approved invoice spend for YTD — independent of portfolio sync.
+          fetchRecognizedMaintenanceSpend(),
+          allowImportedOperations
+            ? supabase
+                .from('maintenance_requests')
+                .select('id, completed_at, recognized_spend_amount, recognized_spend_at')
+                .eq('landlord_id', landlordId)
+                .order('created_at', { ascending: false })
+                .limit(500)
+            : Promise.resolve({ data: [], error: null }),
+          loadSmsNoRecipientsAttention(landlordId),
         ])
 
       if (cancelled) return
@@ -1355,10 +1315,34 @@ export function AdminOverviewDashboard() {
       }
 
       if (!ticketsResult.error) {
+        const spendById = new Map<string, Record<string, unknown>>()
+        if (!mrSpendResult.error) {
+          for (const row of (mrSpendResult.data ?? []) as Record<string, unknown>[]) {
+            const id = asString(row.id)
+            if (id) spendById.set(id, row)
+          }
+        }
         setTickets(
-          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) =>
-            normalizeTicketRow(raw, vendorNameById),
-          ),
+          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) => {
+            const spend = spendById.get(asString(raw.id))
+            const merged = spend ? { ...raw, ...spend } : raw
+            if (
+              merged.recognized_spend_amount != null &&
+              merged.total_cost == null &&
+              merged.invoice_total == null
+            ) {
+              merged.total_cost = merged.recognized_spend_amount
+            }
+            // Prefer recognition timestamp for YTD attribution when present.
+            if (
+              typeof merged.recognized_spend_at === 'string' &&
+              merged.recognized_spend_at.trim() &&
+              !merged.completed_at
+            ) {
+              merged.completed_at = merged.recognized_spend_at
+            }
+            return normalizeTicketRow(merged, vendorNameById)
+          }),
         )
       } else {
         console.error(
@@ -1366,6 +1350,18 @@ export function AdminOverviewDashboard() {
           ticketsResult.error.message,
         )
       }
+
+      setRecognizedSpend(
+        Array.isArray(recognizedSpendResult) ? recognizedSpendResult : [],
+      )
+      // #region agent log
+      {
+        const mrRows = (!mrSpendResult.error
+          ? ((mrSpendResult.data ?? []) as Record<string, unknown>[])
+          : [])
+        const withAmount = mrRows.filter((r) => r.recognized_spend_amount != null).length
+      }
+      // #endregion
 
       const ratingByTicket = new Map<string, number>()
       if (!feedbackResult.error) {
@@ -1402,13 +1398,17 @@ export function AdminOverviewDashboard() {
       const ticketById = new Map(ticketRowsForInvoice.map((t) => [t.id, t]))
 
       const payReviews: InvoicePaymentReview[] = []
-      if (landlordHasPayments(getActiveLandlordId()) && !invoicesResult.error) {
+      // Always surface submitted invoices — Limited Alpha has no Stripe pay rail but
+      // still needs Approve cost so YTD can lock the vendor invoice amount.
+      if (!invoicesResult.error) {
+        const paymentsEnabled = landlordHasPayments(getActiveLandlordId())
         for (const row of (invoicesResult.data ?? []) as Record<string, unknown>[]) {
           const invoiceId = asString(row.id)
           const ticketId = asString(row.maintenance_request_id)
           if (!invoiceId || !ticketId) continue
           const rating = ratingByTicket.get(ticketId)
-          if (rating == null || rating < 4) continue
+          // Full accounts keep the 4★ gate before pay; Limited Alpha can approve without it.
+          if (paymentsEnabled && (rating == null || rating < 4)) continue
           const ticket = ticketById.get(ticketId)
           const vendorId = asString(row.vendor_id)
           const vendorScore = vendorId ? vendorScoreById.get(vendorId) : undefined
@@ -1429,7 +1429,7 @@ export function AdminOverviewDashboard() {
             vendorId: vendorId || null,
             issueCategory: ticket?.issueCategory ?? null,
             submittedAt: asString(row.submitted_at),
-            rating,
+            rating: rating ?? null,
             invoiceNumber: asString(row.invoice_number) || null,
             documentPath: asString(row.document_path) || null,
             vendorRating: vendorScore?.rating ?? null,
@@ -1445,6 +1445,7 @@ export function AdminOverviewDashboard() {
             id: asString(r.id),
             unitLabel: asString(r.unit_label),
             building: asString(r.building) || null,
+            propertyId: asString(r.property_id) || null,
             status: asString(r.status).toLowerCase(),
           })),
         )
@@ -1498,6 +1499,7 @@ export function AdminOverviewDashboard() {
       }
 
       setLeaseInfoMissing(leaseInfoMissingResult)
+      setSmsNoRecipients(smsNoRecipientsResult)
       setDismissedAttention(dismissedAttentionResult)
       setLastUpdated(new Date())
       setError(null)
@@ -1637,22 +1639,27 @@ export function AdminOverviewDashboard() {
         ? responseRecent - responsePrevious
         : null
 
-    // YTD maintenance cost: total spend on completed maintenance jobs from
-    // Jan 1 (local) through now. Uses extracted invoice totals when present,
-    // else the estimate proxy, attributed to each job's completion date.
+    // YTD maintenance cost: approved invoice totals. Fall back to ticket
+    // recognized_spend_amount when the invoice query is empty (RLS / lag).
     const startOfYear = new Date(new Date().getFullYear(), 0, 1).getTime()
-    const completedJobs = tickets.filter(isCompletedJob)
-    const spendBetween = (fromMs: number, toMs: number): number =>
-      completedJobs.reduce((sum, t) => {
-        const at = ticketSpendDate(t)
-        if (Number.isNaN(at) || at < fromMs || at >= toMs) return sum
-        return sum + ticketSpend(t)
-      }, 0)
-    const ytdMaintenanceCost = Math.round(spendBetween(startOfYear, now))
-    // 4-week-over-4-week change in completed-job spend (rising spend = bad).
+    const invoiceYtd = sumRecognizedSpendBetween(recognizedSpend, startOfYear, now)
+    const ticketYtd = tickets.reduce((sum, t) => {
+      if (t.totalCost == null || t.totalCost <= 0) return sum
+      const at = ticketSpendDate(t)
+      if (Number.isNaN(at) || at < startOfYear || at >= now) return sum
+      return sum + t.totalCost
+    }, 0)
+    const ytdMaintenanceCost = Math.round(invoiceYtd > 0 ? invoiceYtd : ticketYtd)
+    // #region agent log
+    // #endregion
+    // 4-week-over-4-week change in recognized invoice spend (rising spend = bad).
     const ytdMaintenanceCostDelta = Math.round(
-      spendBetween(now - fourWeeksMs, now) -
-        spendBetween(now - 2 * fourWeeksMs, now - fourWeeksMs),
+      sumRecognizedSpendBetween(recognizedSpend, now - fourWeeksMs, now) -
+        sumRecognizedSpendBetween(
+          recognizedSpend,
+          now - 2 * fourWeeksMs,
+          now - fourWeeksMs,
+        ),
     )
 
     return {
@@ -1667,7 +1674,7 @@ export function AdminOverviewDashboard() {
       ytdMaintenanceCost,
       ytdMaintenanceCostDelta,
     }
-  }, [tickets, openTickets, healthReport, now, fourWeeksMs])
+  }, [tickets, openTickets, healthReport, recognizedSpend, now, fourWeeksMs])
 
   const slaOverdueTickets = useMemo(
     () =>
@@ -1731,7 +1738,7 @@ export function AdminOverviewDashboard() {
           ? supabase
               .from('maintenance_request_enriched')
               .select(
-                'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+                'id, created_at, assigned_at, unit, unit_id, property_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at, inspection_report_id, resident_reported_recurring',
               )
               .eq('landlord_id', landlordId)
               .order('created_at', { ascending: false })
@@ -1902,18 +1909,23 @@ export function AdminOverviewDashboard() {
           (u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit),
         )?.building ??
         null
+      const fallbackMeta = ticket.dueAt
+        ? `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past due ${formatRelativeTime(ticket.dueAt)}`
+        : `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past response time`
+      const scoped = buildInspectionScopedAttentionCopy({
+        ticketId: ticket.id,
+        workflowData,
+        propertyLabel: building,
+        unitLabel: ticket.unit,
+        residentName: ticket.residentName,
+        fallbackMeta,
+      })
       items.push({
         key: `sla-${ticket.id}`,
         badge: isTicketCritical(ticket) ? 'critical' : 'warning',
         title: 'No vendor available — response time exceeded',
-        context: formatLocationContextLabel({
-          propertyLabel: building,
-          unitLabel: ticket.unit,
-          residentName: ticket.residentName,
-        }),
-        meta: ticket.dueAt
-          ? `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past due ${formatRelativeTime(ticket.dueAt)}`
-          : `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past response time`,
+        context: scoped.context,
+        meta: scoped.meta,
         actionLabel: 'Assign vendor',
         actionStyle: 'alert',
         onAction: () => openEscalatedRailForTicket(ticket.id),
@@ -1954,6 +1966,31 @@ export function AdminOverviewDashboard() {
           continue
         }
         const issueCategory = run.issueCategory ?? linkedTicket?.issueCategory ?? null
+        const fallbackMeta = needsVendor
+          ? maintenanceAdminVendorAttentionMeta(adminVendorReason, issueCategory)
+          : run.lastEventAt
+            ? isLeaseRenewal
+              ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
+              : `Escalated ${formatRelativeTime(run.lastEventAt)}`
+            : 'Awaiting input'
+        const scoped = ticketId
+          ? buildInspectionScopedAttentionCopy({
+              ticketId,
+              run,
+              workflowData,
+              propertyLabel: run.propertyLabel,
+              unitLabel: run.unitLabel,
+              residentName: run.residentName,
+              fallbackMeta,
+            })
+          : {
+              meta: fallbackMeta,
+              context: formatLocationContextLabel({
+                propertyLabel: run.propertyLabel,
+                unitLabel: run.unitLabel,
+                residentName: run.residentName,
+              }),
+            }
         items.push({
           key: `run-${run.id}`,
           badge: needsVendor || isLeaseRenewal ? 'critical' : 'warning',
@@ -1962,18 +1999,8 @@ export function AdminOverviewDashboard() {
             : isLeaseRenewal
               ? 'Lease Renewal Escalated'
               : `${run.templateName} Escalated`,
-          context: formatLocationContextLabel({
-            propertyLabel: run.propertyLabel,
-            unitLabel: run.unitLabel,
-            residentName: run.residentName,
-          }),
-          meta: needsVendor
-            ? maintenanceAdminVendorAttentionMeta(adminVendorReason, issueCategory)
-            : run.lastEventAt
-              ? isLeaseRenewal
-                ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
-                : `Escalated ${formatRelativeTime(run.lastEventAt)}`
-              : 'Awaiting input',
+          context: scoped.context,
+          meta: scoped.meta,
           actionLabel: needsVendor ? 'Assign vendor' : 'Review',
           onAction: isLeaseRenewal
             ? () => openLeaseRenewalRail(run.id)
@@ -2036,32 +2063,65 @@ export function AdminOverviewDashboard() {
       })
     }
 
+    for (const row of smsNoRecipients) {
+      items.push({
+        key: `sms-no-recipients-${row.messageType ?? row.id}`,
+        badge: 'warning',
+        title: 'SMS could not be delivered',
+        context: 'Account phone missing',
+        meta:
+          row.message?.trim() ||
+          'Add a phone number in Account settings so Ulo can text you updates.',
+        actionLabel: 'Open account',
+        onAction: () => navigate('/admin/settings'),
+      })
+    }
+
     for (const inv of invoicePayReviews) {
       if (completedTicketIds.has(inv.maintenanceRequestId)) continue
       const totalLabel = inv.totalCost.toLocaleString('en-US', {
         style: 'currency',
         currency: 'USD',
       })
+      const paymentsEnabled = landlordHasPayments(getActiveLandlordId())
       items.push({
         key: `invoice-${inv.invoiceId}`,
         badge: 'warning',
-        title: 'Invoice ready to pay',
+        title: paymentsEnabled ? 'Invoice ready to pay' : 'Invoice ready to approve',
         context: formatLocationContextLabel({
           propertyLabel: inv.building,
           unitLabel: inv.unit,
           residentName: inv.residentName,
         }),
         meta: `${inv.vendorName} · ${totalLabel}${inv.rating != null ? ` · Rated ${inv.rating}/5` : ''}`,
-        actionLabel: 'Review & pay',
+        actionLabel: paymentsEnabled ? 'Review & pay' : 'Approve cost',
         onAction: () => {
           setInvoicePayError(null)
           setInvoicePayRailId(inv.invoiceId)
+          // Limited Alpha has no Stripe checkout — approve immediately so YTD picks up the amount.
+          if (!paymentsEnabled) {
+            void (async () => {
+              try {
+                await approveMaintenanceInvoice(inv.invoiceId)
+                const spendRows = await fetchRecognizedMaintenanceSpend()
+                setRecognizedSpend(spendRows)
+                setInvoicePayReviews((prev) =>
+                  prev.filter((r) => r.invoiceId !== inv.invoiceId),
+                )
+                setInvoicePayRailId(null)
+              } catch (err) {
+                setInvoicePayError(
+                  getErrorMessage(err, 'Could not approve invoice'),
+                )
+              }
+            })()
+          }
         },
       })
     }
 
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
@@ -2810,6 +2870,7 @@ export function AdminOverviewDashboard() {
         building: t.building,
         unit: t.unit,
         unitId: t.unitId,
+        propertyId: t.propertyId,
         issueCategory: t.issueCategory,
         description: t.description,
         vendorWorkStatus: t.vendorWorkStatus,
@@ -2817,11 +2878,13 @@ export function AdminOverviewDashboard() {
         assignedVendorId: t.assignedVendorId,
         urgency: t.urgency,
         residentReportedRecurring: t.residentReportedRecurring,
+        inspectionReportId: t.inspectionReportId,
       })),
       units: units.map((u) => ({
         id: u.id,
         unitLabel: u.unitLabel,
         building: u.building,
+        propertyId: u.propertyId,
       })),
       vendorResponsePct: kpis.vendorResponse,
       assignedWorkOrderCount: tickets.filter((t) => t.assignedVendorId).length,
@@ -3086,10 +3149,7 @@ export function AdminOverviewDashboard() {
   const healthScoreReady = shouldShowPropertyHealthScore(healthReport.portfolio?.status)
   const healthFactorBreakdown =
     !loading && healthReport.portfolio && healthReport.portfolio.status !== 'pending_setup'
-      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
-          dataCompleteness: healthReport.portfolio.dataCompleteness,
-          topIssues: healthReport.portfolio.topIssues,
-        })
+      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
       : undefined
   const healthKpiValue = loading
     ? '—'
@@ -3130,12 +3190,16 @@ export function AdminOverviewDashboard() {
     setInvoicePayError(null)
     try {
       await approveMaintenanceInvoice(invoicePayReview.invoiceId, note)
-      const ytdPaidTotal = invoicePayReview.vendorId
-        ? await fetchVendorYtdPaidTotal({
-            landlordId: getActiveLandlordId(),
-            vendorId: invoicePayReview.vendorId,
-          })
-        : null
+      const [ytdPaidTotal, spendRows] = await Promise.all([
+        invoicePayReview.vendorId
+          ? fetchVendorYtdPaidTotal({
+              landlordId: getActiveLandlordId(),
+              vendorId: invoicePayReview.vendorId,
+            })
+          : Promise.resolve(null),
+        fetchRecognizedMaintenanceSpend(),
+      ])
+      setRecognizedSpend(spendRows)
       setInvoicePayReviews((prev) =>
         prev.filter((r) => r.invoiceId !== invoicePayReview.invoiceId),
       )
@@ -3453,9 +3517,11 @@ export function AdminOverviewDashboard() {
           deltaSuffix="%"
           goodWhenUp
           caption={updatedCaption}
-          infoTitle="Property health factors"
-          infoDescription="Condition, maintenance, and risk. Missing information is unknown — it does not lower the score."
-          infoLines={healthFactorBreakdown}
+          infoContent={
+            healthFactorBreakdown?.length ? (
+              <PropertyHealthScoreInfoTip lines={healthFactorBreakdown} />
+            ) : null
+          }
         />
         <KpiCard
           stagger={3}

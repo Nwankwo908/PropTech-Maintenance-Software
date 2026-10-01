@@ -4,6 +4,7 @@ import { computePortfolioInsights } from '../../../../shared/portfolioIntelligen
 import { computePortfolioRecommendations } from '../../../../shared/portfolioIntelligence/computeRecommendations.ts'
 
 const NOW = Date.parse('2026-08-07T12:00:00.000Z')
+const PROP_OAK = 'prop-oak-0001'
 
 function daysAgo(n: number): string {
   return new Date(NOW - n * 24 * 60 * 60 * 1000).toISOString()
@@ -12,10 +13,15 @@ function daysAgo(n: number): string {
 Deno.test('shared portfolio intelligence — insights vs recommendations stay distinct', () => {
   const input = {
     now: NOW,
-    units: [{ unitLabel: '4B', building: 'Oak Tower' }],
+    units: [{
+      unitLabel: '4B',
+      building: 'Oak Tower',
+      propertyId: PROP_OAK,
+    }],
     tickets: [
       {
         id: 'open-1',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '4B',
         issueCategory: 'plumbing',
@@ -25,6 +31,7 @@ Deno.test('shared portfolio intelligence — insights vs recommendations stay di
       },
       {
         id: 'open-2',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '2A',
         issueCategory: 'hvac',
@@ -34,6 +41,7 @@ Deno.test('shared portfolio intelligence — insights vs recommendations stay di
       },
       {
         id: 'hist-1',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '4B',
         issueCategory: 'plumbing',
@@ -43,6 +51,7 @@ Deno.test('shared portfolio intelligence — insights vs recommendations stay di
       },
       {
         id: 'hist-2',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '4B',
         issueCategory: 'plumbing',
@@ -64,10 +73,15 @@ Deno.test('shared portfolio intelligence — insights vs recommendations stay di
 Deno.test('property insights ignore cancelled and deleted work orders', () => {
   const input = {
     now: NOW,
-    units: [{ unitLabel: '4B', building: 'Oak Tower' }],
+    units: [{
+      unitLabel: '4B',
+      building: 'Oak Tower',
+      propertyId: PROP_OAK,
+    }],
     tickets: [
       {
         id: 'cancelled-1',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '4B',
         issueCategory: 'plumbing',
@@ -78,6 +92,7 @@ Deno.test('property insights ignore cancelled and deleted work orders', () => {
       },
       {
         id: 'cancelled-2',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '4B',
         issueCategory: 'plumbing',
@@ -88,6 +103,7 @@ Deno.test('property insights ignore cancelled and deleted work orders', () => {
       },
       {
         id: 'deleted-1',
+        propertyId: PROP_OAK,
         building: 'Oak Tower',
         unit: '4B',
         issueCategory: 'plumbing',

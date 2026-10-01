@@ -31,11 +31,17 @@ function vendorResponsePct(tickets: PortfolioTicketRow[]): {
   }
 }
 
-function mapTicketRow(row: Record<string, unknown>): PortfolioTicketRow {
+function mapTicketRow(
+  row: Record<string, unknown>,
+  landlordId: string,
+): PortfolioTicketRow {
   return {
     id: String(row.id ?? ''),
     building: typeof row.building === 'string' ? row.building : null,
     unit: typeof row.unit === 'string' ? row.unit : null,
+    unitId: typeof row.unit_id === 'string' ? row.unit_id : null,
+    propertyId: typeof row.property_id === 'string' ? row.property_id : null,
+    landlordId,
     issueCategory: typeof row.issue_category === 'string' ? row.issue_category : null,
     vendorWorkStatus: typeof row.vendor_work_status === 'string' ? row.vendor_work_status : null,
     createdAt: String(row.created_at ?? ''),
@@ -43,6 +49,8 @@ function mapTicketRow(row: Record<string, unknown>): PortfolioTicketRow {
       typeof row.assigned_vendor_id === 'string' ? row.assigned_vendor_id : null,
     urgency: typeof row.urgency === 'string' ? row.urgency : null,
     residentReportedRecurring: row.resident_reported_recurring === true,
+    inspectionReportId:
+      typeof row.inspection_report_id === 'string' ? row.inspection_report_id : null,
   }
 }
 
@@ -57,7 +65,7 @@ export async function loadPortfolioIntelligenceInput(
     supabase
       .from('maintenance_request_enriched')
       .select(
-        'id, building, unit, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency, resident_reported_recurring',
+        'id, building, unit, unit_id, property_id, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency, resident_reported_recurring, inspection_report_id',
       )
       .eq('landlord_id', id)
       .gte('created_at', since60)
@@ -66,13 +74,17 @@ export async function loadPortfolioIntelligenceInput(
     supabase
       .from('maintenance_request_enriched')
       .select(
-        'id, building, unit, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency, resident_reported_recurring',
+        'id, building, unit, unit_id, property_id, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency, resident_reported_recurring, inspection_report_id',
       )
       .eq('landlord_id', id)
       .not('vendor_work_status', 'in', '("completed","cancelled","closed","resolved")')
       .order('created_at', { ascending: false })
       .limit(400),
-    supabase.from('units').select('unit_label, building').eq('landlord_id', id).limit(500),
+    supabase
+      .from('units')
+      .select('id, unit_label, building, property_id')
+      .eq('landlord_id', id)
+      .limit(500),
     supabase
       .from('workflow_runs')
       .select('id, status, template_id, metadata')
@@ -83,16 +95,19 @@ export async function loadPortfolioIntelligenceInput(
   ])
 
   const recentTickets = (recentRes.data ?? []).map((row) =>
-    mapTicketRow(row as Record<string, unknown>),
+    mapTicketRow(row as Record<string, unknown>, id),
   )
   const openTickets = (openRes.data ?? []).map((row) =>
-    mapTicketRow(row as Record<string, unknown>),
+    mapTicketRow(row as Record<string, unknown>, id),
   )
   const tickets = mergeTickets(recentTickets, openTickets)
 
   const units: PortfolioUnitRow[] = (unitsRes.data ?? []).map((row) => ({
+    id: typeof row.id === 'string' ? row.id : null,
     unitLabel: typeof row.unit_label === 'string' ? row.unit_label : null,
     building: typeof row.building === 'string' ? row.building : null,
+    propertyId: typeof row.property_id === 'string' ? row.property_id : null,
+    landlordId: id,
   }))
 
   const escalatedWorkflows: PortfolioWorkflowRow[] = (workflowsRes.data ?? []).map((row) => {

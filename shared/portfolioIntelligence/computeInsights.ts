@@ -1,9 +1,11 @@
 import {
   buildUnitBuildingMap,
   formatCategoryName,
-  isInsightEligibleTicket,
+  isPatternInsightEligibleTicket,
   normalizeUnitLabel,
   resolveTicketBuilding,
+  resolveTicketPropertyId,
+  resolveTicketUnitGroupKey,
 } from './helpers.ts'
 import {
   PORTFOLIO_INSIGHT_WINDOW_MS,
@@ -11,7 +13,6 @@ import {
   type PortfolioInsightTicketSummary,
   type PortfolioIntelligenceInput,
   type PortfolioTicketRow,
-  type PortfolioUnitRow,
 } from './types.ts'
 
 const MAX_INSIGHTS = 4
@@ -45,19 +46,30 @@ function collectTicketMeta(tickets: PortfolioTicketRow[]): {
   return { ticketIds, ticketSummaries }
 }
 
-function resolveUnitId(
-  unitKey: string,
+function displayBuildingForTickets(
   tickets: PortfolioTicketRow[],
-  units: PortfolioUnitRow[],
+  buildingByUnit: Map<string, string>,
 ): string | null {
   for (const ticket of tickets) {
-    if (normalizeUnitLabel(ticket.unit) !== unitKey) continue
-    const id = typeof ticket.unitId === 'string' ? ticket.unitId.trim() : ''
-    if (id) return id
+    const building = resolveTicketBuilding(ticket, buildingByUnit)
+    if (building) return building
   }
-  for (const unit of units) {
-    if (normalizeUnitLabel(unit.unitLabel) !== unitKey) continue
-    const id = typeof unit.id === 'string' ? unit.id.trim() : ''
+  return null
+}
+
+function displayUnitLabel(tickets: PortfolioTicketRow[]): string | null {
+  for (const ticket of tickets) {
+    const unitId = typeof ticket.unitId === 'string' ? ticket.unitId.trim() : ''
+    const label = normalizeUnitLabel(ticket.unit)
+    if (label) return `Unit ${label.toUpperCase()}`
+    if (unitId) return 'Unit'
+  }
+  return null
+}
+
+function resolveUnitIdFromGroup(tickets: PortfolioTicketRow[]): string | null {
+  for (const ticket of tickets) {
+    const id = typeof ticket.unitId === 'string' ? ticket.unitId.trim() : ''
     if (id) return id
   }
   return null
@@ -75,7 +87,8 @@ export function computePortfolioInsights(
   const sinceMs = now - PORTFOLIO_INSIGHT_WINDOW_MS
   const buildingByUnit = buildUnitBuildingMap(input.units)
 
-  const eligibleTickets = input.tickets.filter(isInsightEligibleTicket)
+  // Pattern cards only — exclude inspection_report_id batches (HQS letter, etc.).
+  const eligibleTickets = input.tickets.filter(isPatternInsightEligibleTicket)
   const recentTickets = eligibleTickets.filter((t) => {
     const ts = Date.parse(t.createdAt)
     return !Number.isNaN(ts) && ts >= sinceMs
@@ -83,32 +96,34 @@ export function computePortfolioInsights(
 
   const insights: PortfolioInsightFinding[] = []
 
-  const byBuildingCategory = new Map<string, PortfolioTicketRow[]>()
+  // Recurring Issues: property_id + category — never building name / bare unit label.
+  const byPropertyCategory = new Map<string, PortfolioTicketRow[]>()
   for (const t of recentTickets) {
-    const building = resolveTicketBuilding(t, buildingByUnit)
+    const propertyId = resolveTicketPropertyId(t)
     const category =
       typeof t.issueCategory === 'string' && t.issueCategory.trim()
         ? t.issueCategory.trim()
         : null
-    if (!building || !category) continue
-    const key = `${building}|${category}`
-    const list = byBuildingCategory.get(key) ?? []
+    if (!propertyId || !category) continue
+    const key = `${propertyId}|${category}`
+    const list = byPropertyCategory.get(key) ?? []
     list.push(t)
-    byBuildingCategory.set(key, list)
+    byPropertyCategory.set(key, list)
   }
 
-  const topPattern = [...byBuildingCategory.entries()].sort(
+  const topPattern = [...byPropertyCategory.entries()].sort(
     (a, b) => b[1].length - a[1].length,
   )[0]
-  let recurringBuilding: string | null = null
+  let recurringPropertyId: string | null = null
   let recurringCategory: string | null = null
-  // Aggregate count ≥ 2, or a single ticket the resident flagged as recurring.
-  const flaggedRecurring = recentTickets.filter((t) => t.residentReportedRecurring)
+  // Recurring requires ≥2 separate jobs at the same property + category.
   if (topPattern && topPattern[1].length >= 2) {
     const [key, tickets] = topPattern
-    const [building, category] = key.split('|')
-    recurringBuilding = building
+    const [propertyId, category] = key.split('|')
+    recurringPropertyId = propertyId
     recurringCategory = category
+    const building =
+      displayBuildingForTickets(tickets, buildingByUnit) ?? 'this property'
     const meta = collectTicketMeta(tickets)
     insights.push({
       tag: 'RECURRING ISSUES',
@@ -119,32 +134,12 @@ export function computePortfolioInsights(
       requestCount: tickets.length,
       ...meta,
     })
-  } else if (flaggedRecurring.length > 0) {
-    const ticket = flaggedRecurring[0]
-    const building = resolveTicketBuilding(ticket, buildingByUnit)
-    const category =
-      typeof ticket.issueCategory === 'string' && ticket.issueCategory.trim()
-        ? ticket.issueCategory.trim()
-        : 'maintenance'
-    recurringBuilding = building
-    recurringCategory = category
-    const meta = collectTicketMeta(flaggedRecurring)
-    insights.push({
-      tag: 'RECURRING ISSUES',
-      text: building
-        ? `${formatCategoryName(category)} issues keep occurring in ${building}.`
-        : `A resident reported a recurring ${formatCategoryName(category).toLowerCase()} issue.`,
-      score: Math.min(90, 72 + flaggedRecurring.length * 5),
-      building,
-      categoryLabel: formatCategoryName(category),
-      requestCount: flaggedRecurring.length,
-      ...meta,
-    })
   }
 
+  // Needs Attention (RISK): unit_id or property-scoped unit label — never bare label.
   const byUnit = new Map<string, PortfolioTicketRow[]>()
   for (const t of recentTickets) {
-    const key = normalizeUnitLabel(t.unit)
+    const key = resolveTicketUnitGroupKey(t)
     if (!key) continue
     const list = byUnit.get(key) ?? []
     list.push(t)
@@ -152,22 +147,24 @@ export function computePortfolioInsights(
   }
   const topUnit = [...byUnit.entries()].sort((a, b) => b[1].length - a[1].length)[0]
   if (topUnit && topUnit[1].length >= 2) {
-    const [unitKey, tickets] = topUnit
+    const [, tickets] = topUnit
     const meta = collectTicketMeta(tickets)
+    const unitLabel = displayUnitLabel(tickets) ?? 'Unit'
     insights.push({
       tag: 'RISK',
-      text: `Unit ${unitKey.toUpperCase()} has generated the most maintenance requests.`,
+      text: `${unitLabel} has generated the most maintenance requests.`,
       score: Math.min(90, 60 + tickets.length * 6),
-      unitLabel: `Unit ${unitKey.toUpperCase()}`,
-      unitId: resolveUnitId(unitKey, tickets, input.units),
+      unitLabel,
+      unitId: resolveUnitIdFromGroup(tickets),
       requestCount: tickets.length,
       ...meta,
     })
   }
 
+  // Prevent Future Repairs: same scoped unit key + category.
   const byUnitCategory = new Map<string, PortfolioTicketRow[]>()
   for (const t of recentTickets) {
-    const unitKey = normalizeUnitLabel(t.unit)
+    const unitKey = resolveTicketUnitGroupKey(t)
     const category =
       typeof t.issueCategory === 'string' && t.issueCategory.trim()
         ? t.issueCategory.trim()
@@ -182,29 +179,39 @@ export function computePortfolioInsights(
     .filter(([, tickets]) => tickets.length >= 2)
     .sort((a, b) => b[1].length - a[1].length)
   const preventPick =
-    unitCategoryCandidates.find(([key]) => {
-      const [unitKey, category] = key.split('|')
+    unitCategoryCandidates.find(([, tickets]) => {
+      const category =
+        typeof tickets[0]?.issueCategory === 'string'
+          ? tickets[0].issueCategory.trim()
+          : ''
       if (recurringCategory && category === recurringCategory) {
-        const building = buildingByUnit.get(unitKey)
-        if (building && building === recurringBuilding) return false
+        const propertyId = resolveTicketPropertyId(tickets[0]!)
+        if (propertyId && propertyId === recurringPropertyId) return false
       }
       return true
     }) ?? unitCategoryCandidates[0]
   if (preventPick) {
-    const [key, tickets] = preventPick
-    const [unitKey, category] = key.split('|')
+    const [, tickets] = preventPick
+    const category =
+      typeof tickets[0]?.issueCategory === 'string'
+        ? tickets[0].issueCategory.trim()
+        : 'maintenance'
     const meta = collectTicketMeta(tickets)
+    const unitLabel = displayUnitLabel(tickets) ?? 'Unit'
     insights.push({
       tag: 'PREVENT FUTURE REPAIRS',
-      text: `A preventive ${formatCategoryName(category).toLowerCase()} inspection is recommended for Unit ${unitKey.toUpperCase()}.`,
+      text: `A preventive ${formatCategoryName(category).toLowerCase()} inspection is recommended for ${unitLabel}.`,
       score: Math.min(95, 65 + tickets.length * 4),
       categoryLabel: formatCategoryName(category),
       requestCount: tickets.length,
-      unitLabel: `Unit ${unitKey.toUpperCase()}`,
-      unitId: resolveUnitId(unitKey, tickets, input.units),
+      unitLabel,
+      unitId: resolveUnitIdFromGroup(tickets),
       ...meta,
     })
   }
+
+  // Vendor Response: portfolio-wide rate — no unit/building/property grouping.
+  // (Not emitted here historically when rate is healthy; no label-match hazard.)
 
   return insights.slice(0, MAX_INSIGHTS)
 }

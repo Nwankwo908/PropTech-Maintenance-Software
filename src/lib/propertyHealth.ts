@@ -41,6 +41,10 @@ export const PROPERTY_HEALTH_WEIGHTS = {
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
+/** Property Health ⓘ popover intro — weights + missing-data rule. */
+export const PROPERTY_HEALTH_SCORE_INFO_DESCRIPTION =
+  'Your score reflects property condition (40%), maintenance (35%), and risk (25%). If information is missing, we leave it out of the score.'
+
 export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history' | 'unknown_condition'
 
 /** KPI helper copy for property health — activation vs insights are separate. */
@@ -171,8 +175,10 @@ export type PropertyHealthScopeScore = {
 export type PropertyHealthBuildingRow = PropertyHealthScopeScore & {
   building: string
   unitCount: number
-  /** Open maintenance tickets scoped to this building (work orders). */
+  /** Open (not completed/cancelled) maintenance tickets for this building. */
   openTickets: number
+  /** All non-voided work orders (open + completed) — Properties table “Work orders” column. */
+  workOrderCount: number
   occupancyPct: number
   /** Real avg resident rating (1–5) when feedback exists; null otherwise. */
   residentRating: number | null
@@ -314,6 +320,10 @@ export type PropertyHealthTicket = {
   unit: string
   unitId: string | null
   building: string | null
+  /** Canonical `properties.id` when enriched join resolved it. */
+  propertyId?: string | null
+  /** Set when the repair is finished (even if vendor_work_status lags). */
+  completedAt?: string | null
   issueCategory?: string | null
   vendorWorkStatus: string
   assignedVendorId?: string | null
@@ -323,6 +333,8 @@ export type PropertyHealthTicket = {
   severity?: string | null
   priority?: string | null
   dueAt?: string | null
+  /** Landlord-initiated inspection batch — excluded from Repeat issues scoring. */
+  inspectionReportId?: string | null
 }
 
 export type PropertyHealthPmTask = {
@@ -394,9 +406,9 @@ export type PropertyHealthInputs = {
   openIssuesCreatedBeforeMs?: number
 }
 
-const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled'])
+const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled', 'archived'])
 /** Removed / resident-stopped work orders are not real repair history. */
-const VOIDED_WORK_STATUSES = new Set(['cancelled', 'deleted'])
+const VOIDED_WORK_STATUSES = new Set(['cancelled', 'deleted', 'archived'])
 
 function isVoidedWorkOrder(ticket: Pick<PropertyHealthTicket, 'vendorWorkStatus'>): boolean {
   return VOIDED_WORK_STATUSES.has(ticket.vendorWorkStatus.toLowerCase())
@@ -619,6 +631,12 @@ function normalizePlaceCompareKey(value: string): string {
   return normalized.replace(/\s+/g, ' ').trim()
 }
 
+/** Leading house/building number when present ("35 maple st" → "35"). */
+function extractLeadingStreetNumber(placeKey: string): string | null {
+  const match = placeKey.trim().toLowerCase().match(/^(\d+[a-z]?)\b/)
+  return match?.[1] ?? null
+}
+
 /** True when two building labels are the same place (81 Maple St vs 81 Maple Street). */
 export function buildingsLikelySamePlace(
   left: string | null | undefined,
@@ -632,9 +650,15 @@ export function buildingsLikelySamePlace(
   const bKey = normalizePlaceCompareKey(b)
   if (!aKey || !bKey || aKey === 'portfolio' || bKey === 'portfolio') return false
   if (aKey === bKey) return true
+  // Different street numbers are different properties (33 Maple ≠ 35 Maple).
+  const aNum = extractLeadingStreetNumber(aKey)
+  const bNum = extractLeadingStreetNumber(bKey)
+  if (aNum && bNum && aNum !== bNum) return false
   const shorter = aKey.length <= bKey.length ? aKey : bKey
   const longer = aKey.length <= bKey.length ? bKey : aKey
-  return shorter.length >= 8 && (longer.startsWith(`${shorter} `) || longer.includes(` ${shorter} `))
+  // "Sunset" ↔ "Sunset (Austin, TX)" and "81 Maple" ↔ "81 Maple Street".
+  if (longer.startsWith(`${shorter} (`) || longer.startsWith(`${shorter} `)) return true
+  return shorter.length >= 8 && longer.includes(` ${shorter} `)
 }
 
 /** True when a unit row belongs to a saved property (by id or building alias). */
@@ -763,9 +787,20 @@ function buildingScopeAliasKeys(
 ): Set<string> {
   const aliases = new Set<string>([normalizeBuildingKey(building)])
   if (!property) return aliases
-  aliases.add(normalizeBuildingKey(property.name))
+  // Only alias the saved property name when it is this same street address.
+  // Shared/wrong property_id must not pull "35 Maple" into the "33 Maple" scope.
+  if (
+    normalizeBuildingKey(property.name) === normalizeBuildingKey(building) ||
+    buildingsLikelySamePlace(property.name, building)
+  ) {
+    aliases.add(normalizeBuildingKey(property.name))
+  }
   for (const unit of units) {
-    if (unitBelongsToCanonicalProperty(unit, property) && unit.building?.trim()) {
+    if (!unitBelongsToCanonicalProperty(unit, property) || !unit.building?.trim()) continue
+    if (
+      normalizeBuildingKey(unit.building) === normalizeBuildingKey(building) ||
+      buildingsLikelySamePlace(unit.building, building)
+    ) {
       aliases.add(normalizeBuildingKey(unit.building))
     }
   }
@@ -784,6 +819,7 @@ function buildingMatchesScopeAliases(building: string | null | undefined, aliase
 }
 
 function isTicketOpen(ticket: PropertyHealthTicket): boolean {
+  if (ticket.completedAt?.trim()) return false
   return !CLOSED_WORK_STATUSES.has(ticket.vendorWorkStatus.toLowerCase())
 }
 
@@ -817,12 +853,14 @@ function resolveCanonicalBuildingLabel(
     const canonical = normalizeBuildingKey(name)
     const canonicalLower = canonical.toLowerCase()
     if (canonicalLower === normalizedLower) return canonical
+    if (buildingsLikelySamePlace(normalized, canonical)) return canonical
     const firstWord = canonicalLower.split(/\s+/)[0] ?? ''
+    // Require a word boundary — "1" must not match "10 Main St".
     if (
       firstWord &&
       (firstWord === normalizedLower ||
         canonicalLower.startsWith(`${normalizedLower} `) ||
-        normalizedLower.startsWith(firstWord))
+        normalizedLower.startsWith(`${firstWord} `))
     ) {
       return canonical
     }
@@ -893,7 +931,12 @@ function ticketBuilding(
     if (fromUnitId) return fromUnitId
   }
   const fromLabel = ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(ticket.unit))
-  return fromLabel ?? 'Portfolio'
+  if (fromLabel) return fromLabel
+  // Single-property portfolios: SMS tickets often lack building/unit_id — still count them.
+  if (ctx.knownBuildingNames.length === 1) {
+    return ctx.knownBuildingNames[0]!
+  }
+  return 'Portfolio'
 }
 
 /** Scope maintenance tickets to one building (uses unit_id when unit labels repeat across properties). */
@@ -908,19 +951,20 @@ export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
   const emailBuildingMap = buildResidentEmailBuildingMap(residents)
 
   return tickets.filter((ticket) => {
-    if (
-      ticket.building?.trim() &&
-      resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames) === key
-    ) {
-      return true
+    // Explicit building wins — never override with a resident email on another address.
+    if (ticket.building?.trim()) {
+      const resolved = resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames)
+      return resolved === key || buildingsLikelySamePlace(ticket.building, building)
+    }
+    if (ticket.unitId?.trim()) {
+      const unitBuilding = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
+      if (unitBuilding) {
+        return unitBuilding === key || buildingsLikelySamePlace(unitBuilding, building)
+      }
     }
     const ticketEmail = ticket.email?.trim().toLowerCase()
     if (ticketEmail && emailBuildingMap.get(ticketEmail) === key) {
       return true
-    }
-    if (ticket.unitId?.trim()) {
-      const unitBuilding = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
-      if (unitBuilding === key) return true
     }
     return ticketBuilding(ticket, ctx, emailBuildingMap) === key
   })
@@ -1088,6 +1132,34 @@ function filterTicketsForScope(
       residents,
     )) {
       if (seen.has(ticket.id)) continue
+      seen.add(ticket.id)
+      scoped.push(ticket)
+    }
+  }
+  // property_id helps orphan SMS tickets, but never copy a ticket that already
+  // names a different street address onto this building.
+  if (property?.id) {
+    const ctx = buildTicketBuildingContext(units)
+    const emailBuildingMap = buildResidentEmailBuildingMap(residents)
+    const buildingKey = normalizeBuildingKey(building)
+    for (const ticket of tickets) {
+      if (!ticket.propertyId || ticket.propertyId !== property.id) continue
+      if (seen.has(ticket.id)) continue
+      if (
+        ticket.building?.trim() &&
+        !buildingMatchesScopeAliases(ticket.building, aliases)
+      ) {
+        continue
+      }
+      const resolved = ticketBuilding(ticket, ctx, emailBuildingMap)
+      if (
+        resolved !== buildingKey &&
+        !aliases.has(resolved) &&
+        !buildingsLikelySamePlace(resolved, building) &&
+        !buildingsLikelySamePlace(resolved, property.name)
+      ) {
+        continue
+      }
       seen.add(ticket.id)
       scoped.push(ticket)
     }
@@ -1456,6 +1528,13 @@ function collectBuildingHealthRows(
       inputs.residents ?? [],
       scopeProperty,
     )
+    const scopedWorkOrders = filterTicketsForScope(
+      inputs.tickets.filter((ticket) => !isVoidedWorkOrder(ticket)),
+      building,
+      inputs.units,
+      inputs.residents ?? [],
+      scopeProperty,
+    )
     const scopedFeedback = filterFeedbackForScope(
       inputs.feedback,
       building,
@@ -1475,6 +1554,7 @@ function collectBuildingHealthRows(
       building,
       unitCount: buildingUnits.length,
       openTickets: scopedOpenTickets.length,
+      workOrderCount: scopedWorkOrders.length,
       occupancyPct: occupancy.occupancyPct,
       residentRating,
       feedbackCount: ratings.length,
@@ -1524,35 +1604,45 @@ export function formatPropertyHealthTooltip(components: PropertyHealthComponent[
 
 const CATEGORY_ORDER: PropertyHealthComponentKey[] = ['condition', 'maintenance', 'risk']
 
-/** KPI popover rows for Condition / Maintenance / Risk. */
+export type PropertyHealthFactorBreakdownLine = {
+  label: string
+  value: string
+  detail: string
+}
+
+function propertyHealthFactorMeaning(
+  key: PropertyHealthComponentKey,
+  component: PropertyHealthComponent | undefined,
+): string {
+  if (!component || component.isFallback) {
+    if (key === 'condition') return 'Add property details to calculate this part.'
+    return 'Not enough information yet to score this part.'
+  }
+  const hasIssueNotes =
+    Boolean(component.detail?.trim()) && component.detail !== 'No deductions'
+  if (hasIssueNotes) return component.detail
+  if (key === 'maintenance') {
+    return 'No maintenance issues are currently lowering this score.'
+  }
+  if (key === 'risk') {
+    return 'No recorded risks are currently lowering this score.'
+  }
+  return 'No condition issues are currently lowering this score.'
+}
+
+/** KPI popover rows for Condition / Maintenance / Risk (Factor · Status · What it means). */
 export function propertyHealthFactorBreakdownLines(
   components: PropertyHealthComponent[],
-  extras?: { dataCompleteness?: number; topIssues?: string[] },
-): Array<{ label: string; value: string; detail: string }> {
+): PropertyHealthFactorBreakdownLine[] {
   const byKey = new Map(components.map((component) => [component.key, component]))
-  const lines = CATEGORY_ORDER.map((key) => {
+  return CATEGORY_ORDER.map((key) => {
     const component = byKey.get(key)
-    if (!component) {
-      return { label: `${COMPONENT_LABELS[key]} (${Math.round(PROPERTY_HEALTH_WEIGHTS[key] * 100)}%)`, value: '—', detail: '' }
-    }
-    const weightPct = Math.round(component.weight * 100)
     return {
-      label: `${component.label} (${weightPct}%)`,
-      value: component.isFallback ? 'Unknown' : String(component.score),
-      detail: component.detail,
+      label: COMPONENT_LABELS[key],
+      value: !component || component.isFallback ? 'Unknown' : String(component.score),
+      detail: propertyHealthFactorMeaning(key, component),
     }
   })
-  for (const issue of extras?.topIssues ?? []) {
-    lines.push({ label: 'Needs attention', value: '', detail: issue })
-  }
-  if (extras?.dataCompleteness != null) {
-    lines.push({
-      label: 'Data completeness',
-      value: `${Math.round(extras.dataCompleteness * 100)}%`,
-      detail: 'Missing items are unknown, not scored as poor.',
-    })
-  }
-  return lines
 }
 
 function asString(value: unknown): string {
@@ -1586,6 +1676,12 @@ export function mapTicketsForPropertyHealth(
     unit: asString(raw.unit),
     unitId: asString(raw.unit_id ?? raw.unitId) || null,
     building: asString(raw.building) || null,
+    propertyId: asString(raw.property_id ?? raw.propertyId) || null,
+    completedAt:
+      asString(raw.completed_at ?? raw.completedAt) ||
+      asString(raw.resolved_at ?? raw.resolvedAt) ||
+      asString(raw.closed_at ?? raw.closedAt) ||
+      null,
     email: asString(raw.email) || null,
     issueCategory: asString(raw.issue_category ?? raw.issueCategory) || null,
     vendorWorkStatus: asString(raw.vendor_work_status ?? raw.vendorWorkStatus).toLowerCase(),
@@ -1595,6 +1691,8 @@ export function mapTicketsForPropertyHealth(
     severity: asString(raw.severity) || null,
     priority: asString(raw.priority) || null,
     dueAt: asString(raw.due_at ?? raw.dueAt) || null,
+    inspectionReportId:
+      asString(raw.inspection_report_id ?? raw.inspectionReportId) || null,
   }))
 }
 
