@@ -1,9 +1,9 @@
 /**
  * Admin Messages rail — short issue noun-phrases for "Ulo summary for admin".
- * Extraction lives in shared/maintenance/issueNounPhrase (also used by SMS intake).
+ * Issue wording via shared generateIssueSummary (same as titles / SMS confirms).
  */
+import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
 import {
-  containsGreetingOrPleasantry,
   extractAdminIssueNounPhrase,
   stripTenantMessageFiller,
   type AdminIssueExtraction,
@@ -16,13 +16,6 @@ export {
 } from '@shared/maintenance/issueNounPhrase.ts'
 
 const MAX_SUMMARY_WORDS = 20
-const FALLBACK_MAX_WORDS = 15
-
-function truncateWords(text: string, maxWords: number): string {
-  const words = text.trim().split(/\s+/).filter(Boolean)
-  if (words.length <= maxWords) return words.join(' ')
-  return `${words.slice(0, maxWords).join(' ')}…`
-}
 
 function enforceMaxWords(text: string, maxWords = MAX_SUMMARY_WORDS): string {
   const words = text.trim().split(/\s+/).filter(Boolean)
@@ -87,19 +80,11 @@ export function buildAdminMaintenanceReportSummary(
 
   if (!sourceText && !(input.ticketCategory ?? '').trim()) return null
 
-  const extracted: AdminIssueExtraction = extractAdminIssueNounPhrase(
-    sourceText,
-    input.ticketCategory,
-  )
-  let issue = extracted.phrase.trim()
-  if (!issue) {
-    issue = truncateWords(stripTenantMessageFiller(sourceText) || sourceText, FALLBACK_MAX_WORDS)
-  }
-  // Never leave greetings in the visible issue phrase.
-  if (containsGreetingOrPleasantry(issue) && extracted.confidence === 'low') {
-    const cleaned = stripTenantMessageFiller(issue)
-    issue = truncateWords(cleaned || issue, FALLBACK_MAX_WORDS)
-  }
+  const issue = generateIssueSummary(sourceText, {
+    format: 'summary',
+    category: input.ticketCategory,
+    maxWords: 18,
+  })
 
   const location = formatLocationParen(input.unitLabel ?? '', input.building ?? '')
   const urgent = isUrgentFlag(input.ticketUrgency)

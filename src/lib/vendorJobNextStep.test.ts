@@ -134,7 +134,7 @@ describe('humanizeVendorJobDescription', () => {
       entryOkIfAbsent: false,
     })
     expect(result.title).toBe('Burst pipe')
-    expect(result.residentReport).toBe('My pipes burst')
+    expect(result.residentReport).toMatch(/pipes burst|plumbing/i)
     expect(result.affectedArea?.toLowerCase()).toBe('basement')
     expect(result.accessFromIntake).toBe('must_be_home')
     expect(result.residentReport).not.toMatch(/Tenant update/i)

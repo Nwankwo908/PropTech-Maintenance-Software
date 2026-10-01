@@ -4,6 +4,8 @@
  * No workflow side effects — UI only.
  */
 
+import { extractStructuredIssueDetails } from '@shared/maintenance/structuredIssueDetails.ts'
+
 export type VendorJobNextStepKind =
   | 'accept'
   | 'submit_estimate'
@@ -181,22 +183,16 @@ export type HumanizedVendorJobDescription = {
   affectedArea: string | null
   /** Coarse access signal for localized copy on the page. */
   accessFromIntake: 'must_be_home' | 'ok_if_away' | null
+  /** Distinct triage flags (e.g. tunneling vs spray-only pest). */
+  triageFlags?: string[]
+  recurring?: boolean
+  availability?: string | null
 }
-
-const INTAKE_LABELS = [
-  'Affected area',
-  'Safety concerns',
-  'First noticed',
-  'Resident availability',
-  'Tenant update',
-  'Entry if not home',
-  'Entry if absent',
-  'Preferred contact method',
-  'Preferred contact',
-]
 
 /**
  * Turn SMS/intake description blobs into human-readable job copy.
+ * Uses shared structured extraction so Tenant update fragments and fake
+ * "Resident availability" copies of the opening message are not treated as prose.
  */
 export function humanizeVendorJobDescription(input: {
   description: string | null | undefined
@@ -204,46 +200,22 @@ export function humanizeVendorJobDescription(input: {
   entryOkIfAbsent?: boolean | null
   fallbackTitle?: string | null
 }): HumanizedVendorJobDescription {
-  let rest = (input.description ?? '').replace(/\r\n/g, '\n').trim()
-
-  const takeLabeled = (label: string): string | null => {
-    const re = new RegExp(`(?:^|\\n+)\\s*${label}:\\s*([^\\n]+)`, 'i')
-    const match = rest.match(re)
-    if (!match) return null
-    rest = rest.replace(re, '\n').trim()
-    const value = match[1]!.replace(/[.]+$/, '').trim()
-    return value || null
-  }
-
-  const affectedArea = takeLabeled('Affected area')
-  const entryIfNotHome = takeLabeled('Entry if not home') ?? takeLabeled('Entry if absent')
-  for (const label of INTAKE_LABELS) {
-    if (label === 'Affected area' || label === 'Entry if not home' || label === 'Entry if absent') {
-      continue
-    }
-    takeLabeled(label)
-  }
-
-  // Collapse leftover intake fragments like "Tenant update: No" that survived.
-  rest = rest
-    .replace(/(?:^|\n+)\s*[A-Za-z][A-Za-z /]{1,40}:\s*(Yes|No)\b/gi, '')
-    .replace(/\n+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  const residentReport = rest || null
+  const structured = extractStructuredIssueDetails(input.description ?? '', {
+    format: 'title',
+  })
+  const entryIfNotHome =
+    structured.parts.labeledFields['Entry if not home'] ??
+    structured.parts.labeledFields['Entry if absent'] ??
+    null
 
   const headline = input.issueHeadline?.trim() || ''
   const title =
     headline ||
-    (residentReport
-      ? residentReport.split(/[.!?]/)[0]!.trim().slice(0, 80)
-      : '') ||
+    structured.issue ||
     input.fallbackTitle?.trim() ||
     'Maintenance'
 
-  // accessFromIntake is a coarse signal; page maps to localized copy via entryOkIfAbsent / flag.
-  let accessFromIntake: string | null = null
+  let accessFromIntake: 'must_be_home' | 'ok_if_away' | null = null
   if (typeof input.entryOkIfAbsent === 'boolean') {
     accessFromIntake = input.entryOkIfAbsent ? 'ok_if_away' : 'must_be_home'
   } else if (entryIfNotHome) {
@@ -257,8 +229,11 @@ export function humanizeVendorJobDescription(input: {
 
   return {
     title,
-    residentReport,
-    affectedArea,
+    residentReport: structured.displayDescription || null,
+    affectedArea: structured.locationDetail,
     accessFromIntake,
+    triageFlags: structured.triageFlags,
+    recurring: structured.recurring,
+    availability: structured.availability,
   }
 }

@@ -6,6 +6,7 @@ import {
 } from './adminWorkflows'
 import {
   collectCompletedWorkOrderTicketIds,
+  formatInspectionAttentionMeta,
   shouldOmitEscalatedRunFromNeedsAttention,
 } from './needsAttentionWorkOrder'
 
@@ -118,5 +119,19 @@ describe('collectCompletedWorkOrderTicketIds', () => {
       ]),
     })
     expect(ids.has('ticket-1')).toBe(true)
+  })
+})
+
+describe('formatInspectionAttentionMeta', () => {
+  it('keeps the specific WO identifiable inside a visit group', () => {
+    expect(
+      formatInspectionAttentionMeta({
+        workOrderRef: 'WO-D154',
+        itemIndex: 1,
+        itemTotal: 12,
+        itemLabel: 'Kitchen — Stove',
+        locationLabel: '563 Springdale',
+      }),
+    ).toContain('WO-D154 (1 of 12')
   })
 })
