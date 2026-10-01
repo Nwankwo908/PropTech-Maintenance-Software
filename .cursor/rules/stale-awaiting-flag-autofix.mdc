@@ -18,6 +18,7 @@ Every “pending ask” has **paired state**. When the ask is answered (or becom
 | `intake_state.vendor_availability_probe` (host thread) | Probe started / offers collected | Landlord choice resolved (probe is done) |
 | `maintenance_requests.vendor_notify_error` containing `Awaiting landlord vendor choice` | Choice SMS / rematch ask | Same moment as clearing `awaiting_vendor_choice` |
 | `vendor_notify_error` containing `Awaiting vendor availability before landlord choice` | Probe soft-offers sent | Probe completes into landlord choice **or** landlord acknowledges / assign proceeds |
+| `maintenance_requests.awaiting_vendor_availability_at` | Probe soft-offers sent | Same moment as clearing the probe notify string — also when `assigned_vendor_id` is set or work advances past availability (`closeOpenAsksForTicket`) |
 | `intake_state.awaiting_estimate_decision` | Estimate APPROVE/DECLINE ask | Estimate decision handled |
 
 **Ticket field vs intake:** Clearing only `awaiting_vendor_choice` while leaving `vendor_notify_error = "Awaiting landlord vendor choice"` makes the product look stuck on the landlord after they already replied.
