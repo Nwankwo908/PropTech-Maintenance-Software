@@ -73,6 +73,9 @@ type InspectionDoc = {
   fileSize: number
   uploadedAt: string
   status: InspectionStatus
+  /** When set, row is an HQS SMS/email letter — open via href, not removable. */
+  href?: string | null
+  hqsSource?: boolean
 }
 
 type InsuranceProfile = {
@@ -1109,6 +1112,11 @@ type HomeInspectionExpandedPanelProps = {
   hasPersistedInspection: boolean
   onFiles: (files: FileList | null) => void
   onRemove: (id: string) => void
+  hqsLetters?: import('@/lib/propertyHqsInspectionReports').PropertyHqsInspectionReportRow[]
+}
+
+function isHqsInspectionDoc(doc: InspectionDoc): boolean {
+  return doc.hqsSource === true || doc.id.startsWith('hqs-doc-')
 }
 
 /** Expanded Smart Inspection Report — Figma node 1144:20784. */
@@ -1118,6 +1126,7 @@ function HomeInspectionExpandedPanel({
   hasPersistedInspection,
   onFiles,
   onRemove,
+  hqsLetters = [],
 }: HomeInspectionExpandedPanelProps) {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -1242,9 +1251,25 @@ function HomeInspectionExpandedPanel({
               >
                 <div className="flex min-w-0 items-center gap-2.5">
                   <FileDocIcon />
-                  <p className="truncate text-[13px] font-medium leading-[19.5px] text-[#0d0f11]">
-                    {doc.fileName}
-                  </p>
+                  {doc.href ? (
+                    <a
+                      href={doc.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-[13px] font-medium leading-[19.5px] text-[#186179] underline-offset-2 hover:underline"
+                    >
+                      {doc.fileName}
+                    </a>
+                  ) : (
+                    <p className="truncate text-[13px] font-medium leading-[19.5px] text-[#0d0f11]">
+                      {doc.fileName}
+                    </p>
+                  )}
+                  {isHqsInspectionDoc(doc) ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#eff6ff] px-1.5 py-0.5 text-[10px] font-semibold text-[#1d4ed8]">
+                      HQS SMS
+                    </span>
+                  ) : null}
                   {doc.status === 'ready' ? (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#ecfdf5] px-1.5 py-0.5 text-[10px] font-semibold text-[#059669]">
                       <ReadyCheckIcon />
@@ -1273,14 +1298,18 @@ function HomeInspectionExpandedPanel({
                   <span className="sm:hidden">Uploaded · </span>
                   {formatUploadDate(doc.uploadedAt)}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => onRemove(doc.id)}
-                  className="pd-btn pd-btn-icon justify-self-start rounded p-1 sm:justify-self-center"
-                  aria-label={`Remove ${doc.fileName}`}
-                >
-                  <RemoveXIcon />
-                </button>
+                {isHqsInspectionDoc(doc) ? (
+                  <span className="size-8" aria-hidden />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(doc.id)}
+                    className="pd-btn pd-btn-icon justify-self-start rounded p-1 sm:justify-self-center"
+                    aria-label={`Remove ${doc.fileName}`}
+                  >
+                    <RemoveXIcon />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -1288,11 +1317,54 @@ function HomeInspectionExpandedPanel({
       </div>
   )
 
+  const hqsLetterList =
+    hqsLetters.length === 0 ? null : (
+      <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
+        <div className="border-b border-[#e2e8f0] bg-[#f8fafc] px-4 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.275px] text-[#64748b]">
+            HQS / compliance letters
+          </p>
+        </div>
+        <ul>
+          {hqsLetters.map((letter, index) => (
+            <li
+              key={letter.id}
+              className={[
+                'flex flex-col gap-0.5 px-4 py-3',
+                index < hqsLetters.length - 1 ? 'border-b border-[#e2e8f0]' : '',
+              ].join(' ')}
+            >
+              <p className="text-[13px] font-medium text-[#0d0f11]">
+                {letter.unitLabel ? `Unit ${letter.unitLabel}` : 'Unit'}
+                {letter.isAbated ? ' · HAP abatement' : ''}
+              </p>
+              <p className="text-[12px] text-[#64748b]">
+                {letter.emergencyItemCount} emergency · {letter.standardItemCount}{' '}
+                standard
+                {letter.reinspectionDate
+                  ? ` · re-inspect ${letter.reinspectionDate}`
+                  : letter.inspectionDate
+                    ? ` · inspected ${letter.inspectionDate}`
+                    : ''}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+
+  const trailing = (
+    <div className="flex flex-col gap-3">
+      {documentList}
+      {hqsLetterList}
+    </div>
+  )
+
   if (!building) {
     return (
       <div className="flex flex-col gap-4">
         {uploadCard}
-        {documentList}
+        {trailing}
       </div>
     )
   }
@@ -1301,7 +1373,7 @@ function HomeInspectionExpandedPanel({
     <ApplianceInspectionUploader
       building={building}
       leading={uploadCard}
-      trailing={documentList}
+      trailing={trailing}
     />
   )
 }
@@ -1310,6 +1382,8 @@ export type PropertyDetailsModule = 'inspection' | 'insurance' | 'history'
 
 export type PropertyDetailsPanelProps = {
   building: string
+  /** Canonical property id — preferred scope for HQS letters / SMS docs. */
+  propertyId?: string | null
   loading?: boolean
   /** Seed from onboarding / demo meta when no saved profile yet. */
   initialYearBuilt?: number | null
@@ -1326,6 +1400,7 @@ const ALL_DETAIL_MODULES: PropertyDetailsModule[] = [
 /** Property Details tab — Figma card stack for optional property data modules. */
 export function PropertyDetailsPanel({
   building,
+  propertyId = null,
   loading = false,
   initialYearBuilt = null,
   modules = ALL_DETAIL_MODULES,
@@ -1337,6 +1412,9 @@ export function PropertyDetailsPanel({
   const [inspectionDocs, setInspectionDocs] = useState<InspectionDoc[]>([])
   const [inspectionHasPersistedWork, setInspectionHasPersistedWork] = useState(false)
   const [inspectionSaveMessage, setInspectionSaveMessage] = useState<string | null>(null)
+  const [hqsLetters, setHqsLetters] = useState<
+    import('@/lib/propertyHqsInspectionReports').PropertyHqsInspectionReportRow[]
+  >([])
   const [historyDocs, setHistoryDocs] = useState<MaintenanceHistoryDocument[]>([])
   const [historyApproved, setHistoryApproved] = useState<MaintenanceHistoryRecord[]>([])
   const [insurance, setInsurance] = useState<InsuranceProfile>(EMPTY_INSURANCE)
@@ -1359,22 +1437,40 @@ export function PropertyDetailsPanel({
     let cancelled = false
     async function loadDocs() {
       try {
-        const [session, assets] = await Promise.all([
+        const hqsMod = await import('@/lib/propertyHqsInspectionReports')
+        const [session, assets, letters] = await Promise.all([
           loadBuildingInspectionSession(building),
           listInspectionAssets(building).catch(() => []),
+          hqsMod
+            .listHqsInspectionReportsForBuilding(building, { propertyId })
+            .catch(() => []),
         ])
         if (cancelled) return
-        setInspectionDocs(inspectionDocsFromSessionPhotos(session.photos))
+        const sessionDocs = inspectionDocsFromSessionPhotos(session.photos)
+        const hqsDocs: InspectionDoc[] = hqsMod
+          .hqsLettersToDocumentRows(letters)
+          .map((row) => ({
+            id: row.id,
+            fileName: row.fileName,
+            fileSize: row.fileSize,
+            uploadedAt: row.uploadedAt,
+            status: row.status,
+            href: row.href,
+            hqsSource: true,
+          }))
+        setInspectionDocs([...hqsDocs, ...sessionDocs])
         setInspectionHasPersistedWork(
           hasPersistedInspectionData({
             photoCount: session.photos.length,
             assetCount: assets.length,
-          }),
+          }) || letters.length > 0,
         )
+        setHqsLetters(letters)
       } catch {
         if (!cancelled) {
           setInspectionDocs([])
           setInspectionHasPersistedWork(false)
+          setHqsLetters([])
         }
       }
     }
@@ -1402,7 +1498,7 @@ export function PropertyDetailsPanel({
     return () => {
       cancelled = true
     }
-  }, [building, initialYearBuilt])
+  }, [building, propertyId, initialYearBuilt])
 
   useEffect(() => {
     if (!building) return
@@ -1414,12 +1510,18 @@ export function PropertyDetailsPanel({
         listInspectionAssets(building).catch(() => []),
       ])
         .then(([session, assets]) => {
-          setInspectionDocs(inspectionDocsFromSessionPhotos(session.photos))
+          setInspectionDocs((current) => {
+            const hqsDocs = current.filter((doc) => isHqsInspectionDoc(doc))
+            return [
+              ...hqsDocs,
+              ...inspectionDocsFromSessionPhotos(session.photos),
+            ]
+          })
           setInspectionHasPersistedWork(
             hasPersistedInspectionData({
               photoCount: session.photos.length,
               assetCount: assets.length,
-            }),
+            }) || hqsLetters.length > 0,
           )
         })
         .catch(() => {
@@ -1428,7 +1530,7 @@ export function PropertyDetailsPanel({
     }
     window.addEventListener(INSPECTION_SESSION_CHANGED_EVENT, onSessionChanged)
     return () => window.removeEventListener(INSPECTION_SESSION_CHANGED_EVENT, onSessionChanged)
-  }, [building])
+  }, [building, hqsLetters.length])
 
   const persistHistory = useCallback(
     (next: MaintenanceHistoryDocument[]) => {
@@ -1503,12 +1605,16 @@ export function PropertyDetailsPanel({
         loadBuildingInspectionSession(building),
         listInspectionAssets(building).catch(() => []),
       ])
-      setInspectionDocs(inspectionDocsFromSessionPhotos(refreshed.photos))
+      const hqsDocs = inspectionDocs.filter((doc) => isHqsInspectionDoc(doc))
+      setInspectionDocs([
+        ...hqsDocs,
+        ...inspectionDocsFromSessionPhotos(refreshed.photos),
+      ])
       setInspectionHasPersistedWork(
         hasPersistedInspectionData({
           photoCount: refreshed.photos.length,
           assetCount: assets.length,
-        }),
+        }) || hqsDocs.length > 0,
       )
       notifyInspectionSessionChanged(building)
       notifyAssetRegistryChanged(building)
@@ -1522,12 +1628,16 @@ export function PropertyDetailsPanel({
           loadBuildingInspectionSession(building),
           listInspectionAssets(building).catch(() => []),
         ])
-        setInspectionDocs(inspectionDocsFromSessionPhotos(refreshed.photos))
+        const hqsDocs = inspectionDocs.filter((doc) => isHqsInspectionDoc(doc))
+        setInspectionDocs([
+          ...hqsDocs,
+          ...inspectionDocsFromSessionPhotos(refreshed.photos),
+        ])
         setInspectionHasPersistedWork(
           hasPersistedInspectionData({
             photoCount: refreshed.photos.length,
             assetCount: assets.length,
-          }),
+          }) || hqsDocs.length > 0,
         )
       } catch {
         setInspectionDocs((current) => current.filter((doc) => !pending.some((row) => row.id === doc.id)))
@@ -1543,6 +1653,7 @@ export function PropertyDetailsPanel({
 
   async function onRemoveInspectionDoc(id: string) {
     setError(null)
+    if (id.startsWith('hqs-doc-')) return
     const previous = inspectionDocs
     setInspectionDocs((current) => current.filter((doc) => doc.id !== id))
     if (id.startsWith('pending-')) return
@@ -1600,6 +1711,7 @@ export function PropertyDetailsPanel({
           building={building}
           docs={inspectionDocs}
           hasPersistedInspection={inspectionHasPersistedWork}
+          hqsLetters={hqsLetters}
           onFiles={(files) => void onInspectionFiles(files)}
           onRemove={(id) => void onRemoveInspectionDoc(id)}
         />

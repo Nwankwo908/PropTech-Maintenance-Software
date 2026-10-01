@@ -501,7 +501,7 @@ export function AdminPropertyDetailDashboard() {
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, due_at',
+              'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, due_at, inspection_report_id',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -509,7 +509,7 @@ export function AdminPropertyDetailDashboard() {
           supabase
             .from('maintenance_requests')
             .select(
-              'id, created_at, unit, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount, due_at',
+              'id, created_at, unit, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount, due_at, inspection_report_id',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -1565,6 +1565,7 @@ export function AdminPropertyDetailDashboard() {
       ) : activeTab === 'details' ? (
         <PropertyDetailsPanel
           building={building ?? ''}
+          propertyId={canonicalProperty?.id ?? null}
           loading={loading}
           initialYearBuilt={meta.yearBuilt}
           modules={['inspection']}
@@ -1572,6 +1573,7 @@ export function AdminPropertyDetailDashboard() {
       ) : activeTab === 'insurance' ? (
         <PropertyDetailsPanel
           building={building ?? ''}
+          propertyId={canonicalProperty?.id ?? null}
           loading={loading}
           initialYearBuilt={meta.yearBuilt}
           modules={['insurance']}
