@@ -9,6 +9,7 @@ import {
   buildIntakeSilenceNudgeSms,
   classifyIntakeSilenceFollowUp,
   isEmergencyIntakeSilence,
+  resolveIntakeSilenceAskedAt,
   thresholdsForIntakeSilence,
   type IntakeSilenceSnapshot,
 } from './intakeSilenceFollowUp.ts'
@@ -194,5 +195,58 @@ describe('buildIntakeSilenceNudgeSms', () => {
     const body = buildIntakeSilenceNudgeSms(base())
     expect(body).toMatch(/pest issue/i)
     expect(body).not.toBe(base().diagnosticQuestion)
+  })
+})
+
+describe('resolveIntakeSilenceAskedAt', () => {
+  const asked = '2026-09-29T20:37:24.000Z'
+  const askedMs = Date.parse(asked)
+
+  it('prefers frozen open_question_asked_at over updated_at', () => {
+    expect(
+      resolveIntakeSilenceAskedAt({
+        openQuestionAskedAt: asked,
+        conversationUpdatedAt: new Date(askedMs + INTAKE_SILENCE_NUDGE_MS).toISOString(),
+        hasOpenQuestion: true,
+      }),
+    ).toEqual({ askedAt: asked, source: 'open_question_asked_at' })
+  })
+
+  it('recovers ask time from nudge stamp so resolve is not restarted', () => {
+    const nudgeAt = new Date(askedMs + INTAKE_SILENCE_NUDGE_MS).toISOString()
+    const resolved = resolveIntakeSilenceAskedAt({
+      openQuestionAskedAt: null,
+      silenceNudgeSentAt: nudgeAt,
+      conversationUpdatedAt: nudgeAt,
+      hasOpenQuestion: true,
+      nudgeMs: INTAKE_SILENCE_NUDGE_MS,
+    })
+    expect(resolved.source).toBe('recovered_from_nudge')
+    expect(Date.parse(resolved.askedAt!)).toBe(askedMs)
+
+    const snap = base({
+      openQuestionAskedAt: resolved.askedAt,
+      silenceNudgeSentAt: nudgeAt,
+    })
+    expect(
+      classifyIntakeSilenceFollowUp(snap, askedMs + INTAKE_SILENCE_RESOLVE_MS + 1)
+        .action,
+    ).toBe('resolve_unit_entry_unconfirmed')
+  })
+
+  it('documents the updated_at fallback bug when nudge bumps the row', () => {
+    const afterNudgeUpdatedAt = new Date(
+      askedMs + INTAKE_SILENCE_NUDGE_MS + 1,
+    ).toISOString()
+    const buggy = resolveIntakeSilenceAskedAt({
+      openQuestionAskedAt: null,
+      silenceNudgeSentAt: null,
+      conversationUpdatedAt: afterNudgeUpdatedAt,
+      hasOpenQuestion: true,
+    })
+    expect(buggy.source).toBe('updated_at_fallback')
+    const silentFor =
+      askedMs + INTAKE_SILENCE_RESOLVE_MS + 1 - Date.parse(buggy.askedAt!)
+    expect(silentFor).toBeLessThan(INTAKE_SILENCE_RESOLVE_MS)
   })
 })

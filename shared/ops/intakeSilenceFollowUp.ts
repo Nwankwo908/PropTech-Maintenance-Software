@@ -140,6 +140,52 @@ function parseMs(value: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null
 }
 
+export type IntakeSilenceAskedAtSource =
+  | 'open_question_asked_at'
+  | 'recovered_from_nudge'
+  | 'updated_at_fallback'
+  | 'none'
+
+/**
+ * Resolve the silence clock for an open intake question.
+ *
+ * Never keep measuring from conversation `updated_at` after a reminder — saving
+ * the nudge bumps `updated_at` and would restart the 36h resolve wait. Prefer a
+ * frozen `open_question_asked_at`; if missing but a nudge was already sent,
+ * recover ask time as nudgeSentAt − nudgeMs.
+ */
+export function resolveIntakeSilenceAskedAt(input: {
+  openQuestionAskedAt?: string | null
+  silenceNudgeSentAt?: string | null
+  conversationUpdatedAt?: string | null
+  hasOpenQuestion: boolean
+  /** Used only to recover ask time when nudge stamp exists but ask stamp does not. */
+  nudgeMs?: number
+}): { askedAt: string | null; source: IntakeSilenceAskedAtSource } {
+  const stamped = input.openQuestionAskedAt?.trim() || ''
+  if (stamped) {
+    return { askedAt: stamped, source: 'open_question_asked_at' }
+  }
+
+  const nudgeMs = input.nudgeMs ?? INTAKE_SILENCE_NUDGE_MS
+  const nudgedAt = parseMs(input.silenceNudgeSentAt)
+  if (nudgedAt != null && nudgeMs > 0) {
+    return {
+      askedAt: new Date(nudgedAt - nudgeMs).toISOString(),
+      source: 'recovered_from_nudge',
+    }
+  }
+
+  if (input.hasOpenQuestion) {
+    const updated = input.conversationUpdatedAt?.trim() || ''
+    if (updated) {
+      return { askedAt: updated, source: 'updated_at_fallback' }
+    }
+  }
+
+  return { askedAt: null, source: 'none' }
+}
+
 /**
  * True when intake already carries the emergency/habitability band from the
  * SMS urgency pipeline (same band that triggers prependEmergencySafetyIfNeeded).

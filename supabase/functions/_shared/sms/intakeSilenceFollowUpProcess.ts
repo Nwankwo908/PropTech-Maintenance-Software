@@ -4,6 +4,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   classifyIntakeSilenceFollowUp,
+  resolveIntakeSilenceAskedAt,
+  thresholdsForIntakeSilence,
   type IntakeSilenceSnapshot,
   type IntakeSilenceThresholds,
   type IntakeSilenceUrgencyAlertTier,
@@ -69,13 +71,9 @@ function snapshotFromConversation(
   draftUrgency?: string | null,
 ): IntakeSilenceSnapshot {
   const state = asState(row.intake_state)
-  // Legacy stuck intakes (pre-stamp) — use conversation updated_at as asked_at.
   const hasOpenQuestion =
     Boolean(state.diagnostic_question?.trim()) ||
     String(state.step ?? "").toLowerCase() === "photo"
-  const askedAt =
-    state.open_question_asked_at?.trim() ||
-    (hasOpenQuestion ? row.updated_at : null)
   // Prefer intake_state (set in applyQuestionPlan before unit_entry); fall back
   // to draft ticket.urgency written by ensureEarlySmsTicket.
   const urgency =
@@ -83,6 +81,31 @@ function snapshotFromConversation(
     state.recommended_urgency?.trim() ||
     draftUrgency?.trim() ||
     null
+  const urgencyAlertTier = normalizeAlertTier(state.urgency_alert_tier)
+  const thresholdProbe = thresholdsForIntakeSilence({
+    conversationId: row.id,
+    landlordId: String(row.landlord_id ?? ""),
+    step: state.step ?? null,
+    diagnosticQuestionType: state.diagnostic_question_type ?? null,
+    diagnosticQuestion: state.diagnostic_question ?? null,
+    openQuestionAskedAt: null,
+    silenceNudgeSentAt: state.intake_silence_nudge_sent_at ?? null,
+    silenceResolvedAt: state.intake_silence_resolved_at ?? null,
+    draftTicketId: state.draft_ticket_id ?? row.maintenance_request_id ?? null,
+    description: state.description ?? state.initial_message ?? null,
+    issueHeadline: state.acknowledged_headline ?? null,
+    issueType: state.issue_type ?? null,
+    vendorTrade: state.vendor_trade ?? null,
+    urgency,
+    urgencyAlertTier,
+  })
+  const { askedAt } = resolveIntakeSilenceAskedAt({
+    openQuestionAskedAt: state.open_question_asked_at,
+    silenceNudgeSentAt: state.intake_silence_nudge_sent_at,
+    conversationUpdatedAt: row.updated_at,
+    hasOpenQuestion,
+    nudgeMs: thresholdProbe.nudgeMs,
+  })
   return {
     conversationId: row.id,
     landlordId: String(row.landlord_id ?? ""),
@@ -98,7 +121,7 @@ function snapshotFromConversation(
     issueType: state.issue_type ?? null,
     vendorTrade: state.vendor_trade ?? null,
     urgency,
-    urgencyAlertTier: normalizeAlertTier(state.urgency_alert_tier),
+    urgencyAlertTier,
   }
 }
 
@@ -254,6 +277,23 @@ export async function processIntakeSilenceFollowUps(
       continue
     }
 
+    // Freeze ask time into intake_state whenever we had to derive it. Leaving
+    // the clock on conversation.updated_at lets reminder saves restart the 36h wait.
+    if (
+      !dryRun &&
+      snapshot.openQuestionAskedAt &&
+      !state.open_question_asked_at?.trim()
+    ) {
+      const frozen: SmsIntakeState = {
+        ...state,
+        open_question_asked_at: snapshot.openQuestionAskedAt,
+      }
+      await saveState(supabase, row.id, frozen)
+      state.open_question_asked_at = snapshot.openQuestionAskedAt
+      row.updated_at = new Date().toISOString()
+      row.intake_state = frozen
+    }
+
     const decision = classifyIntakeSilenceFollowUp(
       snapshot,
       nowMs,
@@ -292,6 +332,18 @@ export async function processIntakeSilenceFollowUps(
         summary.nudged += 1
         continue
       }
+      const next: SmsIntakeState = {
+        ...state,
+        // Persist ask + nudge stamps BEFORE outbound SMS. send/save bump
+        // conversation.updated_at; if the ask clock still fell back to that
+        // field, the 36h resolve wait would restart.
+        open_question_asked_at:
+          state.open_question_asked_at?.trim() ||
+          snapshot.openQuestionAskedAt ||
+          undefined,
+        intake_silence_nudge_sent_at: new Date(nowMs).toISOString(),
+      }
+      await saveState(supabase, row.id, next)
       const ok = await sendResidentSms(supabase, {
         conversationId: row.id,
         landlordId: snapshot.landlordId,
@@ -303,17 +355,6 @@ export async function processIntakeSilenceFollowUps(
         summary.skipped += 1
         continue
       }
-      const next: SmsIntakeState = {
-        ...state,
-        // Persist ask time before saveState bumps updated_at — otherwise the
-        // updated_at fallback resets silence clocks and resolve never fires.
-        open_question_asked_at:
-          state.open_question_asked_at?.trim() ||
-          snapshot.openQuestionAskedAt ||
-          undefined,
-        intake_silence_nudge_sent_at: new Date(nowMs).toISOString(),
-      }
-      await saveState(supabase, row.id, next)
       await recordActivityLog(supabase, {
         landlordId: snapshot.landlordId,
         eventType: "sms.intake_silence_nudge",

@@ -1,0 +1,32 @@
+---
+description: Intake silence clock must use open_question_asked_at — never conversation updated_at after reminders
+globs: supabase/functions/**/intakeSilence*.ts,shared/ops/intakeSilenceFollowUp.ts
+alwaysApply: false
+---
+
+# Intake silence — freeze the ask clock
+
+Silence nudge (3h) and resolve (36h) are measured from **when the question was asked**, not from `sms_conversations.updated_at`.
+
+## Rule
+
+| Source | When to use |
+|---|---|
+| `intake_state.open_question_asked_at` | Always prefer (via `resolveIntakeSilenceAskedAt`) |
+| Recover from `intake_silence_nudge_sent_at − nudgeMs` | Legacy rows that were nudged without an ask stamp |
+| `conversation.updated_at` | Last resort only — **persist into `open_question_asked_at` immediately** |
+
+## Why
+
+Sending a silence reminder (or any `saveState`) bumps `updated_at`. If silence is still measured from that field, the 36-hour resolve wait **restarts** and the request stays stuck on “already nudged.”
+
+## Do
+
+- Stamp `open_question_asked_at` when asking (`finishIntakeQuestion`)
+- Persist derived ask time before outbound nudge SMS
+- Use `resolveIntakeSilenceAskedAt` — do not read `updated_at` ad hoc
+
+## Do not
+
+- Use `row.updated_at` as the ongoing silence clock after a reminder
+- Clear `open_question_asked_at` on nudge save
