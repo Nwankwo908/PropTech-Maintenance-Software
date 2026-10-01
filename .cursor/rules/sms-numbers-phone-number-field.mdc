@@ -1,0 +1,37 @@
+---
+description: sms_numbers from-number is phone_number — never e164 (prevents silent reminder skips)
+globs: supabase/functions/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Landlord SMS line — use `phone_number`, not `e164`
+
+`sms_numbers` stores the DID in **`phone_number`**. There is no `e164` column on that table.
+
+## Rule
+
+| API | From-number field |
+|---|---|
+| `findActiveLandlordMainNumber` → `LandlordSmsNumberRow` | `row.phone_number` via `landlordSmsRowFromNumber(row)` |
+| `resolveOutboundLandlordSmsLine` → `OutboundLandlordSmsLine` | `line.phone` (already normalized) |
+
+## Why
+
+Reading `row.e164` is always `undefined`. Call sites then treat the landlord line as missing and **quietly skip** silence nudges, rent reminders, and other outbound SMS (`return false` / `no landlord SMS line` warn) with no hard failure.
+
+## Do
+
+```ts
+const line = await findActiveLandlordMainNumber(supabase, landlordId)
+const fromNumber = landlordSmsRowFromNumber(line)
+if (!fromNumber) { /* skip / error */ }
+```
+
+## Do not
+
+```ts
+if (!line?.e164) return false
+fromNumber: line.e164
+```
+
+Incident reference: intake silence follow-ups never sent until the sender switched to `phone_number` (`bf4c6cc`).

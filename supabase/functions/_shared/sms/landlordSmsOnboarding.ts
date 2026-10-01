@@ -52,6 +52,19 @@ function selectSmsNumberFields() {
   return "id, landlord_id, phone_number, provider, provider_number_sid, provider_messaging_service_sid, status, purpose"
 }
 
+/**
+ * Outbound from-number on a landlord_main `sms_numbers` row.
+ *
+ * Always read `phone_number`. There is no `e164` column on this table — checking
+ * `row.e164` is always undefined and makes reminders / silence follow-ups quietly
+ * skip with a false "no landlord SMS line" warning.
+ */
+export function landlordSmsRowFromNumber(
+  row: Pick<LandlordSmsNumberRow, "phone_number"> | null | undefined,
+): string {
+  return typeof row?.phone_number === "string" ? row.phone_number.trim() : ""
+}
+
 export async function findActiveLandlordMainNumber(
   supabase: SupabaseClient,
   landlordId: string,

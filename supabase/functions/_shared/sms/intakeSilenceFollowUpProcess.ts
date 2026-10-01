@@ -16,8 +16,12 @@ import {
   markQuestionAsked,
 } from "./determineNextMaintenanceQuestion.ts"
 import { sendInboundAutoReply } from "./inboundReply.ts"
-import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import {
+  findActiveLandlordMainNumber,
+  landlordSmsRowFromNumber,
+} from "./landlordSmsOnboarding.ts"
+import {
+  buildConfirmationSummary,
   conversationStatusForStep,
   type SmsIntakeState,
   type UrgencyAlertTier,
@@ -139,7 +143,7 @@ async function sendResidentSms(
   },
 ): Promise<boolean> {
   const line = await findActiveLandlordMainNumber(supabase, params.landlordId)
-  const fromNumber = line?.phone_number?.trim() || ""
+  const fromNumber = landlordSmsRowFromNumber(line)
   if (!fromNumber) {
     console.warn("[intake-silence] no landlord SMS line", params.landlordId)
     return false
@@ -154,6 +158,29 @@ async function sendResidentSms(
     source: params.source,
   })
   return sent.ok
+}
+
+/**
+ * Gate a post-nudge silence resolve SMS. Honor quiet hours, but do not pass
+ * ticketId — the prior silence nudge would otherwise trip the 6h recipient
+ * cooldown and quietly suppress the resolve/confirm text (esp. urgent 60–120m).
+ */
+async function gateSilenceResolveSms(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    residentId: string
+    phone: string
+    nowMs: number
+  },
+) {
+  return await gateResidentAutomatedReminder(supabase, {
+    landlordId: params.landlordId,
+    residentId: params.residentId,
+    messageType: "intake_silence_nudge",
+    recipientPhone: params.phone,
+    nowMs: params.nowMs,
+  })
 }
 
 export async function processIntakeSilenceFollowUps(
@@ -351,12 +378,10 @@ export async function processIntakeSilenceFollowUps(
           }
           await saveState(supabase, row.id, next)
           if (phone) {
-            const gate = await gateResidentAutomatedReminder(supabase, {
+            const gate = await gateSilenceResolveSms(supabase, {
               landlordId: snapshot.landlordId,
               residentId,
-              messageType: "intake_silence_nudge",
-              recipientPhone: phone,
-              ticketId,
+              phone,
               nowMs,
             })
             if (gate.decision.action === "send") {
@@ -471,14 +496,41 @@ export async function processIntakeSilenceFollowUps(
         open_question_asked_at: undefined,
         intake_silence_nudge_sent_at: undefined,
       })
-      if (next.step !== "awaiting_confirm" && next.diagnostic_question) {
+      let outboundBody: string | null = null
+      if (next.step === "awaiting_confirm") {
+        next = {
+          ...next,
+          open_question_asked_at: new Date(nowMs).toISOString(),
+        }
+        outboundBody = buildConfirmationSummary(next)
+      } else if (next.diagnostic_question?.trim()) {
         next = {
           ...next,
           open_question_asked_at: new Date(nowMs).toISOString(),
           intake_silence_resolved_at: undefined,
         }
+        outboundBody = next.diagnostic_question.trim()
       }
       await saveState(supabase, row.id, next)
+      if (outboundBody && residentId && phone) {
+        const gate = await gateSilenceResolveSms(supabase, {
+          landlordId: snapshot.landlordId,
+          residentId,
+          phone,
+          nowMs,
+        })
+        if (gate.decision.action === "send") {
+          await sendResidentSms(supabase, {
+            conversationId: row.id,
+            landlordId: snapshot.landlordId,
+            toPhone: phone,
+            body: outboundBody,
+            source: "intake_silence_resolve",
+          })
+        } else if (gate.decision.action === "hold_quiet_hours") {
+          summary.deferredQuietHours += 1
+        }
+      }
       await recordActivityLog(supabase, {
         landlordId: snapshot.landlordId,
         eventType: "sms.intake_silence_resolved",
@@ -491,6 +543,7 @@ export async function processIntakeSilenceFollowUps(
         metadata: {
           message: "Skipped the photo ask after silence and continued intake.",
           resolution: "skip_photo",
+          next_step: next.step ?? null,
         },
       })
       summary.resolved += 1
