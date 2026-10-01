@@ -278,6 +278,12 @@ export async function processIntakeSilenceFollowUps(
       }
       const next: SmsIntakeState = {
         ...state,
+        // Persist ask time before saveState bumps updated_at — otherwise the
+        // updated_at fallback resets silence clocks and resolve never fires.
+        open_question_asked_at:
+          state.open_question_asked_at?.trim() ||
+          snapshot.openQuestionAskedAt ||
+          undefined,
         intake_silence_nudge_sent_at: new Date(nowMs).toISOString(),
       }
       await saveState(supabase, row.id, next)
