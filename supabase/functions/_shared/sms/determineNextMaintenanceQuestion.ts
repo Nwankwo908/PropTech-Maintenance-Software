@@ -93,6 +93,15 @@ function isNo(text: string): boolean {
     /\b(not overflowing|not leaking|no leak|none|it'?s not)\b/i.test(text)
 }
 
+/** unit_entry: resident is unsure — proceed with permission unconfirmed. */
+export function isUnitEntryNotSure(text: string): boolean {
+  const t = text.trim().toLowerCase()
+  return (
+    /^(not\s+sure|unsure|idk|i\s*don'?t\s+know|dont\s+know|unknown|maybe)\b/.test(t) ||
+    /\b(not\s+sure\s+yet|don'?t\s+know\s+yet)\b/.test(t)
+  )
+}
+
 function hasFixture(hay: string): boolean {
   return /\b(sink|toilet|faucet|tub|shower|dishwasher|washer|dryer|fridge|refrigerator|oven|stove|outlet|breaker)\b/i
     .test(hay)
@@ -575,10 +584,12 @@ function resolveNextMaintenanceQuestion(
   }
 
   if (isPest(state, hay)) {
-    const recurring =
+    // "Repeatedly" / "again" can mean sighting frequency — only treat as a
+    // prior-visit follow-up when a real prior ticket is attached.
+    const frequencyImplied =
       Boolean(state.resident_reported_recurring) || detectRecurringIssueSignal(hay)
-    // Frequency is already answered when they said again / before / repeatedly.
-    if (!recurring) {
+    const priorVisit = Boolean(state.prior_related_ticket_id?.trim())
+    if (!frequencyImplied) {
       const q = tryAsk(
         "pest_frequency",
         "Have you seen just one, or are you seeing them repeatedly?",
@@ -588,19 +599,15 @@ function resolveNextMaintenanceQuestion(
     if (!room) {
       const loc = tryAsk(
         "pest_location",
-        recurring
-          ? state.prior_related_ticket_id
-            ? "I see a prior pest visit for your unit. Is this the same spot as last time, or somewhere new?"
-            : "Since someone's been out before — is this the same spot as last time, or somewhere new?"
+        priorVisit
+          ? "I see a prior pest visit for your unit. Is this the same spot as last time, or somewhere new?"
           : "Where are you seeing them most — kitchen, bathroom, bedroom, or multiple rooms?",
       )
       if (loc) return loc
-    } else if (recurring && !asked(state, "pest_location")) {
+    } else if (priorVisit && !asked(state, "pest_location")) {
       const same = tryAsk(
         "pest_location",
-        state.prior_related_ticket_id
-          ? "I see a prior pest visit for your unit. Is this the same issue coming back in that same spot?"
-          : "Is this the same spot as last time, or somewhere new?",
+        "I see a prior pest visit for your unit. Is this the same issue coming back in that same spot?",
       )
       if (same) return same
     }
@@ -713,7 +720,7 @@ function resolveNextMaintenanceQuestion(
   if (!asked(state, "unit_entry") && !fact(state, "unit_entry")) {
     const q = tryAsk(
       "unit_entry",
-      "If you're not home, may staff or a vendor enter the unit to make the repair? Reply YES or NO.",
+      "If you're not home, may staff or a vendor enter the unit to make the repair? Reply YES, NO, or NOT SURE.",
       "diagnostic",
     )
     if (q) return q
@@ -779,9 +786,13 @@ export function applyDiagnosticAnswer(
   body: string,
 ): SmsIntakeState {
   const type = state.diagnostic_question_type || "general_clarify"
-  const answer = body.trim()
+  let answer = body.trim()
   const askedTypes = [...(state.asked_question_types ?? [])]
   if (!askedTypes.includes(type)) askedTypes.push(type)
+
+  if (type === "unit_entry" && isUnitEntryNotSure(answer)) {
+    answer = "not_sure"
+  }
 
   const facts = { ...(state.diagnostic_facts ?? {}), [type]: answer }
   let safety = state.safety_concerns
@@ -878,6 +889,9 @@ export function applyDiagnosticAnswer(
       initial_message: answer,
       description: answer,
       sanitized_description: answer,
+      open_question_asked_at: undefined,
+      intake_silence_nudge_sent_at: undefined,
+      intake_silence_resolved_at: undefined,
     }
   }
 
@@ -895,6 +909,9 @@ export function applyDiagnosticAnswer(
     issue_type: issueType,
     vendor_trade: vendorTrade,
     description,
+    open_question_asked_at: undefined,
+    intake_silence_nudge_sent_at: undefined,
+    intake_silence_resolved_at: undefined,
   }
 }
 

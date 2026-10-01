@@ -37,8 +37,8 @@ describe('intake understanding confirm (Byron-style)', () => {
   })
 })
 
-describe('Property Insights recurring from resident_reported_recurring', () => {
-  it('surfaces RECURRING ISSUES from a single flagged ticket', () => {
+describe('Property Insights recurring from separate jobs', () => {
+  it('does not surface RECURRING ISSUES from resident language alone', () => {
     const input: PortfolioIntelligenceInput = {
       tickets: [
         {
@@ -56,6 +56,37 @@ describe('Property Insights recurring from resident_reported_recurring', () => {
       now: Date.now(),
     }
     const insights = computePortfolioInsights(input)
-    expect(insights.some((i) => i.tag === 'RECURRING ISSUES')).toBe(true)
+    expect(insights.some((i) => i.tag === 'RECURRING ISSUES')).toBe(false)
+  })
+
+  it('surfaces RECURRING ISSUES when two separate jobs share building + category', () => {
+    const now = Date.now()
+    const input: PortfolioIntelligenceInput = {
+      tickets: [
+        {
+          id: 't1',
+          building: '14 Maple Ave',
+          unit: '1',
+          propertyId: 'prop-maple',
+          issueCategory: 'pest_control',
+          vendorWorkStatus: 'completed',
+          createdAt: new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        {
+          id: 't2',
+          building: '14 Maple Ave',
+          unit: '1',
+          propertyId: 'prop-maple',
+          issueCategory: 'pest_control',
+          vendorWorkStatus: 'unassigned',
+          createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      ],
+      units: [{ unitLabel: '1', building: '14 Maple Ave', propertyId: 'prop-maple' }],
+      now,
+    }
+    const insights = computePortfolioInsights(input)
+    const recurring = insights.find((i) => i.tag === 'RECURRING ISSUES')
+    expect(recurring?.requestCount).toBe(2)
   })
 })

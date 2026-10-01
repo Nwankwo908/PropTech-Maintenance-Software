@@ -1,13 +1,18 @@
 import { assertEquals, assertMatch } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   beginMultiIssueSharedIntake,
+  buildMediaEvidenceAck,
   buildMultiIssueConfirmSms,
   buildMultiIssueSubmittedSms,
   buildRequestSubmittedSms,
   clusterIssueSegments,
+  coalesceIssueSegments,
   detectMultipleMaintenanceIssues,
   INTAKE_SUBMIT_FAILED_SMS,
+  isActionableIssueFragment,
+  isMediaEvidenceFragment,
   splitMaintenanceIssueSegments,
+  summarizeIssueCandidate,
 } from "./multiIssueIntake.ts"
 
 const SAMPLE = `Good morning. I hope all is well. Following up again regarding the piece for the door and the exterminator for behind the stove.
@@ -174,3 +179,71 @@ Deno.test("buildMultiIssueSubmittedSms follows up with schedule copy", () => {
   assertMatch(body, /Until help arrives/i)
   assertEquals(/You're all set/i.test(body), false)
 })
+
+const BATHROOM_LEAK_CASCADE =
+  "My bathroom sink is leaking bad. The wood of the bottom drawer of the vanity has soaked and broke. And a metal piece has rusted and broke from the faucet. I can't use my sink at all and I have turned off the valves. I also have videos of the leaking."
+
+Deno.test("media evidence fragment is not actionable", () => {
+  assertEquals(isMediaEvidenceFragment("have videos of the leaking."), true)
+  assertEquals(isActionableIssueFragment("have videos of the leaking."), false)
+  assertEquals(
+    isActionableIssueFragment("Also my bedroom smoke alarm is beeping"),
+    true,
+  )
+})
+
+Deno.test(
+  "multi-symptom leak cascade does not split; symptoms stay one summary; videos acknowledged",
+  async () => {
+    const issues = await detectMultipleMaintenanceIssues(BATHROOM_LEAK_CASCADE)
+    assertEquals(issues.length, 0, JSON.stringify(issues))
+
+    const parts = splitMaintenanceIssueSegments(BATHROOM_LEAK_CASCADE)
+    const coalesced = coalesceIssueSegments(parts)
+    assertEquals(coalesced.length, 1, JSON.stringify(coalesced))
+    assertMatch(coalesced[0], /drawer/i)
+    assertMatch(coalesced[0], /faucet|rusted/i)
+    assertMatch(coalesced[0], /videos?/i)
+
+    const summary = summarizeIssueCandidate(coalesced[0])
+    assertMatch(summary, /sink|leak|plumbing/i)
+    assertEquals(/\bvideos?\b/i.test(summary), false)
+    // No mid-word character truncation (e.g. "soaked a…")
+    assertEquals(/\w…/.test(summary), false)
+
+    const ack = buildMediaEvidenceAck(BATHROOM_LEAK_CASCADE)
+    assertMatch(ack ?? "", /attach your video/i)
+  },
+)
+
+Deno.test(
+  "distinct second issue still splits with clean summaries",
+  async () => {
+    const msg =
+      "My bathroom sink is leaking bad. Also my bedroom smoke alarm is beeping constantly."
+    const issues = await detectMultipleMaintenanceIssues(msg)
+    assertEquals(issues.length, 2, JSON.stringify(issues))
+    assertMatch(issues[0].summary, /sink|leak|plumbing/i)
+    assertMatch(issues[1].summary, /smoke|alarm|beep|electrical|detector/i)
+    for (const issue of issues) {
+      assertEquals(/\w…/.test(issue.summary), false, issue.summary)
+      assertEquals(issue.summary.length <= 80, true, issue.summary)
+    }
+    const confirm = buildMultiIssueConfirmSms(issues, msg)
+    assertMatch(confirm, /1\. /)
+    assertMatch(confirm, /2\. /)
+    assertEquals(/have videos/i.test(confirm), false)
+  },
+)
+
+Deno.test(
+  "same-trade marker split still opens two tickets for sink + toilet",
+  async () => {
+    const issues = await detectMultipleMaintenanceIssues(
+      "My kitchen sink is leaking badly under the cabinet. Also, the toilet in the bathroom won't stop running.",
+    )
+    assertEquals(issues.length, 2, JSON.stringify(issues))
+    assertMatch(issues[0].summary, /sink|leak|plumbing/i)
+    assertMatch(issues[1].summary, /toilet/i)
+  },
+)

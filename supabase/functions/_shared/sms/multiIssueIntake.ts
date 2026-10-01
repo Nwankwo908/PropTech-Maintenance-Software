@@ -3,11 +3,14 @@
  * per-issue tickets (each can get its own vendor assignment).
  *
  * Same-trade splits (e.g. two plumbing problems) are kept when the message
- * uses clear markers ("Also", paragraphs, numbered lists). Same unit + same
- * trade reuses one vendor at submit time.
+ * uses clear markers ("Also", paragraphs, numbered lists) AND the fragments
+ * are independently actionable with no shared root cause. Media mentions,
+ * consequences, and multi-symptom cascades stay on one ticket.
  */
 import { classifyMaintenanceRequest } from "../maintenance_classification/mod.ts"
 import { matchDeterministicRules } from "../maintenance_classification/deterministicRules.ts"
+import { hasProblemSignal } from "../../../../shared/maintenance/deterministicRules.ts"
+import { generateIssueSummary } from "../../../../shared/maintenance/generateIssueSummary.ts"
 import type { ClassificationResult, VendorTrade } from "../maintenance_classification/types.ts"
 import { applyQuestionPlan } from "./determineNextMaintenanceQuestion.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
@@ -25,6 +28,21 @@ export const MULTI_ISSUE_MAX = 4
 
 const SPLIT_MARKERS =
   /\n\s*\n+|\bAlso[,:]?\s+|\bAdditionally[,:]?\s+|\bIn\s+addition[,:]?\s+|\bPlus[,:]?\s+|\bAnd\s+(?:also|then|yesterday|today)\b|(?:^|\n)\s*(?:\d+[\).\]]|-)\s+/gi
+
+/** Fixtures / appliances that can mark an independent ask. */
+const FIXTURE_RE =
+  /\b(sink|toilet|faucet|shower|tub|bathtub|drain|pipe|pipes|outlet|switch|smoke\s*alarms?|smoke\s*detectors?|carbon\s*monoxide\s*detectors?|stove|oven|fridge|refrigerator|dishwasher|washer|dryer|water\s*heater|heater|furnace|ac|air\s*condition(?:er|ing)?|door|window|lock|roof|ceiling|garbage\s*disposal)\b/gi
+
+/** Language that elaborates damage / consequence of an earlier problem. */
+const CONSEQUENCE_RE =
+  /\b(soaked|warped|warping|rusted|corrod(?:ed|ing)|rotted|rotten|swollen|damaged|broke|broken|stained|mold|mould|water\s*damage|can'?t\s+use|cannot\s+use|turned\s+off\s+the\s+valves?|pooling|puddl(?:e|ing))\b/i
+
+/** Fragment is mainly offering / mentioning photos or videos as evidence. */
+const MEDIA_EVIDENCE_RE =
+  /\b(?:photos?|pictures?|pics?|videos?|clips?|images?)\b/i
+
+const MEDIA_OFFER_RE =
+  /\b(?:i\s+)?(?:also\s+)?(?:have|took|taking|can\s+send|will\s+send|sending|attached?|sending\s+you)\b/i
 
 export type IssueSplitMode = "markers" | "sentences" | "single"
 
@@ -46,10 +64,214 @@ function tradeLabel(trade: string): string {
   return map[trade] ?? trade.replace(/_/g, " ")
 }
 
-function shortSummary(text: string, max = 90): string {
-  const cleaned = text.replace(/\s+/g, " ").trim()
-  if (cleaned.length <= max) return cleaned
-  return `${cleaned.slice(0, max - 1)}…`
+/** Clean noun-phrase summary for confirm SMS — never a mid-word char truncate. */
+export function summarizeIssueCandidate(
+  text: string,
+  issueType?: string | null,
+): string {
+  return generateIssueSummary(text, {
+    format: "title",
+    category: issueType,
+    maxChars: 50,
+  })
+}
+
+/** True when the fragment is about photos/videos as evidence, not a new ask. */
+export function isMediaEvidenceFragment(text: string): boolean {
+  const raw = text.replace(/\s+/g, " ").trim()
+  if (!raw || !MEDIA_EVIDENCE_RE.test(raw)) return false
+
+  // Strip media-offer wording and "of the leaking/damage" so leftover problem
+  // words from the evidence clause don't count as a second issue.
+  const stripped = raw
+    .replace(
+      /\b(?:i\s+)?(?:also\s+)?(?:have|took|taking|can\s+send|will\s+send|am\s+sending|sending|attached?)\s+(?:a\s+|some\s+|the\s+)?(?:photos?|pictures?|pics?|videos?|clips?|images?)\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:photos?|pictures?|pics?|videos?|clips?|images?)\b/gi,
+      " ",
+    )
+    .replace(
+      /\bof\s+(?:the\s+)?(?:leaking|leak|damage|issue|problem|it|that)\b/gi,
+      " ",
+    )
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (!stripped) return true
+  // Short leftovers like "have e" / "of" after a bad split are not actionable.
+  if (stripped.length < 16 && !hasIndependentFixtureAsk(stripped)) return true
+  // Offer phrasing + media with no distinct fixture ask → evidence only.
+  if (MEDIA_OFFER_RE.test(raw) && !hasIndependentFixtureAsk(stripped)) {
+    return true
+  }
+  return false
+}
+
+function normalizeFixture(raw: string): string {
+  const t = raw.toLowerCase().replace(/\s+/g, " ")
+  if (/smoke|carbon\s*monoxide/.test(t)) return "smoke_alarm"
+  if (/air\s*condition|\bac\b/.test(t)) return "ac"
+  if (/fridge|refrigerator/.test(t)) return "fridge"
+  if (/tub|bathtub/.test(t)) return "tub"
+  if (/water\s*heater/.test(t)) return "water_heater"
+  if (/garbage\s*disposal/.test(t)) return "disposal"
+  return t
+}
+
+function extractFixtures(text: string): Set<string> {
+  const found = new Set<string>()
+  for (const m of text.matchAll(FIXTURE_RE)) {
+    found.add(normalizeFixture(m[0]))
+  }
+  return found
+}
+
+function hasIndependentFixtureAsk(text: string): boolean {
+  return extractFixtures(text).size > 0 && hasProblemSignal(text)
+}
+
+/**
+ * Fixtures that commonly belong to the same plumbing assembly (one root cause).
+ * sink ↔ faucet/drain/pipe is one leak cascade, not two work orders.
+ */
+const RELATED_FIXTURE_GROUPS: ReadonlyArray<ReadonlySet<string>> = [
+  new Set(["sink", "faucet", "drain", "pipe", "pipes", "disposal"]),
+  new Set(["toilet", "pipe", "pipes"]),
+  new Set(["shower", "tub", "drain", "pipe", "pipes", "faucet"]),
+  new Set(["water_heater", "pipe", "pipes"]),
+]
+
+function fixturesAreRelated(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return a.size === 0 || b.size === 0
+  for (const x of a) {
+    if (b.has(x)) return true
+  }
+  for (const group of RELATED_FIXTURE_GROUPS) {
+    const aHit = [...a].some((f) => group.has(f))
+    const bHit = [...b].some((f) => group.has(f))
+    if (aHit && bHit) return true
+  }
+  return false
+}
+
+/** Distinct primary fixtures that should stay separate even in the same room. */
+function hasDistinctIndependentFixtures(a: Set<string>, b: Set<string>): boolean {
+  const primary = new Set([
+    "sink",
+    "toilet",
+    "shower",
+    "tub",
+    "outlet",
+    "smoke_alarm",
+    "stove",
+    "oven",
+    "fridge",
+    "dishwasher",
+    "washer",
+    "dryer",
+    "door",
+    "window",
+    "lock",
+    "ac",
+    "heater",
+    "furnace",
+    "water_heater",
+    "roof",
+    "ceiling",
+  ])
+  const aPrimary = [...a].filter((f) => primary.has(f))
+  const bPrimary = [...b].filter((f) => primary.has(f))
+  if (aPrimary.length === 0 || bPrimary.length === 0) return false
+  return aPrimary.every((f) => !bPrimary.includes(f)) &&
+    !fixturesAreRelated(new Set(aPrimary), new Set(bPrimary))
+}
+
+/**
+ * Non-actionable fragment: media evidence, emotional commentary, or trailing
+ * description that is not itself a problem to open a work order for.
+ */
+export function isActionableIssueFragment(text: string): boolean {
+  const raw = text.replace(/\s+/g, " ").trim()
+  if (raw.length < 8) return false
+  if (isMediaEvidenceFragment(raw)) return false
+
+  // Operational consequence without a fresh problem report ("can't use", valves off).
+  const withoutOps = raw
+    .replace(/\b(can'?t\s+use|cannot\s+use)\s+(?:my\s+|the\s+)?\w+/gi, " ")
+    .replace(/\bturned\s+off\s+the\s+valves?\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (
+    /\b(can'?t\s+use|cannot\s+use|turned\s+off\s+the\s+valves?)\b/i.test(raw) &&
+    !hasProblemSignal(withoutOps) &&
+    !hasIndependentFixtureAsk(withoutOps)
+  ) {
+    return false
+  }
+
+  if (hasProblemSignal(raw)) return true
+  if (hasIndependentFixtureAsk(raw)) return true
+  const hits = matchDeterministicRules(raw)
+  const top = hits[0]
+  if (top && top.weight >= 0.7) return true
+  return false
+}
+
+/**
+ * Adjacent same-trade fragments that share a plausible root cause (one leak
+ * damaging drawer + faucet) should stay one issue.
+ */
+export function sharesPlausibleCommonCause(prior: string, next: string): boolean {
+  if (isMediaEvidenceFragment(next)) return true
+  if (!isActionableIssueFragment(next)) return true
+
+  const priorFixtures = extractFixtures(prior)
+  const nextFixtures = extractFixtures(next)
+
+  if (hasDistinctIndependentFixtures(priorFixtures, nextFixtures)) {
+    return false
+  }
+
+  // Consequence / damage language continuing the prior problem.
+  if (CONSEQUENCE_RE.test(next)) {
+    if (nextFixtures.size === 0) return true
+    if (fixturesAreRelated(priorFixtures, nextFixtures)) return true
+    // Drawer / vanity damage with no new primary fixture — cascade from leak.
+    if (
+      /\b(drawer|vanity|cabinet|wood|floor|ceiling|wall)\b/i.test(next) &&
+      /\bleak|drip|flood|soak|water/i.test(prior)
+    ) {
+      return true
+    }
+  }
+
+  // Same room, related fixtures, both plumbing-ish → one cause.
+  const roomA = extractRoomFromText(prior)
+  const roomB = extractRoomFromText(next)
+  if (roomA && roomB && roomA === roomB && fixturesAreRelated(priorFixtures, nextFixtures)) {
+    return true
+  }
+
+  // No new fixture — elaboration of the same problem ("water pooling…").
+  if (nextFixtures.size === 0 && hasProblemSignal(next)) return true
+
+  return false
+}
+
+/** SMS line when the resident mentioned photos/videos but has not sent them yet. */
+export function buildMediaEvidenceAck(text: string): string | null {
+  const raw = text.replace(/\s+/g, " ").trim()
+  if (!raw || !MEDIA_EVIDENCE_RE.test(raw)) return null
+  const hasVideo = /\bvideos?\b/i.test(raw)
+  const hasPhoto = /\b(?:photos?|pictures?|pics?|images?)\b/i.test(raw)
+  if (hasVideo && hasPhoto) {
+    return "I'll attach your photo or video once you send it."
+  }
+  if (hasVideo) return "I'll attach your video once you send it."
+  return "I'll attach your photo once you send it."
 }
 
 /** Split raw SMS into candidate issue segments. */
@@ -84,6 +306,29 @@ export function splitMaintenanceIssueSegmentsWithMode(
   return { segments: [text], mode: "single" }
 }
 
+/**
+ * Fold non-actionable / evidence fragments onto the preceding segment so they
+ * never become their own work-order candidate.
+ */
+export function coalesceIssueSegments(segments: string[]): string[] {
+  const out: string[] = []
+  for (const seg of segments) {
+    const trimmed = seg.trim()
+    if (!trimmed) continue
+    if (out.length > 0 && !isActionableIssueFragment(trimmed)) {
+      out[out.length - 1] = `${out[out.length - 1]} ${trimmed}`.trim()
+      continue
+    }
+    if (out.length === 0 && !isActionableIssueFragment(trimmed)) {
+      // Leading pleasantry / media-only — keep so we don't drop the whole SMS.
+      out.push(trimmed)
+      continue
+    }
+    out.push(trimmed)
+  }
+  return out
+}
+
 type ScoredSegment = {
   text: string
   trade: VendorTrade
@@ -91,6 +336,7 @@ type ScoredSegment = {
 }
 
 function scoreSegment(text: string): ScoredSegment | null {
+  if (!isActionableIssueFragment(text)) return null
   const hits = matchDeterministicRules(text)
   if (hits.length === 0) return null
   const top = [...hits].sort((a, b) => b.weight - a.weight)[0]
@@ -101,7 +347,8 @@ function scoreSegment(text: string): ScoredSegment | null {
 /**
  * Score segments into issue clusters.
  * When `keepSameTrade` is true (marker splits), adjacent same-trade segments
- * stay separate so two plumbing asks become two tickets.
+ * stay separate only when they look like independent asks. Shared root-cause
+ * cascades and non-actionable evidence always merge.
  * When false (sentence fallback), merge adjacent same-trade to avoid
  * splitting one leak across two sentences.
  */
@@ -110,17 +357,28 @@ export function clusterIssueSegments(
   opts?: { keepSameTrade?: boolean },
 ): ScoredSegment[] {
   const keepSameTrade = opts?.keepSameTrade === true
+  const coalesced = coalesceIssueSegments(segments)
   const scored: ScoredSegment[] = []
-  for (const seg of segments) {
+  for (const seg of coalesced) {
     const hit = scoreSegment(seg)
-    if (!hit) continue
-    const prev = scored[scored.length - 1]
-    if (!keepSameTrade && prev && prev.trade === hit.trade) {
-      prev.text = `${prev.text} ${hit.text}`.trim()
-      prev.weight = Math.max(prev.weight, hit.weight)
-    } else {
-      scored.push({ ...hit })
+    if (!hit) {
+      const prev = scored[scored.length - 1]
+      if (prev) {
+        prev.text = `${prev.text} ${seg}`.trim()
+      }
+      continue
     }
+    const prev = scored[scored.length - 1]
+    if (prev && prev.trade === hit.trade) {
+      const shouldMerge = !keepSameTrade ||
+        sharesPlausibleCommonCause(prev.text, hit.text)
+      if (shouldMerge) {
+        prev.text = `${prev.text} ${hit.text}`.trim()
+        prev.weight = Math.max(prev.weight, hit.weight)
+        continue
+      }
+    }
+    scored.push({ ...hit })
   }
   return scored
 }
@@ -142,7 +400,7 @@ async function pendingFromCluster(
   const issueType =
     pipelineTradeToIssueType(classified.issueType, trade) || "general"
   return {
-    summary: shortSummary(cluster.text),
+    summary: summarizeIssueCandidate(cluster.text, issueType),
     description: cluster.text,
     vendor_trade: trade,
     issue_type: issueType,
@@ -161,7 +419,8 @@ async function pendingFromCluster(
  * Returns [] when only one (or zero) issues — caller keeps single-issue path.
  *
  * Marker splits ("Also", paragraphs, lists) may yield multiple same-trade
- * tickets. Sentence-only splits still require distinct trades.
+ * tickets when fragments are independently actionable. Sentence-only splits
+ * still require distinct trades.
  */
 export async function detectMultipleMaintenanceIssues(
   raw: string,
@@ -214,6 +473,7 @@ export async function detectMultipleMaintenanceIssues(
       const start = Math.max(0, idx - 40)
       const end = Math.min(raw.length, idx + 120)
       const slice = raw.slice(start, end).trim() || raw
+      if (!isActionableIssueFragment(slice)) continue
       const classified = await classifyMaintenanceRequest({
         rawDescription: slice,
         skipLlm: true,
@@ -225,7 +485,7 @@ export async function detectMultipleMaintenanceIssues(
         pipelineTradeToIssueType(classified.issueType, classified.vendorTrade) ||
         "general"
       pending.push({
-        summary: shortSummary(slice),
+        summary: summarizeIssueCandidate(slice, issueType),
         description: slice,
         vendor_trade: classified.vendorTrade !== "other"
           ? classified.vendorTrade
@@ -267,16 +527,31 @@ export async function detectMultipleMaintenanceIssues(
   return pending
 }
 
-export function buildMultiIssueConfirmSms(issues: PendingIntakeIssue[]): string {
+export function buildMultiIssueConfirmSms(
+  issues: PendingIntakeIssue[],
+  rawMessage?: string,
+): string {
   const lines = [
     "Thanks — I see more than one request in your message. Here's how I'd split them:",
     "",
   ]
   for (let i = 0; i < issues.length; i++) {
     const issue = issues[i]
+    const summary = (issue.summary?.trim() ||
+      summarizeIssueCandidate(issue.description, issue.issue_type)).replace(
+        /\.$/,
+        "",
+      )
     lines.push(
-      `${i + 1}. ${tradeLabel(issue.vendor_trade)} — ${issue.summary}`,
+      `${i + 1}. ${tradeLabel(issue.vendor_trade)} — ${summary}`,
     )
+  }
+  const ackSource = rawMessage ??
+    issues.map((i) => i.description).join(" ")
+  const mediaAck = buildMediaEvidenceAck(ackSource)
+  if (mediaAck) {
+    lines.push("")
+    lines.push(mediaAck)
   }
   lines.push("")
   const trades = new Set(issues.map((i) => i.vendor_trade))

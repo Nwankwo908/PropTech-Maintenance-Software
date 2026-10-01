@@ -6,6 +6,7 @@ import {
   isVagueTicketDescription,
   looksLikeBareRepairRequest,
   looksLikeClarifyMenuRepairEcho,
+  parseClarifyMenuSelection,
   resolveIssueSeed,
   resolveIssueSeedFromRecentInbounds,
   SEED_LOOKBACK_MINUTES,
@@ -41,6 +42,12 @@ Deno.test("clarify menu echo A repair is bare repair, not a ticket headline", ()
   assertEquals(isVagueTicketDescription("A repair"), true)
   assertEquals(isVagueTicketDescription("A repair is needed."), true)
   assertEquals(isVagueTicketDescription("No hot water"), false)
+  assertEquals(parseClarifyMenuSelection("A repair"), "repair")
+  assertEquals(parseClarifyMenuSelection("Something else"), "something_else")
+  assertEquals(
+    parseClarifyMenuSelection("something about rent or your lease"),
+    "rent_or_lease",
+  )
 })
 
 Deno.test("Adriana: menu echo recovers prior no hot water into the ticket seed", () => {

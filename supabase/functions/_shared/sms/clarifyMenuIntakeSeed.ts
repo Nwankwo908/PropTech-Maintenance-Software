@@ -4,6 +4,7 @@
  */
 import { hasProblemSignal } from "../../../../shared/maintenance/deterministicRules.ts"
 import { inferIssueTypeFromText } from "./residentIntakeTypes.ts"
+import { matchShortReplyToken } from "./shortReplyTokens.ts"
 
 /** Menu echo from “What do you need — a repair, rent, lease…?” */
 const CLARIFY_MENU_REPAIR_ECHO =
@@ -13,8 +14,71 @@ const CLARIFY_MENU_REPAIR_ECHO =
 const BARE_REPAIR_NEED =
   /\b((i |we )?(need|want|requesting) (a |some )?(repair|maintenance|fix)|need (it |something )?(fixed|repaired)|something (needs?|is) (a )?fix|please (help|fix|send).{0,40}\brepair)\b/i
 
+export type ClarifyMenuSelection = "repair" | "rent_or_lease" | "something_else"
+
+const MENU_REPAIR_TOKENS = [
+  "A REPAIR",
+  "REPAIR",
+  "MAINTENANCE",
+  "FIX",
+  "A FIX",
+] as const
+
+const MENU_RENT_LEASE_TOKENS = [
+  "SOMETHING ABOUT RENT OR YOUR LEASE",
+  "SOMETHING ABOUT RENT OR MY LEASE",
+  "RENT OR YOUR LEASE",
+  "RENT OR MY LEASE",
+  "RENT OR LEASE",
+  "ABOUT RENT OR LEASE",
+  "RENT",
+  "LEASE",
+] as const
+
+const MENU_SOMETHING_ELSE_TOKENS = [
+  "SOMETHING ELSE",
+  "SOMETHING DIFFERENT",
+  "OTHER",
+  "NONE OF THOSE",
+] as const
+
 export function looksLikeClarifyMenuRepairEcho(body: string): boolean {
-  return CLARIFY_MENU_REPAIR_ECHO.test(body.trim())
+  const t = body.trim()
+  if (CLARIFY_MENU_REPAIR_ECHO.test(t)) return true
+  return matchShortReplyToken(t, MENU_REPAIR_TOKENS) != null
+}
+
+/**
+ * When Ulo just showed the clarify menu, treat a verbatim / near-verbatim
+ * option echo as a valid selection (typo-tolerant via matchShortReplyToken).
+ */
+export function parseClarifyMenuSelection(body: string): ClarifyMenuSelection | null {
+  const t = body.trim()
+  if (!t) return null
+  if (looksLikeClarifyMenuRepairEcho(t)) return "repair"
+  if (matchShortReplyToken(t, MENU_SOMETHING_ELSE_TOKENS)) return "something_else"
+  if (matchShortReplyToken(t, MENU_RENT_LEASE_TOKENS)) return "rent_or_lease"
+  // Longer near-verbatim rent/lease option line.
+  const norm = t.toLowerCase().replace(/[.!?]+$/g, "").replace(/\s+/g, " ").trim()
+  if (
+    /^(something about )?rent( or (your|my|the )?lease)?$/.test(norm) ||
+    /^rent or (your|my|the )?lease$/.test(norm)
+  ) {
+    return "rent_or_lease"
+  }
+  if (/^something else$/.test(norm)) return "something_else"
+  return null
+}
+
+export function isRecentClarifyMenuAsk(
+  clarifyMenuShownAt: string | null | undefined,
+  nowMs = Date.now(),
+  windowMs = 24 * 60 * 60 * 1000,
+): boolean {
+  if (!clarifyMenuShownAt?.trim()) return false
+  const shown = Date.parse(clarifyMenuShownAt)
+  if (!Number.isFinite(shown)) return false
+  return nowMs - shown <= windowMs
 }
 
 export function looksLikeBareRepairRequest(body: string): boolean {
