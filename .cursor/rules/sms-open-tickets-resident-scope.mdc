@@ -1,0 +1,33 @@
+---
+description: Open SMS tickets must be resident-scoped — never bare unit label
+globs: supabase/functions/_shared/sms/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Open ticket lookup — resident scope (P0)
+
+**Severity:** Same urgency tier as cross-account phone-list leaks and phone-identity misroutes. Confirmed live: Kenniesa Crews (646 Bartlett · unit 1) was shown Takeira Chester’s WO-5FA6 and Ganaia Swinton’s “Hello” ticket because all three share the unit **label** `"1"` under one Limited Alpha landlord.
+
+## Rule
+
+`loadOpenTickets` / `resolveOpenMaintenanceRequestId` must **never** query open work orders by `landlord_id + unit` label alone, and must **never** resolve by `unit_id` alone without a verified `resident_id` / `resident_user_id` or `resident_phone` match on the ticket. Fail closed (no ticket) rather than guessing.
+
+| Prefer (in order) | Filter |
+|---|---|
+| 1 | `resident_phone` matching the resolved resident |
+| 2 | `resident_id` / `resident_user_id` on the ticket |
+| ~~3~~ | ~~canonical `unit_id` on `sms_identities` alone~~ — **removed (P0)** |
+| ~~4~~ | ~~`property_id` + unit label~~ — **removed (P0)** |
+
+Pinned conversation / draft ticket IDs must also pass an ownership check before they enter the open-ticket pool (phone or resident id only).
+
+## Do not
+
+- `.eq("unit", profile.unit)` without `property_id` or `unit_id` under a multi-property landlord
+- Recite another resident’s WO status, append notes, or list their titles in “which request?” SMS
+- Treat “same unit number on a different building” as shared-unit visibility
+
+## Where it lives
+
+- `loadOpenTickets` in `inboundInterpretationAct.ts`
+- `resolveOpenMaintenanceRequestId` in `inbound_db.ts`
