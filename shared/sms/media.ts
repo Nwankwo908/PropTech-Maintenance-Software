@@ -1,6 +1,6 @@
 /** Shared MMS helpers — kind detection, storage vs provider URLs, inbox preview. */
 
-export type SmsMediaKind = 'image' | 'video'
+export type SmsMediaKind = 'image' | 'video' | 'document'
 
 export type SmsMediaItem = {
   url: string
@@ -9,6 +9,7 @@ export type SmsMediaItem = {
 
 const VIDEO_EXT = /\.(mp4|m4v|mov|webm|3gp|3gpp)(?:$|[?#])/i
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(?:$|[?#])/i
+const DOCUMENT_EXT = /\.(pdf)(?:$|[?#])/i
 
 export function normalizeMediaRefs(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -44,6 +45,7 @@ export function isProviderAuthMediaUrl(url: string): boolean {
 
 export function mediaKindFromRef(ref: string): SmsMediaKind {
   const lower = ref.trim().toLowerCase()
+  if (lower.includes('application/pdf') || DOCUMENT_EXT.test(lower)) return 'document'
   if (lower.includes('video/') || VIDEO_EXT.test(lower)) return 'video'
   if (lower.includes('image/') || IMAGE_EXT.test(lower)) return 'image'
   return 'image'
@@ -51,6 +53,7 @@ export function mediaKindFromRef(ref: string): SmsMediaKind {
 
 export function mediaKindFromContentType(contentType: string): SmsMediaKind | null {
   const ct = contentType.trim().toLowerCase()
+  if (ct === 'application/pdf' || ct.startsWith('application/pdf')) return 'document'
   if (ct.startsWith('video/')) return 'video'
   if (ct.startsWith('image/')) return 'image'
   return null
@@ -62,11 +65,16 @@ export function inboxPreviewForSmsMessage(body: string, mediaUrls: unknown): str
   if (text) return text
   const refs = normalizeMediaRefs(mediaUrls)
   if (refs.length === 0) return 'No messages yet.'
+  const docCount = refs.filter((ref) => mediaKindFromRef(ref) === 'document').length
   const videoCount = refs.filter((ref) => mediaKindFromRef(ref) === 'video').length
-  const imageCount = refs.length - videoCount
+  const imageCount = refs.length - videoCount - docCount
+  if (docCount > 0 && imageCount === 0 && videoCount === 0) {
+    return docCount === 1 ? 'Sent a document' : 'Sent documents'
+  }
   if (videoCount > 0 && imageCount > 0) {
     return refs.length === 2 ? 'Sent a photo and a video' : 'Sent photos and video'
   }
   if (videoCount > 0) return videoCount === 1 ? 'Sent a video' : 'Sent videos'
-  return imageCount === 1 ? 'Sent a photo' : 'Sent photos'
+  if (imageCount > 0) return imageCount === 1 ? 'Sent a photo' : 'Sent photos'
+  return 'Sent an attachment'
 }

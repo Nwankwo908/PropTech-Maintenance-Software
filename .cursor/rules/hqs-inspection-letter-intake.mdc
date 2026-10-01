@@ -1,0 +1,44 @@
+---
+description: HQS / compliance inspection letter intake via MMS
+globs: supabase/functions/_shared/sms/**/*.{ts,tsx},shared/maintenance/hqs*.ts,src/lib/propertyHqsInspectionReports.ts
+alwaysApply: false
+---
+
+# HQS inspection letter intake
+
+Landlords text a housing-authority fail letter (PDF or photo) to the Ulo number. Ulo classifies the attachment, extracts deficiencies, confirms with the landlord, then creates one `inspection_reports` row + owner-responsibility work orders.
+
+## Surfaces
+
+| Concern | Where |
+|---|---|
+| Schema | `inspection_reports`, `inspection_source_documents`, `hqs_owner_tenant_unit_map`, `hqs_fail_category_trade_map`, `maintenance_requests.inspection_report_id` |
+| Pure extract | `shared/maintenance/hqsInspectionLetter.ts` |
+| PDF vs photo routes | `shared/maintenance/hqsLetterMediaExtract.ts` — PDF = text; photo = **vision OCR** (not rehost-only) |
+| Confirm + create | `supabase/functions/_shared/sms/hqsInspectionLetterConfirm.ts` |
+| SMS YES/unit replies | `hqs_unit_reply` / `hqs_confirm` in inbound registry |
+| Landlord can't-process | `landlordInboundCantProcess.ts` — link-only / unsupported type / unrecognized attachment (landlord only) |
+| Property Intelligence | Smart Inspection Report panel lists HQS letters via `listHqsInspectionReportsForBuilding` |
+
+## Rules
+
+- Do not create `inspection_reports` or work orders until landlord replies **YES**
+- No unit mapping → ask which unit; store `(owner_id, tenant_id) → unit_id`; auto-resolve later letters
+- Emergency section may be absent — never require an Emergency header
+- `is_abated` → separate `inspection.hap_abatement` graph event + Needs Attention alert
+- Emergency rows → urgent/habitability alert tier (same path as gas/fire/flooding)
+- Standard due date = reinspection date if stated, else inspection date + 30 days
+- Fail category → vendor trade via `hqs_fail_category_trade_map` / `mapHqsFailCategoryToVendorTrade`
+- Email ingest does **not** exist yet — MMS (+ dashboard Smart Inspection Report) only
+- Landlord **link-only** (ViewLetter / habc / HQS) → ask for photo or PDF; never fetch or classify a bare URL
+- Landlord **unsupported** attachment (HEIC, video, office docs) → name the type; ask for JPEG/PNG/PDF
+- Landlord **unrecognized** supported file → say we support HQS letters; offer HELP → human (not maintenance fallback)
+- These three replies are **not** tenant_distress; distress still applies independently if they react badly
+
+## Do not
+
+- Assume every letter has an Emergency (24-hr) section
+- Create tickets before YES
+- Treat photo MMS as rehost-only — must run vision OCR for HQS classification
+- Open or classify bare links
+- Fire can't-process replies for tenants or vendors

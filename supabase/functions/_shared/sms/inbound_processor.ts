@@ -38,6 +38,8 @@ import {
   inboundMediaWasRehosted,
   rehostInboundSmsMedia,
 } from "./rehostInboundMedia.ts"
+import { tryStartHqsLetterIntakeFromInbound } from "./hqsInspectionLetterInbound.ts"
+import { tryLandlordCantProcessInbound } from "./landlordInboundCantProcess.ts"
 import { isLimitedAlphaTwilioSmsNumber } from "../../../../shared/landlordCapabilities.ts"
 import { getSMSProviderFor } from "./providerFactory.ts"
 
@@ -478,6 +480,19 @@ export async function processInboundSms(
   const handlerResult = await tryInboundSmsHandlers(handlerContext)
   if (handlerResult.handled) {
     return finishHandledInbound(handlerContext, handlerResult)
+  }
+
+  // Landlord MMS: classify attachment as HQS/inspection letter after rehost.
+  // Tenants never enter this path (gated inside tryStartHqsLetterIntakeFromInbound).
+  const hqsLetterStart = await tryStartHqsLetterIntakeFromInbound(handlerContext)
+  if (hqsLetterStart.handled) {
+    return finishHandledInbound(handlerContext, hqsLetterStart)
+  }
+
+  // Landlord link-only / unsupported / unrecognized attachment — not distress.
+  const landlordCantProcess = await tryLandlordCantProcessInbound(handlerContext)
+  if (landlordCantProcess.handled) {
+    return finishHandledInbound(handlerContext, landlordCantProcess)
   }
 
   let interpreted: InboundSmsHandlerResult = { handled: false }

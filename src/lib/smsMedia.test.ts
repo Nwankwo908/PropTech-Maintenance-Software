@@ -26,13 +26,15 @@ describe('sms media helpers', () => {
     expect(isProviderAuthMediaUrl('https://example.com/photo.jpg')).toBe(false)
   })
 
-  it('detects image vs video from path, URL, and content type', () => {
+  it('detects image vs video vs pdf from path, URL, and content type', () => {
     expect(mediaKindFromRef('sms/c/m/0.mp4')).toBe('video')
     expect(mediaKindFromRef('sms/c/m/0.MOV')).toBe('video')
     expect(mediaKindFromRef('sms/c/m/0.jpg')).toBe('image')
+    expect(mediaKindFromRef('sms/c/m/letter.pdf')).toBe('document')
     expect(mediaKindFromRef('https://cdn.example/clip.webm')).toBe('video')
     expect(mediaKindFromContentType('video/mp4')).toBe('video')
     expect(mediaKindFromContentType('image/jpeg')).toBe('image')
+    expect(mediaKindFromContentType('application/pdf')).toBe('document')
     expect(mediaKindFromContentType('application/octet-stream')).toBeNull()
   })
 
@@ -46,6 +48,7 @@ describe('sms media helpers', () => {
     expect(inboxPreviewForSmsMessage('', ['sms/c/m/0.jpg', 'sms/c/m/1.mp4'])).toBe(
       'Sent a photo and a video',
     )
+    expect(inboxPreviewForSmsMessage('', ['sms/c/m/letter.pdf'])).toBe('Sent a document')
     expect(inboxPreviewForSmsMessage('', [])).toBe('No messages yet.')
   })
 })

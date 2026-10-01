@@ -49,6 +49,12 @@ import {
   canHandleVendorAvailabilityProbe,
   tryHandleVendorAvailabilityProbeInbound,
 } from "../vendorAvailabilityProbe.ts"
+import {
+  canHandleHqsConfirm,
+  canHandleHqsUnitReply,
+  tryHandleHqsConfirmInbound,
+  tryHandleHqsUnitReplyInbound,
+} from "./hqsInspectionLetterInbound.ts"
 import type {
   InboundSmsHandler,
   InboundSmsHandlerContext,
@@ -482,6 +488,39 @@ async function tryVendorTenantProxyHandler(
   }
 }
 
+async function tryHqsUnitReplyHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (!canHandleHqsUnitReply({ intakeState: conv?.intake_state })) {
+    return { handled: false }
+  }
+  return tryHandleHqsUnitReplyInbound(ctx)
+}
+
+async function tryHqsConfirmHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    !canHandleHqsConfirm({
+      intakeState: conv?.intake_state,
+      body: ctx.inbound.body,
+    })
+  ) {
+    return { handled: false }
+  }
+  return tryHandleHqsConfirmInbound(ctx)
+}
+
 /** Documented pending gates — contract tests require every registry id to be listed. */
 export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   Record<string, string>
@@ -499,6 +538,10 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "intake_state.awaiting_invoice_paid_confirmation (YES/NO paid confirmation for the invoice id stored in the ask)",
   invoice_payment:
     "SMS_ADMIN_NOTIFY phone + recent maintenance.invoice_payment_options_sent event",
+  hqs_unit_reply:
+    "intake_state.awaiting_hqs_unit (landlord replies with unit for HQS letter mapping)",
+  hqs_confirm:
+    "intake_state.awaiting_hqs_confirm (landlord YES/NO before creating inspection_reports + work orders)",
   tenant_activation_reply:
     "users.activation_status === waiting + YES or NO",
   tenant_activation_hold:
@@ -536,6 +579,16 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
     try: tryInvoicePaidConfirmationHandler,
   },
   { id: "invoice_payment", priority: 25, try: tryInvoicePaymentHandler },
+  {
+    id: "hqs_unit_reply",
+    priority: 28,
+    try: tryHqsUnitReplyHandler,
+  },
+  {
+    id: "hqs_confirm",
+    priority: 29,
+    try: tryHqsConfirmHandler,
+  },
   {
     id: "tenant_activation_reply",
     priority: 30,

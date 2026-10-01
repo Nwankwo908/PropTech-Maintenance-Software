@@ -44,13 +44,16 @@ Deno.test("R3: inbound_processor short-circuits before workflow when handler win
   const finishCall = source.indexOf("finishHandledInbound(handlerContext, handlerResult)")
   assertEquals(finishCall >= 0, true, "expected finishHandledInbound call")
 
+  const interpretCall = source.indexOf("tryHandleInterpretedInbound(handlerContext)")
+  assertEquals(interpretCall >= 0, true, "expected tryHandleInterpretedInbound")
+
   const workflowCall = source.indexOf("routeInboundSmsWorkflow(supabase,")
   assertEquals(workflowCall >= 0, true, "expected routeInboundSmsWorkflow fallback")
 
   assertEquals(
-    handlerCall < finishCall && finishCall < workflowCall,
+    handlerCall < finishCall && finishCall < interpretCall && interpretCall < workflowCall,
     true,
-    "Order must be: handlers → finishHandledInbound → routeInboundSmsWorkflow",
+    "Order must be: handlers → finishHandledInbound → interpretation → workflow",
   )
 
   const betweenHandlerAndWorkflow = source.slice(handlerCall, workflowCall)

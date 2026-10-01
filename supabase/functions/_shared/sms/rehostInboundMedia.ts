@@ -17,11 +17,14 @@ function extFromContentType(contentType: string, fallbackRef: string): string {
   if (ct.includes("webm")) return "webm"
   if (ct.includes("3gpp") || ct.includes("3gp")) return "3gp"
   if (ct.includes("jpeg") || ct.includes("jpg")) return "jpg"
+  if (ct.includes("pdf")) return "pdf"
 
   const fromRef = fallbackRef.toLowerCase()
   const match = fromRef.match(/\.([a-z0-9]{2,5})(?:$|[?#])/i)
   if (match?.[1]) return match[1].toLowerCase()
-  return mediaKindFromRef(fallbackRef) === "video" ? "mp4" : "jpg"
+  const kind = mediaKindFromRef(fallbackRef)
+  if (kind === "document") return "pdf"
+  return kind === "video" ? "mp4" : "jpg"
 }
 
 function isAcceptedMediaContentType(contentType: string, fallbackRef: string): boolean {
@@ -51,10 +54,11 @@ async function fetchProviderMedia(
 }
 
 /**
- * Download inbound MMS (photos + videos) and rehost into the private
+ * Download inbound MMS (photos, videos, and PDFs) and rehost into the private
  * `maintenance-uploads` bucket so the dashboard can render signed URLs.
- * Already-stored object paths are kept as-is. Best-effort: a failing item
- * keeps its original URL so a later submit can retry.
+ * HQS inspection letters often arrive as `application/pdf` — those must rehost
+ * intact (not skip). Already-stored object paths are kept as-is. Best-effort:
+ * a failing item keeps its original URL so a later submit can retry.
  */
 export async function rehostInboundSmsMedia(
   supabase: SupabaseClient,
@@ -99,7 +103,9 @@ export async function rehostInboundSmsMedia(
       const path = `${prefix}/${Date.now()}-${idx}.${ext}`
       const uploadType =
         contentType.split(";")[0]?.trim() ||
-        (ext === "mp4" || ext === "mov" || ext === "webm" || ext === "3gp"
+        (ext === "pdf"
+          ? "application/pdf"
+          : ext === "mp4" || ext === "mov" || ext === "webm" || ext === "3gp"
           ? `video/${ext === "mov" ? "quicktime" : ext}`
           : `image/${ext === "jpg" ? "jpeg" : ext}`)
 
