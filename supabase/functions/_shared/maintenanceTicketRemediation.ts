@@ -174,6 +174,8 @@ export async function remediateOrphanedMaintenanceTicket(
       String(ticket.vendor_work_status ?? "").toLowerCase() === "pending_accept"
 
     try {
+      // Do not set needsVendorEscalation here — dispatch runs next and owns
+      // probe / landlord-choice / nearby escalation once matching is attempted.
       const started = await startMaintenanceRequestWorkflow(supabase, {
         landlordId,
         ticketId,
@@ -188,7 +190,7 @@ export async function remediateOrphanedMaintenanceTicket(
         source: "backfill",
         conversationId,
         vendorAssigned,
-        needsVendorEscalation: !vendorAssigned,
+        needsVendorEscalation: false,
       })
       workflowRunId = started.workflowRunId
       workflowCreated = Boolean(workflowRunId)

@@ -76,15 +76,18 @@ serve(async (req) => {
         .select("resident_name, issue_headline, issue_category, description")
         .eq("id", ticketId)
         .maybeSingle()
-      const issueLabel =
-        (typeof ticket?.issue_headline === "string" &&
-          ticket.issue_headline.trim()) ||
-        (/oven|stove/i.test(String(ticket?.description ?? ""))
-          ? "the oven"
-          : null) ||
-        (ticket?.issue_category === "appliance_repair"
-          ? "the appliance"
-          : "the repair")
+      const desc = String(ticket?.description ?? "")
+      const headline = String(ticket?.issue_headline ?? "").trim()
+      const genericHeadline =
+        !headline ||
+        /^(appliance|maintenance|repair)\s+issue$/i.test(headline)
+      const issueLabel = /oven|stove/i.test(desc)
+        ? "the oven"
+        : !genericHeadline
+        ? headline.replace(/^an?\s+/i, "").replace(/\.$/, "")
+        : ticket?.issue_category === "appliance_repair"
+        ? "the appliance"
+        : "the repair"
       closeLoop = buildOrphanTicketCloseLoopSms({
         residentName: ticket?.resident_name,
         issueLabel,
