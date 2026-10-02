@@ -23,7 +23,7 @@ export type StartMaintenanceRequestRunParams = {
   issueCategory: string
   severity: string
   unitLabel?: string | null
-  source: "web_form" | "sms_intake" | "hqs_letter"
+  source: "web_form" | "sms_intake" | "hqs_letter" | "backfill"
   intakeRunId?: string | null
   conversationId?: string | null
   vendorAssigned?: boolean
@@ -114,6 +114,8 @@ export async function startMaintenanceRequestRun(
       ? "Ticket created from SMS intake"
       : params.source === "hqs_letter"
       ? "Ticket created from inspection letter"
+      : params.source === "backfill"
+      ? "Ticket workflow started from backfill remediation"
       : "Ticket submitted from web form"
 
   await logPipelineStageEvent(supabase, {

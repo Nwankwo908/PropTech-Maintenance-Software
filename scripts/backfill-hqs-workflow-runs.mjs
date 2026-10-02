@@ -12,6 +12,7 @@ import { execSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createClient } from '@supabase/supabase-js'
+import { ensureMaintenanceRequestWorkflow } from './ensure-maintenance-request-workflow.mjs'
 
 const PROJECT_REF = 'mzpqwuizhiaczxcnmxbt'
 const VENDOR_ID = process.env.VENDOR_ID?.trim() ||
@@ -68,110 +69,24 @@ async function main() {
   let created = 0
   let skipped = 0
   for (const t of open) {
-    const { data: existing } = await sb
-      .from('workflow_runs')
-      .select('id')
-      .eq('template_id', 'maintenance_request')
-      .eq('entity_type', 'maintenance_request')
-      .eq('entity_id', t.id)
-      .limit(1)
-      .maybeSingle()
-    if (existing?.id) {
-      skipped += 1
-      continue
-    }
-
-    // Prefer ticket.resident_id; if null (legacy HQS inserts), resolve from unit occupancy.
-    let residentId = t.resident_id ?? null
-    if (!residentId && t.unit_id && t.landlord_id) {
-      const { data: occupancy } = await sb
-        .from('occupancy')
-        .select('resident_id')
-        .eq('unit_id', t.unit_id)
-        .eq('landlord_id', t.landlord_id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (typeof occupancy?.resident_id === 'string' && occupancy.resident_id.trim()) {
-        residentId = occupancy.resident_id.trim()
-      }
-    }
-
     const wo = `WO-${String(t.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`
-    const vendorAssigned =
-      Boolean(t.assigned_vendor_id) ||
-      String(t.vendor_work_status ?? '').toLowerCase() === 'pending_accept'
-    const currentStep = vendorAssigned ? 'pending_accept' : 'unassigned'
-    const metadata = {
-      landlord_id: t.landlord_id,
-      trigger_type: 'sms_inbound',
-      due_at: t.due_at ?? t.created_at,
-      issue_category: t.issue_category ?? 'general',
-      severity: t.urgency ?? t.priority ?? 'normal',
-      source: 'hqs_letter',
-      vendor_assigned: vendorAssigned,
-      assigned_vendor_id: t.assigned_vendor_id ?? null,
-      backfilled_active_tasks: true,
-    }
-
-    console.log(`Create run ${wo} step=${currentStep} resident=${residentId ?? 'null'}`)
-    if (DRY_RUN) continue
-
-    const { data: run, error: insErr } = await sb
-      .from('workflow_runs')
-      .insert({
-        template_id: 'maintenance_request',
-        landlord_id: t.landlord_id,
-        trigger_type: 'sms_inbound',
-        status: 'active',
-        entity_type: 'maintenance_request',
-        entity_id: t.id,
-        property_id: t.property_id ?? null,
-        resident_id: residentId,
-        unit_id: t.unit_id ?? null,
-        current_stage: currentStep,
-        current_step: currentStep,
-        metadata,
+    try {
+      const result = await ensureMaintenanceRequestWorkflow(sb, t.id, {
+        dryRun: DRY_RUN,
+        source: 'hqs_letter',
       })
-      .select('id')
-      .single()
-    if (insErr || !run?.id) {
-      console.error('insert failed', wo, insErr?.message)
-      continue
+      if (result.created) {
+        console.log(
+          `Create run ${wo}`,
+          DRY_RUN ? '(dry-run)' : `id=${result.workflowRunId}`,
+        )
+        created += 1
+      } else {
+        skipped += 1
+      }
+    } catch (e) {
+      console.error('ensure failed', wo, e instanceof Error ? e.message : e)
     }
-
-    await sb.from('workflow_events').insert([
-      {
-        workflow_run_id: run.id,
-        event_type: 'workflow.classify',
-        stage: 'classify',
-        step: 'classify',
-        message: 'Classified',
-        metadata: { source: 'hqs_letter', backfill: true },
-      },
-      {
-        workflow_run_id: run.id,
-        event_type: 'workflow.route',
-        stage: 'route',
-        step: 'route',
-        message: 'Routed',
-        metadata: { source: 'hqs_letter', backfill: true },
-      },
-      {
-        workflow_run_id: run.id,
-        event_type: 'workflow.act',
-        stage: 'act',
-        step: 'submitted',
-        message: 'Ticket created from inspection letter',
-        metadata: {
-          maintenance_request_id: t.id,
-          source: 'hqs_letter',
-          backfill: true,
-        },
-      },
-    ])
-
-    created += 1
   }
 
   console.log({ created, skipped, dry_run: DRY_RUN })
