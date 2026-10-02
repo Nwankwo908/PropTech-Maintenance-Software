@@ -116,7 +116,7 @@ export function matchEmergencyNet(
 ): { type: EmergencyType; keyword: string } | null {
   const hay = text.toLowerCase()
   if (GAS_RE.test(hay)) return { type: 'gas', keyword: 'gas / carbon monoxide' }
-  if (FIRE_RE.test(hay) && /\b(smoke|fire|flame)/i.test(hay)) {
+  if (FIRE_RE.test(hay) && /\b(smoke|fire|flame)\b/i.test(hay)) {
     return { type: 'fire', keyword: 'fire / smoke' }
   }
   if (SPARKING_RE.test(hay)) return { type: 'electrical', keyword: 'sparking' }
@@ -161,7 +161,7 @@ export function matchDeterministicRules(text: string): RuleHit[] {
       weight: 1.2,
     })
   }
-  if (FIRE_RE.test(hay) && /\b(smoke|fire|flame)/i.test(hay)) {
+  if (FIRE_RE.test(hay) && /\b(smoke|fire|flame)\b/i.test(hay)) {
     hits.push({
       trade: 'electrical',
       issueType: 'electrical',
@@ -175,7 +175,7 @@ export function matchDeterministicRules(text: string): RuleHit[] {
   push(
     PLUMBING_RE,
     'plumbing',
-    /\bleak|drip|flood|overflow/i.test(hay) ? 'leak' : 'plumbing',
+    /\b(leak|drip|flood|overflow)\b/i.test(hay) ? 'leak' : 'plumbing',
     0.92,
     /\b(overflow|flood|gushing|pouring)\b/i.test(hay) ? 'urgent' : null,
   )
@@ -268,7 +268,7 @@ export function matchDeterministicRules(text: string): RuleHit[] {
 
   const ceilingWater =
     /\b(ceiling|ceilings)\b/i.test(hay) &&
-    /\b(water|leak|leaking|drip|pour)/i.test(hay)
+    /\b(water|leak|leaking|drip|pour)\b/i.test(hay)
   if (FLOOD_ACTIVE_RE.test(hay) && PLUMBING_RE.test(hay) && !ceilingWater) {
     hits.push({
       trade: 'plumbing',

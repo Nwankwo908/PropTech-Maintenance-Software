@@ -242,7 +242,7 @@ export function sharesPlausibleCommonCause(prior: string, next: string): boolean
     // Drawer / vanity damage with no new primary fixture — cascade from leak.
     if (
       /\b(drawer|vanity|cabinet|wood|floor|ceiling|wall)\b/i.test(next) &&
-      /\bleak|drip|flood|soak|water/i.test(prior)
+      /\b(leak|drip|flood|soak|water)\b/i.test(prior)
     ) {
       return true
     }

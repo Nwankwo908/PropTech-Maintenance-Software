@@ -315,7 +315,7 @@ function photoQuestion(state: SmsIntakeState, hay: string): NextMaintenanceQuest
   }
   let question =
     "If it's safe to do so, send a photo of the area. If you'd rather not, reply SKIP."
-  if (/\bsink|drain|clog\b/.test(hay)) {
+  if (/\b(sink|drain|clog)\b/.test(hay)) {
     question =
       "Thanks. If you can, send me a photo of the sink/drain. It can help the property team or plumber understand what they're dealing with. If you'd rather not, reply SKIP."
   } else if (isAppliance(state, hay)) {
@@ -462,7 +462,11 @@ function resolveNextMaintenanceQuestion(
     if (q) return q
   }
 
-  if (isPlumbing(state, hay) && /\btoilet\b/.test(hay) && /\bclog|backup|won'?t (?:flush|go down)\b/.test(hay)) {
+  if (
+    isPlumbing(state, hay) &&
+    /\btoilet\b/.test(hay) &&
+    /\b(?:clog|backup|won'?t (?:flush|go down))\b/.test(hay)
+  ) {
     if (knownOverflow(state, hay) == null) {
       const q = tryAsk("toilet_overflow", "Got it. Is the toilet overflowing right now?")
       if (q) return q
@@ -505,7 +509,7 @@ function resolveNextMaintenanceQuestion(
   if (
     isPlumbing(state, hay) &&
     !matchesWaterOutage(tenantHay) &&
-    /\bno hot water|no heat(?:ed)? water\b/.test(hay)
+    /\b(?:no hot water|no heat(?:ed)? water)\b/.test(hay)
   ) {
     const q = tryAsk(
       "plumbing_hot_water_scope",
@@ -547,7 +551,7 @@ function resolveNextMaintenanceQuestion(
   if (isHvac(state, hay)) {
     const extreme = (state.outdoor_temp_f != null &&
       (state.outdoor_temp_f >= 88 || state.outdoor_temp_f <= 40)) ||
-      /\bno heat|no ac|not cooling|not heating\b/.test(hay)
+      /\b(?:no heat|no ac|not cooling|not heating)\b/.test(hay)
     if (extreme && !fact(state, "hvac_dangerous_temp")) {
       const q = tryAsk(
         "hvac_dangerous_temp",
@@ -834,7 +838,9 @@ export function applyDiagnosticAnswer(
   }
   if (type === "structural_risk") {
     if (/\bwater\b/i.test(answer)) safety = SYSTEM_SAFETY_NOTES.structuralWater
-    if (/\bsag|collaps|fall/i.test(answer)) safety = SYSTEM_SAFETY_NOTES.structuralCollapse
+    if (/\b(?:sag(?:ging)?|collaps(?:e|ed|ing)?|fall(?:ing)?)\b/i.test(answer)) {
+      safety = SYSTEM_SAFETY_NOTES.structuralCollapse
+    }
   }
   if (type === "pest_location" || type === "room_or_area") {
     const extracted = extractRoomFromText(answer)

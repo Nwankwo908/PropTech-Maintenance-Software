@@ -805,7 +805,7 @@ export function issueSummaryBullet(state: SmsIntakeState): string {
     return matchesWholeHomeWaterOutage(all) ? "No water in the home" : "No water"
   }
   if (/\bno hot water/.test(all)) return "No hot water"
-  if (/\b(ac|air condition)/.test(all) && /\bwarm|not cooling|running/.test(all)) {
+  if (/\b(?:ac|air condition)/.test(all) && /\b(?:warm|not cooling|running)\b/.test(all)) {
     return "Air conditioning is running but not cooling"
   }
   if (/\b(ac|air condition|no cooling)/.test(all)) return "Air conditioning is not working"

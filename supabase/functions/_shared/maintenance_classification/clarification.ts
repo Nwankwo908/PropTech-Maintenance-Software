@@ -37,7 +37,8 @@ export function buildClarificationPrompt(params: {
 
   if (
     hasCeilingWater &&
-    (looksLikeWaterIssue(entities, ruleHits) || /\bwater|leak|drip|pour/i.test(hay))
+    (looksLikeWaterIssue(entities, ruleHits) ||
+      /\b(water|leak|drip|pour(?:ing)?)\b/i.test(hay))
   ) {
     return {
       field: "ceiling_source",
@@ -47,7 +48,10 @@ export function buildClarificationPrompt(params: {
     }
   }
 
-  if (looksLikeWaterIssue(entities, ruleHits) || /\bwater|leak|drip|wet\b/i.test(hay)) {
+  if (
+    looksLikeWaterIssue(entities, ruleHits) ||
+    /\b(water|leak|drip|wet)\b/i.test(hay)
+  ) {
     return {
       field: "issue_source",
       reason: "ambiguous_water_source",
@@ -59,7 +63,7 @@ export function buildClarificationPrompt(params: {
   if (
     entities.vendorTrade === "appliance_repair" ||
     entities.issueType === "appliance" ||
-    /\bfridge|washer|dryer|oven|dishwasher|appliance\b/i.test(hay)
+    /\b(fridge|washer|dryer|oven|dishwasher|appliance)\b/i.test(hay)
   ) {
     return {
       field: "appliance_symptom",
@@ -70,9 +74,11 @@ export function buildClarificationPrompt(params: {
   }
 
   if (
-    /\belectric|power|outlet|spark/i.test(entities.affectedObject ?? "") ||
+    /\b(electric(?:al)?|power|outlet|spark(?:s|ing)?)\b/i.test(
+      entities.affectedObject ?? "",
+    ) ||
     entities.issueType === "electrical" ||
-    /\boutlet|spark|power|electric/i.test(hay)
+    /\b(outlet|spark(?:s|ing)?|power|electric(?:al)?)\b/i.test(hay)
   ) {
     return {
       field: "electrical_safety",
@@ -85,7 +91,7 @@ export function buildClarificationPrompt(params: {
   if (
     entities.issueType === "lock" ||
     entities.vendorTrade === "locksmith" ||
-    /\block|key|can't get in|cannot get in/i.test(hay)
+    /\b(?:lock|keys?|can'?t get in|cannot get in)\b/i.test(hay)
   ) {
     return {
       field: "lockout",

@@ -20,10 +20,10 @@ export function extractEntities(sanitized: string): ClassificationEntities {
   const durationMatch = sanitized.match(DURATION_RE)
 
   const safetyRisks: string[] = []
-  if (/\bspark/i.test(hay)) safetyRisks.push("sparks")
+  if (/\bspark(?:s|ing)?\b/i.test(hay)) safetyRisks.push("sparks")
   if (/\bgas\b/i.test(hay)) safetyRisks.push("gas")
-  if (/\bsmoke|fire\b/i.test(hay)) safetyRisks.push("fire/smoke")
-  if (/\bflood|pouring|gushing|water\s+everywhere\b/i.test(hay)) {
+  if (/\b(smoke|fire)\b/i.test(hay)) safetyRisks.push("fire/smoke")
+  if (/\b(?:flood|pouring|gushing|water\s+everywhere)\b/i.test(hay)) {
     safetyRisks.push("active water")
   }
   if (/\blocked\s*out\b/i.test(hay)) safetyRisks.push("lockout")
@@ -39,7 +39,7 @@ export function extractEntities(sanitized: string): ClassificationEntities {
     /\b(wet|soaking|damage|damaged|flood|pouring|spreading|mold)\b/i.test(hay)
   const damageType = /\bwater\b/i.test(hay)
     ? "water"
-    : /\bfire|smoke|burn\b/i.test(hay)
+    : /\b(fire|smoke|burn(?:t|ing)?)\b/i.test(hay)
     ? "fire"
     : null
 

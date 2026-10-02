@@ -126,7 +126,7 @@ export function resolveCategoryHandlingTip(
     if (matchesWaterOutage(text)) {
       return "Until help arrives: keep your faucets turned off so water doesn't run once service comes back. Let us know if your neighbors have water."
     }
-    if (/\bno hot water|no heat(?:ed)? water\b/.test(text)) {
+    if (/\b(?:no hot water|no heat(?:ed)? water)\b/.test(text)) {
       return "Until help arrives: avoid adjusting the water heater yourself. Use cold water only if you need water."
     }
     if (/\bleak\b/.test(text)) {
@@ -136,10 +136,10 @@ export function resolveCategoryHandlingTip(
   }
 
   if (key === "hvac") {
-    if (/\bno heat|not heating|freezing\b/.test(text)) {
+    if (/\b(?:no heat|not heating|freezing)\b/.test(text)) {
       return "Until help arrives: check that the thermostat is set to heat and the filter isn't badly clogged. Use safe space heaters only if you have them — keep them clear of fabric."
     }
-    if (/\bno ac|not cooling|no cooling|air condition\b/.test(text)) {
+    if (/\b(?:no ac|not cooling|no cooling|air condition(?:ing|er)?)\b/.test(text)) {
       return "Until help arrives: check that the thermostat is set to cool and the filter isn't badly clogged. Close windows and blinds if it's hot outside."
     }
     return "Until help arrives: check the thermostat setting and air filter. Close windows if outdoor temperatures are extreme."

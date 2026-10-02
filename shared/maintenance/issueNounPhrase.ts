@@ -70,10 +70,10 @@ function specificIssueNounPhrase(hay: string): string | null {
   if (/\bno\s*(?:ac|air\s*condition(?:ing|er)?|cooling)\b|\bac\s+(?:is\s+)?(?:out|broken|not\s+working)\b/i.test(hay)) {
     return 'no AC'
   }
-  if (/\bkitchen\s+sink\b/i.test(hay) && /\bleak|leaking|drip/i.test(hay)) {
+  if (/\bkitchen\s+sink\b/i.test(hay) && /\b(leak|leaking|drip)\b/i.test(hay)) {
     return 'a kitchen sink leak'
   }
-  if (/\bbathroom\s+sink\b/i.test(hay) && /\bleak|leaking|drip/i.test(hay)) {
+  if (/\bbathroom\s+sink\b/i.test(hay) && /\b(leak|leaking|drip)\b/i.test(hay)) {
     return 'a bathroom sink leak'
   }
   if (/\btoilet\b/i.test(hay) && /\b(?:overflow|clog|running|leak|broken)/i.test(hay)) {
@@ -88,9 +88,9 @@ function specificIssueNounPhrase(hay: string): string | null {
   ) {
     return 'a pest control request'
   }
-  // Each pest token needs its own \b — otherwise "rat" matches inside "temperature".
+  // Group-wrapped \b — never \b only on the first alt ("rat" inside "temperature").
   if (
-    /\broach(?:es)?\b|\bcockroach(?:es)?\b|\bmice\b|\bmouse\b|\brat(?:s)?\b|\bbed\s*bug(?:s)?\b/i
+    /\b(?:roach(?:es)?|cockroach(?:es)?|mice|mouse|rat(?:s)?|bed\s*bugs?)\b/i
       .test(hay)
   ) {
     return 'a pest issue'
@@ -115,10 +115,14 @@ function tradeNounPhrase(trade: VendorTrade, hay: string, hit: RuleHit | null): 
     case 'pest_control':
       return 'a pest control request'
     case 'plumbing':
-      if (hit?.issueType === 'leak' || /\bleak|drip|flood/i.test(hay)) return 'a plumbing leak'
+      if (hit?.issueType === 'leak' || /\b(leak|drip|flood)\b/i.test(hay)) {
+        return 'a plumbing leak'
+      }
       return 'a plumbing issue'
     case 'hvac':
-      if (/\bac\b|cool|air\s*condition/i.test(hay)) return 'an AC issue'
+      if (/\b(?:ac|cool(?:ing)?|air\s*condition(?:ing|er)?)\b/i.test(hay)) {
+        return 'an AC issue'
+      }
       return 'an HVAC issue'
     case 'electrical':
       return 'an electrical issue'
