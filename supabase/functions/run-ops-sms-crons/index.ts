@@ -18,6 +18,7 @@ import { reportMissingRequiredCronJobs } from "../_shared/missingRequiredCrons.t
 import { processTenantActivationRetries } from "../_shared/sms/tenantActivation.ts"
 import { sendNeedsAdminVendorDigest } from "../_shared/needsAdminVendorDigest.ts"
 import { processTenantRentReportConfirmTtl } from "../_shared/tenantRentReportTtl.ts"
+import { processRentBillingInquiryTtl } from "../_shared/sms/rentBillingInquiryTtl.ts"
 import { processIntakeSilenceFollowUps } from "../_shared/sms/intakeSilenceFollowUpProcess.ts"
 
 const corsHeaders: Record<string, string> = {
@@ -131,6 +132,18 @@ serve(async (req) => {
       landlordId: scopedLandlordId || null,
     })
 
+    let rentBillingInquiryTtl: Record<string, unknown> = {}
+    try {
+      rentBillingInquiryTtl = await processRentBillingInquiryTtl(supabase, {
+        landlordId: scopedLandlordId || null,
+      })
+    } catch (err) {
+      console.error("[run-ops-sms-crons] rent billing inquiry ttl", err)
+      rentBillingInquiryTtl = {
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+
     let intakeSilence: Record<string, unknown> = {}
     try {
       intakeSilence = await processIntakeSilenceFollowUps(supabase, {
@@ -194,6 +207,7 @@ serve(async (req) => {
       })),
       tenant_activation: activation,
       tenant_rent_report_confirm_ttl: rentReportTtl,
+      rent_billing_inquiry_ttl: rentBillingInquiryTtl,
       intake_silence_follow_up: intakeSilence,
       rent_collection: {
         landlords: landlordIds.length,

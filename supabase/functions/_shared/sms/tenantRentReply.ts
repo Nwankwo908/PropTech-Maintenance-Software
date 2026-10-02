@@ -30,6 +30,14 @@ import {
 } from "../engine/workflowRuns.ts"
 import type { WorkflowRunRow } from "../engine/types.ts"
 import {
+  attachFollowUpToRentBillingInquiryTicket,
+  createOrBumpRentBillingInquiryTicket,
+  isPendingRentBillingInquiryOpen,
+  readPendingRentBillingInquiry,
+  RENT_QUESTION_FOLLOWUP_ATTACH_MS,
+  writePendingRentBillingInquiry,
+} from "./rentBillingInquiry.ts"
+import {
   buildTenantRentAmountAskSms,
   buildTenantRentCorrectedBalanceSms,
   buildTenantRentQuestionsHandoffSms,
@@ -196,8 +204,9 @@ export function canHandleTenantRentReply(input: {
 }
 
 /**
- * QUESTIONS that are really a repair / rent-balance / lease ask should fall
- * through to interpretation — bare "QUESTIONS" (or noise) hands off.
+ * QUESTIONS that are really a repair / emergency / move-out ask should fall
+ * through to interpretation. Rent/lease billing questions stay on the
+ * rent_billing_inquiry ticket path (including inline asks after QUESTIONS).
  */
 export function questionsShouldFallThroughToInterpretation(body: string): boolean {
   const recognition = recognizeInboundIntentSync(body, { freshThread: false })
@@ -205,8 +214,6 @@ export function questionsShouldFallThroughToInterpretation(body: string): boolea
     recognition.intent === "repair" ||
     recognition.intent === "emergency" ||
     recognition.intent === "status_check" ||
-    recognition.intent === "rent" ||
-    recognition.intent === "lease" ||
     recognition.intent === "move_out"
   ) {
     // Bare keyword alone is still a handoff ("QUESTIONS"), not a disguised ask.
@@ -571,19 +578,41 @@ async function handleQuestionsHandoff(
     run: WorkflowRunRow | null
     body: string
     messageId?: string | null
+    priorIntake: Record<string, unknown>
   },
 ): Promise<string> {
-  void notifyLandlordNeedsAttention(supabase, {
+  const billingPeriod = params.run ? runBillingPeriod(params.run) : null
+  const ticket = await createOrBumpRentBillingInquiryTicket(supabase, {
     landlordId: params.landlordId,
-    kind: "workflow_escalated",
-    headline: "Resident has a rent question",
-    detail: params.body.trim().slice(0, 160)
-      ? `Latest message: "${params.body.trim().slice(0, 160)}"`
-      : "They replied QUESTIONS on a rent reminder.",
-    idempotencyKey: `rent-questions:${params.conversationId}:${params.messageId ?? Date.now()}`,
     residentId: params.residentId,
+    conversationId: params.conversationId,
     workflowRunId: params.run?.id ?? null,
+    billingPeriod,
+    body: params.body,
+    messageId: params.messageId,
   })
+
+  const ticketRef = ticket.ok ? ticket.ticketRef : null
+
+  if (ticket.ok) {
+    const now = new Date()
+    const pending = ticket.awaitingTenantDetail
+      ? {
+          ticketId: ticket.ticketId,
+          ticketRef: ticket.ticketRef,
+          createdAt: now.toISOString(),
+          attachUntil: new Date(
+            now.getTime() + RENT_QUESTION_FOLLOWUP_ATTACH_MS,
+          ).toISOString(),
+        }
+      : null
+    await persistResidentIntake(
+      supabase,
+      params.conversationId,
+      params.priorIntake,
+      writePendingRentBillingInquiry(params.priorIntake, pending),
+    )
+  }
 
   if (params.run) {
     const state = runStepState<Record<string, unknown>>(params.run)
@@ -593,10 +622,13 @@ async function handleQuestionsHandoff(
       completedAt: new Date().toISOString(),
       metadata: {
         payment_intent: "questions",
+        rent_billing_inquiry_ticket_id: ticket.ok ? ticket.ticketId : null,
+        rent_billing_inquiry_ref: ticketRef,
         step_state: {
           ...state,
           step: "payment_intent_recorded",
           payment_intent: "questions",
+          rent_billing_inquiry_ticket_id: ticket.ok ? ticket.ticketId : null,
         },
       },
       pipelineStage: "act",
@@ -615,11 +647,15 @@ async function handleQuestionsHandoff(
     workflowTemplateId: "rent_collection",
     conversationId: params.conversationId,
     metadata: {
-      message: "Resident asked a question about rent; property team notified.",
+      message: ticket.ok
+        ? `Resident asked a rent question (${ticket.ticketRef}); property team notified.`
+        : "Resident asked a question about rent; property team notified.",
+      ticket_id: ticket.ok ? ticket.ticketId : null,
+      ticket_ref: ticketRef,
     },
   })
 
-  return buildTenantRentQuestionsHandoffSms()
+  return buildTenantRentQuestionsHandoffSms(ticketRef)
 }
 
 /**
@@ -642,6 +678,42 @@ export async function handleTenantRentReply(
   if (!residentId) return { handled: false }
 
   const prior = await loadConversationIntake(supabase, params.conversationId)
+
+  // After bare QUESTIONS, attach the next short inbound to the same ticket.
+  const pendingInquiry = readPendingRentBillingInquiry(prior)
+  if (
+    pendingInquiry &&
+    isPendingRentBillingInquiryOpen(pendingInquiry) &&
+    !parseTenantRentReply(params.body)
+  ) {
+    const attach = await attachFollowUpToRentBillingInquiryTicket(supabase, {
+      ticketId: pendingInquiry.ticketId,
+      landlordId: params.landlordId,
+      residentId,
+      conversationId: params.conversationId,
+      body: params.body,
+    })
+    await persistResidentIntake(
+      supabase,
+      params.conversationId,
+      prior,
+      writePendingRentBillingInquiry(prior, null),
+    )
+    if (attach.ok) {
+      return {
+        handled: true,
+        replyBody: buildTenantRentQuestionsHandoffSms(attach.ticketRef),
+      }
+    }
+  } else if (pendingInquiry && !isPendingRentBillingInquiryOpen(pendingInquiry)) {
+    await persistResidentIntake(
+      supabase,
+      params.conversationId,
+      prior,
+      writePendingRentBillingInquiry(prior, null),
+    )
+  }
+
   const amountAsk = readAwaitingTenantRentAmount(prior)
 
   // Follow-up: tenant was asked for the dollar amount.
@@ -687,6 +759,7 @@ export async function handleTenantRentReply(
             run,
             body: params.body,
             messageId: params.messageId,
+            priorIntake: prior,
           }),
         }
       }
@@ -740,6 +813,7 @@ export async function handleTenantRentReply(
         run,
         body: params.body,
         messageId: params.messageId,
+        priorIntake: prior,
       }),
     }
   }

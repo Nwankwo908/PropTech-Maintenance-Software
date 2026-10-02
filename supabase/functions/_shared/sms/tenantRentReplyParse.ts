@@ -217,8 +217,15 @@ export function buildTenantRentCorrectedBalanceSms(params: {
   return `Quick update from your property team: they confirmed ${confirmed} received. That leaves ${remaining} due.`
 }
 
-export function buildTenantRentQuestionsHandoffSms(): string {
-  return "Got it — someone from your property team will reach out about your rent shortly."
+export function buildTenantRentQuestionsHandoffSms(ticketRef?: string | null): string {
+  const ref = (ticketRef ?? "").trim()
+  if (ref) {
+    return [
+      `Got it — we've flagged this for your property manager (ref ${ref}).`,
+      "They'll follow up shortly. Reply here anytime with more detail.",
+    ].join(" ")
+  }
+  return "Got it — we've flagged this for your property manager. They'll follow up shortly."
 }
 
 export {
