@@ -345,6 +345,11 @@ verify_jwt = false
 import_map = "./functions/admin-conversation-sms/deno.json"
 entrypoint = "./functions/admin-conversation-sms/index.ts"
 
+[functions.remediate-maintenance-ticket]
+enabled = true
+verify_jwt = false
+import_map = "./functions/remediate-maintenance-ticket/deno.json"
+entrypoint = "./functions/remediate-maintenance-ticket/index.ts"
 
 [functions.extract-maintenance-history]
 enabled = true
