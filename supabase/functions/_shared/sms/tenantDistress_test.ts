@@ -95,12 +95,30 @@ Deno.test("don't text me language triggers distress handoff not menu", () => {
   }
 })
 
-Deno.test("outbound loop flag alone is a distress signal", () => {
+Deno.test("outbound loop flag alone does not distress ordinary follow-ups", () => {
   const signal = detectTenantDistressSignals({
     body: "ok",
     intakeState: { outbound_identical_reply_loop_at: new Date().toISOString() },
   })
+  assertEquals(signal.distress, false)
+  assertEquals(signal.reasons.includes("outbound_loop"), false)
+  assertEquals(
+    canHandleTenantDistress({
+      identityType: "resident",
+      body: "Thank you very much",
+      intakeState: { outbound_identical_reply_loop_at: new Date().toISOString() },
+    }),
+    false,
+  )
+})
+
+Deno.test("outbound loop flag + profanity still distresses", () => {
+  const signal = detectTenantDistressSignals({
+    body: "this is bullshit",
+    intakeState: { outbound_identical_reply_loop_at: new Date().toISOString() },
+  })
   assertEquals(signal.distress, true)
+  assertEquals(signal.reasons.includes("profanity"), true)
   assertEquals(signal.reasons.includes("outbound_loop"), true)
 })
 

@@ -2,10 +2,7 @@
  * Inbound debounce, duplicate-SID short-circuit, and outbound loop circuit breaker.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import {
-  normalizeSmsBody,
-  type VendorScheduleFsmState,
-} from "../vendor_schedule_fsm.ts"
+import type { VendorScheduleFsmState } from "../vendor_schedule_fsm.ts"
 
 /** Collapse rapid successive texts on the same thread. */
 export const INBOUND_DEBOUNCE_MS = 2_500
@@ -16,6 +13,27 @@ export const OUTBOUND_LOOP_LOOKBACK_MS = 60 * 60 * 1000
  * 1 → if one matching body was already sent, suppress the next (2nd) send.
  */
 export const OUTBOUND_LOOP_MAX_SAME = 1
+
+/**
+ * Normalize outbound SMS for loop comparison.
+ * Strips personalized greetings ("Hi there,", "Hi Shahita,") so greeting
+ * variants of the same substantive message count as duplicates.
+ */
+export function normalizeOutboundForLoopCompare(body: string): string {
+  let t = body.replace(/\r\n/g, "\n").trim()
+  if (!t) return ""
+  // Drop a leading greeting line: "Hi there," / "Hi Shahita," / "Hello Mary,"
+  t = t.replace(
+    /^(?:hi|hello|hey)\s+[^\n,]{1,40},?\s*(?:\n+|$)/i,
+    "",
+  )
+  // Same greeting when it shares the first line with more copy.
+  t = t.replace(
+    /^(?:hi|hello|hey)\s+[a-z][a-z0-9'`.\- ]{0,39},?\s+/i,
+    "",
+  )
+  return t.trim().toLowerCase().replace(/\s+/g, " ")
+}
 
 export type SaveInboundResult = {
   messageId: string
@@ -93,14 +111,22 @@ export function countIdenticalRecentOutbounds(
   recentOutboundBodies: readonly string[],
   candidateBody: string,
 ): number {
-  const norm = normalizeSmsBody(candidateBody)
+  const norm = normalizeOutboundForLoopCompare(candidateBody)
   if (!norm) return 0
   let hits = 0
   for (const body of recentOutboundBodies) {
     if (typeof body !== "string") continue
-    if (normalizeSmsBody(body) === norm) hits += 1
+    if (normalizeOutboundForLoopCompare(body) === norm) hits += 1
   }
   return hits
+}
+
+/** True when a human-handoff / distress body already went out in the window. */
+export function recentOutboundIncludesHandoff(
+  recentOutboundBodies: readonly string[],
+  handoffBody: string,
+): boolean {
+  return countIdenticalRecentOutbounds(recentOutboundBodies, handoffBody) > 0
 }
 
 /**

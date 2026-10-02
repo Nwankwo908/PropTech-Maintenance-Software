@@ -5,6 +5,7 @@ import {
   shouldUnpinMaintenanceForInterpretation,
 } from "../sms/inboundInterpretation.ts"
 import { classifyTenantComplianceKeyword } from "../sms/tenantMessaging.ts"
+import { activeNonMaintenanceRunShouldYield } from "./activeRunYield.ts"
 import { listWorkflowTemplates } from "./registry.ts"
 import { findActiveWorkflowRun } from "./workflowRuns.ts"
 import type {
@@ -58,12 +59,20 @@ export async function classifyWorkflow(
           sms.inbound.body,
         )
 
+      // Active rent/lease/etc. must not absorb a clearly classified repair.
+      const yieldForUnrelatedIntent = activeNonMaintenanceRunShouldYield({
+        activeTemplateId: byConversation.template_id,
+        body: sms.inbound.body,
+        interpretation: sms.interpretation,
+      })
+
       // Don't pin unknown / unlinked senders to a stuck maintenance_intake run —
       // that path only loops "need your unit number" without parsing unit replies.
       if (
         !stuckMaintenanceWithoutResident &&
         !leaseInquiryOnMaintenance &&
-        !interpretedNonMaintenance
+        !interpretedNonMaintenance &&
+        !yieldForUnrelatedIntent
       ) {
         ctx.activeRun = byConversation
         ctx.runId = byConversation.id
@@ -83,12 +92,21 @@ export async function classifyWorkflow(
         })
       }
 
-      console.info("[workflow-classify] skipping stuck maintenance_intake run", {
-        runId: byConversation.id,
-        conversationId: sms.conversationId,
-        identityType: sms.identity.identity_type,
-        selfHealingPhase: sms.selfHealingPhase,
-      })
+      if (yieldForUnrelatedIntent) {
+        console.info("[workflow-classify] clear unrelated intent overrides active run pin", {
+          runId: byConversation.id,
+          conversationId: sms.conversationId,
+          activeTemplateId: byConversation.template_id,
+          intent: sms.interpretation?.intent ?? null,
+        })
+      } else {
+        console.info("[workflow-classify] skipping stuck maintenance_intake run", {
+          runId: byConversation.id,
+          conversationId: sms.conversationId,
+          identityType: sms.identity.identity_type,
+          selfHealingPhase: sms.selfHealingPhase,
+        })
+      }
     }
 
     const residentId = sms.identity.resident_id?.trim()
@@ -98,7 +116,14 @@ export async function classifyWorkflow(
         residentId,
         templateId: "lease_renewal",
       })
-      if (leaseRun) {
+      if (
+        leaseRun &&
+        !activeNonMaintenanceRunShouldYield({
+          activeTemplateId: "lease_renewal",
+          body: sms.inbound.body,
+          interpretation: sms.interpretation,
+        })
+      ) {
         ctx.activeRun = leaseRun
         ctx.runId = leaseRun.id
         return {
@@ -114,7 +139,14 @@ export async function classifyWorkflow(
         residentId,
         templateId: "rent_collection",
       })
-      if (rentRun) {
+      if (
+        rentRun &&
+        !activeNonMaintenanceRunShouldYield({
+          activeTemplateId: "rent_collection",
+          body: sms.inbound.body,
+          interpretation: sms.interpretation,
+        })
+      ) {
         ctx.activeRun = rentRun
         ctx.runId = rentRun.id
         return {
@@ -153,11 +185,12 @@ export async function classifyWorkflow(
         reason: "non_maintenance_intent_no_template",
       }
     }
-    // Fresh repair only when interpretation explicitly approved a new issue
-    // (or interpretation never ran — compliance skip / legacy paths).
+    // Fresh repair when interpretation approved a new issue, classified
+    // maintenance_new, or never ran (compliance skip / legacy paths).
     const approvedNewIssue =
       !sms.interpretation ||
-      sms.interpretation.extractedSlots.contextual_action === "new_issue"
+      sms.interpretation.extractedSlots.contextual_action === "new_issue" ||
+      sms.interpretation.intent === "maintenance_new"
     if (!approvedNewIssue) {
       return {
         templateId: "landlord_command",

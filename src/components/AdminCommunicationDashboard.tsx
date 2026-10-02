@@ -518,8 +518,17 @@ function ConversationListRow({
 }) {
   return (
     <div
+      role="button"
+      tabIndex={0}
       style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
-      className={`sa-enter sa-row flex w-full items-center gap-3 px-6 py-4 hover:bg-[#f9fafb] ${
+      onClick={() => onOpen(c.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(c.id)
+        }
+      }}
+      className={`sa-enter sa-row flex w-full cursor-pointer items-center gap-3 px-6 py-4 outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5] ${
         selected ? 'bg-[#f5f3ff]' : ''
       }`}
     >
@@ -534,11 +543,7 @@ function ConversationListRow({
           onChange={() => onToggleSelect(c.id)}
         />
       </div>
-      <button
-        type="button"
-        onClick={() => onOpen(c.id)}
-        className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-      >
+      <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
         <span className="relative flex size-9 shrink-0 items-center justify-center">
           {c.unread ? (
             <span className="absolute -left-3 top-1/2 size-2 -translate-y-1/2 rounded-full bg-[#1447e6]" />
@@ -589,7 +594,7 @@ function ConversationListRow({
             <span className="text-[12px] leading-4 text-[#6a7282]">{c.status}</span>
           ) : null}
         </div>
-      </button>
+      </div>
     </div>
   )
 }

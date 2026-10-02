@@ -63,7 +63,10 @@ import {
 } from "./tenantRentReply.ts"
 import {
   canHandleTenantDistress,
+  clearOutboundLoopFlag,
   handleTenantDistress,
+  OUTBOUND_LOOP_FLAG_KEY,
+  shouldClearOutboundLoopFlagOnInbound,
 } from "./tenantDistress.ts"
 import {
   canHandleHqsConfirm,
@@ -384,7 +387,26 @@ async function tryTenantDistressHandler(
     .select("intake_state")
     .eq("id", ctx.conversationId)
     .maybeSingle()
-  const intakeState = conv?.intake_state
+  let intakeState = conv?.intake_state
+
+  // Ordinary follow-ups after a loop trip must not re-enter distress.
+  if (
+    shouldClearOutboundLoopFlagOnInbound({
+      body: ctx.inbound.body,
+      intakeState,
+    })
+  ) {
+    await clearOutboundLoopFlag(ctx.supabase, ctx.conversationId)
+    if (
+      intakeState &&
+      typeof intakeState === "object" &&
+      !Array.isArray(intakeState)
+    ) {
+      const next = { ...(intakeState as Record<string, unknown>) }
+      delete next[OUTBOUND_LOOP_FLAG_KEY]
+      intakeState = next
+    }
+  }
 
   if (
     !canHandleTenantDistress({
@@ -740,7 +762,7 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   tenant_rent_reply:
     "active rent_collection run (payment_reminder_sent / awaiting_payment) or intake_state.awaiting_tenant_rent_amount (PAID/PARTIAL/QUESTIONS)",
   tenant_distress:
-    "Resident identity + distress signals (profanity, stop-texting language, or intake_state.outbound_identical_reply_loop_at)",
+    "Resident identity + distress signals (profanity or stop-texting language; sticky outbound loop flag alone does not handle)",
   hqs_unit_reply:
     "intake_state.awaiting_hqs_unit (landlord replies with unit for HQS letter mapping)",
   hqs_confirm:

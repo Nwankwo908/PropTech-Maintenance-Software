@@ -2,6 +2,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   inboundHasContent,
+  normalizeOutboundForLoopCompare,
   shouldSuppressIdenticalOutbound,
 } from "./sms_inbound_guard.ts"
 
@@ -28,6 +29,21 @@ Deno.test("shouldSuppressIdenticalOutbound trips when one prior identical body e
       recentOutboundBodies: [],
       candidateBody: body,
     }).trip,
+    false,
+  )
+})
+
+Deno.test("normalizeOutboundForLoopCompare strips Hi there / Hi Name greetings", () => {
+  const there =
+    "Hi there,\n\nI'm sorry this has been frustrating.\n\nA member of our team will follow up with you here shortly."
+  const named =
+    "Hi Shahita,\n\nI'm sorry this has been frustrating.\n\nA member of our team will follow up with you here shortly."
+  assertEquals(
+    normalizeOutboundForLoopCompare(there),
+    normalizeOutboundForLoopCompare(named),
+  )
+  assertEquals(
+    normalizeOutboundForLoopCompare(there).includes("hi there"),
     false,
   )
 })

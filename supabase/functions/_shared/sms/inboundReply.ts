@@ -31,7 +31,10 @@ export function resolveInboundAutoReplyBody(
   if (
     workflowRoute === "resident_maintenance_intake" ||
     workflowRoute === "lease_renewal" ||
-    workflowRoute === "unknown_sender_onboarding"
+    workflowRoute === "unknown_sender_onboarding" ||
+    // Rent/lifecycle replies must win over the generic identity "what's going on"
+    // resolution hint — that prompt is for intake, not payment reminders.
+    workflowRoute === "rent_collection"
   ) {
     return workflow || resolution || null
   }

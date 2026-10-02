@@ -49,10 +49,12 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
       return null
     }
 
-    // Only start intake when interpretation approved a new problem (or never ran).
+    // Start intake when interpretation approved a new problem, classified
+    // maintenance_new (repair text while another lifecycle run is open), or never ran.
     if (
       sms.interpretation &&
-      sms.interpretation.extractedSlots.contextual_action !== "new_issue"
+      sms.interpretation.extractedSlots.contextual_action !== "new_issue" &&
+      sms.interpretation.intent !== "maintenance_new"
     ) {
       return null
     }
@@ -61,7 +63,9 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
       return {
         templateId: "maintenance_intake",
         confidence: "high",
-        reason: "resident_sms",
+        reason: sms.interpretation?.intent === "maintenance_new"
+          ? "interpreted_maintenance_new"
+          : "resident_sms",
         runId: ctx.runId,
       }
     }

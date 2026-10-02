@@ -15,7 +15,7 @@ import {
 import { readVendorScheduleFsm } from "../vendor_schedule_fsm.ts"
 import { shouldTripOutboundCircuit } from "./sms_inbound_guard.ts"
 import {
-  buildTenantDistressHandoffSms,
+  clearOutboundLoopFlag,
   OUTBOUND_LOOP_FLAG_KEY,
 } from "./tenantDistress.ts"
 import type {
@@ -106,59 +106,58 @@ export async function trySendAutoReply(
       reason: circuit.reason,
       bodyPreview: replyBody.slice(0, 80),
     })
-    // Vendor paths stay silent (prior behavior). Resident paths hand off once.
+    // True suppression: do not send the duplicate and do not substitute a
+    // distress handoff SMS (that substitution was itself a loop).
     const isVendor =
       params.workflowRoute === "vendor_response" ||
       params.source.includes("vendor")
-    if (isVendor || circuit.reason === "empty") {
-      return undefined
+    if (!isVendor && circuit.reason !== "empty") {
+      await recordActivityLog(supabase, {
+        landlordId: params.landlordId,
+        eventType: "sms.identical_reply_loop_detected",
+        source: "sms",
+        actorType: "system",
+        conversationId: params.conversationId,
+        metadata: {
+          message:
+            "Suppressed a repeated automated SMS. No replacement message was sent.",
+          reason: circuit.reason ?? "identical_reply_loop",
+          suppressed_preview: replyBody.slice(0, 160),
+          workflow_route: params.workflowRoute ?? null,
+          source: params.source,
+        },
+      })
+      void notifyLandlordNeedsAttention(supabase, {
+        landlordId: params.landlordId,
+        kind: "workflow_escalated",
+        headline: "Automated SMS replies were looping",
+        detail:
+          "Ulo stopped repeating the same reply. A teammate should follow up with the resident.",
+        whyLine: "The resident kept getting the same automated message.",
+        nextSteps: ["Follow up with the resident by text"],
+        idempotencyKey: `sms-loop:${params.conversationId}:${Date.now()}`,
+      })
+      try {
+        const { data: convo } = await supabase
+          .from("sms_conversations")
+          .select("intake_state")
+          .eq("id", params.conversationId)
+          .maybeSingle()
+        const prior = (convo?.intake_state && typeof convo.intake_state === "object" &&
+            !Array.isArray(convo.intake_state))
+          ? { ...(convo.intake_state as Record<string, unknown>) }
+          : {}
+        prior[OUTBOUND_LOOP_FLAG_KEY] = new Date().toISOString()
+        delete prior.clarify_menu_shown_at
+        await supabase
+          .from("sms_conversations")
+          .update({ intake_state: prior, updated_at: new Date().toISOString() })
+          .eq("id", params.conversationId)
+      } catch (err) {
+        console.warn("[sms-inbound] failed to persist outbound loop flag", err)
+      }
     }
-
-    const handoffBody = buildTenantDistressHandoffSms(null)
-    await recordActivityLog(supabase, {
-      landlordId: params.landlordId,
-      eventType: "sms.identical_reply_loop_detected",
-      source: "sms",
-      actorType: "system",
-      conversationId: params.conversationId,
-      metadata: {
-        message: "Suppressed a repeated automated SMS and handed off to the team.",
-        reason: circuit.reason ?? "identical_reply_loop",
-        suppressed_preview: replyBody.slice(0, 160),
-        workflow_route: params.workflowRoute ?? null,
-        source: params.source,
-      },
-    })
-    void notifyLandlordNeedsAttention(supabase, {
-      landlordId: params.landlordId,
-      kind: "workflow_escalated",
-      headline: "Automated SMS replies were looping",
-      detail: "Ulo stopped repeating the same reply and asked a teammate to follow up.",
-      whyLine: "The resident kept getting the same automated message.",
-      nextSteps: ["Follow up with the resident by text"],
-      idempotencyKey: `sms-loop:${params.conversationId}:${Date.now()}`,
-    })
-    try {
-      const { data: convo } = await supabase
-        .from("sms_conversations")
-        .select("intake_state")
-        .eq("id", params.conversationId)
-        .maybeSingle()
-      const prior = (convo?.intake_state && typeof convo.intake_state === "object" &&
-          !Array.isArray(convo.intake_state))
-        ? { ...(convo.intake_state as Record<string, unknown>) }
-        : {}
-      prior[OUTBOUND_LOOP_FLAG_KEY] = new Date().toISOString()
-      delete prior.clarify_menu_shown_at
-      await supabase
-        .from("sms_conversations")
-        .update({ intake_state: prior, updated_at: new Date().toISOString() })
-        .eq("id", params.conversationId)
-    } catch (err) {
-      console.warn("[sms-inbound] failed to persist outbound loop flag", err)
-    }
-
-    replyBody = handoffBody
+    return undefined
   }
 
   const sent = await sendInboundAutoReply(supabase, {
@@ -168,9 +167,7 @@ export async function trySendAutoReply(
     toNumber: params.externalPhone,
     body: replyBody,
     provider: params.provider,
-    source: circuit.trip && !params.source.includes("vendor")
-      ? "sms_identical_reply_loop_handoff"
-      : params.source,
+    source: params.source,
   })
 
   if (!sent.ok) {
@@ -181,6 +178,13 @@ export async function trySendAutoReply(
       error: sent.error,
     })
     return undefined
+  }
+
+  // A real (non-loop) reply went out — sticky loop flag must not linger.
+  try {
+    await clearOutboundLoopFlag(supabase, params.conversationId)
+  } catch {
+    // best-effort
   }
 
   return sent.messageId

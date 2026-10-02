@@ -58,6 +58,35 @@ export function readOutboundLoopFlag(intakeState: unknown): string | null {
   return typeof raw === "string" && raw.trim() ? raw.trim() : null
 }
 
+/** True when the inbound itself shows continued frustration (not "thanks" / "okay"). */
+export function inboundLooksLikeContinuedFrustration(body: string): boolean {
+  return looksLikeProfanity(body) || looksLikeStopTextingNearVerbatim(body)
+}
+
+/** Clear sticky loop flag so ordinary follow-ups never re-enter distress. */
+export async function clearOutboundLoopFlag(
+  supabase: SupabaseClient,
+  conversationId: string,
+): Promise<boolean> {
+  const { data: conv } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", conversationId)
+    .maybeSingle()
+  if (!conv?.intake_state || typeof conv.intake_state !== "object" ||
+    Array.isArray(conv.intake_state)) {
+    return false
+  }
+  const prior = { ...(conv.intake_state as Record<string, unknown>) }
+  if (!(OUTBOUND_LOOP_FLAG_KEY in prior)) return false
+  delete prior[OUTBOUND_LOOP_FLAG_KEY]
+  await supabase
+    .from("sms_conversations")
+    .update({ intake_state: prior, updated_at: new Date().toISOString() })
+    .eq("id", conversationId)
+  return true
+}
+
 export function looksLikeProfanity(body: string): boolean {
   return PROFANITY.test(body.trim())
 }
@@ -100,7 +129,14 @@ export function detectTenantDistressSignals(input: {
   const reasons: TenantDistressReason[] = []
   if (looksLikeProfanity(input.body)) reasons.push("profanity")
   if (looksLikeStopTextingNearVerbatim(input.body)) reasons.push("stop_texting")
-  if (readOutboundLoopFlag(input.intakeState)) reasons.push("outbound_loop")
+  // Sticky loop flag alone must NOT force distress on "thank you" / "okay".
+  // Only honor it when this inbound itself shows continued frustration.
+  if (
+    readOutboundLoopFlag(input.intakeState) &&
+    inboundLooksLikeContinuedFrustration(input.body)
+  ) {
+    reasons.push("outbound_loop")
+  }
   return { distress: reasons.length > 0, reasons }
 }
 
@@ -114,6 +150,15 @@ export function canHandleTenantDistress(input: {
     body: input.body,
     intakeState: input.intakeState,
   }).distress
+}
+
+/** Ordinary follow-up after a loop trip — clear the sticky flag. */
+export function shouldClearOutboundLoopFlagOnInbound(input: {
+  body: string
+  intakeState?: unknown
+}): boolean {
+  if (!readOutboundLoopFlag(input.intakeState)) return false
+  return !inboundLooksLikeContinuedFrustration(input.body)
 }
 
 /** Distress must never offer YES/NO to append text onto a work order. */

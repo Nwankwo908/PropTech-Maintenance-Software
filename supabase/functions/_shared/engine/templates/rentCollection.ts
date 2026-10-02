@@ -38,6 +38,7 @@ import {
 import { offerLandlordRentReceiptAsk } from "../rentReceiptConfirmation.ts"
 import { maybeSendOfflineTenantGraceReminder } from "../offlineTenantRentReminder.ts"
 import { landlordHasPayments } from "../../../../../shared/landlordCapabilities.ts"
+import { activeNonMaintenanceRunShouldYield } from "../activeRunYield.ts"
 import {
   buildRentClassificationMetadata,
   classifyRentCollection,
@@ -247,6 +248,18 @@ export const rentCollectionTemplate: WorkflowTemplate = {
 
   classify(ctx): ClassifiedIntent | null {
     if (ctx.activeRun?.template_id === "rent_collection") {
+      // Belt-and-suspenders: never re-claim a clear repair via template.classify
+      // after classifyWorkflow already decided to yield the rent pin.
+      if (
+        ctx.sms &&
+        activeNonMaintenanceRunShouldYield({
+          activeTemplateId: "rent_collection",
+          body: ctx.sms.inbound.body,
+          interpretation: ctx.sms.interpretation,
+        })
+      ) {
+        return null
+      }
       return {
         templateId: "rent_collection",
         confidence: "high",
