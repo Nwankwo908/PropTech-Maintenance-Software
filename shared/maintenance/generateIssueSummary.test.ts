@@ -122,4 +122,20 @@ describe('five surfaces share generateIssueSummary extraction', () => {
     expect(splitCandidateLabel).toBe(title)
     expect(title).not.toMatch(/Hi and thank you/i)
   })
+
+  it('does not treat "temperature" as a pest (rat) sighting', () => {
+    const body =
+      'The it failed the inspection. The oven does not work at all (at any temperature)'
+    const summary = generateIssueSummary(body, {
+      format: 'summary',
+      category: 'appliance',
+      maxWords: 18,
+    })
+    expect(summary.toLowerCase()).not.toMatch(/pest/)
+    expect(summary.toLowerCase()).toMatch(/appliance|oven|stove/)
+    expect(
+      generateIssueSummary('I saw mice in the kitchen', { format: 'summary' })
+        .toLowerCase(),
+    ).toContain('pest')
+  })
 })

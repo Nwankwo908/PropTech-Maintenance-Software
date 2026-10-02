@@ -88,7 +88,11 @@ function specificIssueNounPhrase(hay: string): string | null {
   ) {
     return 'a pest control request'
   }
-  if (/\broach(?:es)?|cockroach|mice|mouse|rat(?:s)?|bed\s*bug/i.test(hay)) {
+  // Each pest token needs its own \b — otherwise "rat" matches inside "temperature".
+  if (
+    /\broach(?:es)?\b|\bcockroach(?:es)?\b|\bmice\b|\bmouse\b|\brat(?:s)?\b|\bbed\s*bug(?:s)?\b/i
+      .test(hay)
+  ) {
     return 'a pest issue'
   }
   if (/\bgas\s*(?:smell|leak)\b|\bsmell(?:s)?\s+(?:of\s+)?gas\b/i.test(hay)) {
