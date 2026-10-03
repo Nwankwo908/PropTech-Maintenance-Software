@@ -10,6 +10,8 @@ import {
   rentCollectionGraphScopeFromRun,
   RENT_GRAPH_EVENTS,
 } from "../engine/rentCollectionGraph.ts"
+import { isRentCollectionPaused } from "../engine/rentCollectionPolicy.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
@@ -42,6 +44,7 @@ import {
   buildTenantRentCorrectedBalanceSms,
   buildTenantRentQuestionsHandoffSms,
   buildTenantRentReportAckSms,
+  buildTenantRentCollectionPausedSms,
   checkPartialAmount,
   formatTenantRentAmount,
   parseMoneyAmountFromSms,
@@ -65,6 +68,7 @@ import {
   upsertAwaitingTenantRentReportConfirmation,
   type AwaitingTenantRentReportConfirmation,
 } from "./tenantRentReportConfirmation.ts"
+import { shouldYieldRentReplyToSpecificPendingAsk } from "./shortReplyArbitration.ts"
 
 export type AwaitingTenantRentAmount = {
   runId: string
@@ -679,6 +683,57 @@ export async function handleTenantRentReply(
 
   const prior = await loadConversationIntake(supabase, params.conversationId)
 
+  // Landlord paused resident rent outreach — ack and stop. Do not run
+  // PAID/PARTIAL amount validation against balance_due (Section 8 loops).
+  const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
+  if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+    const amountAsk = readAwaitingTenantRentAmount(prior)
+    if (amountAsk) {
+      await persistResidentIntake(
+        supabase,
+        params.conversationId,
+        prior,
+        writeAwaitingTenantRentAmount(prior, null),
+      )
+    }
+    // Only claim the message when it is a rent-reply keyword / pending amount ask.
+    const parsed = parseTenantRentReply(params.body)
+    if (!amountAsk && !parsed) return { handled: false }
+    if (
+      parsed?.kind === "questions" &&
+      questionsShouldFallThroughToInterpretation(params.body)
+    ) {
+      return { handled: false }
+    }
+    // Specific pending YES/NO asks (ticket-update confirm, schedule, …) beat
+    // the blanket "rent is paused" ack — do not consume their reply.
+    if (
+      shouldYieldRentReplyToSpecificPendingAsk({
+        intakeState: prior,
+        body: params.body,
+      })
+    ) {
+      return { handled: false }
+    }
+    await recordActivityLog(supabase, {
+      landlordId: params.landlordId,
+      eventType: "rent.tenant_reply_while_paused",
+      source: "sms",
+      actorType: "resident",
+      residentId,
+      conversationId: params.conversationId,
+      metadata: {
+        message: "Resident rent reply received while rent collection is paused.",
+        reply_kind: parsed?.kind ?? (amountAsk ? "amount_follow_up" : null),
+        rent_collection_paused: true,
+      },
+    }).catch(() => {})
+    return {
+      handled: true,
+      replyBody: buildTenantRentCollectionPausedSms(),
+    }
+  }
+
   // After bare QUESTIONS, attach the next short inbound to the same ticket.
   const pendingInquiry = readPendingRentBillingInquiry(prior)
   if (
@@ -799,6 +854,16 @@ export async function handleTenantRentReply(
 
   const parsed = parseTenantRentReply(params.body)
   if (!parsed) return { handled: false }
+
+  // Ticket-update / schedule / other contextual YES asks beat rent PAID tokens.
+  if (
+    shouldYieldRentReplyToSpecificPendingAsk({
+      intakeState: prior,
+      body: params.body,
+    })
+  ) {
+    return { handled: false }
+  }
 
   if (parsed.kind === "questions") {
     if (questionsShouldFallThroughToInterpretation(params.body)) {

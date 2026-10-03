@@ -151,7 +151,10 @@ export function shouldSuppressIdenticalOutbound(params: {
 
 /**
  * Circuit breaker: suppress outbound if the same normalized body was
- * recently *sent* on this conversation (sms_messages).
+ * recently *delivered/sent* on this conversation (sms_messages).
+ *
+ * Failed / undelivered / candidate rows must not count — a body that was
+ * generated then replaced or that failed to send is not "already sent".
  *
  * Do not use schedule FSM recentOutboundNorm here — confirm / soft-confirm
  * paths record the intended reply on the FSM before trySendAutoReply runs,
@@ -177,7 +180,7 @@ export async function shouldTripOutboundCircuit(
 
   const { data: rows } = await supabase
     .from("sms_messages")
-    .select("body, created_at")
+    .select("body, created_at, provider_status, raw_payload")
     .eq("conversation_id", params.conversationId)
     .eq("direction", "outbound")
     .gte("created_at", since)
@@ -185,6 +188,13 @@ export async function shouldTripOutboundCircuit(
     .limit(20)
 
   const recent = (rows ?? [])
+    .filter((row) =>
+      outboundCountsTowardIdenticalReplyLoop({
+        providerStatus:
+          typeof row.provider_status === "string" ? row.provider_status : null,
+        rawPayload: row.raw_payload,
+      })
+    )
     .map((row) => (typeof row.body === "string" ? row.body : ""))
     .filter(Boolean)
   return shouldSuppressIdenticalOutbound({
@@ -192,6 +202,38 @@ export async function shouldTripOutboundCircuit(
     candidateBody: body,
     maxSame,
   })
+}
+
+/**
+ * Only successfully handed-off outbound rows count for identical-reply loops.
+ * Failed / undelivered / send_error rows are candidates that never reached
+ * the resident and must not suppress a later real send.
+ */
+export function outboundCountsTowardIdenticalReplyLoop(input: {
+  providerStatus?: string | null
+  rawPayload?: unknown
+}): boolean {
+  const status = String(input.providerStatus ?? "")
+    .trim()
+    .toLowerCase()
+  if (
+    status === "failed" ||
+    status === "undelivered" ||
+    status === "canceled" ||
+    status === "cancelled"
+  ) {
+    return false
+  }
+  const raw =
+    input.rawPayload && typeof input.rawPayload === "object" &&
+      !Array.isArray(input.rawPayload)
+      ? (input.rawPayload as Record<string, unknown>)
+      : null
+  if (raw && typeof raw.send_error === "string" && raw.send_error.trim()) {
+    return false
+  }
+  // Missing status after a successful provider handoff still counts (legacy rows).
+  return true
 }
 
 /** Extract best-effort inbound timestamp from provider payload. */

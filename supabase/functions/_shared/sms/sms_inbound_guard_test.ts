@@ -33,6 +33,27 @@ Deno.test("shouldSuppressIdenticalOutbound trips when one prior identical body e
   )
 })
 
+Deno.test("outboundCountsTowardIdenticalReplyLoop ignores failed candidates", async () => {
+  const { outboundCountsTowardIdenticalReplyLoop } = await import(
+    "./sms_inbound_guard.ts"
+  )
+  assertEquals(
+    outboundCountsTowardIdenticalReplyLoop({ providerStatus: "failed" }),
+    false,
+  )
+  assertEquals(
+    outboundCountsTowardIdenticalReplyLoop({
+      providerStatus: null,
+      rawPayload: { send_error: "provider down" },
+    }),
+    false,
+  )
+  assertEquals(
+    outboundCountsTowardIdenticalReplyLoop({ providerStatus: "delivered" }),
+    true,
+  )
+})
+
 Deno.test("normalizeOutboundForLoopCompare strips Hi there / Hi Name greetings", () => {
   const there =
     "Hi there,\n\nI'm sorry this has been frustrating.\n\nA member of our team will follow up with you here shortly."

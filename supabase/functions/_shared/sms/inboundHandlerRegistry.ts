@@ -12,6 +12,9 @@
  *    belong in `runWorkflowEngine()` templates, not here.
  *
  * Governing disambiguation: **STOP and START are global. YES is contextual.**
+ * Specific pending YES/NO asks (ticket-update confirm, schedule, invoice, …)
+ * beat blanket claimants (e.g. rent-pause treating YES as PAID) — see
+ * `shortReplyArbitration.ts`.
  *
  * Priority bands:
  *   1–9    Compliance (STOP / START / HELP)
@@ -29,10 +32,9 @@ import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
 import { tryHandleLandlordRentReceiptInbound } from "./landlordRentReceiptInbound.ts"
 import {
   buildAmbiguousYesPendingAsksSms,
-  canHandleInvoicePaidConfirmation,
-  isBareYesInvoicePaidReply,
   tryHandleInvoicePaidConfirmationInbound,
 } from "./invoicePaidConfirmation.ts"
+import { shouldClarifyAmbiguousYesPendingAsks, shouldYieldRentReplyToSpecificPendingAsk } from "./shortReplyArbitration.ts"
 import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import {
   tryHandleTenantActivationReply,
@@ -42,7 +44,6 @@ import { tryHandleTenantActivationHold } from "./tenantActivationPending.ts"
 import { relayInboundProxiedMessage } from "./proxiedMessaging.ts"
 import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
 import {
-  canHandleLandlordVendorChoice,
   tryHandleLandlordVendorChoiceInbound,
 } from "../vendorLandlordChoice.ts"
 import {
@@ -351,6 +352,16 @@ async function tryTenantRentReplyHandler(
       residentId,
       intakeState,
       hasActiveRentRun,
+    })
+  ) {
+    return { handled: false }
+  }
+
+  // Specific YES/NO pending asks (ticket-update confirm, …) win over rent.
+  if (
+    shouldYieldRentReplyToSpecificPendingAsk({
+      intakeState,
+      body: ctx.inbound.body,
     })
   ) {
     return { handled: false }
@@ -860,41 +871,27 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
 export async function tryInboundSmsHandlers(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
-  // Multiple bare-YES pending asks → clarify instead of priority race.
-  if (isBareYesInvoicePaidReply(ctx.inbound.body)) {
-    const { data: conv } = await ctx.supabase
-      .from("sms_conversations")
-      .select("intake_state")
-      .eq("id", ctx.conversationId)
-      .maybeSingle()
-    const intakeState = conv?.intake_state
-    const invoicePending = canHandleInvoicePaidConfirmation({
-      identityType: ctx.identity.identity_type,
-      intakeState,
+  // Multiple specific bare-YES pending asks → clarify instead of priority race.
+  // Blanket claimants (rent-pause PAID token) are not counted — they yield.
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    shouldClarifyAmbiguousYesPendingAsks({
+      intakeState: conv?.intake_state,
+      body: ctx.inbound.body,
     })
-    const vendorChoicePending = canHandleLandlordVendorChoice({
-      identityType: ctx.identity.identity_type,
-      conversationType: ctx.conversationType,
-      intakeState,
-    })
-    const rentReportPending = canHandleTenantRentReportConfirmation({
-      identityType: ctx.identity.identity_type,
-      intakeState,
-    })
-    const yesAskCount =
-      Number(invoicePending) +
-      Number(vendorChoicePending) +
-      Number(rentReportPending)
-    if (yesAskCount >= 2) {
-      return {
-        handled: true,
-        workflowRoute: "ambiguous_yes_pending_asks",
-        reply: {
-          body: buildAmbiguousYesPendingAsksSms(),
-          source: "ambiguous_yes_pending_asks",
-          skipGenericFallback: true,
-        },
-      }
+  ) {
+    return {
+      handled: true,
+      workflowRoute: "ambiguous_yes_pending_asks",
+      reply: {
+        body: buildAmbiguousYesPendingAsksSms(),
+        source: "ambiguous_yes_pending_asks",
+        skipGenericFallback: true,
+      },
     }
   }
 
