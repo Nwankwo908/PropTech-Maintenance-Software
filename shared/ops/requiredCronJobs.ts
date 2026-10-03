@@ -77,6 +77,20 @@ export const REQUIRED_CRON_JOBS: readonly RequiredCronJob[] = [
     schedule: "0 7 * * *",
     description: "Daily lease renewal workflow starts",
   },
+  {
+    jobname: "ulo-ticket-unit-fk-audit",
+    edgeFunction: "check-ticket-unit-fk-mismatches",
+    schedule: "45 5 * * *",
+    description:
+      "Daily audit of ticket/conversation unit_id vs resident occupancy (fail-closed FK drift)",
+  },
+  {
+    jobname: "ulo-vendor-choice-trigger-audit",
+    edgeFunction: "check-vendor-choice-trigger-audit",
+    schedule: "50 5 * * *",
+    description:
+      "Daily audit of landlord vendor-choice assignments without a durable confirming inbound SMS",
+  },
 ] as const
 
 export function requiredCronJobByName(

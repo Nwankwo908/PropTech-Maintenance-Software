@@ -15,7 +15,9 @@ function readRequiredCronMigrationSql(): string {
   const files = readdirSync(migrationsDir).filter(
     (name) =>
       name.includes(MIGRATION_GLOB_HINT) ||
-      name.includes('maintenance_stall_follow_up'),
+      name.includes('maintenance_stall_follow_up') ||
+      name.includes('ticket_unit_fk_audit') ||
+      name.includes('vendor_choice_trigger_audit'),
   )
   expect(files.length).toBeGreaterThanOrEqual(1)
   return files

@@ -1,0 +1,49 @@
+---
+description: Fail-closed FK guards for any agent/live production data remediation
+alwaysApply: true
+---
+
+# Live-data remediation — unit/property FK guard
+
+Agent-assisted production fixes (ticket backfills, conversation heals, identity
+rewrites) are a **normal** workflow in this repo — not a one-off. The Oct 2
+Shahita WO-C2C7 corruption came from an ad-hoc insert that trusted
+`sms_conversations.unit_id` / bare unit label `"1"` without checking the
+resident’s occupancy.
+
+## Required pattern (every live write)
+
+1. **Resolve unit from occupancy first** when a `resident_id` is known  
+   (`occupancy.unit_id` where `status = active`).
+2. **Else** resolve with the fail-closed helper — never `matches[0]` on a
+   repeating label:
+   - Edge: `resolveUnitIdForLandlord` / `pickUnitIdFromInventoryRows`
+     (`supabase/functions/_shared/sms/resolveUnitId.ts`)
+   - Node scripts: `scripts/lib/resolveUnitFailClosed.mjs`
+3. **Require agreement** before write: `units.id` → `units.property_id` must
+   equal the ticket/run `property_id` when both are set.
+4. **Write through a reusable path** when possible
+   (`ensure-maintenance-request-workflow.mjs`,
+   `remediate-orphaned-maintenance-ticket.mjs`) — not a raw
+   `maintenance_requests.insert` in a one-off shell.
+5. **Audit after write**:
+   `LANDLORD_ID=… node scripts/audit-ticket-unit-fk-mismatches.mjs`  
+   (add `HEAL=1` only when the report is reviewed).
+
+## Do not
+
+- Pick the first `units` row for label `"1"` / `"2"` across the portfolio
+- Copy `sms_conversations.unit_id` onto a new ticket without verifying it
+  matches the resident’s occupancy / building
+- Ship a remediation that only fixes display scoping while leaving bad FKs
+  on the ticket/run/conversation
+
+## Standing check
+
+Daily cron `ulo-ticket-unit-fk-audit` → `check-ticket-unit-fk-mismatches`
+logs mismatches (same class as schedule-FSM TTL / stale probe sweeps).
+
+Daily cron `ulo-vendor-choice-trigger-audit` → `check-vendor-choice-trigger-audit`
+flags `maintenance.vendor_choice_selected` with no confirming inbound SMS in the
+prior ~2 minutes (WO-E6F7 class). Landlord-choice dispatch also fail-closes unless
+the triggering `sms_messages` row is durable and queryable.

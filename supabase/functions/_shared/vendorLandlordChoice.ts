@@ -3,6 +3,7 @@
  * One option → reply YES. Two options → reply 1 or 2.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { isConfirmedDurableInboundTrigger } from "../../../shared/ops/vendorChoiceTriggerAudit.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { formatWorkOrderRef, vendorCompanyName } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
@@ -16,6 +17,71 @@ import { UNKNOWN_CONTACT_INTAKE_KEY } from "./sms/unknownContactIntake.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
 import type { VendorAssignmentOption } from "./vendor_assignment.ts"
+
+export type DurableLandlordChoiceTrigger =
+  | { ok: true; messageId: string; providerMessageSid: string | null }
+  | { ok: false; reason: string }
+
+/**
+ * Re-read the triggering inbound from sms_messages before any vendor dispatch.
+ * In-memory messageId alone is not enough (WO-E6F7 phantom class).
+ */
+export async function confirmDurableLandlordChoiceTrigger(
+  supabase: SupabaseClient,
+  params: {
+    messageId?: string | null
+    conversationId: string
+    landlordId: string
+  },
+): Promise<DurableLandlordChoiceTrigger> {
+  const messageId = params.messageId?.trim() ?? ""
+  if (!messageId) {
+    return { ok: false, reason: "missing_message_id" }
+  }
+  const { data, error } = await supabase
+    .from("sms_messages")
+    .select("id, direction, conversation_id, landlord_id, provider_message_sid")
+    .eq("id", messageId)
+    .maybeSingle()
+  if (error) {
+    console.error("[vendor-choice] durable trigger lookup failed", error.message)
+    return { ok: false, reason: "inbound_lookup_failed" }
+  }
+  return isConfirmedDurableInboundTrigger(data, {
+    messageId,
+    conversationId: params.conversationId,
+    landlordId: params.landlordId,
+  })
+}
+
+async function recordVendorChoiceSelected(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    ticketId: string
+    conversationId: string
+    vendorId?: string | null
+    messageId: string
+    providerMessageSid: string | null
+    metadata: Record<string, unknown>
+  },
+): Promise<void> {
+  await recordActivityLog(supabase, {
+    landlordId: params.landlordId,
+    eventType: "maintenance.vendor_choice_selected",
+    source: "sms",
+    actorType: "landlord",
+    vendorId: params.vendorId ?? undefined,
+    maintenanceRequestId: params.ticketId,
+    conversationId: params.conversationId,
+    messageId: params.messageId,
+    metadata: {
+      ...params.metadata,
+      provider_message_sid: params.providerMessageSid,
+      trigger_message_id: params.messageId,
+    },
+  })
+}
 
 export const AWAITING_LANDLORD_VENDOR_CHOICE = "Awaiting landlord vendor choice"
 
@@ -937,6 +1003,8 @@ export async function tryHandleLandlordVendorChoiceInbound(
     body: string
     identityType: string
     fromPhone?: string | null
+    /** Durable sms_messages.id for this inbound — required before dispatch. */
+    messageId?: string | null
   },
 ): Promise<
   | { handled: false }
@@ -1069,6 +1137,28 @@ export async function tryHandleLandlordVendorChoiceInbound(
     }
   }
 
+  // Fail closed: never assign/dispatch unless the triggering inbound is durable.
+  const trigger = await confirmDurableLandlordChoiceTrigger(supabase, {
+    messageId: params.messageId,
+    conversationId,
+    landlordId: params.landlordId,
+  })
+  if (!trigger.ok) {
+    console.error("[vendor-choice] refusing dispatch — durable inbound missing", {
+      reason: trigger.reason,
+      messageId: params.messageId ?? null,
+      conversationId,
+      ticketId: awaiting.ticketId,
+    })
+    return {
+      handled: true,
+      ticketId: awaiting.ticketId,
+      vendorId: null,
+      replyBody:
+        "I couldn't confirm your reply just now. Please reply again to assign the vendor.",
+    }
+  }
+
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select(
@@ -1132,14 +1222,13 @@ export async function tryHandleLandlordVendorChoiceInbound(
           priorIntake,
           awaiting.ticketId,
         )
-        await recordActivityLog(supabase, {
+        await recordVendorChoiceSelected(supabase, {
           landlordId: params.landlordId,
-          eventType: "maintenance.vendor_choice_selected",
-          source: "sms",
-          actorType: "landlord",
-          vendorId: chosen.id,
-          maintenanceRequestId: awaiting.ticketId,
+          ticketId: awaiting.ticketId,
           conversationId,
+          vendorId: chosen.id,
+          messageId: trigger.messageId,
+          providerMessageSid: trigger.providerMessageSid,
           metadata: {
             message: `Assigned ${vendorChoiceDisplayName(chosen.name)} after the landlord confirmed.`,
           },
@@ -1203,14 +1292,13 @@ export async function tryHandleLandlordVendorChoiceInbound(
         priorIntake,
         awaiting.ticketId,
       )
-    await recordActivityLog(supabase, {
+    await recordVendorChoiceSelected(supabase, {
       landlordId: params.landlordId,
-      eventType: "maintenance.vendor_choice_selected",
-      source: "sms",
-      actorType: "landlord",
-      vendorId: chosen.id,
-      maintenanceRequestId: awaiting.ticketId,
+      ticketId: awaiting.ticketId,
       conversationId,
+      vendorId: chosen.id,
+      messageId: trigger.messageId,
+      providerMessageSid: trigger.providerMessageSid,
       metadata: {
         message: `Assigned ${vendorChoiceDisplayName(chosen.name)} after the landlord confirmed.`,
       },
@@ -1272,13 +1360,12 @@ export async function tryHandleLandlordVendorChoiceInbound(
         priorIntake,
         awaiting.ticketId,
       )
-    await recordActivityLog(supabase, {
+    await recordVendorChoiceSelected(supabase, {
       landlordId: params.landlordId,
-      eventType: "maintenance.vendor_choice_selected",
-      source: "sms",
-      actorType: "landlord",
-      maintenanceRequestId: awaiting.ticketId,
+      ticketId: awaiting.ticketId,
       conversationId,
+      messageId: trigger.messageId,
+      providerMessageSid: trigger.providerMessageSid,
       metadata: {
         message: `Asked ${vendorChoiceDisplayName(chosen.name)} about this job after the landlord chose them.`,
         source: "external",
@@ -1403,14 +1490,13 @@ export async function tryHandleLandlordVendorChoiceInbound(
     priorIntake,
     awaiting.ticketId,
   )
-  await recordActivityLog(supabase, {
+  await recordVendorChoiceSelected(supabase, {
     landlordId: params.landlordId,
-    eventType: "maintenance.vendor_choice_selected",
-    source: "sms",
-    actorType: "landlord",
-    vendorId: chosen.id,
-    maintenanceRequestId: awaiting.ticketId,
+    ticketId: awaiting.ticketId,
     conversationId,
+    vendorId: chosen.id,
+    messageId: trigger.messageId,
+    providerMessageSid: trigger.providerMessageSid,
     metadata: {
       message: visitIds.length > 1
         ? `Assigned ${displayName} to the inspection visit (${visitIds.length} items) after the landlord confirmed.`

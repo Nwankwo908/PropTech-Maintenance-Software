@@ -333,3 +333,264 @@ Deno.test("readAwaitingVendorChoice keeps external search metadata", () => {
   assertEquals(awaiting?.options[0]?.searchId, "s1")
   assertEquals(awaiting?.options[0]?.source, "external")
 })
+
+type TriggerStore = {
+  messages: Map<
+    string,
+    {
+      id: string
+      direction: string
+      conversation_id: string
+      landlord_id: string
+      provider_message_sid: string | null
+    }
+  >
+  conversations: Map<
+    string,
+    {
+      id: string
+      landlord_id: string
+      intake_state: Record<string, unknown>
+      conversation_type: string
+      maintenance_request_id: string | null
+      external_phone_number: string
+    }
+  >
+  tickets: Map<
+    string,
+    {
+      id: string
+      landlord_id: string
+      assigned_vendor_id: string | null
+      vendor_work_status: string | null
+      vendor_notified_at: string | null
+      priority: string
+      unit: string
+      description: string
+    }
+  >
+  assignCalls: number
+}
+
+function mockChoiceSupabase(store: TriggerStore) {
+  return {
+    from(table: string) {
+      if (table === "sms_messages") {
+        return {
+          select() {
+            return {
+              eq(col: string, val: string) {
+                assertEquals(col, "id")
+                return {
+                  async maybeSingle() {
+                    const row = store.messages.get(val) ?? null
+                    return { data: row, error: null }
+                  },
+                }
+              },
+            }
+          },
+        }
+      }
+      if (table === "sms_conversations") {
+        return {
+          select() {
+            return {
+              eq(col1: string, val1: string) {
+                return {
+                  eq(col2: string, val2: string) {
+                    assertEquals(col1, "id")
+                    assertEquals(col2, "landlord_id")
+                    const row = store.conversations.get(val1)
+                    return {
+                      async maybeSingle() {
+                        if (!row || row.landlord_id !== val2) {
+                          return { data: null, error: null }
+                        }
+                        return { data: row, error: null }
+                      },
+                    }
+                  },
+                  order() {
+                    return {
+                      limit() {
+                        return Promise.resolve({ data: [], error: null })
+                      },
+                    }
+                  },
+                }
+              },
+            }
+          },
+          update() {
+            return {
+              eq() {
+                return Promise.resolve({ error: null })
+              },
+            }
+          },
+        }
+      }
+      if (table === "maintenance_requests") {
+        return {
+          select() {
+            return {
+              eq(col1: string, val1: string) {
+                return {
+                  eq(col2: string, val2: string) {
+                    assertEquals(col1, "id")
+                    assertEquals(col2, "landlord_id")
+                    const row = store.tickets.get(val1)
+                    return {
+                      async maybeSingle() {
+                        if (!row || row.landlord_id !== val2) {
+                          return { data: null, error: null }
+                        }
+                        return { data: row, error: null }
+                      },
+                    }
+                  },
+                  async maybeSingle() {
+                    return { data: store.tickets.get(val1) ?? null, error: null }
+                  },
+                }
+              },
+            }
+          },
+          update() {
+            return {
+              eq() {
+                return Promise.resolve({ error: null })
+              },
+              in() {
+                return Promise.resolve({ error: null })
+              },
+            }
+          },
+        }
+      }
+      throw new Error(`unexpected table ${table}`)
+    },
+  }
+}
+
+Deno.test("confirmDurableLandlordChoiceTrigger refuses missing inbound row (race)", async () => {
+  const { confirmDurableLandlordChoiceTrigger } = await import(
+    "./vendorLandlordChoice.ts"
+  )
+  const store: TriggerStore = {
+    messages: new Map(),
+    conversations: new Map(),
+    tickets: new Map(),
+    assignCalls: 0,
+  }
+  const result = await confirmDurableLandlordChoiceTrigger(
+    mockChoiceSupabase(store) as never,
+    {
+      messageId: "msg-not-committed",
+      conversationId: "conv-1",
+      landlordId: "ll-1",
+    },
+  )
+  assertEquals(result.ok, false)
+  if (!result.ok) assertEquals(result.reason, "inbound_row_not_found")
+})
+
+Deno.test("confirmDurableLandlordChoiceTrigger accepts durable inbound", async () => {
+  const { confirmDurableLandlordChoiceTrigger } = await import(
+    "./vendorLandlordChoice.ts"
+  )
+  const store: TriggerStore = {
+    messages: new Map([
+      [
+        "msg-1",
+        {
+          id: "msg-1",
+          direction: "inbound",
+          conversation_id: "conv-1",
+          landlord_id: "ll-1",
+          provider_message_sid: "SMabc",
+        },
+      ],
+    ]),
+    conversations: new Map(),
+    tickets: new Map(),
+    assignCalls: 0,
+  }
+  const result = await confirmDurableLandlordChoiceTrigger(
+    mockChoiceSupabase(store) as never,
+    {
+      messageId: "msg-1",
+      conversationId: "conv-1",
+      landlordId: "ll-1",
+    },
+  )
+  assertEquals(result, {
+    ok: true,
+    messageId: "msg-1",
+    providerMessageSid: "SMabc",
+  })
+})
+
+Deno.test("tryHandleLandlordVendorChoiceInbound refuses dispatch without durable trigger", async () => {
+  const { tryHandleLandlordVendorChoiceInbound } = await import(
+    "./vendorLandlordChoice.ts"
+  )
+  const store: TriggerStore = {
+    messages: new Map(),
+    conversations: new Map([
+      [
+        "conv-1",
+        {
+          id: "conv-1",
+          landlord_id: "ll-1",
+          conversation_type: "landlord_update",
+          maintenance_request_id: "tix-1",
+          external_phone_number: "+15551234567",
+          intake_state: {
+            awaiting_vendor_choice: {
+              ticket_id: "tix-1",
+              options: [
+                { id: "vend-1", name: "Ivanhomesolutions", role: "generalist" },
+              ],
+            },
+          },
+        },
+      ],
+    ]),
+    tickets: new Map([
+      [
+        "tix-1",
+        {
+          id: "tix-1",
+          landlord_id: "ll-1",
+          assigned_vendor_id: null,
+          vendor_work_status: null,
+          vendor_notified_at: null,
+          priority: "normal",
+          unit: "1",
+          description: "leak",
+        },
+      ],
+    ]),
+    assignCalls: 0,
+  }
+
+  const result = await tryHandleLandlordVendorChoiceInbound(
+    mockChoiceSupabase(store) as never,
+    {
+      landlordId: "ll-1",
+      conversationId: "conv-1",
+      body: "Yes",
+      identityType: "landlord",
+      fromPhone: "+15551234567",
+      messageId: "msg-not-yet-visible",
+    },
+  )
+  assertEquals(result.handled, true)
+  if (result.handled) {
+    assertEquals(result.vendorId, null)
+    assertStringIncludes(result.replyBody, "couldn't confirm your reply")
+  }
+  assertEquals(store.assignCalls, 0)
+})

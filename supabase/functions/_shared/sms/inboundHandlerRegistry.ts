@@ -205,6 +205,7 @@ async function tryLandlordVendorChoiceHandler(
     body: ctx.inbound.body,
     identityType: ctx.identity.identity_type,
     fromPhone: ctx.inbound.from,
+    messageId: ctx.messageId,
   })
   if (!result.handled) return { handled: false }
 
