@@ -10,14 +10,23 @@ export type RentSmsTopic =
   | "monthly_rent"
   | "payment_link"
   | "payment_status"
+  | "payment_platform"
   | "late"
   | "already_paid"
   | "partial"
   | "general"
 
 export type RentSmsClassification = {
-  /** Maps to tenant SMS intents: rent_balance | rent_late | null (general handoff). */
-  kind: "rent_balance" | "rent_late" | "rent_general" | null
+  /**
+   * Maps to tenant SMS intents:
+   * rent_balance | rent_late | rent_payment_platform | rent_general | null.
+   */
+  kind:
+    | "rent_balance"
+    | "rent_late"
+    | "rent_payment_platform"
+    | "rent_general"
+    | null
   topic: RentSmsTopic | null
   confident: boolean
   /** Competing non-rent amount context — ask before assuming rent. */
@@ -76,6 +85,48 @@ function isPaymentStatusAsk(text: string): boolean {
     /\bi (already )?paid (my )?rent\b/.test(text) ||
     /\b(payment|rent) (went through|was received|was posted)\b/.test(text)
   )
+}
+
+/**
+ * Tenant reports the payment website / app / portal is broken or stale
+ * (can't submit, dates not updating) — not PAID/PARTIAL and not a balance ask.
+ */
+export function isPaymentPlatformIssue(text: string): boolean {
+  const hasPayContext =
+    /\b(pay|payment|rent|checkout|billing)\b/.test(text) ||
+    /\battempt(ed|ing)? to pay\b/.test(text)
+  const hasChannel =
+    /\b(website|web site|site|app|portal|online|login|log[\s-]?in|page|link)\b/
+      .test(text)
+  const staleDates =
+    /\bdates?\b/.test(text) &&
+    /\b(not|never|won'?t|weren'?t|aren'?t|didn'?t|still|stale|outdated|wrong|old)\b/
+      .test(text) &&
+    /\b(update|updating|updated|change|changing|changed|refresh|sync|correct)\b/
+      .test(text)
+  const brokenFlow =
+    (/\b(can'?t|cannot|unable to|won'?t let me|doesn'?t let me|failed to|error|broken|not work(?:ing)?|doesn'?t work)\b/
+      .test(text) &&
+      /\b(pay|payment|submit|checkout|complete)\b/.test(text)) ||
+    (hasChannel &&
+      /\b(not work(?:ing)?|doesn'?t work|broken|error|down|glitch|bug|stuck|freeze|frozen)\b/
+        .test(text) &&
+      hasPayContext)
+  const askUpdateDates =
+    /\b(update|fix|change)\b/.test(text) &&
+    /\bdates?\b/.test(text) &&
+    (hasChannel || hasPayContext)
+
+  if (staleDates && (hasChannel || hasPayContext)) return true
+  if (brokenFlow) return true
+  if (askUpdateDates && hasChannel) return true
+  if (
+    /\battempt(ed|ing)? to pay\b/.test(text) &&
+    (staleDates || brokenFlow || (hasChannel && /\bdates?\b/.test(text)))
+  ) {
+    return true
+  }
+  return false
 }
 
 function isLateRent(text: string): boolean {
@@ -210,6 +261,16 @@ export function classifyRentSmsIntent(
     return { kind: null, topic: null, confident: false, needsClarification: false }
   }
 
+  // Platform/technical failures before late/balance — "can't pay online" is not
+  // "I will be late," and must not fall through to the clarify menu.
+  if (isPaymentPlatformIssue(text)) {
+    return {
+      kind: "rent_payment_platform",
+      topic: "payment_platform",
+      confident: true,
+      needsClarification: false,
+    }
+  }
   if (isLateRent(text)) {
     return { kind: "rent_late", topic: "late", confident: true, needsClarification: false }
   }

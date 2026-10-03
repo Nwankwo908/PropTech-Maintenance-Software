@@ -37,6 +37,11 @@ import {
   recognizeInboundIntentSync,
   type InboundIntentRecognition,
 } from "./recognizeInboundIntent.ts"
+import {
+  extractTenantInspectionNotice,
+  hasStrongRepairAsk,
+  looksLikeTenantInspectionNotice,
+} from "../../../../shared/maintenance/tenantInspectionNotice.ts"
 
 export { looksLikeRentBalanceAsk } from "./rentIntent.ts"
 export { looksLikeMaintenanceStatusAsk } from "./nonRepairIntents.ts"
@@ -50,8 +55,10 @@ export const TENANT_SMS_INTENTS = [
   "access_instruction",
   "rent_balance",
   "rent_late",
+  "rent_payment_platform",
   "lease_info",
   "move_out_intent",
+  "inspection_notice",
   "other",
 ] as const
 
@@ -85,7 +92,9 @@ const PENDING_BREAKOUT_INTENTS = new Set<TenantSmsIntent>([
   "lease_info",
   "rent_balance",
   "rent_late",
+  "rent_payment_platform",
   "move_out_intent",
+  "inspection_notice",
   "other",
   "maintenance_status",
   "schedule_change",
@@ -440,6 +449,16 @@ function heuristicIntent(
         confident: rent.confident,
       }
     }
+    if (rent.kind === "rent_payment_platform") {
+      return {
+        intent: "rent_payment_platform",
+        extractedSlots: {
+          topic: "payment_platform",
+          issue_summary: text.slice(0, 240),
+        },
+        confident: rent.confident,
+      }
+    }
     if (rent.kind === "rent_balance" && rent.topic) {
       return {
         intent: "rent_balance",
@@ -550,6 +569,24 @@ function heuristicIntent(
 
   if (NOT_REPAIR.test(text)) {
     return { intent: "other", extractedSlots: {}, confident: true }
+  }
+
+  // Tenant-forwarded inspection schedule notice (HABC / annual visit) —
+  // not a repair ticket. Compound notice+repair is still inspection_notice;
+  // the act path creates the inspection_reports row then continues repair
+  // as a checklist item under that visit.
+  if (looksLikeTenantInspectionNotice(text)) {
+    const notice = extractTenantInspectionNotice(text)
+    return {
+      intent: "inspection_notice",
+      extractedSlots: {
+        ...(notice.inspectionDate
+          ? { inspection_date: notice.inspectionDate }
+          : {}),
+        ...(hasStrongRepairAsk(text) ? { also_repair: "1" } : {}),
+      },
+      confident: true,
+    }
   }
 
   // One shared recognizer decides "is this a repair?" — no second keyword list.

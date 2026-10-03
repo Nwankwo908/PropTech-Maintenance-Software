@@ -31,6 +31,9 @@ import {
   type TenantSmsIntent,
 } from "./inboundInterpretation.ts"
 import {
+  createOrBumpRentBillingInquiryTicket,
+} from "./rentBillingInquiry.ts"
+import {
   buildEscalatedOtherSms,
   buildSmallTalkDuringIntakeSms,
   buildSmallTalkSms,
@@ -1837,6 +1840,77 @@ async function handleRentLate(
   )
 }
 
+/**
+ * Payment website / app / portal technical problem — escalate with the
+ * resident's exact detail (not a generic QUESTIONS handoff).
+ */
+async function handleRentPaymentPlatform(
+  ctx: InboundSmsHandlerContext,
+  intake: SmsIntakeState,
+  activeIntake: boolean,
+  residentId: string,
+  residentName: string | null,
+  interpretation: InboundInterpretation,
+): Promise<InboundSmsHandlerResult> {
+  const who = firstName(residentName)
+  const detail =
+    (interpretation.extractedSlots.issue_summary ?? ctx.inbound.body)
+      .trim()
+      .slice(0, 400)
+  const runId = await maybeReleaseIntake(
+    ctx.supabase,
+    ctx,
+    intake,
+    activeIntake,
+    "rent_payment_platform",
+    false,
+  )
+
+  const ticket = await createOrBumpRentBillingInquiryTicket(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    residentId,
+    conversationId: ctx.conversationId,
+    workflowRunId: runId,
+    body: detail || ctx.inbound.body,
+    messageId: ctx.messageId,
+    inquiryKind: "payment_platform",
+  })
+
+  const ticketRef = ticket.ok ? ticket.ticketRef : null
+  await logOutcome(ctx, {
+    eventType: "sms.rent_payment_platform_reported",
+    message: ticket.ok
+      ? `Resident reported a rent payment website/app issue (${ticket.ticketRef}); property team notified.`
+      : "Resident reported a rent payment website/app issue; property team notified.",
+    workflowRunId: runId,
+    extra: {
+      ticket_id: ticket.ok ? ticket.ticketId : null,
+      ticket_ref: ticketRef,
+      detail: detail.slice(0, 200),
+    },
+  })
+
+  const echo = detail.length > 120 ? `${detail.slice(0, 117).trim()}…` : detail
+  return handled(
+    "sms_rent_payment_platform",
+    [
+      `Hi ${who},`,
+      "",
+      "This is the property management team.",
+      "",
+      echo
+        ? `Thanks for flagging this — I passed along that ${echo.charAt(0).toLowerCase()}${echo.slice(1)}${/[.!?]$/.test(echo) ? "" : "."}`
+        : "Thanks for flagging a problem with the payment website.",
+      "",
+      "The property team will look into the technical side and text you here once they have an update.",
+    ].join("\n"),
+    {
+      ticket_ref: ticketRef,
+      inquiry_kind: "payment_platform",
+    },
+  )
+}
+
 async function handleMoveOut(
   ctx: InboundSmsHandlerContext,
   intake: SmsIntakeState,
@@ -2264,6 +2338,7 @@ export async function tryHandleInterpretedInbound(
   const relatedBreakoutIntent = interpretation.intent &&
       (interpretation.intent === "rent_balance" ||
         interpretation.intent === "rent_late" ||
+        interpretation.intent === "rent_payment_platform" ||
         interpretation.intent === "lease_info" ||
         interpretation.intent === "move_out_intent" ||
         interpretation.intent === "other" ||
@@ -2510,6 +2585,15 @@ export async function tryHandleInterpretedInbound(
         pending.activeIntake,
         residentId,
         profile?.full_name ?? null,
+      )
+    case "rent_payment_platform":
+      return handleRentPaymentPlatform(
+        ctx,
+        intake,
+        pending.activeIntake,
+        residentId,
+        profile?.full_name ?? null,
+        interpretation,
       )
     case "maintenance_status":
       return handleMaintenanceStatus(

@@ -148,6 +148,11 @@ export async function createOrBumpRentBillingInquiryTicket(
     body: string
     messageId?: string | null
     now?: Date
+    /**
+     * questions = reminder QUESTIONS path (may await detail).
+     * payment_platform = website/app technical failure with detail already present.
+     */
+    inquiryKind?: "questions" | "payment_platform"
   },
 ): Promise<RentBillingInquiryTicketResult | { ok: false; error: string }> {
   const landlordId = input.landlordId.trim()
@@ -159,17 +164,43 @@ export async function createOrBumpRentBillingInquiryTicket(
 
   const now = input.now ?? new Date()
   const nowIso = now.toISOString()
-  const inline = extractInlineRentQuestion(input.body)
-  const { summary, awaitingTenantDetail } = summarizeRentBillingInquiryQuestion(inline)
+  const inquiryKind = input.inquiryKind ?? "questions"
+  const inline = inquiryKind === "payment_platform"
+    ? (input.body.trim() || null)
+    : extractInlineRentQuestion(input.body)
+  const { summary: baseSummary, awaitingTenantDetail } =
+    inquiryKind === "payment_platform"
+      ? {
+          summary: generateIssueSummary(input.body, {
+            format: "summary",
+            category: "rent",
+            maxWords: 18,
+          })?.trim() ||
+            input.body.trim().slice(0, 90) ||
+            "Payment website / app issue",
+          awaitingTenantDetail: false,
+        }
+      : summarizeRentBillingInquiryQuestion(inline)
+  const summary = inquiryKind === "payment_platform"
+    ? (baseSummary.toLowerCase().includes("payment") ||
+        baseSummary.toLowerCase().includes("website") ||
+        baseSummary.toLowerCase().includes("portal")
+      ? baseSummary
+      : `Payment website issue: ${baseSummary}`)
+    : baseSummary
   const dedupSignature = rentBillingInquiryDedupSignature({
     residentId,
     billingPeriod: input.billingPeriod ?? null,
-    summary,
+    summary: inquiryKind === "payment_platform"
+      ? `platform_${summary}`
+      : summary,
     awaitingTenantDetail,
   })
   const escalateAfter = new Date(now.getTime() + RENT_BILLING_INQUIRY_TTL_MS).toISOString()
   const transcriptExcerpt = inline
     ? `Resident: ${inline.trim().slice(0, 400)}`
+    : inquiryKind === "payment_platform"
+    ? `Resident: ${(input.body.trim() || "payment website issue").slice(0, 400)}`
     : "Resident: QUESTIONS (no details yet)"
 
   const { data: openTicket, error: lookupErr } = await supabase
@@ -206,8 +237,7 @@ export async function createOrBumpRentBillingInquiryTicket(
         conversation_id: conversationId,
         resident_id: residentId,
         workflow_run_id: input.workflowRunId?.trim() || null,
-        // Fresh detail resets the escalate clock; bare bump keeps existing unless null.
-        escalate_after: awaitingTenantDetail ? escalateAfter : escalateAfter,
+        escalate_after: escalateAfter,
         escalated_at: null,
       })
       .eq("id", ticketId)
@@ -266,11 +296,12 @@ export async function createOrBumpRentBillingInquiryTicket(
       ticket_ref: ticketRef,
       summary,
       awaiting_tenant_detail: awaitingTenantDetail,
+      inquiry_kind: inquiryKind,
     },
   })
 
   const detail = inline
-    ? `Latest message: "${inline.trim().slice(0, 160)}"`
+    ? `Latest message: "${inline.trim().slice(0, 200)}"`
     : "They replied QUESTIONS on a rent reminder (waiting for details)."
 
   let notifyStatus: "pending" | "sent" | "failed" | "skipped" = "pending"
@@ -279,15 +310,27 @@ export async function createOrBumpRentBillingInquiryTicket(
     const attention = await notifyLandlordNeedsAttention(supabase, {
       landlordId,
       kind: "late_rent",
-      headline: created
-        ? `Resident rent question — ${ticketRef}`
-        : `Rent question update — ${ticketRef}`,
+      headline: inquiryKind === "payment_platform"
+        ? (created
+          ? `Payment website issue — ${ticketRef}`
+          : `Payment website update — ${ticketRef}`)
+        : (created
+          ? `Resident rent question — ${ticketRef}`
+          : `Rent question update — ${ticketRef}`),
       detail,
-      whyLine: "A resident asked about rent and needs a reply from your team.",
-      nextSteps: [
-        "Read the question in Messages",
-        "Reply to the resident on the SMS thread",
-      ],
+      whyLine: inquiryKind === "payment_platform"
+        ? "A resident reported a technical problem paying rent online — they need help from your team."
+        : "A resident asked about rent and needs a reply from your team.",
+      nextSteps: inquiryKind === "payment_platform"
+        ? [
+          "Read the technical detail in Messages",
+          "Check the payment website / dates they described",
+          "Reply to the resident on the SMS thread",
+        ]
+        : [
+          "Read the question in Messages",
+          "Reply to the resident on the SMS thread",
+        ],
       idempotencyKey: created
         ? `rent-billing-inquiry:${ticketId}:created`
         : `rent-billing-inquiry:${ticketId}:bump:${repeatCount}`,

@@ -107,6 +107,33 @@ Deno.test("rent sub-intents stay distinct from balance", () => {
   assertEquals(heuristicInterpretInbound("I'm going to be late on rent.").intent, "rent_late")
 })
 
+Deno.test("payment website / platform technical issues classify inline (no menu)", () => {
+  const phrases = [
+    "I attempted to make a payment yesterday and the dates have not been updated on the website. Can you please update the dates?",
+    "The payment website dates are not updating",
+    "I can't pay rent online — the portal is broken",
+    "Unable to submit payment on the app, dates are wrong",
+    "Please update the dates on the website so I can pay",
+  ]
+  for (const phrase of phrases) {
+    const c = classifyRentSmsIntent(phrase)
+    assertEquals(c.kind, "rent_payment_platform", phrase)
+    assertEquals(c.topic, "payment_platform", phrase)
+    assertEquals(c.confident, true, phrase)
+    assertEquals(
+      heuristicInterpretInbound(phrase).intent,
+      "rent_payment_platform",
+      phrase,
+    )
+  }
+  // Balance / status asks must not be stolen by platform.
+  assertEquals(classifyRentSmsIntent("What's my rent balance?").topic, "balance")
+  assertEquals(
+    classifyRentSmsIntent("Did my rent payment go through?").topic,
+    "payment_status",
+  )
+})
+
 Deno.test("open or closed maintenance + rent balance → rent wins, no new ticket", () => {
   for (const tickets of [[openElectrical], [closedElectrical], [openElectrical, closedElectrical]]) {
     const body = "How much rent do I owe?"
