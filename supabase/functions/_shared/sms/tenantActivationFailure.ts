@@ -3,6 +3,11 @@
  * for tenant welcome/activation SMS delivery.
  */
 
+import {
+  formatInUnitPhrase,
+  formatUnitReference,
+} from "../properties/unitLabelDisplay.ts"
+
 export type ActivationFailureKind =
   | "invalid_phone"
   | "cannot_receive_sms"
@@ -213,14 +218,14 @@ export function buildActivationAdminSms(input: {
   residentName?: string | null
   unitLabel: string
   propertyName: string
+  propertyType?: string | null
   last4?: string | null
 }): string {
-  const unit = input.unitLabel.trim() || "their unit"
   const property = input.propertyName.trim() || "your property"
   const name = (input.residentName ?? "").trim()
   const who = name
-    ? `${name} in Unit ${unit}`
-    : `the resident in Unit ${unit}`
+    ? `${name}${formatInUnitPhrase(input.unitLabel, input.propertyType)}`
+    : `the resident${formatInUnitPhrase(input.unitLabel, input.propertyType)}`
   const lines = [
     `Ulo alert: We couldn't deliver the activation text to ${who} at ${property}. Please verify or update their phone number before activating SMS access.`,
   ]
@@ -234,19 +239,23 @@ export function buildActivationAdminEmail(input: {
   residentName?: string | null
   unitLabel: string
   propertyName: string
+  propertyType?: string | null
   maskedPhone?: string | null
   friendlyReason: string
   residentDetailsUrl: string
 }): { subject: string; text: string; html: string } {
-  const unit = input.unitLabel.trim() || "—"
+  const unit = formatUnitReference(input.unitLabel, input.propertyType)
   const property = input.propertyName.trim() || "your property"
   const name = (input.residentName ?? "").trim() || "the resident"
-  const subject = `Resident phone needs attention — Unit ${unit}`
+  const who = `${name}${formatInUnitPhrase(input.unitLabel, input.propertyType)}`
+  const subject = unit
+    ? `Resident phone needs attention — ${unit}`
+    : "Resident phone needs attention"
   const phoneLine = input.maskedPhone
     ? `Phone on file: ${input.maskedPhone}`
     : null
   const text = [
-    `Ulo couldn't deliver the activation text to ${name} in Unit ${unit} at ${property}.`,
+    `Ulo couldn't deliver the activation text to ${who} at ${property}.`,
     "",
     "Please review and update the resident's phone number before activating SMS access.",
     "",
@@ -259,7 +268,10 @@ export function buildActivationAdminEmail(input: {
     .filter((line): line is string => line != null)
     .join("\n")
 
-  const html = `<p>Ulo couldn't deliver the activation text to <strong>${escapeHtml(name)}</strong> in Unit <strong>${escapeHtml(unit)}</strong> at ${escapeHtml(property)}.</p>
+  const unitHtml = unit
+    ? ` in <strong>${escapeHtml(unit)}</strong>`
+    : ""
+  const html = `<p>Ulo couldn't deliver the activation text to <strong>${escapeHtml(name)}</strong>${unitHtml} at ${escapeHtml(property)}.</p>
 <p>Please review and update the resident's phone number before activating SMS access.</p>
 ${phoneLine ? `<p>${escapeHtml(phoneLine)}</p>` : ""}
 <p>Delivery issue: ${escapeHtml(input.friendlyReason)}</p>
@@ -271,12 +283,14 @@ ${phoneLine ? `<p>${escapeHtml(phoneLine)}</p>` : ""}
 
 export function buildActivationInAppCopy(input: {
   unitLabel: string
+  propertyType?: string | null
 }): { title: string; summary: string } {
-  const unit = input.unitLabel.trim() || "—"
+  const unit = formatUnitReference(input.unitLabel, input.propertyType)
   return {
     title: "Resident phone needs attention",
-    summary:
-      `Unit ${unit} — We couldn't deliver the activation text. Verify or update the resident's phone number before activating SMS access.`,
+    summary: unit
+      ? `${unit} — We couldn't deliver the activation text. Verify or update the resident's phone number before activating SMS access.`
+      : `We couldn't deliver the activation text. Verify or update the resident's phone number before activating SMS access.`,
   }
 }
 

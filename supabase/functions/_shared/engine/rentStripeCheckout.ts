@@ -25,6 +25,7 @@ import { logPipelineStageEvent, logWorkflowEvent } from "./workflowRuns.ts"
 import type { WorkflowRunRow } from "./types.ts"
 import { uloAppOrigin } from "../uloAppUrl.ts"
 import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 /** @deprecated Prefer StripeConnectDestination from stripeConnect.ts */
 export type LandlordRentDestination = StripeConnectDestination
@@ -91,6 +92,7 @@ export async function createRentCheckoutSession(
     amountDue: number
     residentName?: string | null
     unitLabel?: string | null
+  propertyType?: string | null
   },
 ): Promise<RentCheckoutCreateResult> {
   if (!isRentStripeConfigured()) {
@@ -132,9 +134,8 @@ export async function createRentCheckoutSession(
     `&run=${encodeURIComponent(params.runId)}` +
     `&resident=${encodeURIComponent(params.residentId)}`
 
-  const unitBit = params.unitLabel?.trim()
-    ? ` · Unit ${params.unitLabel.trim()}`
-    : ""
+  const unitRef = formatUnitReference(params.unitLabel, params.propertyType)
+  const unitBit = unitRef ? ` · ${unitRef}` : ""
   const nameBit = params.residentName?.trim()
     ? ` for ${params.residentName.trim()}`
     : ""

@@ -11,6 +11,7 @@ import {
   type ToolResult,
 } from "../_shared/toolResult.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
+import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
 
 export type SearchLateRentParams = {
   organizationId: string
@@ -97,7 +98,7 @@ export function formatLateRentMarkdown(rows: LateRentRow[]): string {
     "",
   ]
   for (const r of rows.slice(0, 12)) {
-    const where = [r.propertyName, r.unitLabel ? `Unit ${r.unitLabel}` : null]
+    const where = [r.propertyName, formatUnitReference(r.unitLabel) || null]
       .filter(Boolean)
       .join(" · ")
     const overdue =

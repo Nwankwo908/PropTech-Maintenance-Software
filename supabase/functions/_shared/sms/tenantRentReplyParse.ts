@@ -184,6 +184,20 @@ export function buildTenantRentAmountAskSms(params: {
   return `Got it — a partial payment. How much did you pay? Reply with the dollar amount (for example 700). The balance due is ${due}.`
 }
 
+/**
+ * Resident PAID / PARTIAL / QUESTIONS while landlord rent collection is paused.
+ * Do not validate amounts against balance_due (Section 8 / wrong-balance loops).
+ */
+export function buildTenantRentCollectionPausedSms(): string {
+  return [
+    "This is the property management team.",
+    "",
+    "Rent reminders and payment follow-ups are paused right now, so you don't need to reply PAID, PARTIAL, or QUESTIONS for rent.",
+    "",
+    "If you still need help, text us what you need and someone from the team will follow up.",
+  ].join("\n")
+}
+
 export function buildTenantRentReportAckSms(params: {
   kind: "paid" | "partial"
   reportedAmount: number

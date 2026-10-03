@@ -1,6 +1,10 @@
 /** Vendor outreach copy — short, friendly, one clear CTA (6th–8th grade reading level). */
 
 import { sanitizeResidentAvailabilityForVendor } from "./sms/residentAvailabilityExtract.ts"
+import {
+  formatBareUnitLabel,
+  shouldOmitUnitReference,
+} from "./properties/unitLabelDisplay.ts"
 
 /** Short work-order ref for SMS (matches admin WO-XXXX style). */
 export function formatWorkOrderRef(ticketId: string): string {
@@ -153,6 +157,8 @@ export function buildVendorJobAssignmentSms(input: {
    * Prefer this over bare `unit` when the street is known.
    */
   location?: string | null
+  /** When set, single-family properties omit the Unit line. */
+  propertyType?: string | null
   /** Public job detail link (`/w/{vendor_action_token}`). */
   jobDetailUrl?: string | null
   viewJobUrl?: string | null
@@ -168,6 +174,7 @@ export function buildVendorJobAssignmentSms(input: {
   const { address, unitLabel } = addressAndUnitForVendorAssignmentSms({
     location: input.location,
     unit: input.unit,
+    propertyType: input.propertyType,
   })
 
   const lines = [`Hi ${company} — new job ${wo}`]
@@ -196,19 +203,24 @@ export function buildVendorJobAssignmentSms(input: {
 
 /**
  * Split location ("563 Springdale · Unit 1") into Address + Unit labels for
- * vendor assignment SMS.
+ * vendor assignment SMS. Single-family omits the unit line entirely.
  */
 export function addressAndUnitForVendorAssignmentSms(input: {
   location?: string | null
   unit?: string | null
+  propertyType?: string | null
 }): { address: string; unitLabel: string } {
   const loc = input.location?.trim() || ""
   const parts = loc.split(/\s*·\s*/).map((p) => p.trim()).filter(Boolean)
   if (parts.length >= 2 && /^unit\b/i.test(parts[parts.length - 1] ?? "")) {
     const unitPart = parts[parts.length - 1] ?? ""
+    const address = parts.slice(0, -1).join(" · ")
+    if (shouldOmitUnitReference({ unitLabel: unitPart, propertyType: input.propertyType })) {
+      return { address, unitLabel: "" }
+    }
     return {
-      address: parts.slice(0, -1).join(" · "),
-      unitLabel: unitPart.replace(/^unit\b/i, "Unit"),
+      address,
+      unitLabel: formatBareUnitLabel(unitPart, input.propertyType),
     }
   }
 
@@ -219,12 +231,14 @@ export function addressAndUnitForVendorAssignmentSms(input: {
       unitParts.length >= 2 &&
       /^unit\b/i.test(unitParts[unitParts.length - 1] ?? "")
     ) {
+      const address = loc || unitParts.slice(0, -1).join(" · ")
+      const unitPart = unitParts[unitParts.length - 1] ?? ""
+      if (shouldOmitUnitReference({ unitLabel: unitPart, propertyType: input.propertyType })) {
+        return { address, unitLabel: "" }
+      }
       return {
-        address: loc || unitParts.slice(0, -1).join(" · "),
-        unitLabel: (unitParts[unitParts.length - 1] ?? "").replace(
-          /^unit\b/i,
-          "Unit",
-        ),
+        address,
+        unitLabel: formatBareUnitLabel(unitPart, input.propertyType),
       }
     }
     // Combined location passed as unit — treat as address when no separate loc.
@@ -234,14 +248,10 @@ export function addressAndUnitForVendorAssignmentSms(input: {
     unitRaw = ""
   }
 
-  let unitLabel = ""
-  if (unitRaw) {
-    unitLabel = /^unit\b/i.test(unitRaw)
-      ? unitRaw.replace(/^unit\b/i, "Unit")
-      : `Unit ${unitRaw}`
+  return {
+    address: loc,
+    unitLabel: formatBareUnitLabel(unitRaw, input.propertyType),
   }
-
-  return { address: loc, unitLabel }
 }
 
 /** Job detail link — sent after schedule is locked (completes the scheduling thread). */

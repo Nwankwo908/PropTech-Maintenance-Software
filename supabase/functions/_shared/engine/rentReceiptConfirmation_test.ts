@@ -1,5 +1,5 @@
 /// <reference lib="deno.ns" />
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
+import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   askAlreadyTracked,
   buildLandlordRentPartialConfirmSms,
@@ -25,6 +25,15 @@ Deno.test("formatRentReceiptUnitLabel prefixes Unit", () => {
   assertEquals(formatRentReceiptUnitLabel("Unit 2B"), "Unit 2B")
 })
 
+Deno.test("formatRentReceiptUnitLabel omits unit for single-family", () => {
+  assertEquals(formatRentReceiptUnitLabel("1", "single_family"), "This home")
+  assertEquals(
+    formatRentReceiptUnitLabel("1", "single_family", "14 Maple Ave"),
+    "14 Maple Ave",
+  )
+  assertEquals(formatRentReceiptUnitLabel("Home"), "This home")
+})
+
 Deno.test("buildLandlordRentReceiptAskSms includes PARTIAL", () => {
   const body = buildLandlordRentReceiptAskSms({
     runId: "r1",
@@ -38,6 +47,23 @@ Deno.test("buildLandlordRentReceiptAskSms includes PARTIAL", () => {
     body,
     "Unit 2B — $2,400 rent due today. Did you receive it?\n\nReply YES, NO, or PARTIAL.",
   )
+})
+
+Deno.test("buildLandlordRentReceiptAskSms omits unit for single-family", () => {
+  const body = buildLandlordRentReceiptAskSms({
+    runId: "r1",
+    residentId: "u1",
+    unitLabel: "1",
+    propertyType: "single_family",
+    propertyLabel: "14 Maple Ave",
+    amountDue: 2400,
+    billingPeriod: "2026-09",
+    dueToday: true,
+  })
+  assertEquals(body.includes("Unit"), false)
+  assertEquals(body.includes("Home"), false)
+  assertStringIncludes(body, "14 Maple Ave")
+  assertStringIncludes(body, "PARTIAL")
 })
 
 Deno.test("parseLandlordRentReceiptReply yes/no/partial/method", () => {

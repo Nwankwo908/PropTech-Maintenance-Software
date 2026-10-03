@@ -30,6 +30,7 @@ import {
   isRentCollectionPaused,
 } from "./rentCollectionPolicy.ts"
 import type { RentCollectionState } from "./templates/rentCollection.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 export type RentCollectionEscalationResult = {
   workflow_run_id: string
@@ -270,7 +271,7 @@ async function notifyAdminDashboard(
 
   const detailParts = [
     residentLabel,
-    unitLabel ? `Unit ${unitLabel}` : null,
+    formatUnitReference(unitLabel),
     amountLabel,
     params.billingPeriod,
   ].filter(Boolean)
@@ -314,12 +315,16 @@ export async function escalateRentCollectionRun(
 
   const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
   const paused = isRentCollectionPaused(operational.rentCollectionPaused)
+  if (paused) {
+    // Platform / landlord pause: do not escalate or SMS the landlord about late rent.
+    return null
+  }
   const paymentsOn = landlordHasPayments(params.landlordId)
   const resident = await loadResidentContact(supabase, params.run.resident_id)
 
   // Quiet hours: defer escalation + late notice until the window opens so the
   // resident SMS is not lost after status flips to escalated.
-  if (resident && paymentsOn && !paused) {
+  if (resident && paymentsOn) {
     const phone = String(resident.phone ?? "").trim()
     const email = String(resident.email ?? "").trim()
     if (phone || email) {
@@ -381,14 +386,11 @@ export async function escalateRentCollectionRun(
     metadata: {
       escalated_at: new Date().toISOString(),
       escalation_reason: reason,
-      rent_collection_paused: paused || undefined,
       ...classificationMeta,
       step_state: nextState,
     },
     pipelineStage: "escalate",
-    eventMessage: paused
-      ? "Late payment escalated (resident outreach paused)"
-      : "Late payment escalated",
+    eventMessage: "Late payment escalated",
     eventStep: "late_payment",
   })
 
@@ -406,7 +408,6 @@ export async function escalateRentCollectionRun(
       amount_due: amountDue,
       billing_period: billingPeriod,
       rent_due_date: rentDueDate || null,
-      rent_collection_paused: paused,
     },
   })
 
@@ -420,7 +421,6 @@ export async function escalateRentCollectionRun(
       amount_due: amountDue,
       billing_period: billingPeriod,
       rent_due_date: rentDueDate || null,
-      rent_collection_paused: paused,
     },
   })
 
@@ -437,13 +437,10 @@ export async function escalateRentCollectionRun(
     runId: params.run.id,
     stage: "escalate",
     step: "late_payment",
-    message: paused
-      ? "Late payment escalated (resident outreach paused)"
-      : "Late payment escalated",
+    message: "Late payment escalated",
     metadata: {
       reason,
       rent_classification: classification,
-      rent_collection_paused: paused,
     },
   })
 
@@ -467,7 +464,6 @@ export async function escalateRentCollectionRun(
       state: nextState,
       paymentLink: paymentProvider?.paymentLink ?? null,
       graphScope,
-      skipResidentOutreach: paused,
     })
     : { smsSent: false, emailSent: false }
 

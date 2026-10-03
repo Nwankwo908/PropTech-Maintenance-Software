@@ -6,6 +6,7 @@ import {
   getWorkflowRunById,
   updateWorkflowRun,
 } from "./engine/workflowRuns.ts"
+import { resolveUnitIdForLandlord } from "./sms/resolveUnitId.ts"
 
 export type TriggerMoveOutFromLeaseRenewalResult = {
   ok: true
@@ -41,28 +42,63 @@ async function resolveUnitForLeaseRenewal(
     }
   }
 
-  if (!params.residentId) return null
+  // Occupancy first — never pick units.unit_label matches[0] for repeating "1".
+  if (params.residentId) {
+    const { data: occ } = await supabase
+      .from("occupancy")
+      .select("unit_id")
+      .eq("landlord_id", params.landlordId)
+      .eq("resident_id", params.residentId)
+      .eq("status", "active")
+      .limit(5)
+    const unitIds = [
+      ...new Set(
+        (occ ?? [])
+          .map((row) => (typeof row.unit_id === "string" ? row.unit_id.trim() : ""))
+          .filter(Boolean),
+      ),
+    ]
+    if (unitIds.length === 1) {
+      const { data: unit } = await supabase
+        .from("units")
+        .select("id, unit_label, building")
+        .eq("id", unitIds[0]!)
+        .maybeSingle()
+      if (unit?.id) {
+        return {
+          unitId: String(unit.id),
+          unitLabel: readString(unit.unit_label) ?? params.unitLabel,
+          building: readString(unit.building) ?? params.building,
+        }
+      }
+    }
+  }
 
-  const { data: resident } = await supabase
-    .from("users")
-    .select("unit, building")
-    .eq("id", params.residentId)
-    .eq("landlord_id", params.landlordId)
-    .maybeSingle()
+  const { data: resident } = params.residentId
+    ? await supabase
+      .from("users")
+      .select("unit, building")
+      .eq("id", params.residentId)
+      .eq("landlord_id", params.landlordId)
+      .maybeSingle()
+    : { data: null }
 
   const unitLabel = readString(resident?.unit) ?? params.unitLabel
   const building = readString(resident?.building) ?? params.building
   if (!unitLabel) return null
 
-  let query = supabase
+  const unitId = await resolveUnitIdForLandlord(supabase, {
+    landlordId: params.landlordId,
+    unitLabel,
+    building,
+  })
+  if (!unitId) return null
+
+  const { data: unit } = await supabase
     .from("units")
     .select("id, unit_label, building")
-    .eq("landlord_id", params.landlordId)
-    .eq("unit_label", unitLabel)
-
-  if (building) query = query.eq("building", building)
-
-  const { data: unit } = await query.limit(1).maybeSingle()
+    .eq("id", unitId)
+    .maybeSingle()
   if (!unit?.id) return null
 
   return {

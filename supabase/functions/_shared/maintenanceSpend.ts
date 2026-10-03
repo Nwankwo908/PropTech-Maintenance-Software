@@ -8,6 +8,7 @@ import { logLedgerEvent } from "./engine/ledgerEvents.ts"
 import { notifyLandlordNeedsAttention } from "./landlordAttentionNotify.ts"
 import { recordMaintenanceInvoicePaidActivity } from "./paymentActivityEvents.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
+import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
 
 /** Canonical maintenance spend graph event types. */
 export const MAINTENANCE_GRAPH_EVENTS = {
@@ -234,7 +235,7 @@ export async function submitMaintenanceInvoice(
       landlordId: scope.landlordId,
       kind: "invoice_ready",
       headline: "Invoice ready to pay",
-      detail: [unit ? `Unit ${unit}` : null, vendorName, amount]
+      detail: [formatUnitReference(unit), vendorName, amount]
         .filter(Boolean)
         .join(" · "),
       idempotencyKey: `invoice:${invoice.id}`,

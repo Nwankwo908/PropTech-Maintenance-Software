@@ -6,6 +6,7 @@ import {
 import { getErrorMessage } from '@/lib/errorMessage'
 import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
 import { buildRentPaymentReceivedMessage } from '@/lib/paymentActivityMessages'
+import { formatLocationWithOptionalUnit } from '@shared/properties/unitLabelDisplay'
 
 export type LateRentInsightTag = 'ON-TIME HISTORY' | 'ENGAGEMENT' | 'INTENT' | 'RISK'
 
@@ -123,11 +124,12 @@ function formatInitials(fullName: string | null | undefined): string {
 }
 
 function formatLocation(propertyLabel: string | null, unitLabel: string | null): string {
-  const building = propertyLabel?.trim() || 'Property'
-  const unit = (unitLabel ?? '').trim()
-  if (!unit) return building
-  const displayUnit = /^unit\s+/i.test(unit) ? unit.replace(/^unit\s+/i, 'Unit ') : `Unit ${unit}`
-  return `${building} · ${displayUnit}`
+  return (
+    formatLocationWithOptionalUnit({
+      propertyLabel,
+      unitLabel,
+    }) || 'Property'
+  )
 }
 
 function estimateMonthlyRent(amountDue: number | null, unitLabel: string | null): number {

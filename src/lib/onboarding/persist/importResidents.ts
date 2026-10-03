@@ -45,6 +45,27 @@ type ImportUnitInventoryRow = {
 type ImportPropertyNameRow = {
   id?: string
   name: string
+  propertyType?: string | null
+}
+
+/** Resolve property type for a resident/lease building when inventing a default unit. */
+export function resolveImportPropertyType(
+  building: string,
+  properties: ImportPropertyNameRow[],
+): string | null {
+  const trimmed = asTrimmed(building)
+  if (!trimmed) {
+    return properties.length === 1 ? (properties[0]?.propertyType ?? null) : null
+  }
+  const exact = properties.find(
+    (property) => normalizeBuildingKey(property.name) === normalizeBuildingKey(trimmed),
+  )
+  if (exact?.propertyType) return exact.propertyType
+  const overlapping = properties.filter((property) =>
+    extractedPlacesOverlap(trimmed, property.name),
+  )
+  if (overlapping.length === 1) return overlapping[0]?.propertyType ?? null
+  return null
 }
 
 /** Map rent-roll / onboarding rows onto the saved property + unit inventory. */
@@ -112,15 +133,16 @@ function asTrimmed(value: string | null | undefined): string {
   return (value ?? '').trim()
 }
 
-/** Prefer the resident unit; if a lease is present with no unit, default to 1. */
+/** Prefer the resident unit; if a lease is present with no unit, default to 1 (multifamily) or blank (single-family). */
 export function resolveImportedResidentUnit(
   residentUnit: string | null | undefined,
   matchedLeaseUnit: string | null | undefined,
   hasMatchedLease: boolean,
+  propertyType?: string | null,
 ): string {
   const fromResident = asTrimmed(residentUnit)
   if (fromResident) return fromResident
-  if (hasMatchedLease) return leaseUnitOrDefault(matchedLeaseUnit)
+  if (hasMatchedLease) return leaseUnitOrDefault(matchedLeaseUnit, propertyType)
   return ''
 }
 
@@ -597,14 +619,18 @@ export async function importOnboardingResidentsFromExtraction(
 
   for (const resident of selectedResidents) {
     const matchedLease = resolveLeaseMatch(resident, selectedLeases)
+    const buildingHint =
+      asTrimmed(resident.building) || asTrimmed(matchedLease?.building) || ''
+    const propertyType = resolveImportPropertyType(buildingHint, properties)
     const resolvedUnit = resolveImportedResidentUnit(
       resident.unit,
       matchedLease?.unit,
       Boolean(matchedLease),
+      propertyType,
     )
     const resolvedBuilding = resolveImportResidentBuilding(
       resolvedUnit,
-      asTrimmed(resident.building) || asTrimmed(matchedLease?.building) || '',
+      buildingHint,
       unitInventory,
       properties,
     )

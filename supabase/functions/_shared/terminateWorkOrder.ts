@@ -25,6 +25,7 @@ import { releaseMaintenanceIntakePin } from "./sms/residentIntake.ts"
 import { runLinksCancelledTicket } from "./sms/cancelResidentWorkOrderLink.ts"
 import { closeOpenAsksForTicket } from "./closeOpenAsksForTicket.ts"
 import type { SmsIntakeState } from "./sms/residentIntakeTypes.ts"
+import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
 
 export const MAX_TERMINATE_SMS_ATTEMPTS = 3
 export const TERMINATE_NOTIFY_SOURCE = "work_order_terminate_notify"
@@ -218,7 +219,7 @@ export function buildVendorTerminateSms(params: {
   const wo = params.workOrderRef.trim() || "this work order"
   const unit = params.unit.trim()
   const unitPart = unit
-    ? (unit.toLowerCase().startsWith("unit") ? unit : `Unit ${unit}`)
+    ? (formatUnitReference(unit) || unit)
     : ""
   const statusWord = params.mode === "release" ? "Reassigned" : "Cancelled"
   const line1 = [statusWord, "—", wo, unitPart ? `· ${unitPart}` : null]

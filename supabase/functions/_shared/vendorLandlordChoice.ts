@@ -7,6 +7,7 @@ import { isConfirmedDurableInboundTrigger } from "../../../shared/ops/vendorChoi
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { formatWorkOrderRef, vendorCompanyName } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+import { formatLocationWithOptionalUnit } from "./properties/unitLabelDisplay.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
@@ -445,6 +446,7 @@ function problemContextForLandlordSms(input: {
   issueHeadline?: string | null
   locationLabel?: string | null
   unit?: string | null
+  propertyType?: string | null
 }): string {
   const issueRaw = input.issueHeadline?.trim() || ""
   const issue = issueRaw
@@ -454,12 +456,10 @@ function problemContextForLandlordSms(input: {
     : ""
   const loc =
     input.locationLabel?.trim() ||
-    (() => {
-      const unit = input.unit?.trim() || ""
-      if (!unit) return ""
-      if ((/\d/.test(unit) && /[a-z]/i.test(unit)) || unit.includes("·")) return unit
-      return /^unit\b/i.test(unit) ? unit : `Unit ${unit}`
-    })()
+    formatLocationWithOptionalUnit({
+      unitLabel: input.unit,
+      propertyType: input.propertyType,
+    })
   const trade = input.tradeLabel.trim() || "maintenance"
   if (issue && loc) return `${issue} at ${loc}`
   if (issue) return issue

@@ -24,6 +24,8 @@ type PropertyUnitsTableProps = {
     unitId: string,
     status: UnitOccupancyStatus,
   ) => void | Promise<void | boolean>
+  /** Opens the Active Tasks work-order right rail for this workflow run. */
+  onOpenWorkflow?: (workflowRunId: string) => void
 }
 
 /** Property detail — units table on the Overview tab. */
@@ -33,6 +35,7 @@ export function PropertyUnitsTable({
   rows,
   loading = false,
   onOccupancyStatusChange,
+  onOpenWorkflow,
 }: PropertyUnitsTableProps) {
   const location = useLocation()
   const [statusOverrides, setStatusOverrides] = useState<
@@ -135,7 +138,17 @@ export function PropertyUnitsTable({
                     />
                   </td>
                   <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
-                    {row.openWorkflowLabel ?? '—'}
+                    {row.openWorkflowLabel && row.openWorkflowRunId && onOpenWorkflow ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWorkflow(row.openWorkflowRunId!)}
+                        className="sa-link cursor-pointer font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                      >
+                        {row.openWorkflowLabel}
+                      </button>
+                    ) : (
+                      (row.openWorkflowLabel ?? '—')
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 tabular-nums text-[#364153]">
                     {showOccupiedFields ? formatBalance(row.balanceDue) : '—'}

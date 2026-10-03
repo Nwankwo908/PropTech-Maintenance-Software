@@ -18,6 +18,7 @@ import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispatch.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 export type ConfirmHqsInspectionLetterInput = {
   landlordId: string
@@ -237,7 +238,7 @@ export async function confirmAndCreateHqsInspectionLetter(
         description: String(ticket.description ?? ""),
         issueHeadline: String(ticket.description ?? "").split("\n")[0] ?? null,
         dueAt: ticket.due_at == null ? null : String(ticket.due_at),
-        locationLabel: [buildingEarly, unitLabel ? `Unit ${unitLabel}` : null]
+        locationLabel: [buildingEarly, formatUnitReference(unitLabel) || null]
           .filter(Boolean)
           .join(" · ") || null,
       })

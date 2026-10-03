@@ -20,6 +20,13 @@ describe('leaseUnitOrDefault', () => {
     expect(leaseUnitOrDefault(undefined)).toBe(DEFAULT_LEASE_UNIT)
   })
 
+  it('does not invent a unit for single-family leases without a unit field', () => {
+    expect(leaseUnitOrDefault('', 'single_family')).toBe('')
+    expect(leaseUnitOrDefault(null, 'single_family_home')).toBe('')
+    expect(leaseUnitOrDefault('illegible', 'SFR')).toBe('')
+    expect(leaseUnitOrDefault('2A', 'single_family')).toBe('2A')
+  })
+
   it('defaults to unit 1 when the unit is not legible', () => {
     expect(isIllegibleLeaseUnit('illegible')).toBe(true)
     expect(isIllegibleLeaseUnit('N/A')).toBe(true)
@@ -32,6 +39,10 @@ describe('leaseUnitOrDefault', () => {
 describe('sharedUnitForCoTenants', () => {
   it('defaults every co-tenant to unit 1 when no unit is readable', () => {
     expect(sharedUnitForCoTenants(['', 'illegible', 'N/A'])).toBe(DEFAULT_LEASE_UNIT)
+  })
+
+  it('does not invent a unit for single-family co-tenants without a readable unit', () => {
+    expect(sharedUnitForCoTenants(['', 'illegible', 'N/A'], 'single_family')).toBeNull()
   })
 
   it('copies the one readable unit onto the rest', () => {
@@ -62,6 +73,28 @@ describe('assignSharedUnitToLeaseCoTenants', () => {
       },
     ])
     expect(rows.map((row) => row.unit)).toEqual([DEFAULT_LEASE_UNIT, DEFAULT_LEASE_UNIT])
-    expect(rows.every((row) => row.needsReview === false)).toBe(true)
+  })
+
+  it('does not invent unit 1 for single-family co-tenants on the same lease', () => {
+    const rows = assignSharedUnitToLeaseCoTenants(
+      [
+        {
+          unit: '',
+          building: '14 Maple Ave',
+          sourceDocumentName: 'Maple-Lease.pdf',
+          needsReview: true,
+          confidence: 90,
+        },
+        {
+          unit: 'illegible',
+          building: '14 Maple Ave',
+          sourceDocumentName: 'Maple-Lease.pdf',
+          needsReview: true,
+          confidence: 88,
+        },
+      ],
+      'single_family',
+    )
+    expect(rows.map((row) => row.unit)).toEqual(['', 'illegible'])
   })
 })

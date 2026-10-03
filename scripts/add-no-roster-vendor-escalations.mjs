@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createClient } from '@supabase/supabase-js'
+import { resolveUnitFailClosed } from './lib/resolveUnitFailClosed.mjs'
 
 const SHOWCASE_LANDLORD_ID = 'de300000-0000-4000-8000-000000000001'
 const TARGET_LANDLORD_ID =
@@ -178,15 +179,13 @@ async function main() {
       throw new Error(`Resident ${resident.full_name} is missing building/unit`)
     }
 
-    const { data: unitRow, error: unitError } = await supabase
-      .from('units')
-      .select('id')
-      .eq('landlord_id', TARGET_LANDLORD_ID)
-      .eq('building', building)
-      .eq('unit_label', unitLabel)
-      .maybeSingle()
-    if (unitError) throw new Error(`units: ${unitError.message}`)
-    if (!unitRow?.id) throw new Error(`Unit ${building} · ${unitLabel} not found`)
+    const unitRow = await resolveUnitFailClosed(supabase, {
+      landlordId: TARGET_LANDLORD_ID,
+      unitLabel,
+      building,
+      residentId: resident.id,
+    })
+    if (!unitRow?.id) throw new Error(`Unit ${building} · ${unitLabel} not found (fail-closed)`)
 
     const { data: propertyId, error: propertyError } = await supabase.rpc('derive_property_id', {
       p_landlord_id: TARGET_LANDLORD_ID,

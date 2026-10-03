@@ -27,6 +27,7 @@ import {
 import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/workflowPipelineDetail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
+import { mutateSearchParams, readCsvSet, writeCsvSet } from '@/lib/adminListUrlState'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
@@ -37,11 +38,23 @@ type KanbanCard = WorkflowKanbanCard
 
 type WorkflowFilterKey = 'maintenance' | 'lease' | 'critical'
 
+const WORKFLOW_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease', 'critical'])
+
 const WORKFLOW_FILTER_OPTIONS: { id: WorkflowFilterKey; label: string }[] = [
   { id: 'maintenance', label: 'Maintenance' },
   { id: 'lease', label: 'Lease' },
   { id: 'critical', label: 'Critical' },
 ]
+
+function readWorkflowFilters(params: URLSearchParams): Set<WorkflowFilterKey> {
+  const next = new Set<WorkflowFilterKey>()
+  for (const key of readCsvSet(params, 'filters')) {
+    if (WORKFLOW_FILTER_KEYS.has(key as WorkflowFilterKey)) {
+      next.add(key as WorkflowFilterKey)
+    }
+  }
+  return next
+}
 
 const CATEGORY_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease'])
 
@@ -487,19 +500,55 @@ function KanbanCardItem({
 }
 
 export function AdminWorkflowOperationsDashboard() {
-  const [searchParams] = useSearchParams()
-  const focusRunId = searchParams.get('run')?.trim() || null
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedRunId = searchParams.get('run')?.trim() || null
+  const activeFilters = useMemo(() => readWorkflowFilters(searchParams), [searchParams])
   const [data, setData] = useState<AdminWorkflowDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeFilters, setActiveFilters] = useState<Set<WorkflowFilterKey>>(() => new Set())
   const [highlightRunId, setHighlightRunId] = useState<string | null>(null)
 
   const [chooserOpen, setChooserOpen] = useState(false)
   const [startModalWorkflow, setStartModalWorkflow] = useState<LifecycleWorkflowType | null>(null)
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [pipelineDetail, setPipelineDetail] = useState<WorkflowPipelineDetail | null>(null)
   const [pipelineLoading, setPipelineLoading] = useState(false)
+
+  const openRun = useCallback(
+    (runId: string) => {
+      const id = runId.trim()
+      if (!id) return
+      if (searchParams.get('run')?.trim() === id) return
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          next.set('run', id)
+        }),
+        { replace: false },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const closeRun = useCallback(() => {
+    if (!searchParams.get('run')) return
+    setSearchParams(
+      mutateSearchParams(searchParams, (next) => {
+        next.delete('run')
+      }),
+      { replace: true },
+    )
+  }, [searchParams, setSearchParams])
+
+  const writeFilters = useCallback(
+    (filters: Set<WorkflowFilterKey>) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeCsvSet(next, 'filters', filters)
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
 
   const allRuns = useMemo<AdminWorkflowRow[]>(() => {
     if (!data) return []
@@ -548,16 +597,15 @@ export function AdminWorkflowOperationsDashboard() {
   }, [load])
 
   useEffect(() => {
-    if (!focusRunId || loading) return
-    setSelectedRunId(focusRunId)
-    const element = document.getElementById(`workflow-card-${focusRunId}`)
+    if (!selectedRunId || loading) return
+    const element = document.getElementById(`workflow-card-${selectedRunId}`)
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-    setHighlightRunId(focusRunId)
+    setHighlightRunId(selectedRunId)
     const timer = window.setTimeout(() => setHighlightRunId(null), 3200)
     return () => window.clearTimeout(timer)
-  }, [focusRunId, loading, cards])
+  }, [selectedRunId, loading, cards])
 
   useEffect(() => {
     if (!selectedRunId || !data) {
@@ -609,12 +657,10 @@ export function AdminWorkflowOperationsDashboard() {
   }, [load])
 
   function toggleWorkflowFilter(key: WorkflowFilterKey) {
-    setActiveFilters((current) => {
-      const next = new Set(current)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+    const next = new Set(activeFilters)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    writeFilters(next)
   }
 
   return (
@@ -648,7 +694,7 @@ export function AdminWorkflowOperationsDashboard() {
         open={selectedRunId != null}
         detail={pipelineDetail}
         loading={pipelineLoading}
-        onClose={() => setSelectedRunId(null)}
+        onClose={closeRun}
         onWorkflowUpdated={() => {
           void load()
           if (selectedRunId && data) {
@@ -671,7 +717,7 @@ export function AdminWorkflowOperationsDashboard() {
           options={WORKFLOW_FILTER_OPTIONS}
           activeFilters={activeFilters}
           onToggle={toggleWorkflowFilter}
-          onClear={() => setActiveFilters(new Set())}
+          onClear={() => writeFilters(new Set())}
         />
 
         <div
@@ -719,7 +765,7 @@ export function AdminWorkflowOperationsDashboard() {
                         card={card}
                         stagger={Math.min(cardIndex, 6)}
                         highlighted={highlightRunId === card.id}
-                        onSelect={setSelectedRunId}
+                        onSelect={openRun}
                       />
                     ))
                   )}

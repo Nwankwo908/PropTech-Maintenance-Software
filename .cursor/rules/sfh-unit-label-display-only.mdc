@@ -1,0 +1,36 @@
+---
+description: Single-family unit labels — display omit is source of truth; do not normalize stored "1"
+alwaysApply: true
+---
+
+# Single-family unit labels — display omit, leave stored "1"
+
+For single-family properties, outbound SMS/email/Ask Ulo/admin display **omit the unit entirely** (never show "Home" or "Unit 1" in messages). Shared helpers:
+
+| Layer | Module |
+|---|---|
+| Shared | `shared/properties/propertyType.ts`, `shared/properties/unitLabelDisplay.ts` |
+| Edge re-export | `supabase/functions/_shared/properties/unitLabelDisplay.ts` |
+| Lease default | `leaseUnitOrDefault(unit, propertyType)` — empty for SFH, `'1'` only for multifamily |
+
+## Stored data decision (Oct 3, 2026)
+
+Live SFH inventory/residents may still store invented `"1"` / `"Unit 1"` from the old `DEFAULT_LEASE_UNIT` path (audit: `scripts/audit-sfh-invented-unit-one.mjs` — historically ~11 units + ~14 residents).
+
+**Decision: leave those rows as-is.** Rely entirely on display/generation suppression (`formatUnitReference` / `shouldOmitUnitReference` with `propertyType`). Do **not** normalize underlying unit/resident labels to `Home` or empty as a follow-up cleanup.
+
+### Why
+
+- Suppression is already the single source of truth for outbound/display surfaces and is tested.
+- Normalizing risks regressing unit/property matching (`maintenance_unit_label_match`, `resolveUnitIdForLandlord`, ticket FK scoping).
+- Historical SMS already references the stored label; rewriting rows can create confusing mismatches.
+
+### If normalization is reconsidered later
+
+Use the **live-data-remediation-fk-guard** pattern only — occupancy-first, fail-closed resolve, write through a reusable path, report-then-heal with audit after write. Never an ad-hoc `UPDATE units SET unit_label = …` / resident unit rewrite.
+
+## Do not
+
+- Heal SFH `"1"` rows just because admin UI hides them
+- Invent `"1"` on new SFH lease imports (forward path already fixed)
+- Show `"Home"` or `"Unit 1"` in tenant/vendor/landlord-facing copy for SFH

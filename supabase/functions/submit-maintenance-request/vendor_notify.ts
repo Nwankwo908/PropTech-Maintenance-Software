@@ -79,6 +79,8 @@ export type TicketNotifyPayload = {
    * Resolved from property data when omitted.
    */
   locationLabel?: string | null
+  /** When set, single-family properties omit the Unit line on vendor SMS. */
+  propertyType?: string | null
   /**
    * Retry assignment when the ticket was already marked notified but still has
    * no vendor (e.g. landlord Override after a no-vendor submit).
@@ -276,6 +278,7 @@ function buildSmsBody(
     issueHeadline: payload.issueHeadline,
     entryOkIfAbsent: payload.entryOkIfAbsent,
     location: payload.locationLabel ?? payload.unit,
+    propertyType: payload.propertyType,
     jobDetailUrl: buildJobDetailUrl(actionToken) ?? legacyViewUrl,
     residentAvailabilityText: payload.residentAvailabilityText,
   })
@@ -473,6 +476,30 @@ async function notifyChannelsForAssignment(
           )
         } catch (e) {
           console.error("[vendor-notify] location label for assignment SMS", e)
+        }
+      }
+      if (!payload.propertyType) {
+        try {
+          const { data: ticketProp } = await supabase
+            .from("maintenance_requests")
+            .select("property_id")
+            .eq("id", ticketId)
+            .maybeSingle()
+          const propertyId =
+            typeof ticketProp?.property_id === "string"
+              ? ticketProp.property_id.trim()
+              : ""
+          if (propertyId) {
+            const { loadPropertyTypeById } = await import(
+              "../_shared/properties/loadPropertyType.ts"
+            )
+            payload.propertyType = await loadPropertyTypeById(
+              supabase,
+              propertyId,
+            )
+          }
+        } catch (e) {
+          console.error("[vendor-notify] property type for assignment SMS", e)
         }
       }
       const smsBody = buildSmsBody(

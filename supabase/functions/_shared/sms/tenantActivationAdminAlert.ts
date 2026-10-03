@@ -29,6 +29,7 @@ import {
   type OpsAlertChannelPreference,
 } from "./tenantActivationFailure.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 export type { OpsAlertChannelPreference }
 export {
@@ -44,6 +45,7 @@ export type ActivationAdminAlertParams = {
   residentName?: string | null
   unitLabel?: string | null
   propertyName?: string | null
+  propertyType?: string | null
   phone?: string | null
   attemptNumber: number
   attemptId?: string | null
@@ -205,8 +207,9 @@ export async function notifyLandlordActivationUndeliverable(
     return empty("already_sent")
   }
 
-  const unitLabel = (params.unitLabel ?? "").trim() || "—"
+  const unitLabel = (params.unitLabel ?? "").trim()
   const propertyName = (params.propertyName ?? "").trim() || "your property"
+  const propertyType = params.propertyType ?? null
   const residentName = (params.residentName ?? "").trim()
   const last4 = maskPhoneLast4(params.phone)
   const maskedPhone = last4 ? `•••-•••-${last4}` : null
@@ -215,7 +218,7 @@ export async function notifyLandlordActivationUndeliverable(
     params.providerErrorCode,
   )
   const detailsUrl = residentDetailsUrl(propertyName, residentId)
-  const inApp = buildActivationInAppCopy({ unitLabel })
+  const inApp = buildActivationInAppCopy({ unitLabel, propertyType })
 
   const { data: landlordRow } = await supabase
     .from("landlords")
@@ -239,6 +242,7 @@ export async function notifyLandlordActivationUndeliverable(
       residentName: residentName || "the resident",
       unitLabel,
       propertyName,
+      propertyType,
     },
   })
   const styledEmail = buildOperationalMessage({
@@ -252,6 +256,7 @@ export async function notifyLandlordActivationUndeliverable(
       residentName: residentName || "the resident",
       unitLabel,
       propertyName,
+      propertyType,
       deepLink: detailsUrl,
     },
   })
@@ -263,12 +268,20 @@ export async function notifyLandlordActivationUndeliverable(
       residentName,
       unitLabel,
       propertyName,
+      propertyType,
       maskedPhone,
       friendlyReason,
       residentDetailsUrl: detailsUrl,
     }),
     subject: styledEmail.subject ??
-      `Resident phone needs attention — Unit ${unitLabel}`,
+      (() => {
+        const unitRef = formatUnitReference(unitLabel, propertyType)
+        if (unitRef) return `Resident phone needs attention — ${unitRef}`
+        if (propertyName && propertyName !== "your property") {
+          return `Resident phone needs attention — ${propertyName}`
+        }
+        return "Resident phone needs attention"
+      })(),
     text: styledEmail.body,
   }
 

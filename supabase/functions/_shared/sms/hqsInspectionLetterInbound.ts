@@ -24,6 +24,7 @@ import {
   loadHqsOwnerTenantUnitMap,
   upsertHqsOwnerTenantUnitMap,
 } from "./hqsInspectionLetterConfirm.ts"
+import { resolveUnitIdForLandlord } from "./resolveUnitId.ts"
 import {
   isHttpUrl,
   isStorageMediaPath,
@@ -273,17 +274,17 @@ async function resolveUnitForLandlord(
 ): Promise<
   { unitId: string; propertyId: string | null; unitLabel: string; building: string | null } | null
 > {
-  let q = supabase
+  const unitId = await resolveUnitIdForLandlord(supabase, {
+    landlordId: input.landlordId,
+    unitLabel: input.unitLabel,
+    building: input.buildingHint,
+  })
+  if (!unitId) return null
+  const { data: row } = await supabase
     .from("units")
     .select("id, unit_label, building, property_id")
-    .eq("landlord_id", input.landlordId)
-    .ilike("unit_label", input.unitLabel)
-    .limit(5)
-  if (input.buildingHint) {
-    q = q.ilike("building", `%${input.buildingHint}%`)
-  }
-  const { data } = await q
-  const row = data?.[0]
+    .eq("id", unitId)
+    .maybeSingle()
   if (!row?.id) return null
   return {
     unitId: String(row.id),

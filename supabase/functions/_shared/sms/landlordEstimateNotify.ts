@@ -18,6 +18,7 @@ import { getSMSProviderForSend } from "./providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./tenantActivationAdminAlert.ts"
 import { buildLandlordEstimateApprovalSms } from "./estimateApprovalSms.ts"
 import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 export const LANDLORD_ESTIMATE_NOTIFY_SOURCE = "landlord_estimate_notify"
 export const MAX_ESTIMATE_SMS_ATTEMPTS = 3
@@ -1136,7 +1137,7 @@ export function buildEstimateDisambiguationSms(
     "",
   ]
   options.forEach((opt, i) => {
-    const loc = [opt.propertyLabel, opt.unit ? `Unit ${opt.unit}` : null]
+    const loc = [opt.propertyLabel, formatUnitReference(opt.unit) || null]
       .filter(Boolean)
       .join(" · ")
     const wo = formatWorkOrderRef(opt.ticketId)

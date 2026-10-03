@@ -17,6 +17,10 @@ import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { supabase } from '@/lib/supabase'
 import { trackProductEventOnce } from '@/lib/analytics/productEvents'
+import {
+  isSingleFamilyPropertyType,
+  SINGLE_FAMILY_UNIT_LABEL,
+} from '@shared/properties/propertyType'
 import { requireOnboardingLandlord } from '../scope'
 import type { OnboardingProperty } from '../types'
 
@@ -42,15 +46,19 @@ export function uniqueOnboardingUnitLabels(labels: Iterable<string>): string[] {
   return out
 }
 
-/** Prefer extracted / saved labels. Only invent 101…N when the property has no inventory yet. */
+/** Prefer extracted / saved labels. Only invent 101…N when the property has no inventory yet.
+ * Single-family properties never invent unit numbers. */
 export function resolveOnboardingUnitLabels(
-  property: Pick<OnboardingProperty, 'unitCount' | 'unitLabels'>,
+  property: Pick<OnboardingProperty, 'unitCount' | 'unitLabels' | 'propertyType'>,
   existingLabels: string[] = [],
 ): string[] {
   const explicit = uniqueOnboardingUnitLabels(property.unitLabels ?? [])
   if (explicit.length > 0) return explicit
   const existing = uniqueOnboardingUnitLabels(existingLabels)
   if (existing.length > 0) return existing
+  if (isSingleFamilyPropertyType(property.propertyType)) {
+    return [SINGLE_FAMILY_UNIT_LABEL]
+  }
   const count = Number.isFinite(property.unitCount) ? Math.max(0, Math.round(property.unitCount)) : 0
   return generateUnitLabels(count)
 }

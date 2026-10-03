@@ -37,17 +37,35 @@ export function resolveUnitIdFromInventory(
   if (matches.length === 0) return null
   if (matches.length === 1) return matches[0]!.id
   const buildingHint = (building ?? '').trim().toLowerCase()
-  if (!buildingHint) return matches[0]!.id
+  // Fail closed — never pick matches[0] when unit labels like "1" collide.
+  if (!buildingHint) return null
   const narrowed = matches.filter((u) => {
     const b = u.building.trim().toLowerCase()
     if (!b) return false
-    return (
-      b.includes(buildingHint) ||
-      buildingHint.includes(b) ||
-      buildingHint.split(/\s+/).some((tok) => tok.length >= 3 && b.includes(tok))
-    )
+    if (b === buildingHint || b.includes(buildingHint) || buildingHint.includes(b)) return true
+    const STREET = new Set([
+      'ave',
+      'avenue',
+      'st',
+      'street',
+      'rd',
+      'road',
+      'dr',
+      'drive',
+      'ln',
+      'lane',
+      'blvd',
+      'ct',
+      'court',
+      'pl',
+      'place',
+    ])
+    const tokens = buildingHint
+      .split(/\s+/)
+      .filter((tok) => tok.length >= 3 && !STREET.has(tok))
+    return tokens.length > 0 && tokens.every((tok) => b.includes(tok))
   })
-  return (narrowed[0] ?? matches[0])!.id
+  return narrowed.length === 1 ? narrowed[0]!.id : null
 }
 
 export function buildResidentByPhoneDigits(

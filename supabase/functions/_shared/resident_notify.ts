@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "./delivery.ts"
 import { sendOutboundSms } from "./sms/adapters.ts"
+import { formatBareUnitLabel } from "./properties/unitLabelDisplay.ts"
 
 export type ResidentNotifyEvent =
   | "ticket_submitted"
@@ -84,6 +85,7 @@ function buildEmail(
   ticketId: string,
   ctx: {
     unit?: string
+    propertyType?: string | null
     priority?: string
     descriptionPreview?: string
     vendorName?: string
@@ -93,7 +95,10 @@ function buildEmail(
 ): { text: string; html: string } {
   const name = recipientName.trim() || "there"
   const unitLine = ctx.unit?.trim()
-    ? `Unit / location: ${ctx.unit.trim()}`
+    ? (() => {
+      const bare = formatBareUnitLabel(ctx.unit, ctx.propertyType)
+      return bare ? `Unit / location: ${bare}` : null
+    })()
     : null
   const pri = ctx.priority?.trim()
   const desc = ctx.descriptionPreview?.trim()

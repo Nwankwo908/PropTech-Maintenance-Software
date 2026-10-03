@@ -4,6 +4,10 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
+import { loadPropertyTypeById } from "../properties/loadPropertyType.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
+import { isRentCollectionPaused } from "./rentCollectionPolicy.ts"
 import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import {
   findOrCreateConversation,
@@ -46,6 +50,8 @@ export type LandlordRentReceiptAsk = {
   runId: string
   residentId: string
   unitLabel: string
+  propertyType?: string | null
+  propertyLabel?: string | null
   amountDue: number
   billingPeriod: string
   dueToday?: boolean
@@ -105,15 +111,22 @@ export function formatRentReceiptAmount(amount: number): string {
   })
 }
 
-export function formatRentReceiptUnitLabel(unitLabel: string | null | undefined): string {
-  const raw = (unitLabel ?? "").trim()
-  if (!raw) return "This unit"
-  if (/^unit\b/i.test(raw)) return raw
-  return `Unit ${raw}`
+export function formatRentReceiptUnitLabel(
+  unitLabel: string | null | undefined,
+  propertyType?: string | null,
+  propertyLabel?: string | null,
+): string {
+  const unitRef = formatUnitReference(unitLabel, propertyType)
+  if (unitRef) return unitRef
+  const property = (propertyLabel ?? "").trim()
+  if (property) return property
+  // Omitted SFH unit with no property label — never invent "Unit 1".
+  if (formatUnitReference(unitLabel ?? "Home", propertyType) === "") return "This home"
+  return "This unit"
 }
 
 export function buildLandlordRentReceiptAskSms(ask: LandlordRentReceiptAsk): string {
-  const unit = formatRentReceiptUnitLabel(ask.unitLabel)
+  const unit = formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)
   const amount = formatRentReceiptAmount(ask.amountDue)
   const due = ask.dueToday === false ? "rent" : "rent due today"
   return `${unit} — ${amount} ${due}. Did you receive it?\n\nReply YES, NO, or PARTIAL.`
@@ -127,11 +140,11 @@ export function buildLandlordRentReceiptMethodSms(): string {
 }
 
 export function buildLandlordRentPartialAmountSms(ask: LandlordRentReceiptAsk): string {
-  return `How much did you receive for ${formatRentReceiptUnitLabel(ask.unitLabel)}?`
+  return `How much did you receive for ${formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)}?`
 }
 
 export function buildLandlordRentUnpaidSms(ask: LandlordRentReceiptAsk): string {
-  const unit = formatRentReceiptUnitLabel(ask.unitLabel)
+  const unit = formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)
   return `Got it — I marked ${unit} as unpaid.`
 }
 
@@ -140,7 +153,7 @@ export function buildLandlordRentPaidConfirmSms(
   method: RentPaymentMethod,
   received: number,
 ): string {
-  return `Got it. ${formatRentReceiptAmount(received)} received via ${paymentMethodLabel(method)} for ${formatRentReceiptUnitLabel(ask.unitLabel)}.`
+  return `Got it. ${formatRentReceiptAmount(received)} received via ${paymentMethodLabel(method)} for ${formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)}.`
 }
 
 export function buildLandlordRentPartialConfirmSms(
@@ -150,7 +163,7 @@ export function buildLandlordRentPartialConfirmSms(
   remaining: number,
 ): string {
   return (
-    `Got it. ${formatRentReceiptAmount(received)} received via ${paymentMethodLabel(method)} for ${formatRentReceiptUnitLabel(ask.unitLabel)}. ` +
+    `Got it. ${formatRentReceiptAmount(received)} received via ${paymentMethodLabel(method)} for ${formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)}. ` +
     `${formatRentReceiptAmount(remaining)} is still due.`
   )
 }
@@ -305,6 +318,18 @@ function asAsk(raw: unknown): LandlordRentReceiptAsk | null {
     runId,
     residentId,
     unitLabel: String(row.unitLabel ?? row.unit_label ?? "").trim(),
+    propertyType: typeof row.propertyType === "string"
+      ? row.propertyType.trim()
+      : typeof row.property_type === "string"
+      ? row.property_type.trim()
+      : null,
+    propertyLabel: typeof row.propertyLabel === "string"
+      ? row.propertyLabel.trim()
+      : typeof row.property_label === "string"
+      ? row.property_label.trim()
+      : typeof row.building === "string"
+      ? row.building.trim()
+      : null,
     amountDue: Number.isFinite(amount) ? amount : 0,
     billingPeriod: String(row.billingPeriod ?? row.billing_period ?? "").trim(),
     dueToday: row.dueToday === false || row.due_today === false ? false : true,
@@ -319,6 +344,8 @@ function serializeAsk(ask: LandlordRentReceiptAsk): Record<string, unknown> {
     run_id: ask.runId,
     resident_id: ask.residentId,
     unit_label: ask.unitLabel,
+    property_type: ask.propertyType ?? null,
+    property_label: ask.propertyLabel ?? null,
     amount_due: ask.amountDue,
     billing_period: ask.billingPeriod,
     due_today: ask.dueToday !== false,
@@ -456,14 +483,24 @@ async function loadConversationIntake(
 
 function askFromRun(
   run: WorkflowRunRow,
-  resident: { id: string; unit: string | null },
+  resident: { id: string; unit: string | null; building?: string | null },
   dueToday: boolean,
+  propertyType?: string | null,
 ): LandlordRentReceiptAsk {
   const state = runStepState<RentCollectionState>(run)
+  const building =
+    (resident.building ?? "").trim() ||
+    (typeof state.building === "string" ? state.building.trim() : "") ||
+    (typeof run.metadata?.building === "string" ? run.metadata.building.trim() : "")
   return {
     runId: run.id,
     residentId: String(resident.id),
     unitLabel: (resident.unit ?? state.unit_label ?? "").trim(),
+    propertyType: propertyType ??
+      (typeof run.metadata?.property_type === "string"
+        ? run.metadata.property_type.trim()
+        : null),
+    propertyLabel: building || null,
     amountDue: runAmountDue(run) ?? state.amount_due ?? 0,
     billingPeriod: runBillingPeriod(run) ?? state.billing_period ?? "",
     dueToday,
@@ -507,10 +544,18 @@ export async function offerLandlordRentReceiptAsk(
   params: {
     landlordId: string
     run: WorkflowRunRow
-    resident: { id: string; unit: string | null }
+    resident: { id: string; unit: string | null; building?: string | null }
     dueToday?: boolean
   },
 ): Promise<{ sent: boolean; queued: boolean }> {
+  const operational = await loadLandlordOperationalSettings(
+    supabase,
+    params.landlordId,
+  )
+  if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+    return { sent: false, queued: false }
+  }
+
   const existingStatus = String(
     params.run.metadata?.landlord_receipt_ask_status ?? "",
   )
@@ -555,7 +600,13 @@ export async function offerLandlordRentReceiptAsk(
 
   const prior = await loadConversationIntake(supabase, conversationId)
   const intake = readLandlordRentReceiptIntake(prior)
-  const ask = askFromRun(params.run, params.resident, params.dueToday !== false)
+  const propertyType = await loadPropertyTypeById(supabase, params.run.property_id)
+  const ask = askFromRun(
+    params.run,
+    params.resident,
+    params.dueToday !== false,
+    propertyType,
+  )
 
   if (askAlreadyTracked(intake, ask.runId)) {
     return { sent: false, queued: existingStatus === "queued" }
@@ -612,7 +663,7 @@ export async function offerLandlordRentReceiptAsk(
     workflowTemplateId: "rent_collection",
     conversationId,
     metadata: {
-      message: `Asked if ${formatRentReceiptUnitLabel(ask.unitLabel)} rent of ${formatRentReceiptAmount(ask.amountDue)} was received.`,
+      message: `Asked if ${formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)} rent of ${formatRentReceiptAmount(ask.amountDue)} was received.`,
       amount_due: ask.amountDue,
       billing_period: ask.billingPeriod,
       unit_label: ask.unitLabel,
@@ -778,7 +829,7 @@ async function recordFullPayment(
     workflowTemplateId: "rent_collection",
     conversationId: params.conversationId,
     metadata: {
-      message: `${formatRentReceiptUnitLabel(params.ask.unitLabel)} rent of ${formatRentReceiptAmount(received)} recorded as paid${methodNote}.`,
+      message: `${formatRentReceiptUnitLabel(params.ask.unitLabel, params.ask.propertyType, params.ask.propertyLabel)} rent of ${formatRentReceiptAmount(received)} recorded as paid${methodNote}.`,
       amount: received,
       paid_date: paidDate,
       rent_status: "paid",
@@ -887,7 +938,7 @@ async function recordPartialPayment(
     workflowTemplateId: "rent_collection",
     conversationId: params.conversationId,
     metadata: {
-      message: `${formatRentReceiptUnitLabel(params.ask.unitLabel)} partial rent of ${formatRentReceiptAmount(params.received)} recorded${methodNote}. ${formatRentReceiptAmount(params.remaining)} still due.`,
+      message: `${formatRentReceiptUnitLabel(params.ask.unitLabel, params.ask.propertyType, params.ask.propertyLabel)} partial rent of ${formatRentReceiptAmount(params.received)} recorded${methodNote}. ${formatRentReceiptAmount(params.remaining)} still due.`,
       amount: params.received,
       remaining_due: params.remaining,
       paid_date: paidDate,
@@ -1004,7 +1055,7 @@ async function recordUnpaid(
     workflowTemplateId: "rent_collection",
     conversationId: params.conversationId,
     metadata: {
-      message: `${formatRentReceiptUnitLabel(params.ask.unitLabel)} rent of ${formatRentReceiptAmount(outstanding)} marked unpaid.`,
+      message: `${formatRentReceiptUnitLabel(params.ask.unitLabel, params.ask.propertyType, params.ask.propertyLabel)} rent of ${formatRentReceiptAmount(outstanding)} marked unpaid.`,
       amount: outstanding,
       rent_status: "unpaid",
       billing_period: params.ask.billingPeriod,
@@ -1019,7 +1070,7 @@ async function recordUnpaid(
 }
 
 function amountClarifySms(ask: LandlordRentReceiptAsk, reason: "not_positive" | "exceeds_balance" | "ambiguous" | "missing"): string {
-  const unit = formatRentReceiptUnitLabel(ask.unitLabel)
+  const unit = formatRentReceiptUnitLabel(ask.unitLabel, ask.propertyType, ask.propertyLabel)
   const due = formatRentReceiptAmount(ask.amountDue)
   if (reason === "exceeds_balance") {
     return `That amount is more than the ${due} due for ${unit}. How much did you receive?`

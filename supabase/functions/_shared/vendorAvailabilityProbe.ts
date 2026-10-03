@@ -34,6 +34,7 @@ import {
 } from "./sms/inbound_db.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import { applyVendorStatusTransition } from "./vendor_workflow.ts"
+import { formatLocationWithOptionalUnit } from "./properties/unitLabelDisplay.ts"
 import {
   resolveVendorAvailability,
   type ResolvedAvailability,
@@ -552,25 +553,33 @@ export function formatVendorProbeLocationLine(input: {
   streetAddress?: string | null
   building?: string | null
   unit?: string | null
+  propertyType?: string | null
 }): string {
   const street = (input.streetAddress ?? "").trim()
   const building = (input.building ?? "").trim()
   const place = street || building
   const unitRaw = (input.unit ?? "").trim()
-  // If callers already passed "14 Maple · Unit 1", keep it.
+  // If callers already passed "14 Maple · Unit 1", keep it for multifamily only.
   if (
     unitRaw &&
     !place &&
     (/\d/.test(unitRaw) && /[a-z]/i.test(unitRaw) || unitRaw.includes("·"))
   ) {
+    // Combined labels still go through omit rules when property type is known.
+    if (unitRaw.includes("·")) {
+      return formatLocationWithOptionalUnit({
+        propertyLabel: unitRaw.split(/\s*·\s*/)[0],
+        unitLabel: unitRaw.split(/\s*·\s*/).slice(1).join(" · "),
+        propertyType: input.propertyType,
+      }) || unitRaw
+    }
     return unitRaw
   }
-  const unitBit = unitRaw
-    ? (/^unit\b/i.test(unitRaw) ? unitRaw : `Unit ${unitRaw}`)
-    : ""
-  if (place && unitBit) return `${place} · ${unitBit}`
-  if (place) return place
-  return unitBit
+  return formatLocationWithOptionalUnit({
+    propertyLabel: place,
+    unitLabel: unitRaw,
+    propertyType: input.propertyType,
+  })
 }
 
 /** Resolve property street address (+ unit) for vendor probe SMS. */

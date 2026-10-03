@@ -41,6 +41,7 @@ import {
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { assignSharedUnitToLeaseCoTenants, leaseUnitOrDefault, usableLeaseUnit } from '@/lib/onboarding/leaseUnit'
 import { collectExtractedUnitLabels, extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
+import { resolveImportPropertyType } from '@/lib/onboarding/persist/importResidents'
 import { supabase } from '@/lib/supabase'
 
 export type { OnboardingReviewManualAccount } from '@/lib/onboardingReviewManual'
@@ -1245,6 +1246,7 @@ function rentAmountsConflict(left: string, right: string): boolean {
 function fillExtractedResidentsFromLeases(
   residents: OnboardingExtractedResident[],
   leases: ExtractedLeaseInfo[],
+  properties: OnboardingExtractedProperty[] = [],
   options?: { mintUnmatchedLeases?: boolean },
 ): {
   residents: OnboardingExtractedResident[]
@@ -1253,6 +1255,10 @@ function fillExtractedResidentsFromLeases(
 } {
   const matchedLeaseIds = new Set<string>()
   const conflicts: ExtractedReviewItem[] = []
+  const propertyRows = properties.map((property) => ({
+    name: property.name,
+    propertyType: property.propertyType,
+  }))
 
   const nextResidents = residents.map((resident) => {
     const lease = leases.find((row) =>
@@ -1268,7 +1274,12 @@ function fillExtractedResidentsFromLeases(
     matchedLeaseIds.add(lease.id)
 
     const fullName = preferFullerPersonName(resident.fullName, lease.residentName)
-    const unit = usableLeaseUnit(resident.unit) || leaseUnitOrDefault(lease.unit)
+    const propertyType = resolveImportPropertyType(
+      resident.building.trim() || lease.building.trim(),
+      propertyRows,
+    )
+    const unit =
+      usableLeaseUnit(resident.unit) || leaseUnitOrDefault(lease.unit, propertyType)
     const rentConflict =
       Boolean(resident.monthlyRent.trim()) &&
       Boolean(lease.rentAmount.trim()) &&
@@ -1316,10 +1327,12 @@ function fillExtractedResidentsFromLeases(
   if (options?.mintUnmatchedLeases) {
     const minted = leftoverLeases
       .filter((lease) => lease.residentName.trim())
-      .map((lease) => ({
+      .map((lease) => {
+        const propertyType = resolveImportPropertyType(lease.building.trim(), propertyRows)
+        return {
         id: `ext-res-from-lease-${lease.id}`,
         fullName: lease.residentName.trim(),
-        unit: leaseUnitOrDefault(lease.unit),
+        unit: leaseUnitOrDefault(lease.unit, propertyType),
         building: lease.building.trim(),
         phone: '',
         email: '',
@@ -1333,7 +1346,8 @@ function fillExtractedResidentsFromLeases(
         confidence: lease.confidence,
         selected: true,
         needsReview: lease.confidence < 75,
-      }))
+      }
+      })
     return {
       residents: [...nextResidents, ...minted],
       conflicts,
@@ -1430,7 +1444,14 @@ function enrichExtractedResidentPlacement(
     // Require identity (name + unit/building) — never steal another tenant's lease by unit alone.
     const leaseMatch = leases.find((lease) => leaseResidentPlacementMatch(lease, resident))
     if (leaseMatch) {
-      unit = unit || leaseUnitOrDefault(leaseMatch.unit)
+      const propertyType = resolveImportPropertyType(
+        building || leaseMatch.building.trim() || fallbackBuilding,
+        properties.map((property) => ({
+          name: property.name,
+          propertyType: property.propertyType,
+        })),
+      )
+      unit = unit || leaseUnitOrDefault(leaseMatch.unit, propertyType)
       building = building || leaseMatch.building.trim()
     }
 
@@ -1463,7 +1484,14 @@ function enrichExtractedResidentPlacement(
       unit = unit || residentMatch.unit.trim()
       building = building || residentMatch.building.trim()
     }
-    unit = leaseUnitOrDefault(unit)
+    const propertyType = resolveImportPropertyType(
+      building || fallbackBuilding,
+      properties.map((property) => ({
+        name: property.name,
+        propertyType: property.propertyType,
+      })),
+    )
+    unit = leaseUnitOrDefault(unit, propertyType)
 
     if (unit && !building) {
       building = uniqueUnitBuildingForLabel(unit, units)
@@ -1920,6 +1948,7 @@ function finalizeExtractionReviewEntities(input: {
   const filled = fillExtractedResidentsFromLeases(
     dedupeOnboardingExtractedResidents(residents),
     leases,
+    properties,
     { mintUnmatchedLeases: leaseOnlyPortfolio },
   )
   residents = filled.residents
@@ -1927,8 +1956,14 @@ function finalizeExtractionReviewEntities(input: {
     const unmatched = filled.unmatchedLeases.find((row) => row.id === lease.id)
     return unmatched ?? lease
   })
-  residents = assignSharedUnitToLeaseCoTenants(residents)
-  leases = assignSharedUnitToLeaseCoTenants(leases)
+  residents = assignSharedUnitToLeaseCoTenants(
+    residents,
+    properties.length === 1 ? properties[0]?.propertyType : null,
+  )
+  leases = assignSharedUnitToLeaseCoTenants(
+    leases,
+    properties.length === 1 ? properties[0]?.propertyType : null,
+  )
 
   const propertyNames = properties.map((property) => property.name)
   properties = properties.map((property) => {

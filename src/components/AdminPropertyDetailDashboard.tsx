@@ -16,9 +16,10 @@ import { PropertyHistoryPanel } from '@/components/PropertyHistoryPanel'
 import { PropertyHomeDataPanel } from '@/components/PropertyHomeDataPanel'
 import { PropertyAccessRail } from '@/components/PropertyAccessRail'
 import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
+import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
+import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, workflowMatchesPropertyScope, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
   collectAdminWorkflowRuns,
   isOpenWorkflowKanbanCard,
@@ -44,6 +45,10 @@ import {
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { fetchPmCompliance, type PmComplianceTask } from '@/lib/pmCompliance'
 import {
+  fetchWorkflowPipelineDetail,
+  type WorkflowPipelineDetail,
+} from '@/lib/workflowPipelineDetail'
+import {
   buildPropertyHealthReport,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
@@ -51,7 +56,7 @@ import {
   filterResidentsForPropertyScope,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
-  filterTicketsForBuildingScope,
+  filterTicketsForScope,
   normalizeBuildingKey,
   resolveBuildingHealthRow,
   resolvePropertyHealthKpiValue,
@@ -112,6 +117,7 @@ type PropertyTicket = {
   unit: string
   unitId: string | null
   building: string | null
+  propertyId: string | null
   issueCategory: string | null
   description: string | null
   assignedVendorId: string | null
@@ -259,7 +265,7 @@ function StarStatIcon() {
 
 export function AdminPropertyDetailDashboard() {
   const { propertySlug } = useParams<{ propertySlug: string }>()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
   const [building, setBuilding] = useState<string | null>(null)
@@ -279,9 +285,7 @@ export function AdminPropertyDetailDashboard() {
   const [propertyInsuranceGuideRunId, setPropertyInsuranceGuideRunId] = useState(0)
   const propertyInsuranceTabRef = useRef<HTMLElement | null>(null)
 
-  const [activeTab, setActiveTab] = useState<PropertyTab>(() =>
-    parsePropertyDetailTab(searchParams.get('tab')),
-  )
+  const activeTab = parsePropertyDetailTab(searchParams.get('tab')) as PropertyTab
   const tabListRef = useRef<HTMLDivElement>(null)
   const tabItemRefs = useRef<Map<PropertyTab, HTMLElement>>(new Map())
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, ready: false })
@@ -320,6 +324,9 @@ export function AdminPropertyDetailDashboard() {
   const [propertyAccessRailOpen, setPropertyAccessRailOpen] = useState(false)
   const [propertyActionsMenuOpen, setPropertyActionsMenuOpen] = useState(false)
   const [maintenanceHistoryRailOpen, setMaintenanceHistoryRailOpen] = useState(false)
+  const [selectedWorkflowRunId, setSelectedWorkflowRunId] = useState<string | null>(null)
+  const [pipelineDetail, setPipelineDetail] = useState<WorkflowPipelineDetail | null>(null)
+  const [pipelineLoading, setPipelineLoading] = useState(false)
   const loadSeqRef = useRef(0)
 
   useEffect(() => {
@@ -335,18 +342,24 @@ export function AdminPropertyDetailDashboard() {
   useEffect(() => {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'property_access')) return
     setShowPropertyAccessGuide(true)
-    setActiveTab('overview')
     setPropertyAccessGuideRunId((value) => value + 1)
     consumeSetupSuccessCheckboxGuidePending('property_access')
-    if (isSetupSuccessCheckboxGuideNavigation(location.state, 'property_access')) {
-      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
+    const onOverview = !searchParams.get('tab') || searchParams.get('tab') === 'overview'
+    const fromGuideNav = isSetupSuccessCheckboxGuideNavigation(location.state, 'property_access')
+    if (!onOverview || fromGuideNav) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('tab')
+      const qs = next.toString()
+      navigate(`${location.pathname}${qs ? `?${qs}` : ''}`, {
+        replace: true,
+        state: fromGuideNav ? {} : location.state,
+      })
     }
-  }, [location.pathname, location.search, location.state, navigate])
+  }, [location.pathname, location.search, location.state, navigate, searchParams])
 
   useEffect(() => {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'property_insurance')) return
     setShowPropertyInsuranceGuide(true)
-    setActiveTab('insurance')
     setPropertyInsuranceGuideRunId((value) => value + 1)
     consumeSetupSuccessCheckboxGuidePending('property_insurance')
     const onInsuranceTab = searchParams.get('tab') === 'insurance'
@@ -501,7 +514,7 @@ export function AdminPropertyDetailDashboard() {
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, due_at, inspection_report_id',
+              'id, created_at, unit, unit_id, building, property_id, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, due_at, inspection_report_id',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -509,7 +522,7 @@ export function AdminPropertyDetailDashboard() {
           supabase
             .from('maintenance_requests')
             .select(
-              'id, created_at, unit, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount, due_at, inspection_report_id',
+              'id, created_at, unit, unit_id, property_id, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount, due_at, inspection_report_id',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -580,6 +593,7 @@ export function AdminPropertyDetailDashboard() {
           unit: asString(merged.unit),
           unitId: asString(merged.unit_id) || null,
           building: asString(merged.building) || null,
+          propertyId: asString(merged.property_id) || null,
           issueCategory: asString(merged.issue_category) || null,
           description: asString(merged.description) || null,
           assignedVendorId: asString(merged.assigned_vendor_id) || null,
@@ -752,10 +766,6 @@ export function AdminPropertyDetailDashboard() {
     void loadProperty()
   }, [loadProperty])
 
-  useEffect(() => {
-    setActiveTab(parsePropertyDetailTab(searchParams.get('tab')))
-  }, [searchParams])
-
   useLayoutEffect(() => {
     function measureIndicator() {
       const list = tabListRef.current
@@ -782,7 +792,15 @@ export function AdminPropertyDetailDashboard() {
       setShowPropertyInsuranceGuide(false)
     }
     if (tab === activeTab) return
-    setActiveTab(tab)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (tab === 'overview') next.delete('tab')
+        else next.set('tab', tab)
+        return next
+      },
+      { replace: true },
+    )
   }
 
   function setTabItemRef(tab: PropertyTab, node: HTMLElement | null) {
@@ -927,14 +945,17 @@ export function AdminPropertyDetailDashboard() {
       status: resident.status,
       email: resident.email ?? null,
     }))
+    // Same scoper as Properties grid / health (unit_id + building + property_id).
+    // Building-only scoping drops unit-label "1" tickets when building text is missing.
     const scopedIds = new Set(
-      filterTicketsForBuildingScope(
+      filterTicketsForScope(
         tickets.map((ticket) => ({
           id: ticket.id,
           createdAt: ticket.createdAt,
           unit: ticket.unit,
           unitId: ticket.unitId,
           building: ticket.building,
+          propertyId: ticket.propertyId,
           issueCategory: ticket.issueCategory,
           vendorWorkStatus: ticket.vendorWorkStatus,
           assignedVendorId: ticket.assignedVendorId,
@@ -943,12 +964,26 @@ export function AdminPropertyDetailDashboard() {
         building,
         healthUnits,
         scopedResidents,
+        activeCanonicalProperty,
       ).map((ticket) => ticket.id),
     )
 
     if (workflowData) {
+      const unitIds = new Set(healthUnits.map((unit) => unit.id).filter(Boolean))
+      const ticketPropertyById = new Map(
+        tickets.map((ticket) => [ticket.id, ticket.propertyId] as const),
+      )
       for (const row of collectAdminWorkflowRuns(workflowData)) {
-        if (normalizeBuildingKey(row.propertyLabel) !== normalizeBuildingKey(building)) continue
+        if (
+          !workflowMatchesPropertyScope(row, {
+            building,
+            propertyId: activeCanonicalProperty?.id ?? null,
+            unitIds,
+            ticketPropertyById,
+          })
+        ) {
+          continue
+        }
         if (row.entityType === 'maintenance_request' && row.entityId) {
           scopedIds.add(row.entityId)
         }
@@ -956,7 +991,7 @@ export function AdminPropertyDetailDashboard() {
     }
 
     return tickets.filter((ticket) => scopedIds.has(ticket.id))
-  }, [tickets, units, building, residents, workflowData])
+  }, [tickets, units, building, residents, workflowData, activeCanonicalProperty])
 
   const healthReport = useMemo(() => {
     const healthTickets = mapTicketsForPropertyHealth(
@@ -1010,8 +1045,20 @@ export function AdminPropertyDetailDashboard() {
   const urgentItems: UrgentItem[] = useMemo(() => {
     if (!workflowData || !building) return []
 
+    const unitIds = new Set(buildingUnits.map((unit) => unit.id).filter(Boolean))
+    const ticketPropertyById = new Map(
+      buildingTickets.map((ticket) => [ticket.id, ticket.propertyId] as const),
+    )
+
     return collectAdminWorkflowRuns(workflowData)
-      .filter((row) => normalizeBuildingKey(row.propertyLabel) === normalizeBuildingKey(building))
+      .filter((row) =>
+        workflowMatchesPropertyScope(row, {
+          building,
+          propertyId: activeCanonicalProperty?.id ?? null,
+          unitIds,
+          ticketPropertyById,
+        }),
+      )
       .filter((row) => !isCancelledOnActiveTasks(row))
       .map((row) => {
         const ticket =
@@ -1051,7 +1098,7 @@ export function AdminPropertyDetailDashboard() {
             : null,
         isUrgent: priority.isUrgent,
       }))
-  }, [workflowData, building, dismissedWorkflowIds, buildingTickets])
+  }, [workflowData, building, dismissedWorkflowIds, buildingTickets, buildingUnits, activeCanonicalProperty])
 
   const buildingPmTasks = useMemo(
     () => (building ? pmComplianceTasks.filter((task) => pmTaskMatchesBuilding(task, building)) : []),
@@ -1062,12 +1109,54 @@ export function AdminPropertyDetailDashboard() {
     if (!building) return []
     return buildPropertyUnitRows({
       building,
+      propertyId: activeCanonicalProperty?.id ?? null,
+      propertyType: canonicalProperty?.propertyType ?? null,
       units: buildingUnits,
       residents: buildingResidents,
-      tickets: buildingTickets,
+      tickets: buildingTickets.map((ticket) => ({
+        id: ticket.id,
+        unit: ticket.unit,
+        unitId: ticket.unitId,
+        building: ticket.building,
+        propertyId: ticket.propertyId,
+        issueCategory: ticket.issueCategory,
+        urgency: ticket.urgency,
+        vendorWorkStatus: ticket.vendorWorkStatus,
+      })),
       workflowData,
     })
-  }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData])
+  }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData, activeCanonicalProperty, canonicalProperty])
+
+  const allWorkflowRuns = useMemo(
+    () => (workflowData ? collectAdminWorkflowRuns(workflowData) : []),
+    [workflowData],
+  )
+
+  useEffect(() => {
+    if (!selectedWorkflowRunId || !workflowData) {
+      setPipelineDetail(null)
+      setPipelineLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPipelineLoading(true)
+    setPipelineDetail(null)
+
+    void fetchWorkflowPipelineDetail(
+      selectedWorkflowRunId,
+      allWorkflowRuns,
+      workflowData.runMetadata,
+    ).then((result) => {
+      if (cancelled) return
+      setPipelineDetail(result)
+      setPipelineLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedWorkflowRunId, workflowData, allWorkflowRuns])
 
   const occupancyPct = useMemo(() => {
     const total = propertyUnitRows.length || buildingUnits.length
@@ -1548,6 +1637,7 @@ export function AdminPropertyDetailDashboard() {
               rows={propertyUnitRows}
               loading={loading}
               onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
+              onOpenWorkflow={setSelectedWorkflowRunId}
             />
           </div>
           <PropertyHomeDataPanel
@@ -1646,6 +1736,22 @@ export function AdminPropertyDetailDashboard() {
         open={maintenanceHistoryRailOpen}
         building={building ?? ''}
         onClose={() => setMaintenanceHistoryRailOpen(false)}
+      />
+      <WorkflowPipelineDetailPanel
+        open={selectedWorkflowRunId != null}
+        detail={pipelineDetail}
+        loading={pipelineLoading}
+        onClose={() => setSelectedWorkflowRunId(null)}
+        onWorkflowUpdated={() => {
+          void loadProperty()
+          if (selectedWorkflowRunId && workflowData) {
+            void fetchWorkflowPipelineDetail(
+              selectedWorkflowRunId,
+              allWorkflowRuns,
+              workflowData.runMetadata,
+            ).then(setPipelineDetail)
+          }
+        }}
       />
       <ConversationMonitoringModal
         open={monitoringConversationId != null}

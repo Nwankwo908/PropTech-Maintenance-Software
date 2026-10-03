@@ -1,5 +1,6 @@
 import {
   isCancelledOnActiveTasks,
+  workflowMatchesPropertyScope,
   type AdminWorkflowDashboardData,
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
@@ -28,6 +29,7 @@ export type PropertyWorkflowTicket = {
   id: string
   issueCategory: string | null
   urgency: string
+  propertyId?: string | null
 }
 
 export type PropertyWorkflowRow = {
@@ -40,6 +42,8 @@ export type PropertyWorkflowRow = {
   isUrgent: boolean
   startedAt: string
 }
+
+export { workflowMatchesPropertyScope }
 
 function buildingShortName(building: string): string {
   return building.replace(/\s+Apartments$/i, '').trim() || building
@@ -199,16 +203,28 @@ export function evaluatePropertyWorkflow(input: {
 /** Open property workflows for the Workflows tab (includes urgent/escalated items). */
 export function buildPropertyWorkflowRows(input: {
   building: string
+  propertyId?: string | null
+  unitIds?: ReadonlySet<string>
   workflowData: AdminWorkflowDashboardData | null
   tickets?: PropertyWorkflowTicket[]
 }): PropertyWorkflowRow[] {
-  const { building, workflowData, tickets = [] } = input
+  const { building, propertyId = null, unitIds, workflowData, tickets = [] } = input
   if (!workflowData) return []
 
   const ticketsById = new Map(tickets.map((ticket) => [ticket.id, ticket]))
+  const ticketPropertyById = new Map(
+    tickets.map((ticket) => [ticket.id, ticket.propertyId ?? null] as const),
+  )
 
   return collectAdminWorkflowRuns(workflowData)
-    .filter((row) => normalizeBuildingKey(row.propertyLabel) === normalizeBuildingKey(building))
+    .filter((row) =>
+      workflowMatchesPropertyScope(row, {
+        building,
+        propertyId,
+        unitIds,
+        ticketPropertyById,
+      }),
+    )
     .filter((row) => !isCancelledOnActiveTasks(row))
     .map((row) => {
       const card = buildWorkflowKanbanCard(row)

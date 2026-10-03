@@ -1,6 +1,10 @@
 import { Link } from 'react-router-dom'
 import type { PropertyResidentCard } from '@/lib/propertyResidentCards'
-import { propertyResidentDetailPath, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
+import {
+  propertyDetailPath,
+  propertyResidentDetailPath,
+  propertyResidentDetailPathForBuilding,
+} from '@/lib/propertyRoutes'
 
 type PropertyResidentsGridProps = {
   building: string
@@ -40,7 +44,7 @@ function ResidentCard({
             {resident.name}
           </h3>
           <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">
-            {resident.unitDisplay} · {resident.occupancyLabel}
+            {[resident.unitDisplay, resident.occupancyLabel].filter(Boolean).join(' · ')}
           </p>
         </div>
       </div>

@@ -10,6 +10,7 @@ import {
 } from "../vendor_outreach_copy.ts"
 import { parseVendorSmsReply } from "../vendor_workflow.ts"
 import { phoneLookupVariants } from "./inbound_db.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 export const VENDOR_WO_CLARIFICATION_KEY = "vendor_work_order_clarification"
 export const VENDOR_WO_CLARIFICATION_TTL_MS = 30 * 60 * 1000
@@ -172,7 +173,7 @@ export function buildVendorWorkOrderClarifySms(
   for (let i = 0; i < Math.min(jobs.length, 8); i++) {
     const job = jobs[i]
     const unit = job.unit?.trim()
-    const unitBit = unit ? `Unit ${unit}` : "Unit —"
+    const unitBit = formatUnitReference(unit) || "—"
     lines.push(
       `${i + 1}. ${job.workOrderRef} — ${unitBit} — ${jobIssueSummary(job)}`,
     )

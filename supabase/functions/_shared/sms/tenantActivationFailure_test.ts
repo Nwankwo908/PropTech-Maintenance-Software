@@ -65,6 +65,19 @@ Deno.test("SMS copy prefers resident name when present", () => {
   assertStringIncludes(withoutName, "the resident in Unit 3A")
 })
 
+Deno.test("SMS copy omits unit for single-family", () => {
+  const sms = buildActivationAdminSms({
+    residentName: "Alex Rivera",
+    unitLabel: "1",
+    propertyType: "single_family",
+    propertyName: "14 Maple Ave",
+  })
+  assertEquals(sms.includes("Unit"), false)
+  assertEquals(sms.includes("Home"), false)
+  assertStringIncludes(sms, "Alex Rivera")
+  assertStringIncludes(sms, "14 Maple Ave")
+})
+
 Deno.test("email copy uses friendly reason and deep link", () => {
   const email = buildActivationAdminEmail({
     residentName: "Alex Rivera",
@@ -87,4 +100,13 @@ Deno.test("in-app copy matches product wording", () => {
   assertEquals(copy.title, "Resident phone needs attention")
   assertStringIncludes(copy.summary, "Unit 3A")
   assertStringIncludes(copy.summary, "Verify or update")
+})
+
+Deno.test("in-app copy omits unit for single-family", () => {
+  const copy = buildActivationInAppCopy({
+    unitLabel: "1",
+    propertyType: "single_family_home",
+  })
+  assertEquals(copy.summary.includes("Unit"), false)
+  assertEquals(copy.summary.includes("Home"), false)
 })

@@ -1,9 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  mutateSearchParams,
+  writeStringParam,
+} from '@/lib/adminListUrlState'
 import {
   isCommunicationConversationUnread,
   markCommunicationConversationRead,
@@ -35,7 +39,12 @@ import {
 } from '@/lib/vendorOutreachCopy'
 import { listVendorSetupInboxEntries } from '@/lib/vendorSetupConversation'
 import { fetchCommunicationWorkOrderInboxRows } from '@/lib/workflowPipelineDetail'
-import { isCommunicationInboxConversationType } from '@/lib/propertyConversations'
+import {
+  isCommunicationInboxConversationType,
+  landlordUpdateInboxDisplayName,
+} from '@/lib/propertyConversations'
+import { isStaffAdminEmail } from '@shared/admin/staffAllowlist'
+import { emailFromAuthSession, getAdminSession } from '@/lib/adminAuth'
 import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
 import { supabase } from '@/lib/supabase'
 import {
@@ -93,7 +102,7 @@ const KIND_BADGE: Record<ParticipantKind, { label: string; className: string }> 
   tenant: { label: 'TENANT', className: 'bg-[#dbeafe] text-[#1447e6]' },
   vendor: { label: 'VENDOR', className: 'bg-[#f3f4f6] text-[#364153]' },
   ai: { label: 'AI', className: 'bg-[#f3e8ff] text-[#7c3aed]' },
-  landlord: { label: 'OWNER', className: 'bg-[#dbfce7] text-[#008236]' },
+  landlord: { label: 'TEAM', className: 'bg-[#dbfce7] text-[#008236]' },
 }
 
 const AVATAR_COLORS = [
@@ -398,6 +407,16 @@ const PARTICIPANT_FILTER_OPTIONS: { id: ParticipantFilterKey; label: string }[] 
   { id: 'tenant', label: 'Tenant' },
   { id: 'vendor', label: 'Vendor' },
 ]
+
+function parseParticipantFilter(raw: string | null | undefined): ParticipantFilterKey {
+  const value = raw?.trim()
+  if (value === 'tenant' || value === 'vendor') return value
+  return 'all'
+}
+
+function parseMessageLane(raw: string | null | undefined): LimitedAlphaMessageLane {
+  return raw?.trim() === 'onboarding' ? 'onboarding' : 'request'
+}
 
 function conversationMatchesParticipantFilters(
   conversation: Conversation,
@@ -707,14 +726,48 @@ export function AdminCommunicationDashboard() {
   const [metrics, setMetrics] = useState<CommMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [participantFilter, setParticipantFilter] = useState<ParticipantFilterKey>('all')
-  const [messageLaneTab, setMessageLaneTab] = useState<LimitedAlphaMessageLane>('request')
+  const participantFilter = parseParticipantFilter(searchParams.get('who'))
+  const messageLaneTab = parseMessageLane(searchParams.get('lane'))
+  const monitoringConversationId = searchParams.get('thread')?.trim() || null
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteSaving, setDeleteSaving] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
   const deleteConfirmTitleId = useId()
+
+  const setParticipantFilter = useCallback(
+    (value: ParticipantFilterKey) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'who', value, 'all')
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const setMessageLaneTab = useCallback(
+    (value: LimitedAlphaMessageLane) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'lane', value, 'request')
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const closeMonitoring = useCallback(() => {
+    if (!searchParams.get('thread')) return
+    setSearchParams(
+      mutateSearchParams(searchParams, (next) => {
+        next.delete('thread')
+      }),
+      { replace: true },
+    )
+  }, [searchParams, setSearchParams])
 
   const monitoringHeadingName = useMemo(() => {
     if (!monitoringConversationId) return null
@@ -739,6 +792,11 @@ export function AdminCommunicationDashboard() {
       setError(null)
       setMetrics(null)
       const landlordId = getActiveLandlordId()
+
+      const session = await getAdminSession()
+      if (cancelled) return
+      const sessionEmail = emailFromAuthSession(session)
+      const includeLandlordUpdate = isStaffAdminEmail(sessionEmail)
 
       // Strict rule: guided New Landlord only surfaces portfolio-matched threads.
       const dashboardSync = await ensureOnboardingDashboardMatchesPortfolio(landlordId)
@@ -880,11 +938,12 @@ export function AdminCommunicationDashboard() {
       const rows = ((convRows ?? []).filter((row) =>
         isCommunicationInboxConversationType(
           asString((row as Record<string, unknown>).conversation_type),
+          { includeLandlordUpdate },
         ),
       ) as Record<string, unknown>[])
 
       // Fail-closed for guided + always load roster so orphan SMS threads can link by phone.
-      const [portfolioResidents, portfolioVendors, portfolioUnits] = await Promise.all([
+      const [portfolioResidents, portfolioVendors, portfolioUnits, landlordRow] = await Promise.all([
         supabase
           .from('users')
           .select('id, full_name, phone, unit, building, status')
@@ -897,8 +956,17 @@ export function AdminCommunicationDashboard() {
           .select('id, unit_label, building')
           .eq('landlord_id', landlordId)
           .limit(2000),
+        includeLandlordUpdate
+          ? supabase
+              .from('landlords')
+              .select('id, name')
+              .eq('id', landlordId)
+              .maybeSingle()
+          : Promise.resolve({ data: null as { name?: string } | null }),
       ])
       if (cancelled) return
+
+      const landlordCompanyName = asString(landlordRow.data?.name) || ''
 
       const rosterResidents: RosterResidentForInboxLink[] = (
         (portfolioResidents.data ?? []) as Record<string, unknown>[]
@@ -936,6 +1004,13 @@ export function AdminCommunicationDashboard() {
           if (digits) allowedPhones.add(digits)
         }
         scopedRows = rows.filter((r) => {
+          // Staff Messages: Ulo ↔ landlord ops threads are not roster-bound.
+          if (
+            includeLandlordUpdate &&
+            asString(r.conversation_type) === 'landlord_update'
+          ) {
+            return true
+          }
           const residentId = asString(r.resident_id)
           const vendorId = asString(r.vendor_id)
           const phone = inboxPhoneDigits(asString(r.external_phone_number))
@@ -1179,15 +1254,20 @@ export function AdminCommunicationDashboard() {
         const name =
           kind === 'ai'
             ? 'Ulo AI'
-            : kind === 'vendor'
-              ? vendorName || 'Vendor'
-              : residentName || asString(r.external_phone_number) || 'Unknown'
+            : kind === 'landlord'
+              ? landlordUpdateInboxDisplayName(landlordCompanyName)
+              : kind === 'vendor'
+                ? vendorName || 'Vendor'
+                : residentName || asString(r.external_phone_number) || 'Unknown'
 
         const building = unit?.building || resident?.building || ''
         const unitLabel = unit?.label || resident?.unit || ''
-        const context = [building, unitLabel ? `Unit ${unitLabel}` : '']
-          .filter(Boolean)
-          .join(' · ')
+        const context =
+          kind === 'landlord'
+            ? 'Ulo ↔ landlord'
+            : [building, unitLabel ? `Unit ${unitLabel}` : '']
+                .filter(Boolean)
+                .join(' · ')
 
         const latest = latestMessageByConversation.get(id)
         const residentRating = ticketId ? ratingByTicketId.get(ticketId) ?? null : null
@@ -1334,15 +1414,38 @@ export function AdminCommunicationDashboard() {
         entry.id === conversationId ? { ...entry, unread: false } : entry,
       )
     })
-    setMonitoringConversationId(conversationId)
+    if (searchParams.get('thread')?.trim() === conversationId) return
+    setSearchParams(
+      mutateSearchParams(searchParams, (next) => {
+        next.set('thread', conversationId)
+      }),
+      { replace: false },
+    )
   }
 
   useEffect(() => {
     const thread = searchParams.get('thread')?.trim()
     if (!thread) return
-    openConversation(thread)
-    // Deep-link open only — mark read when ?thread= is present.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deep-link / history restore — mark read when ?thread= is present.
+    const landlordId = getActiveLandlordId()
+    setConversations((prev) => {
+      const row = prev.find((entry) => entry.id === thread)
+      if (!row) return prev
+      const readAt = Math.max(Date.now(), row.lastActivity ?? 0)
+      markCommunicationConversationRead(landlordId, thread, readAt)
+      if (!row.unread) return prev
+      setMetrics((metricsPrev) =>
+        metricsPrev
+          ? {
+              ...metricsPrev,
+              unreadMessages: Math.max(0, metricsPrev.unreadMessages - 1),
+            }
+          : metricsPrev,
+      )
+      return prev.map((entry) =>
+        entry.id === thread ? { ...entry, unread: false } : entry,
+      )
+    })
   }, [searchParams])
 
   const splitOnboardingFromRequests = isLimitedAlphaLandlord(getActiveLandlordId())
@@ -1408,7 +1511,9 @@ export function AdminCommunicationDashboard() {
     const remove = new Set(idsToDelete)
     setConversations((prev) => prev.filter((row) => !remove.has(row.id)))
     setSelectedIds(new Set())
-    setMonitoringConversationId((cur) => (cur && remove.has(cur) ? null : cur))
+    if (monitoringConversationId && remove.has(monitoringConversationId)) {
+      closeMonitoring()
+    }
     setDeleteSaving(false)
     setDeleteConfirmOpen(false)
   }
@@ -1688,14 +1793,7 @@ export function AdminCommunicationDashboard() {
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}
         headingName={monitoringHeadingName}
-        onClose={() => {
-          setMonitoringConversationId(null)
-          if (searchParams.get('thread')) {
-            const next = new URLSearchParams(searchParams)
-            next.delete('thread')
-            setSearchParams(next, { replace: true })
-          }
-        }}
+        onClose={closeMonitoring}
       />
     </main>
     </>

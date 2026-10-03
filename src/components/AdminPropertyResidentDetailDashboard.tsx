@@ -49,6 +49,7 @@ import {
   residentDetailPath,
 } from '@/lib/propertyRoutes'
 import { findPropertyById, findPropertyByName, listPropertiesForLandlord } from '@/lib/properties'
+import { formatPropertyUnitDisplay } from '@/lib/propertyUnitRows'
 import {
   filterResidentsForPropertyScope,
   filterUnitsForCanonicalProperty,
@@ -788,6 +789,7 @@ export function AdminPropertyResidentDetailDashboard() {
       let buildingName = loaded.building
       let resolvedPropertyId: string | null = slug?.kind === 'id' ? slug.value : null
       let activeCanonicalProperty: PropertyHealthCanonicalProperty | null = null
+      let resolvedPropertyType: string | null = null
 
       if (slug) {
         const propertyResult =
@@ -798,6 +800,7 @@ export function AdminPropertyResidentDetailDashboard() {
         if (propertyResult.ok && 'property' in propertyResult && propertyResult.property) {
           resolvedPropertyId = propertyResult.property.id
           buildingName = propertyResult.property.name || buildingName
+          resolvedPropertyType = propertyResult.property.propertyType ?? null
           activeCanonicalProperty = {
             id: propertyResult.property.id,
             name: propertyResult.property.name,
@@ -826,6 +829,7 @@ export function AdminPropertyResidentDetailDashboard() {
         if (match) {
           activeCanonicalProperty = { id: match.id, name: match.name }
           resolvedPropertyId = match.id
+          resolvedPropertyType = match.propertyType ?? null
         }
       }
 
@@ -867,6 +871,7 @@ export function AdminPropertyResidentDetailDashboard() {
               ...current,
               building: buildingName,
               buildingShort: residentPlaceLabel(buildingName),
+              unitDisplay: formatPropertyUnitDisplay(loaded.unit, resolvedPropertyType),
               communications,
             }
           : current,
@@ -1442,7 +1447,7 @@ export function AdminPropertyResidentDetailDashboard() {
                   {profile.name}
                 </h1>
                 <p className="mt-1 text-[14px] leading-5 text-[#6a7282]">
-                  {profile.buildingShort} · {profile.unitDisplay}
+                  {[profile.buildingShort, profile.unitDisplay].filter(Boolean).join(' · ')}
                 </p>
                 {activationChip ? (
                   <div className="mt-3">

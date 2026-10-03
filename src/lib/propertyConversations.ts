@@ -27,8 +27,34 @@ export function isAdminDirectedConversationType(conversationType: string): boole
   return ADMIN_DIRECTED_CONVERSATION_TYPES.has(conversationType)
 }
 
-export function isCommunicationInboxConversationType(conversationType: string): boolean {
-  return !isAdminDirectedConversationType(conversationType)
+export type CommunicationInboxTypeOptions = {
+  /**
+   * Staff (osi@ / emeka@) Messages: include the Ulo ↔ landlord SMS thread
+   * (`landlord_update`). Still excluded for landlord portal logins (bell only).
+   */
+  includeLandlordUpdate?: boolean
+}
+
+/**
+ * Types shown on the Messages / Communication inbox.
+ * `ai_copilot` stays bell-only. `landlord_update` is opt-in for staff.
+ */
+export function isCommunicationInboxConversationType(
+  conversationType: string,
+  options?: CommunicationInboxTypeOptions,
+): boolean {
+  const type = conversationType.trim()
+  if (type === 'landlord_update') {
+    return Boolean(options?.includeLandlordUpdate)
+  }
+  return !isAdminDirectedConversationType(type)
+}
+
+/** List title for a Ulo ↔ landlord SMS thread on Messages. */
+export function landlordUpdateInboxDisplayName(companyName?: string | null): string {
+  const company = (companyName ?? '').trim()
+  if (company) return company
+  return 'Landlord'
 }
 
 /** Plain-language label for sms_conversations.conversation_type (UI only). */
@@ -164,18 +190,26 @@ function truncatePreview(text: string, max = 72): string {
   return `${trimmed.slice(0, max - 1).trim()}…`
 }
 
-/** Conversations scoped to a single property building (SMS threads + maintenance Ulo work-order threads). */
+/** Conversations scoped to a single property (FK-first: property_id / unit_id, then building). */
 export async function fetchPropertyConversations(
   building: string,
-  tickets: Array<{ id: string; unit: string; building: string | null; email?: string | null }> = [],
+  tickets: Array<{
+    id: string
+    unit: string
+    building: string | null
+    propertyId?: string | null
+    email?: string | null
+  }> = [],
   residents: Array<{ email?: string | null; building?: string | null }> = [],
   propertyLocation: PropertyLocationForVendorCoverage | null = null,
+  propertyId: string | null = null,
 ): Promise<PropertyConversationRow[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
 
   const landlordId = getActiveLandlordId()
   const buildingKey = normalizeBuildingKey(building)
+  const scopedPropertyId = propertyId?.trim() || null
 
   const emailBuildingMap = new Map<string, string>()
   for (const resident of residents) {
@@ -191,6 +225,7 @@ export async function fetchPropertyConversations(
       {
         unit: ticket.unit,
         building: ticket.building,
+        propertyId: ticket.propertyId ?? null,
         email: ticket.email ?? null,
       },
     ]),
@@ -229,7 +264,7 @@ export async function fetchPropertyConversations(
       ? supabase.from('vendors').select('id, name, city, state, country').in('id', vendorIds)
       : Promise.resolve({ data: [], error: null }),
     unitIds.length
-      ? supabase.from('units').select('id, unit_label, building').in('id', unitIds)
+      ? supabase.from('units').select('id, unit_label, building, property_id').in('id', unitIds)
       : Promise.resolve({ data: [], error: null }),
     vendorIds.length
       ? supabase
@@ -303,12 +338,13 @@ export async function fetchPropertyConversations(
     }
   }
 
-  const unitById = new Map<string, { label: string; building: string }>()
+  const unitById = new Map<string, { label: string; building: string; propertyId: string | null }>()
   if (unitsResult.status === 'fulfilled' && !unitsResult.value.error) {
     for (const unit of (unitsResult.value.data ?? []) as Record<string, unknown>[]) {
       unitById.set(asString(unit.id), {
         label: asString(unit.unit_label),
         building: asString(unit.building),
+        propertyId: asString(unit.property_id) || null,
       })
     }
   }
@@ -334,11 +370,19 @@ export async function fetchPropertyConversations(
     const ticketBuildingFromEmail =
       ticketEmail && emailBuildingMap.has(ticketEmail) ? emailBuildingMap.get(ticketEmail)! : null
 
+    const matchesPropertyId =
+      Boolean(scopedPropertyId) &&
+      ((unit?.propertyId && unit.propertyId === scopedPropertyId) ||
+        (ticket?.propertyId && ticket.propertyId === scopedPropertyId))
+
     const matchesBuilding =
+      matchesPropertyId ||
       (unit?.building && normalizeBuildingKey(unit.building) === buildingKey) ||
       (ticket?.building && normalizeBuildingKey(ticket.building) === buildingKey) ||
-      ticketBuildingFromEmail === buildingKey ||
-      (resident?.building && normalizeBuildingKey(resident.building) === buildingKey)
+      (!scopedPropertyId && ticketBuildingFromEmail === buildingKey) ||
+      (!scopedPropertyId &&
+        resident?.building &&
+        normalizeBuildingKey(resident.building) === buildingKey)
 
     if (kind === 'vendor') {
       if (!matchesBuilding && !vendor?.coversProperty) continue

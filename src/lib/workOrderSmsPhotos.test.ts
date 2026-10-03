@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { smsMessageBelongsToWorkOrder } from './workOrderSmsPhotos'
+import {
+  shouldSkipUnclaimedSmsMediaExtras,
+  smsMediaExtraAllowedOnWorkOrder,
+  smsMessageBelongsToWorkOrder,
+} from './workOrderSmsPhotos'
 
 const ticketA = '2026-08-15T15:42:00.000Z'
 const ticketB = '2026-08-15T21:18:00.000Z'
@@ -48,6 +52,67 @@ describe('smsMessageBelongsToWorkOrder', () => {
       smsMessageBelongsToWorkOrder({
         messageCreatedAt: '2026-08-15T21:22:10.000Z',
         ticketCreatedAt: null,
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('smsMediaExtraAllowedOnWorkOrder', () => {
+  it('blocks media already curated onto this ticket (shown via photo_paths)', () => {
+    expect(
+      smsMediaExtraAllowedOnWorkOrder({
+        ref: 'sms/a/1.jpg',
+        thisTicketPhotoPaths: new Set(['sms/a/1.jpg']),
+        claimedByOtherTicketPhotoPaths: new Set(),
+      }),
+    ).toBe(false)
+  })
+
+  it('blocks media re-homed onto another ticket photo_paths (Takeira split)', () => {
+    expect(
+      smsMediaExtraAllowedOnWorkOrder({
+        ref: 'sms/a/habc.jpg',
+        thisTicketPhotoPaths: new Set(['sms/a/pest.jpg']),
+        claimedByOtherTicketPhotoPaths: new Set(['sms/a/habc.jpg', 'sms/a/paint-0.jpg']),
+      }),
+    ).toBe(false)
+  })
+
+  it('allows unclaimed SMS media not on this ticket', () => {
+    expect(
+      smsMediaExtraAllowedOnWorkOrder({
+        ref: 'sms/a/update.jpg',
+        thisTicketPhotoPaths: new Set(['sms/a/pest.jpg']),
+        claimedByOtherTicketPhotoPaths: new Set(),
+      }),
+    ).toBe(true)
+  })
+})
+
+describe('shouldSkipUnclaimedSmsMediaExtras', () => {
+  it('skips late SMS extras when curated photo_paths exist and a later WO exists', () => {
+    expect(
+      shouldSkipUnclaimedSmsMediaExtras({
+        thisTicketPhotoPathCount: 1,
+        nextTicketCreatedAt: ticketB,
+      }),
+    ).toBe(true)
+  })
+
+  it('still loads SMS extras when this ticket has no photo_paths yet', () => {
+    expect(
+      shouldSkipUnclaimedSmsMediaExtras({
+        thisTicketPhotoPathCount: 0,
+        nextTicketCreatedAt: ticketB,
+      }),
+    ).toBe(false)
+  })
+
+  it('still loads SMS extras when there is no later sibling work order', () => {
+    expect(
+      shouldSkipUnclaimedSmsMediaExtras({
+        thisTicketPhotoPathCount: 2,
+        nextTicketCreatedAt: null,
       }),
     ).toBe(false)
   })

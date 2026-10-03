@@ -8,6 +8,7 @@ import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
 import {
   loadLandlordNotificationSettings,
   loadLandlordOperationalSettings,
@@ -165,13 +166,11 @@ export function formatAttentionLocationLine(parts: {
   street?: string | null
   building?: string | null
   unit?: string | null
+  propertyType?: string | null
   reportedAgo?: string | null
 }): string {
   const place = (parts.street ?? "").trim() || (parts.building ?? "").trim()
-  const unitRaw = (parts.unit ?? "").trim()
-  const unitBit = unitRaw
-    ? (/^unit\b/i.test(unitRaw) ? unitRaw : `Unit ${unitRaw}`)
-    : ""
+  const unitBit = formatUnitReference(parts.unit, parts.propertyType)
   const ago = (parts.reportedAgo ?? "").trim()
   return [place, unitBit, ago].filter(Boolean).join(" · ")
 }

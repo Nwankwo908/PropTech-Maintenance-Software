@@ -3,6 +3,8 @@
  * Style never changes factual content, legal language, or workflow logic.
  */
 
+import { formatInUnitPhrase, formatUnitReference } from '@shared/properties/unitLabelDisplay'
+
 export type CommunicationStyle =
   | 'calm_professional'
   | 'friendly_conversational'
@@ -83,6 +85,7 @@ export type OperationalMessageFacts = {
   residentName?: string | null
   unitLabel?: string | null
   propertyName?: string | null
+  propertyType?: string | null
   workOrderNumber?: string | null
   issueSummary?: string | null
   maskedPhone?: string | null
@@ -112,7 +115,12 @@ export type BuiltOperationalMessage = {
 }
 
 function unitLabel(facts: OperationalMessageFacts): string {
-  return (facts.unitLabel ?? '').trim() || '—'
+  return formatUnitReference(facts.unitLabel, facts.propertyType)
+}
+
+function residentAtUnit(facts: OperationalMessageFacts): string {
+  const name = (facts.residentName ?? '').trim() || 'the resident'
+  return `${name}${formatInUnitPhrase(facts.unitLabel, facts.propertyType)}`
 }
 
 function residentLabel(facts: OperationalMessageFacts): string {
@@ -166,17 +174,19 @@ function buildActivationUndeliverable(
   channel: CommunicationChannel,
 ): BuiltOperationalMessage {
   const unit = unitLabel(facts)
-  const resident = residentLabel(facts)
+  const who = residentAtUnit(facts)
   const landlordFirst = firstName(facts.landlordName) ?? 'there'
   const sev = effectiveSeverity(severity, 'activation_undeliverable')
+  const subjectUnitBit = unit ? ` — ${unit}` : ''
+  const subjectReachBit = unit ? ` in ${unit}` : ''
 
   if (style === 'friendly_conversational') {
     const subject =
-      channel === 'email' ? `We couldn’t reach the resident in Unit ${unit}` : null
+      channel === 'email' ? `We couldn’t reach the resident${subjectReachBit}` : null
     const greeting = `Hi ${landlordFirst},`
     const body = [
       greeting,
-      `we couldn’t reach ${resident} in Unit ${unit} by text. Please check their phone number, then resend the welcome message when you’re ready.`,
+      `we couldn’t reach ${who} by text. Please check their phone number, then resend the welcome message when you’re ready.`,
     ].join(' ')
     return {
       subject,
@@ -191,8 +201,10 @@ function buildActivationUndeliverable(
 
   if (style === 'direct_action_oriented') {
     const subject =
-      channel === 'email' ? `Action required — Update phone for Unit ${unit}` : null
-    const body = `Action needed: The activation text for Unit ${unit} was undeliverable. Verify the resident’s phone number and resend the invitation.`
+      channel === 'email' ? `Action required — Update phone${subjectUnitBit}` : null
+    const body = unit
+      ? `Action needed: The activation text for ${unit} was undeliverable. Verify the resident’s phone number and resend the invitation.`
+      : `Action needed: The activation text was undeliverable. Verify the resident’s phone number and resend the invitation.`
     return {
       subject,
       body: withLegalFooter(appendDeepLink(body, facts, channel), facts),
@@ -206,8 +218,8 @@ function buildActivationUndeliverable(
 
   // calm_professional (default)
   const subject =
-    channel === 'email' ? `Resident phone needs attention — Unit ${unit}` : null
-  const body = `Hi ${landlordFirst}, Ulo couldn’t deliver the activation text to ${resident} in Unit ${unit}. Please verify their phone number before resending.`
+    channel === 'email' ? `Resident phone needs attention${subjectUnitBit}` : null
+  const body = `Hi ${landlordFirst}, Ulo couldn’t deliver the activation text to ${who}. Please verify their phone number before resending.`
   return {
     subject,
     body: withLegalFooter(appendDeepLink(body, facts, channel), facts),

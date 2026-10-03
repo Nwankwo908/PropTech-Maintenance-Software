@@ -5,6 +5,7 @@ import {
   loadLandlordPropertyRecords,
   matchPropertyByName,
 } from "../ask_ulo/tools/properties/propertyRecords.ts"
+import { formatLocationWithOptionalUnit } from "../properties/unitLabelDisplay.ts"
 
 export type ResolvedVendorSearchContext = {
   searchLocation: string
@@ -82,14 +83,17 @@ async function propertyRecordById(
   return records.find((r) => r.id === id) ?? null
 }
 
-export function formatVendorSetupLocationLabel(unit: string, building: string): string {
-  const u = unit.trim()
-  const b = building.trim()
-  const unitPart = u.replace(/^unit\s+/i, "").trim() || u
-  if (b && u) return `${b} · Unit ${unitPart}`
-  if (b) return b
-  if (u) return u.match(/^unit\b/i) ? u : `Unit ${u}`
-  return "Property · Unit"
+export function formatVendorSetupLocationLabel(
+  unit: string,
+  building: string,
+  propertyType?: string | null,
+): string {
+  const label = formatLocationWithOptionalUnit({
+    propertyLabel: building,
+    unitLabel: unit,
+    propertyType,
+  })
+  return label || "Property"
 }
 
 function looksGeocodable(value: string): boolean {
@@ -136,11 +140,11 @@ export async function resolveExternalVendorSearchContext(
     if (byId) {
       addressLine = formatPropertyAddressLine(byId)
       areaLabel = formatPropertyCityStateZip(byId)
-      if (byId.name && !building) {
-        locationLabel = formatVendorSetupLocationLabel(unit, byId.name)
-      } else if (byId.name && building && byId.name.toLowerCase() !== building.toLowerCase()) {
-        locationLabel = formatVendorSetupLocationLabel(unit, byId.name)
-      }
+      locationLabel = formatVendorSetupLocationLabel(
+        unit,
+        byId.name || building,
+        byId.propertyType,
+      )
     }
   }
 
@@ -150,6 +154,13 @@ export async function resolveExternalVendorSearchContext(
     if (matched) {
       addressLine = addressLine ?? formatPropertyAddressLine(matched)
       areaLabel = areaLabel ?? formatPropertyCityStateZip(matched)
+      if (!propertyId) {
+        locationLabel = formatVendorSetupLocationLabel(
+          unit,
+          matched.name || building,
+          matched.propertyType,
+        )
+      }
     }
 
     if (!addressLine || !areaLabel) {

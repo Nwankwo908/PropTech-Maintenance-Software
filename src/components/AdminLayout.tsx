@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useAdminScrollRestoration } from '@/hooks/useAdminScrollRestoration'
 import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
 import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
 import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
@@ -252,6 +253,8 @@ function AdminMainContent() {
   const { open, docked, closeAskUlo, setDocked } = useAskUlo()
   const location = useLocation()
   const prevPathRef = useRef(location.pathname)
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
+  useAdminScrollRestoration(scrollEl)
 
   // Full-screen Ask Ulo used to replace <Outlet />, so navigating to Properties
   // while Ask Ulo was open showed a blank/stuck shell. Always keep the route
@@ -264,7 +267,11 @@ function AdminMainContent() {
 
   if (!open) {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white">
+      <div
+        ref={setScrollEl}
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white"
+        data-admin-scroll-root
+      >
         <Outlet />
       </div>
     )
@@ -273,7 +280,9 @@ function AdminMainContent() {
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
       <div
+        ref={setScrollEl}
         className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain"
+        data-admin-scroll-root
         // Keep the route interactive under the undocked panel. The full-panel
         // overlay already covers it; pointer-events-none left dead clicks if
         // Ask Ulo open state and the overlay ever got out of sync.

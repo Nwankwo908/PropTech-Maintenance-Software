@@ -41,7 +41,7 @@ Deno.test("dispatch SMS includes WO + YES/NO and unique job link", () => {
     [
       "Hi Flex Plumbing — new job WO-3B00",
       "Address: 14 Maple Ave",
-      "Unit: Unit 2B",
+      "Unit: 2B",
       "Issue: Leaking kitchen sink",
       "Entry OK if resident out: Yes",
       "",
@@ -60,6 +60,25 @@ Deno.test("dispatch SMS includes WO + YES/NO and unique job link", () => {
     "Open the work order and submit your estimate when you can:",
     "https://www.ulohome.io/w/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   ].join("\n"))
+})
+
+Deno.test("dispatch SMS omits unit line for single-family properties", () => {
+  const body = buildVendorJobAssignmentSms({
+    vendorName: "flex plumbing",
+    priority: "high",
+    unit: "1",
+    description: "Leaking kitchen sink",
+    issueHeadline: "Leaking kitchen sink",
+    location: "14 Maple Ave · Unit 1",
+    propertyType: "single_family",
+    entryOkIfAbsent: true,
+    ticketId: "3b0047aa-1111-2222-3333-444444444444",
+    jobDetailUrl: "https://www.ulohome.io/w/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  })
+  assertEquals(body.includes("Unit:"), false)
+  assertEquals(body.includes("Unit 1"), false)
+  assertEquals(body.includes("Home"), false)
+  assertEquals(body.includes("Address: 14 Maple Ave"), true)
 })
 
 Deno.test("dispatch SMS uses clean headline, not intake Q&A in description", () => {
@@ -85,7 +104,7 @@ Deno.test("dispatch SMS uses clean headline, not intake Q&A in description", () 
   assertEquals(body.includes(stuffed), false)
   assertEquals(body.includes("Entry OK if resident out: No"), true)
   assertEquals(body.includes("Address: 563 Springdale Circle"), true)
-  assertEquals(body.includes("Unit: Unit 1"), true)
+  assertEquals(body.includes("Unit: 1"), true)
   // Accept/decline after the decision facts, details last.
   const yesIdx = body.indexOf("Reply YES")
   const detailsIdx = body.indexOf("Details:")

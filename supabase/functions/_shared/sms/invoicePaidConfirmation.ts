@@ -14,6 +14,7 @@ import {
   upsertSmsIdentityForPhone,
 } from "./inbound_db.ts"
 import { UNKNOWN_CONTACT_INTAKE_KEY } from "./unknownContactIntake.ts"
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 
 export type AwaitingInvoicePaidConfirmation = {
   invoiceId: string
@@ -304,16 +305,17 @@ export function cleanInvoiceJobHeadline(
 export function buildInvoiceReadyPaidConfirmationSms(input: {
   landlordFirstName?: string | null
   unit?: string | null
+  propertyType?: string | null
+  propertyLabel?: string | null
   vendorName?: string | null
   amount?: number | null
   jobHeadline?: string | null
   detailsUrl: string
 }): string {
   const first = (input.landlordFirstName ?? "").trim() || "there"
-  const unitRaw = (input.unit ?? "").trim()
-  const unitBit = unitRaw
-    ? (/^unit\b/i.test(unitRaw) ? unitRaw : `Unit ${unitRaw}`)
-    : "Unit —"
+  const unitBit = formatUnitReference(input.unit, input.propertyType) ||
+    (input.propertyLabel ?? "").trim() ||
+    "This home"
   const vendor =
     titleCaseCompanyName(input.vendorName) || "Vendor"
   const amount = formatInvoiceAmount(input.amount)

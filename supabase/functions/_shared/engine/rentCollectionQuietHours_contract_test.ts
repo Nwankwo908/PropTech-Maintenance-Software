@@ -31,11 +31,16 @@ Deno.test("payment_reminder and late_payment call sites wire the quiet-hours gat
     "late_payment path must gate as rent_reminder",
   )
   assert(
-    escalation.includes("skipResidentOutreach"),
-    "escalation must honor landlord-level pause for resident outreach",
+    escalation.includes("isRentCollectionPaused"),
+    "escalation must honor landlord-level pause (no late-rent landlord notify)",
   )
   assert(
     reminder.includes("isRentCollectionPaused"),
     "payment_reminder cron must honor landlord-level pause",
+  )
+  assert(
+    reminder.includes("landlordReceiptAskStatus: null") ||
+      reminder.includes("Rent collection paused"),
+    "paused route/act must not offer landlord rent receipt asks",
   )
 })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import editIcon from '@/assets/noun_edit_469454.svg'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
@@ -12,6 +12,14 @@ import {
   resetTenantActivationForPhoneChange,
   sendTenantActivationSms,
 } from '@/api/tenantActivation'
+import {
+  mutateSearchParams,
+  writeStringParam,
+} from '@/lib/adminListUrlState'
+import {
+  isSingleFamilyPropertyType,
+  SINGLE_FAMILY_UNIT_LABEL,
+} from '@shared/properties/propertyType'
 import {
   AddResidentModal,
   type AddResidentPropertyOption,
@@ -297,10 +305,22 @@ function rentDueDayFromRaw(value: unknown): number | null {
 export function AdminResidentsDashboard() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [residents, setResidents] = useState<ResidentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
+  const searchQuery = searchParams.get('q') ?? ''
+  const setSearchQuery = useCallback(
+    (value: string) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'q', value)
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
   const [addResidentOpen, setAddResidentOpen] = useState(false)
   const [addResidentError, setAddResidentError] = useState<string | null>(null)
   const [addPropertyOpen, setAddPropertyOpen] = useState(false)
@@ -788,7 +808,9 @@ export function AdminResidentsDashboard() {
     const linkedUnitLabel =
       pendingPropertyLink.customUnitLabel?.trim() ||
       unitsToRegister[0]?.unitLabel ||
-      'Unit 1'
+      (isSingleFamilyPropertyType(payload.propertyType)
+        ? SINGLE_FAMILY_UNIT_LABEL
+        : 'Unit 1')
 
     if (
       linkedUnitLabel &&

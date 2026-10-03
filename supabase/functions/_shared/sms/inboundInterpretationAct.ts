@@ -30,9 +30,12 @@ import {
   type InboundInterpretation,
   type TenantSmsIntent,
 } from "./inboundInterpretation.ts"
+import { ensureTenantInspectionNoticeReport } from "./tenantInspectionNoticeIntake.ts"
 import {
   createOrBumpRentBillingInquiryTicket,
 } from "./rentBillingInquiry.ts"
+import { isStorageMediaPath, normalizeMediaRefs } from "./media.ts"
+import { hasStrongRepairAsk } from "../../../../shared/maintenance/tenantInspectionNotice.ts"
 import {
   buildEscalatedOtherSms,
   buildSmallTalkDuringIntakeSms,
@@ -502,6 +505,120 @@ function handled(
     },
   }
 }
+
+function formatInspectionDateLabel(iso: string | null | undefined): string | null {
+  if (!iso?.trim()) return null
+  const parsed = new Date(`${iso.trim().slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  })
+}
+
+/**
+ * Tenant forwarded an inspection schedule notice (HABC / annual visit).
+ * Creates inspection_reports (letter_type=tenant_notice). If the same text
+ * also asks for repairs, continue into maintenance intake with the report
+ * linked so those WOs become checklist items under the visit.
+ */
+async function handleInspectionNotice(
+  ctx: InboundSmsHandlerContext,
+  intake: SmsIntakeState,
+  activeIntake: boolean,
+  residentId: string,
+  interpretation: InboundInterpretation,
+  residentName: string | null,
+): Promise<InboundSmsHandlerResult> {
+  const who = firstName(residentName)
+  const mediaPaths = normalizeMediaRefs(ctx.inbound.mediaUrls).filter((ref) =>
+    isStorageMediaPath(ref) || (!/^https?:\/\//i.test(ref) && ref.includes("/"))
+  )
+
+  const ensured = await ensureTenantInspectionNoticeReport(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    residentId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    mediaPaths,
+    inspectionDate: interpretation.extractedSlots.inspection_date ?? null,
+  })
+
+  if (!ensured.ok) {
+    await logOutcome(ctx, {
+      eventType: "inspection.tenant_notice_failed",
+      message: "Could not open an inspection visit from the resident notice.",
+      extra: { reason: ensured.reason, detail: ensured.detail ?? null },
+    })
+    return handled(
+      "sms_inspection_notice",
+      `Hi ${who},\n\nThis is the property management team.\n\nThanks for sending the inspection notice. We're looking into it and will follow up shortly.`,
+    )
+  }
+
+  const dateLabel = formatInspectionDateLabel(ensured.inspectionDate)
+
+  await patchIntakeState(ctx.supabase, ctx.conversationId, {
+    // Human-context only — never used as inspection_report_id / checklist FK.
+    inspection_timing_note: dateLabel
+      ? `Timing note: ahead of ${dateLabel} inspection.`
+      : "Timing note: ahead of upcoming inspection.",
+  })
+
+  const alsoRepair =
+    interpretation.extractedSlots.also_repair === "1" ||
+    hasStrongRepairAsk(ctx.inbound.body)
+
+  await logOutcome(ctx, {
+    eventType: "inspection.tenant_notice_received",
+    message: dateLabel
+      ? `Noted the resident's inspection notice for ${dateLabel}.`
+      : "Noted the resident's upcoming inspection notice.",
+    extra: {
+      inspection_report_id: ensured.inspectionReportId,
+      inspection_date: ensured.inspectionDate,
+      created: ensured.created,
+      also_repair: alsoRepair,
+      source_document_id: ensured.sourceDocumentId,
+    },
+  })
+
+  if (alsoRepair) {
+    await maybeReleaseIntake(
+      ctx.supabase,
+      ctx,
+      intake,
+      activeIntake,
+      "inspection_notice",
+      false,
+    )
+    // Continue into maintenance as a standalone repair — no checklist FK.
+    return {
+      handled: false,
+      interpretation: markAsNewMaintenanceIssue(interpretation),
+    }
+  }
+
+  await maybeReleaseIntake(
+    ctx.supabase,
+    ctx,
+    intake,
+    activeIntake,
+    "inspection_notice",
+    false,
+  )
+
+  const dateLine = dateLabel
+    ? `We've noted your inspection for ${dateLabel}.`
+    : `We've noted your upcoming inspection.`
+
+  return handled(
+    "sms_inspection_notice",
+    `Hi ${who},\n\nThis is the property management team.\n\nThanks for sending the inspection notice.\n\n${dateLine}\n\nIf something still needs fixing before then, text us the details and we'll open a separate repair request.`,
+  )
+}
+
 
 async function loadLatestRentRun(
   supabase: SupabaseClient,
@@ -2653,6 +2770,15 @@ export async function tryHandleInterpretedInbound(
         pending.activeIntake,
         residentId,
         profile,
+      )
+    case "inspection_notice":
+      return handleInspectionNotice(
+        ctx,
+        intake,
+        pending.activeIntake,
+        residentId,
+        interpretation,
+        profile?.full_name ?? null,
       )
     case "other": {
       if (shouldStartMaintenanceInsteadOfHandoff(ctx.inbound.body)) {

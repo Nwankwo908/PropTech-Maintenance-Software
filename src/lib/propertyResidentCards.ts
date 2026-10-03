@@ -43,6 +43,7 @@ function unitSortKey(label: string): number {
 export function buildPropertyResidentCards(
   _building: string,
   residents: PropertyUnitResident[],
+  propertyType?: string | null,
 ): PropertyResidentCard[] {
   const current = residents.filter(
     (resident) => !['past_resident', 'inactive'].includes(resident.status.toLowerCase()),
@@ -70,7 +71,7 @@ export function buildPropertyResidentCards(
         id: primary.id,
         initials: residentInitials(primary.fullName),
         name: names.join(', '),
-        unitDisplay: formatPropertyUnitDisplay(primary.unit),
+        unitDisplay: formatPropertyUnitDisplay(primary.unit, propertyType),
         occupancyLabel: residentOccupancyLabel(primary.status),
         leaseEndLabel: formatPropertyLeaseEnd(leaseEndDate) ?? '—',
         balanceLabel: formatBalance(balanceDue),

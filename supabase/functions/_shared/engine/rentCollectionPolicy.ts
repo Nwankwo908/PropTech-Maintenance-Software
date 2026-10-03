@@ -91,8 +91,10 @@ export function effectiveRentDueDay(
 }
 
 /**
- * Landlord-level pause for resident-facing rent collection SMS/email.
- * Independent of Notification Settings mute (landlord alerts only).
+ * Landlord-level pause for all rent-collection outreach:
+ * resident reminders/late notices, landlord receipt asks (payments-off),
+ * and late-rent landlord attention SMS/email.
+ * Independent of Notification Settings mute.
  */
 export function isRentCollectionPaused(
   value: boolean | null | undefined,

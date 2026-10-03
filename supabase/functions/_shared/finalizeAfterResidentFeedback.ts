@@ -14,6 +14,7 @@ import { cleanInvoiceJobHeadline } from "./sms/invoicePaidConfirmation.ts"
 import { notifyResidentCompleted } from "../submit-maintenance-request/resident_notify.ts"
 import { emitServerProductEvent } from "./ga4MeasurementProtocol.ts"
 import { closeOpenAsksForTicket } from "./closeOpenAsksForTicket.ts"
+import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
 
 const POSITIVE_RATING_MIN = 4
 
@@ -227,7 +228,7 @@ export async function finalizeJobAfterResidentFeedback(
       landlordId: params.landlordId,
       kind: "invoice_ready",
       headline: "Invoice ready to pay",
-      detail: [unit ? `Unit ${unit}` : null, vendorName, amount]
+      detail: [formatUnitReference(unit), vendorName, amount]
         .filter(Boolean)
         .join(" · "),
       idempotencyKey: `invoice:${invoiceId}`,

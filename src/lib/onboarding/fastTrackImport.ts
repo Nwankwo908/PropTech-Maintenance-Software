@@ -185,6 +185,7 @@ export async function commitFastTrackImport(
           properties: properties.map((property) => ({
             id: property.id,
             name: property.name,
+            propertyType: property.propertyType ?? null,
           })),
         },
       )

@@ -1,4 +1,6 @@
+import { formatUnitReference } from '@shared/properties/unitLabelDisplay'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { buildingsLikelySamePlace, normalizeBuildingKey } from '@/lib/propertyHealth'
 import { formatLandlordCurrency, formatLandlordDate } from '@/lib/landlordWorkspace'
 import { supabase } from '@/lib/supabase'
 import {
@@ -6,6 +8,12 @@ import {
   retireOnboardingImportLeaseRenewals,
 } from '@/lib/onboardingImportLeaseRenewal'
 import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
+import {
+  shouldShowStandaloneInspectionActiveTask,
+  standaloneInspectionActiveTaskTitle,
+  standaloneInspectionNextStep,
+  standaloneInspectionTaskRowId,
+} from '@shared/maintenance/standaloneInspectionTask'
 
 /** Plain checklist label from a ticket description (HQS fail: Room - Issue → Room — Issue). */
 export function checklistLabelFromTicketDescription(
@@ -53,6 +61,10 @@ export type AdminWorkflowRow = {
   currentStep: string | null
   entityType: string | null
   entityId: string | null
+  /** workflow_runs.property_id when present. */
+  propertyId?: string | null
+  /** workflow_runs.unit_id when present. */
+  unitId?: string | null
   residentId: string | null
   residentName: string | null
   unitLabel: string | null
@@ -163,6 +175,8 @@ export type AdminWorkflowDashboardData = {
   active: AdminWorkflowRow[]
   escalated: AdminWorkflowRow[]
   maintenanceRuns: AdminWorkflowRow[]
+  /** Zero-checklist inspection_reports (tenant notices) as standalone Active Tasks. */
+  standaloneInspectionTasks: AdminWorkflowRow[]
   rentCollection: AdminRentCollectionDashboard
   lifecycle: AdminLifecycleDashboard
   groups: AdminWorkflowGroupCard[]
@@ -271,12 +285,47 @@ export function isSettledOnActiveTasks(row: {
   return isCancelledOnActiveTasks(row) || isCompletedOnActiveTasks(row)
 }
 
+/**
+ * Scope a workflow run to one property: property_id / unit_id first, then building
+ * label. Never treat bare unit labels as a property key.
+ */
+export function workflowMatchesPropertyScope(
+  row: Pick<AdminWorkflowRow, 'propertyId' | 'unitId' | 'propertyLabel' | 'entityType' | 'entityId'>,
+  opts: {
+    building: string
+    propertyId?: string | null
+    unitIds?: ReadonlySet<string>
+    /** maintenance_request entity id → property_id */
+    ticketPropertyById?: ReadonlyMap<string, string | null | undefined>
+  },
+): boolean {
+  const propertyId = opts.propertyId?.trim() || null
+  if (propertyId && row.propertyId?.trim() && row.propertyId === propertyId) return true
+  if (row.unitId && opts.unitIds?.has(row.unitId)) return true
+  if (
+    propertyId &&
+    row.entityType === 'maintenance_request' &&
+    row.entityId &&
+    opts.ticketPropertyById?.get(row.entityId) === propertyId
+  ) {
+    return true
+  }
+  const rowBuilding = row.propertyLabel?.trim()
+  if (!rowBuilding) return false
+  return (
+    normalizeBuildingKey(rowBuilding) === normalizeBuildingKey(opts.building) ||
+    buildingsLikelySamePlace(rowBuilding, opts.building)
+  )
+}
+
 export function workflowTemplateGroupId(templateId: string): WorkflowTemplateGroupId | null {
   if (MAINTENANCE_TEMPLATE_IDS.has(templateId)) return 'maintenance'
   if (templateId === 'rent_collection') return 'rent_collection'
   if (templateId === 'move_in') return 'move_in'
   if (templateId === 'move_out') return 'move_out'
-  if (templateId === 'inspection') return 'inspection'
+  if (templateId === 'inspection' || templateId === 'inspection_notice_task') {
+    return 'inspection'
+  }
   return null
 }
 
@@ -290,12 +339,7 @@ export function formatLocationContext(row: AdminWorkflowRow): AdminWorkflowGroup
 
 export function formatLocationContextLabel(context: AdminWorkflowGroupContext | null): string {
   if (!context) return '—'
-  const unitRaw = String(context.unitLabel ?? '').trim()
-  const unitDisplay = !unitRaw
-    ? ''
-    : /^unit\s+/i.test(unitRaw)
-      ? unitRaw.replace(/^unit\s+/i, 'Unit ')
-      : `Unit ${unitRaw}`
+  const unitDisplay = formatUnitReference(String(context.unitLabel ?? ''))
   const parts = [context.propertyLabel, unitDisplay].filter(Boolean)
   const location = parts.length ? parts.join(' · ') : null
   if (location && context.residentName) {
@@ -356,6 +400,7 @@ type UnitRecord = {
   id: string
   unit_label: string | null
   building: string | null
+  property_id?: string | null
 }
 
 const TEMPLATE_LABELS: Record<string, string> = {
@@ -859,12 +904,200 @@ export function emptyAdminWorkflowDashboardData(): AdminWorkflowDashboardData {
     active: [],
     escalated: [],
     maintenanceRuns: [],
+    standaloneInspectionTasks: [],
     rentCollection: emptyRentCollectionDashboard(),
     lifecycle: emptyLifecycleDashboard(),
     groups: emptyWorkflowGroups(),
     runMetadata: {},
     stats: { activeCount: 0, escalatedCount: 0, completedCount: 0 },
   }
+}
+
+/**
+ * Open inspection_reports with no itemized checklist (tenant notices, etc.)
+ * as standalone Active Tasks rows. Never links or absorbs work orders.
+ */
+export async function loadStandaloneInspectionTaskRows(
+  landlordId: string,
+  options?: { residentId?: string | null },
+): Promise<AdminWorkflowRow[]> {
+  if (!supabase || !landlordId.trim()) return []
+
+  const { data: reports, error } = await supabase
+    .from('inspection_reports')
+    .select(
+      'id, letter_type, inspection_date, status, unit_id, property_id, source_document_id, emergency_item_count, standard_item_count, created_at, conversation_id',
+    )
+    .eq('landlord_id', landlordId)
+    .in('status', ['open', 'in_progress'])
+    .order('inspection_date', { ascending: true, nullsFirst: false })
+    .limit(80)
+
+  if (error || !reports?.length) return []
+
+  const reportIds = reports.map((r) => String(r.id))
+  const unitIds = [
+    ...new Set(
+      reports
+        .map((r) => (r.unit_id == null ? '' : String(r.unit_id).trim()))
+        .filter(Boolean),
+    ),
+  ]
+
+  const sourceDocIds = [
+    ...new Set(
+      reports
+        .map((r) =>
+          r.source_document_id == null ? '' : String(r.source_document_id).trim(),
+        )
+        .filter(Boolean),
+    ),
+  ]
+
+  const [{ data: linkedTickets }, { data: units }, { data: sourceDocs }] =
+    await Promise.all([
+      supabase
+        .from('maintenance_requests')
+        .select('id, inspection_report_id')
+        .eq('landlord_id', landlordId)
+        .in('inspection_report_id', reportIds),
+      unitIds.length
+        ? supabase
+            .from('units')
+            .select('id, unit_label, building, property_id')
+            .in('id', unitIds)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      sourceDocIds.length
+        ? supabase
+            .from('inspection_source_documents')
+            .select('id, file_name')
+            .in('id', sourceDocIds)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    ])
+
+  const linkedCountByReport = new Map<string, number>()
+  for (const ticket of linkedTickets ?? []) {
+    const rid =
+      typeof ticket.inspection_report_id === 'string'
+        ? ticket.inspection_report_id.trim()
+        : ''
+    if (!rid) continue
+    linkedCountByReport.set(rid, (linkedCountByReport.get(rid) ?? 0) + 1)
+  }
+
+  const unitById = new Map<
+    string,
+    { unitLabel: string | null; building: string | null; propertyId: string | null }
+  >()
+  for (const u of units ?? []) {
+    unitById.set(String(u.id), {
+      unitLabel: u.unit_label == null ? null : String(u.unit_label),
+      building: u.building == null ? null : String(u.building),
+      propertyId: u.property_id == null ? null : String(u.property_id),
+    })
+  }
+
+  const docNameById = new Map<string, string>()
+  for (const d of sourceDocs ?? []) {
+    if (d.file_name) docNameById.set(String(d.id), String(d.file_name))
+  }
+
+  // Optional resident filter: only notices on units where that resident is active.
+  let allowedUnitIds: Set<string> | null = null
+  const residentId = options?.residentId?.trim() || null
+  if (residentId) {
+    const { data: occ } = await supabase
+      .from('occupancy')
+      .select('unit_id')
+      .eq('landlord_id', landlordId)
+      .eq('resident_id', residentId)
+      .eq('status', 'active')
+    allowedUnitIds = new Set(
+      (occ ?? [])
+        .map((row) => (row.unit_id == null ? '' : String(row.unit_id).trim()))
+        .filter(Boolean),
+    )
+  }
+
+  const rows: AdminWorkflowRow[] = []
+  for (const report of reports) {
+    const reportId = String(report.id)
+    const linked = linkedCountByReport.get(reportId) ?? 0
+    if (
+      !shouldShowStandaloneInspectionActiveTask({
+        letterType: report.letter_type == null ? null : String(report.letter_type),
+        emergencyItemCount: Number(report.emergency_item_count ?? 0),
+        standardItemCount: Number(report.standard_item_count ?? 0),
+        linkedWorkOrderCount: linked,
+      })
+    ) {
+      continue
+    }
+
+    const unitId = report.unit_id == null ? null : String(report.unit_id)
+    if (allowedUnitIds && (!unitId || !allowedUnitIds.has(unitId))) continue
+
+    const unit = unitId ? unitById.get(unitId) : null
+    const sourceId =
+      report.source_document_id == null ? null : String(report.source_document_id)
+    const sourceName = sourceId ? docNameById.get(sourceId) : null
+    const title = standaloneInspectionActiveTaskTitle({
+      letterType: report.letter_type == null ? null : String(report.letter_type),
+      inspectionDate:
+        report.inspection_date == null ? null : String(report.inspection_date),
+    })
+    const nextStep = standaloneInspectionNextStep()
+    const sourceBit = sourceName?.trim()
+      ? `Source notice: ${sourceName.trim()}`
+      : sourceId
+        ? `Source notice on file (${formatInspectionReportRef(reportId)})`
+        : `Inspection notice ${formatInspectionReportRef(reportId)}`
+    const inspectionDateIso =
+      report.inspection_date == null
+        ? null
+        : String(report.inspection_date).slice(0, 10)
+
+    rows.push({
+      id: standaloneInspectionTaskRowId(reportId),
+      templateId: 'inspection_notice_task',
+      templateName: title,
+      templateType: 'inspection',
+      status: 'active',
+      currentStep: 'prepare',
+      entityType: 'inspection_report',
+      entityId: reportId,
+      propertyId: report.property_id == null ? unit?.propertyId ?? null : String(report.property_id),
+      unitId,
+      residentId: null,
+      residentName: null,
+      unitLabel: unit?.unitLabel ?? null,
+      propertyLabel: unit?.building ?? null,
+      startedAt:
+        report.created_at == null
+          ? new Date().toISOString()
+          : String(report.created_at),
+      completedAt: null,
+      lastEventType: 'inspection.tenant_notice_received',
+      lastEventMessage: `${nextStep}. ${sourceBit}`,
+      lastEventAt: null,
+      escalationReason: null,
+      issueCategory: 'inspection',
+      issueDescription: [
+        nextStep,
+        sourceBit,
+        inspectionDateIso ? `Inspection date: ${inspectionDateIso}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      vendorWorkStatus: null,
+      assignedVendorId: null,
+      inspectionReportId: reportId,
+      // Empty / null checklist — must not trigger N-of-M visit grouping.
+      inspectionGroupItems: null,
+    })
+  }
+
+  return rows
 }
 
 export type FetchAdminWorkflowDashboardOptions = {
@@ -965,7 +1198,7 @@ export async function fetchAdminWorkflowDashboard(
     unitIds.length
       ? supabase
           .from('units')
-          .select('id, unit_label, building')
+          .select('id, unit_label, building, property_id')
           .in('id', unitIds)
       : Promise.resolve({ data: [], error: null }),
   ])
@@ -1149,6 +1382,8 @@ export async function fetchAdminWorkflowDashboard(
       currentStep: run.current_step,
       entityType: run.entity_type,
       entityId: run.entity_id,
+      propertyId: run.property_id ?? unit?.property_id ?? null,
+      unitId: run.unit_id ?? null,
       residentId: run.resident_id,
       residentName: resident?.full_name?.trim() ?? null,
       unitLabel,
@@ -1298,10 +1533,16 @@ export async function fetchAdminWorkflowDashboard(
     ),
   ]
 
+  const standaloneInspectionTasks = await loadStandaloneInspectionTaskRows(
+    landlordId,
+    { residentId },
+  )
+
   return {
     active,
     escalated,
     maintenanceRuns: maintenanceRows,
+    standaloneInspectionTasks,
     rentCollection: {
       runs: rentRuns,
       dueToday,
@@ -1330,7 +1571,7 @@ export async function fetchAdminWorkflowDashboard(
     groups,
     runMetadata,
     stats: {
-      activeCount: active.length,
+      activeCount: active.length + standaloneInspectionTasks.length,
       escalatedCount: escalated.length,
       completedCount,
     },

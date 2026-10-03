@@ -21,7 +21,7 @@ Deno.test("each style produces clearly distinct activation wording", () => {
   assertStringIncludes(friendly.sms, "we couldn’t reach")
   assertStringIncludes(direct.sms, "Action needed:")
   assertEquals(calm.emailSubject, "Resident phone needs attention — Unit 3A")
-  assertEquals(direct.emailSubject, "Action required — Update phone for Unit 3A")
+  assertEquals(direct.emailSubject, "Action required — Update phone — Unit 3A")
 })
 
 Deno.test("unit facts remain identical across styles", () => {
@@ -32,6 +32,26 @@ Deno.test("unit facts remain identical across styles", () => {
   ] as const) {
     assertStringIncludes(buildCommunicationStylePreview(style).sms, "Unit 3A")
   }
+})
+
+Deno.test("single-family activation copy omits unit references", () => {
+  const msg = buildOperationalMessage({
+    style: "calm_professional",
+    audience: "landlord",
+    channel: "sms",
+    eventType: "activation_undeliverable",
+    severity: "action_required",
+    facts: {
+      landlordName: "Marcus",
+      residentName: "Alex",
+      unitLabel: "1",
+      propertyType: "single_family",
+      propertyName: "14 Maple Ave",
+    },
+  })
+  assertEquals(msg.body.includes("Unit"), false)
+  assertEquals(msg.body.includes("Home"), false)
+  assertStringIncludes(msg.body, "Alex")
 })
 
 Deno.test("legal footer is preserved", () => {

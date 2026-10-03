@@ -341,6 +341,49 @@ describe('assemblePropertyHistory', () => {
     expect(rows[0]?.vendorInvoice).toBe('Receipt')
   })
 
+  it('ignores completed tickets that only share a unit label with this property', () => {
+    const rows = assemblePropertyHistory({
+      ...base,
+      tickets: [
+        {
+          id: 't-other-label',
+          createdAt: '2026-08-10T12:00:00.000Z',
+          assignedAt: null,
+          completedAt: '2026-08-11T12:00:00.000Z',
+          unit: '2B',
+          unitId: 'unit-other',
+          building: null,
+          propertyId: 'prop-other',
+          issueCategory: 'plumbing',
+          description: 'Other property sink',
+          vendorWorkStatus: 'completed',
+          assignedVendorId: null,
+          photoPaths: [],
+          completionPhotoPaths: [],
+          spendStatus: null,
+        },
+        {
+          id: 't-here',
+          createdAt: '2026-08-12T12:00:00.000Z',
+          assignedAt: null,
+          completedAt: '2026-08-13T12:00:00.000Z',
+          unit: '2B',
+          unitId: 'unit-2b',
+          building: '123 Main St',
+          propertyId: 'prop-1',
+          issueCategory: 'plumbing',
+          description: 'This property sink',
+          vendorWorkStatus: 'completed',
+          assignedVendorId: null,
+          photoPaths: [],
+          completionPhotoPaths: [],
+          spendStatus: null,
+        },
+      ],
+    })
+    expect(rows.map((row) => row.sourceEntityId)).toEqual(['t-here'])
+  })
+
   it('filters by unit and ignores conversation-only graph events', () => {
     const rows = assemblePropertyHistory({
       ...base,

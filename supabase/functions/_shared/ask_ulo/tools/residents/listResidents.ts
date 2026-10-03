@@ -7,6 +7,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
 import {
+import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
   formatLateRentMarkdown,
   searchLateRent,
 } from "../rent/searchLateRent.ts"
@@ -197,7 +198,7 @@ function buildMoveInMarkdown(residents: ResidentEvidence[], days: number): strin
     "",
   ]
   for (const r of residents.slice(0, 12)) {
-    const where = [r.propertyName, r.unitLabel ? `Unit ${r.unitLabel}` : null]
+    const where = [r.propertyName, formatUnitReference(r.unitLabel) || null]
       .filter(Boolean)
       .join(" · ")
     lines.push(
@@ -229,7 +230,7 @@ function buildMessageNonresponseMarkdown(residents: ResidentEvidence[]): string 
     "",
   ]
   for (const r of residents.slice(0, 12)) {
-    const where = [r.propertyName, r.unitLabel ? `Unit ${r.unitLabel}` : null]
+    const where = [r.propertyName, formatUnitReference(r.unitLabel) || null]
       .filter(Boolean)
       .join(" · ")
     const wait =

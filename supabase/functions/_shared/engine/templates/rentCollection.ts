@@ -363,9 +363,9 @@ async function processRentDueTrigger(
   const portfolioRentDueDate = rentDueDateIso(rentDueDay, now, landlordTimeZone)
 
   if (rentPaused) {
-    // Still escalate overdue runs for landlord attention, but skip resident SMS/email.
-    const { escalateLatePaymentRuns } = await import("../rentCollectionEscalation.ts")
-    const escalated = await escalateLatePaymentRuns(supabase, landlordId)
+    // Platform / landlord pause: no resident outreach, no landlord receipt asks,
+    // and no late-rent landlord attention SMS. Leave overdue runs as-is so they
+    // can escalate normally when collection resumes.
     return {
       templateId: "rent_collection",
       route: workflowRouteForTemplate("rent_collection"),
@@ -380,10 +380,10 @@ async function processRentDueTrigger(
         skipped: 0,
         reminders_sent: 0,
         quiet_hours_deferred: 0,
-        late_payment_escalated: escalated,
+        late_payment_escalated: 0,
         started_runs: [],
         errors: [],
-        note: "Landlord paused resident rent-collection outreach",
+        note: "Rent collection paused — no resident or landlord rent outreach",
       },
     }
   }
@@ -925,6 +925,22 @@ export async function executeRentCollectionRouteAndAct(
     dueToday?: boolean
   },
 ): Promise<RentCollectionRouteActResult> {
+  const operational = await loadLandlordOperationalSettings(
+    supabase,
+    params.landlordId,
+  )
+  if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+    return {
+      smsSent: false,
+      emailSent: false,
+      channels: [],
+      paymentLink: null,
+      paymentRequested: false,
+      provider: null,
+      landlordReceiptAskStatus: null,
+    }
+  }
+
   if (!landlordHasPayments(params.landlordId)) {
     if (params.daysBeforeDue != null && params.daysBeforeDue > 0) {
       const graphScope = graphScopeForRouteAct(params)

@@ -2,13 +2,13 @@ import {
   formatInspectionReportRef,
   formatLocationContextLabel,
   isSettledOnActiveTasks,
+  workflowMatchesPropertyScope,
   workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
   type AdminWorkflowRow,
   type InspectionGroupTicketItem,
 } from '@/lib/adminWorkflows'
 import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
-import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
@@ -318,6 +318,7 @@ export function collectAdminWorkflowRuns(data: AdminWorkflowDashboardData): Admi
     ...data.escalated,
     ...data.maintenanceRuns,
     ...data.lifecycle.runs,
+    ...(data.standaloneInspectionTasks ?? []),
   ]) {
     if (row.templateId === 'rent_collection') continue
     byId.set(row.id, row)
@@ -560,7 +561,7 @@ export function buildWorkflowKanbanCard(
   row: AdminWorkflowRow,
   metadata: Record<string, unknown> = {},
 ): WorkflowKanbanCard {
-  const category = deriveCategory(row)
+  const derivedCategory = deriveCategory(row)
   const groupItems =
     row.inspectionReportId && row.inspectionGroupItems && row.inspectionGroupItems.length > 1
       ? row.inspectionGroupItems
@@ -568,9 +569,21 @@ export function buildWorkflowKanbanCard(
 
   // Maintenance chip already labels the type — show WO/INT ref as the card title.
   // Inspection visit groups use a visit-level title instead of a single WO.
+  const isStandaloneInspectionNotice =
+    row.templateId === 'inspection_notice_task' ||
+    row.entityType === 'inspection_report'
+
+  // Display-only: HQS/landlord-letter visit rollups inherit maintenance from the
+  // underlying WO runs — surface them as inspection so the badge matches
+  // standalone tenant-notice cards. Does not change the linked WOs themselves.
+  const category =
+    groupItems || isStandaloneInspectionNotice ? 'inspection' : derivedCategory
+
   const title = groupItems
     ? `Inspection visit · ${formatInspectionReportRef(row.inspectionReportId!)}`
-    : category === 'maintenance'
+    : isStandaloneInspectionNotice
+      ? row.templateName
+      : derivedCategory === 'maintenance'
       ? formatWorkOrderRefForWorkflowRun(
           row.templateId,
           row.id,
@@ -581,14 +594,18 @@ export function buildWorkflowKanbanCard(
         ? 'Move-Out Preparation'
         : row.templateName
 
-  const issueCategoryLabel = groupItems
-    ? 'Inspection'
-    : category === 'maintenance'
+  // Visit / notice cards: category badge already says Inspection — skip a
+  // second identical chip. Individual WO cards keep their trade label.
+  const issueCategoryLabel = groupItems || isStandaloneInspectionNotice
+    ? null
+    : derivedCategory === 'maintenance'
       ? formatVendorTradeLabel(row.issueCategory, { emptyLabel: '' }).trim() || null
       : null
 
   const progress = groupItems ? inspectionGroupProgress(groupItems) : null
-  const stage = deriveWorkflowKanbanStage(row, metadata)
+  const stage = isStandaloneInspectionNotice
+    ? 'new_intake'
+    : deriveWorkflowKanbanStage(row, metadata)
 
   return {
     id: row.id,
@@ -602,7 +619,9 @@ export function buildWorkflowKanbanCard(
     issueCategoryLabel,
     workOrderSummary: groupItems
       ? `${progress!.complete} of ${progress!.total} complete`
-      : category === 'maintenance'
+      : isStandaloneInspectionNotice
+        ? (row.issueDescription?.split('\n')[0]?.trim() || 'Prepare for inspection')
+      : derivedCategory === 'maintenance'
         ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
         : null,
     stage,
@@ -701,11 +720,22 @@ export function snapshotActiveOperations(
 export function countOpenWorkflowsForBuilding(
   workflowData: AdminWorkflowDashboardData | null | undefined,
   building: string,
+  opts?: {
+    propertyId?: string | null
+    unitIds?: ReadonlySet<string>
+    ticketPropertyById?: ReadonlyMap<string, string | null | undefined>
+  },
 ): number {
   if (!workflowData || !building.trim()) return 0
-  const buildingKey = normalizeBuildingKey(building)
   return collectAdminWorkflowRuns(workflowData)
-    .filter((row) => normalizeBuildingKey(row.propertyLabel) === buildingKey)
+    .filter((row) =>
+      workflowMatchesPropertyScope(row, {
+        building,
+        propertyId: opts?.propertyId,
+        unitIds: opts?.unitIds,
+        ticketPropertyById: opts?.ticketPropertyById,
+      }),
+    )
     .map((row) => buildWorkflowKanbanCard(row, workflowData.runMetadata[row.id]))
     .filter(isOpenWorkflowKanbanCard).length
 }

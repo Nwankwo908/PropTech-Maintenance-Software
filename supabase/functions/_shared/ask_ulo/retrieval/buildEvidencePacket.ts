@@ -13,6 +13,7 @@ import type { DomainToolId } from "../tools/_shared/registry.ts"
 import type { EvidenceItem } from "../tools/_shared/toolResult.ts"
 import type { AskUloCitation } from "./searchInternalData.ts"
 import { LEGAL_STALENESS_DAYS, isStale } from "./sourceFreshness.ts"
+import { formatUnitReference } from "../../properties/unitLabelDisplay.ts"
 
 export type AskUloEvidenceScope = {
   organizationId: string
@@ -320,7 +321,7 @@ function factsFromBundle(
       label: w.title || w.category || w.id,
       excerpt: [
         w.propertyName,
-        w.unitLabel ? `Unit ${w.unitLabel}` : null,
+        formatUnitReference(w.unitLabel) || null,
         w.category,
         w.status,
         days > 0 ? `${days}d open` : null,
@@ -349,7 +350,7 @@ function factsFromBundle(
       label: r.name,
       excerpt: [
         r.propertyName,
-        r.unitLabel ? `Unit ${r.unitLabel}` : null,
+        formatUnitReference(r.unitLabel) || null,
         balance > 0 ? `$${Math.round(balance)} due` : null,
         overdue > 0 ? `${overdue}d overdue` : null,
       ]

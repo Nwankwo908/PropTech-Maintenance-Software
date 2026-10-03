@@ -125,6 +125,12 @@ export type SmsIntakeState = {
   diagnostic_facts?: Record<string, string>
   /** Durable maintenance_requests id minted mid-intake (before final confirm). */
   draft_ticket_id?: string
+  /**
+   * Plain-text timing note from a tenant inspection notice (e.g. "Timing note:
+   * ahead of October 8, 2026 inspection."). Human context only — never written
+   * as inspection_report_id / checklist membership.
+   */
+  inspection_timing_note?: string
   /** When set (length ≥ 2), SMS contained multiple distinct asks. */
   pending_issues?: PendingIntakeIssue[]
   /** Last intake step we asked about — used to stop looping the same question. */
@@ -872,6 +878,8 @@ function urgencyRecommendationReason(state: SmsIntakeState): string {
 
 export function buildIntakeDescription(state: SmsIntakeState): string {
   const parts: string[] = []
+  const timing = state.inspection_timing_note?.trim()
+  if (timing) parts.push(timing)
   const base = state.description?.trim() || state.initial_message?.trim()
   if (base) parts.push(base)
 

@@ -339,8 +339,9 @@ export function buildResidentProfileDetail(input: {
   user: ResidentProfileUserRow
   workflowData: AdminWorkflowDashboardData | null
   communications?: ResidentCommunicationItem[]
+  propertyType?: string | null
 }): ResidentProfileDetail {
-  const { user, workflowData, communications = [] } = input
+  const { user, workflowData, communications = [], propertyType = null } = input
   const standing = resolveStanding(user.status, user.balanceDue)
   const monthlyRent =
     typeof user.monthlyRent === 'number' && Number.isFinite(user.monthlyRent) && user.monthlyRent > 0
@@ -359,7 +360,7 @@ export function buildResidentProfileDetail(input: {
     name: user.fullName,
     building: user.building?.trim() || 'Address',
     buildingShort: residentPlaceLabel(user.building),
-    unitDisplay: formatPropertyUnitDisplay(user.unit),
+    unitDisplay: formatPropertyUnitDisplay(user.unit, propertyType),
     standing: standing.standing,
     standingLabel: standing.standingLabel,
     phone: formatPhone(user.phone),

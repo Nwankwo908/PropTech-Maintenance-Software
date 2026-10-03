@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal, type VendorManagementRow } from '@/components/VendorFormModal'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
@@ -10,6 +10,10 @@ import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import editIcon from '@/assets/noun_edit_469454.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { adminNavPath } from '@/lib/adminNavigation'
+import {
+  mutateSearchParams,
+  writeStringParam,
+} from '@/lib/adminListUrlState'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { vendorDetailPath } from '@/lib/vendorRoutes'
@@ -358,6 +362,7 @@ function ActivationReminderAlertIcon() {
 export function AdminVendorsDashboard() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [vendors, setVendors] = useState<VendorRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -379,9 +384,45 @@ export function AdminVendorsDashboard() {
   const [availabilityByVendor, setAvailabilityByVendor] = useState<Map<string, string>>(
     () => new Map(),
   )
-  const [searchQuery, setSearchQuery] = useState('')
-  const [tradeFilter, setTradeFilter] = useState('')
-  const [ratingSort, setRatingSort] = useState<RatingSort>('desc')
+  const searchQuery = searchParams.get('q') ?? ''
+  const tradeFilter = searchParams.get('trade') ?? ''
+  const ratingSort: RatingSort = searchParams.get('sort') === 'asc' ? 'asc' : 'desc'
+
+  const setSearchQuery = useCallback(
+    (value: string) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'q', value)
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const setTradeFilter = useCallback(
+    (value: string) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'trade', value)
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const setRatingSort = useCallback(
+    (value: RatingSort) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'sort', value, 'desc')
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(() => new Set())
   const [deleteVendorsSaving, setDeleteVendorsSaving] = useState(false)
   const [deleteVendorsError, setDeleteVendorsError] = useState<string | null>(null)

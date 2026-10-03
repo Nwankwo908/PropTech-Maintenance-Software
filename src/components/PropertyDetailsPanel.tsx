@@ -1322,7 +1322,7 @@ function HomeInspectionExpandedPanel({
       <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
         <div className="border-b border-[#e2e8f0] bg-[#f8fafc] px-4 py-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.275px] text-[#64748b]">
-            HQS / compliance letters
+            HQS / compliance & inspection notices
           </p>
         </div>
         <ul>

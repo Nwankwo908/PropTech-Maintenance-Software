@@ -21,6 +21,7 @@ export function buildPropertyResidentUnitOptions(input: {
   units: PropertyUnitOption[]
   residents: PropertyResidentOption[]
   editingResidentId: string | null
+  propertyType?: string | null
 }): { value: string; label: string }[] {
   const buildingKey = normalizeBuildingKey(input.building)
   const occupiedByUnit = new Map<string, string>()
@@ -46,11 +47,11 @@ export function buildPropertyResidentUnitOptions(input: {
     const inventoryBuilding = (unit.building ?? '').trim() || input.building
     const pickKey = customUnitPickKey(unitLabel, inventoryBuilding)
     const isCurrent = occupantId === input.editingResidentId
+    const display =
+      formatPropertyUnitDisplay(unitLabel, input.propertyType) || input.building
     options.push({
       value: pickKey,
-      label: isCurrent
-        ? `${formatPropertyUnitDisplay(unitLabel)} (current)`
-        : formatPropertyUnitDisplay(unitLabel),
+      label: isCurrent ? `${display} (current)` : display,
     })
   }
 
@@ -62,9 +63,11 @@ export function buildPropertyResidentUnitOptions(input: {
     })
     const currentKey = customUnitPickKey(resolved.unitLabel, resolved.building)
     if (currentKey && !options.some((option) => option.value === currentKey)) {
+      const display =
+        formatPropertyUnitDisplay(resolved.unitLabel, input.propertyType) || input.building
       options.push({
         value: currentKey,
-        label: `${formatPropertyUnitDisplay(resolved.unitLabel)} (current)`,
+        label: `${display} (current)`,
       })
     }
   }

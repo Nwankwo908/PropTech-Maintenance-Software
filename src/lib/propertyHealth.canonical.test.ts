@@ -117,6 +117,43 @@ describe('filterResidentsForPropertyScope', () => {
     expect(scoped.map((row) => row.id)).toEqual(['r1'])
   })
 
+  it('does not attach an empty-building resident when unit label repeats across properties', () => {
+    const portfolioUnits: PropertyHealthUnit[] = [
+      ...units,
+      {
+        id: 'u1-bay',
+        unitLabel: '1',
+        building: '3804 W Bay Avenue',
+        status: 'active',
+        propertyId: 'prop-bay',
+      },
+      {
+        id: 'u1-maple',
+        unitLabel: '1',
+        building: '14 Maple Ave',
+        status: 'active',
+        propertyId: 'prop-maple',
+      },
+    ]
+    const residents: PropertyHealthResident[] = [
+      {
+        id: 'rashae',
+        fullName: 'Rashae Hendley',
+        unit: '1',
+        building: '',
+        status: 'active',
+      },
+    ]
+
+    const scoped = filterResidentsForPropertyScope(
+      residents,
+      '3804 W Bay Avenue',
+      { id: 'prop-bay', name: '3804 W Bay Avenue' },
+      portfolioUnits,
+    )
+    expect(scoped.map((row) => row.id)).toEqual([])
+  })
+
   it('includes onboarding residents when rent-roll building label drifted from the saved property name', () => {
     const residents: PropertyHealthResident[] = [
       {

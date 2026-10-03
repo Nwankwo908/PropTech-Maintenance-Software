@@ -46,7 +46,11 @@ import {
   normalizeMediaRefs,
   resolveSmsMediaForMessages,
 } from '@/lib/smsMedia'
-import { smsMessageBelongsToWorkOrder } from '@/lib/workOrderSmsPhotos'
+import {
+  shouldSkipUnclaimedSmsMediaExtras,
+  smsMediaExtraAllowedOnWorkOrder,
+  smsMessageBelongsToWorkOrder,
+} from '@/lib/workOrderSmsPhotos'
 import {
   formatPropertyAccessPlainText,
   loadPropertyAccessCandidates,
@@ -800,6 +804,18 @@ async function loadInboundSmsPhotoAttachments(
   const fromTicket = await loadTicketPhotoPathAttachments(enrichment, residentName)
   const ticketPaths = new Set(normalizeMediaRefs(enrichment.ticket?.photo_paths))
 
+  // Curated photo_paths + a later sibling WO: trust photo_paths only. Otherwise
+  // late MMS on the shared resident thread (paint split, rent receipt, etc.)
+  // keeps rendering on the earlier ticket via the SMS time-window merge.
+  if (
+    shouldSkipUnclaimedSmsMediaExtras({
+      thisTicketPhotoPathCount: ticketPaths.size,
+      nextTicketCreatedAt: enrichment.nextTicketCreatedAt,
+    })
+  ) {
+    return fromTicket
+  }
+
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return fromTicket
 
@@ -842,11 +858,35 @@ async function loadInboundSmsPhotoAttachments(
     }
   }
 
+  const claimedByOtherTicketPhotoPaths = new Set<string>()
+  const ticketId = enrichment.maintenanceRequestId?.trim() || ''
+  if (extraRefs.length > 0 && ticketId) {
+    const { data: siblingRows } = await supabase
+      .from('maintenance_requests')
+      .select('id, photo_paths')
+      .eq('landlord_id', landlordId)
+      .neq('id', ticketId)
+      .overlaps('photo_paths', extraRefs)
+    for (const row of (siblingRows ?? []) as Record<string, unknown>[]) {
+      for (const path of normalizeMediaRefs(row.photo_paths)) {
+        claimedByOtherTicketPhotoPaths.add(path)
+      }
+    }
+  }
+
+  const allowedExtraRefs = extraRefs.filter((ref) =>
+    smsMediaExtraAllowedOnWorkOrder({
+      ref,
+      thisTicketPhotoPaths: ticketPaths,
+      claimedByOtherTicketPhotoPaths,
+    }),
+  )
+
   const extraItems: WorkflowPipelineAttachment[] = []
-  const resolvedByRef = await resolveSmsMediaForMessages(extraRefs.map((ref) => [ref]))
+  const resolvedByRef = await resolveSmsMediaForMessages(allowedExtraRefs.map((ref) => [ref]))
   let mediaIndex = fromTicket.length
-  for (let i = 0; i < extraRefs.length; i += 1) {
-    const ref = extraRefs[i]
+  for (let i = 0; i < allowedExtraRefs.length; i += 1) {
+    const ref = allowedExtraRefs[i]
     const media = resolvedByRef[i]?.[0]
     if (!media) continue
     mediaIndex += 1
@@ -1393,6 +1433,80 @@ export async function fetchWorkflowPipelineDetail(
   if (!row) return null
 
   const metadata = runMetadata[row.id] ?? {}
+
+  // Standalone tenant-notice / zero-checklist inspection_reports card —
+  // not a workflow_runs row and not linked to any work order.
+  if (
+    row.templateId === 'inspection_notice_task' ||
+    row.entityType === 'inspection_report'
+  ) {
+    const category = categoryBadge('inspection')
+    const stage = stageBadge('new_intake')
+    const lines = String(row.issueDescription ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const nextStep = lines[0] || 'Prepare for inspection'
+    const sourceLine =
+      lines.find((line) => /^source notice/i.test(line)) || lines[1] || null
+    const dateIso =
+      lines
+        .find((line) => /^inspection date:/i.test(line))
+        ?.replace(/^inspection date:\s*/i, '')
+        .trim() || null
+    return {
+      runId: row.id,
+      workOrderRef: row.inspectionReportId
+        ? formatInspectionReportRef(row.inspectionReportId)
+        : 'Inspection',
+      ticketRequestNumber: '',
+      title: row.templateName,
+      categoryLabel: category.label.toUpperCase(),
+      categoryClassName: category.className,
+      stageLabel: stage.label,
+      stageClassName: stage.className,
+      priorityLabel: null,
+      priorityClassName: null,
+      createdLine: formatCreatedLine(row.startedAt),
+      locationLine: [
+        row.propertyLabel,
+        row.unitLabel ? `Unit ${row.unitLabel}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      description: nextStep,
+      statusContext: sourceLine,
+      progressSteps: [
+        { label: 'Notice received', state: 'complete' as const },
+        { label: 'Prepare for inspection', state: 'active' as const },
+        { label: 'Inspection day', state: 'upcoming' as const },
+      ],
+      progressCaption: 'Prepare for inspection',
+      overviewFields: [
+        { label: 'Type', value: 'Tenant notice inspection' },
+        { label: 'Property', value: row.propertyLabel || '—' },
+        { label: 'Unit', value: row.unitLabel || '—' },
+        {
+          label: 'Inspection date',
+          value: formatDueLabel(dateIso),
+        },
+        { label: 'Next step', value: nextStep },
+        { label: 'Source', value: sourceLine || '—' },
+      ],
+      maintenanceDetails: [],
+      invoiceSection: null,
+      resident: null,
+      property: await buildPropertyBlock(row, metadata, null),
+      attachments: [],
+      vendorAttachments: [],
+      maintenanceRequestId: null,
+      conversationId: null,
+      vendorConversationId: null,
+      uloThread: null,
+      inspectionGroup: null,
+    }
+  }
+
   const group = workflowTemplateGroupId(row.templateId)
   const isMaintenance = group === 'maintenance'
   const isMoveOut = row.templateId === 'move_out'

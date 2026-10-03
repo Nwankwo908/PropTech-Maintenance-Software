@@ -7,6 +7,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
 import { loadVendorNameById } from "../vendors/vendorNames.ts"
+import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
 
 const OPEN_VENDOR_STATUSES = [
   "unassigned",
@@ -128,7 +129,7 @@ function buildMarkdown(items: MissingUpdateItem[]): string {
   const lead =
     items.length === 1
       ? `**${items[0]!.label}** at ${
-          [items[0]!.building, items[0]!.unitLabel ? `Unit ${items[0]!.unitLabel}` : null]
+          [items[0]!.building, formatUnitReference(items[0]!.unitLabel) || null]
             .filter(Boolean)
             .join(" · ") || "your portfolio"
         } is the open repair going quiet — ${items[0]!.whyMissing.toLowerCase()}.`
@@ -137,7 +138,7 @@ function buildMarkdown(items: MissingUpdateItem[]): string {
   const parts: string[] = [lead, "", "### Going quiet"]
 
   for (const item of items.slice(0, 8)) {
-    const place = [item.building, item.unitLabel ? `Unit ${item.unitLabel}` : null]
+    const place = [item.building, formatUnitReference(item.unitLabel) || null]
       .filter(Boolean)
       .join(" · ")
     parts.push(

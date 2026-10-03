@@ -490,6 +490,11 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/check-schedule-fsm-ttl/index.ts"
 
+[functions.check-ticket-unit-fk-mismatches]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-ticket-unit-fk-mismatches/index.ts"
+
 [functions.check-vendor-incident-protocols]
 enabled = true
 verify_jwt = false

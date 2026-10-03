@@ -46,4 +46,8 @@ describe('inboxParticipantKind', () => {
   it('keeps tenants as tenant', () => {
     expect(inboxParticipantKind({ conversationType: 'resident_intake' })).toBe('tenant')
   })
+
+  it('labels landlord_update as landlord', () => {
+    expect(inboxParticipantKind({ conversationType: 'landlord_update' })).toBe('landlord')
+  })
 })

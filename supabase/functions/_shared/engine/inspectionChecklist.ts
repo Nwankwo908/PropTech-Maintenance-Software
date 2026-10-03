@@ -1,3 +1,4 @@
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
 /**
  * Inspection checklist — task state and resident SMS intent parsing.
  */
@@ -152,11 +153,10 @@ export function parseInspectionResidentReply(body: string): InspectionResidentRe
 export function buildInspectionStartGuideSms(input: {
   residentName: string
   unitLabel?: string | null
+  propertyType?: string | null
 }): string {
   const name = input.residentName.trim() || "there"
-  const unitPhrase = input.unitLabel?.trim()
-    ? `Unit ${input.unitLabel.trim()}`
-    : "your unit"
+  const unitPhrase = formatUnitReference(input.unitLabel, input.propertyType) || "your home"
   return [
     `Thanks ${name} — let's walk through ${unitPhrase} over text.`,
     "",

@@ -8,6 +8,7 @@ import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { adminNotifyEmailsFromEnv } from "./landlordOpsNotify.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
+import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
 
 const HOUR_MS = 60 * 60 * 1000
 const STUCK_AFTER_MS = 24 * HOUR_MS
@@ -138,7 +139,7 @@ export async function loadNeedsAdminVendorDigestLines(
     const unit = typeof row.unit === "string" ? row.unit.trim() : ""
     const resident =
       (typeof row.resident_name === "string" && row.resident_name.trim()) ||
-      (unit ? `Unit ${unit}` : "")
+      (formatUnitReference(unit) || "")
 
     lines.push({
       ticketId,

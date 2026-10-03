@@ -48,6 +48,15 @@ describe('resolveOnboardingUnitLabels', () => {
     expect(resolveOnboardingUnitLabels({ unitCount: 4 })).toEqual(generateUnitLabels(4))
     expect(generateUnitLabels(4)).toEqual(['101', '102', '103', '104'])
   })
+
+  it('does not invent unit numbers for single-family properties', () => {
+    expect(
+      resolveOnboardingUnitLabels({ unitCount: 1, propertyType: 'single_family_home' }),
+    ).toEqual(['Home'])
+    expect(
+      resolveOnboardingUnitLabels({ unitCount: 1, propertyType: 'single_family' }),
+    ).toEqual(['Home'])
+  })
 })
 
 describe('collectExtractedUnitLabels', () => {

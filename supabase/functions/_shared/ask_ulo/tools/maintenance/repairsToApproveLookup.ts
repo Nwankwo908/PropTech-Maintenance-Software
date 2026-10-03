@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
+import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
 
 const OPEN_VENDOR_STATUSES = [
   "unassigned",
@@ -108,7 +109,7 @@ function buildMarkdown(items: RepairToApproveItem[], openUrgentCount: number, aw
   ]
 
   for (const item of items.slice(0, 8)) {
-    const place = [item.building, item.unitLabel ? `Unit ${item.unitLabel}` : null]
+    const place = [item.building, formatUnitReference(item.unitLabel) || null]
       .filter(Boolean)
       .join(" · ")
     parts.push(

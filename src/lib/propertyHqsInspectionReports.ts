@@ -7,6 +7,10 @@ import {
   planHqsPmComplianceTask,
   unitBuildingMatchesPropertyLabel,
 } from '@shared/maintenance/hqsPropertySurfaces'
+import {
+  planStandaloneInspectionPmComplianceTask,
+  shouldShowStandaloneInspectionActiveTask,
+} from '@shared/maintenance/standaloneInspectionTask'
 
 export type PropertyHqsInspectionReportRow = {
   id: string
@@ -234,9 +238,13 @@ export function hqsLettersToDocumentRows(
             ? 'hqs_other'
             : 'hqs_sms'
     const unitBit = letter.unitLabel ? `Unit ${letter.unitLabel} · ` : ''
+    const isTenantNotice = letter.letterType === 'tenant_notice'
     const fileName =
       letter.fileName?.trim() ||
-      `${unitBit}HQS inspection letter`.replace(/^ · /, '')
+      `${unitBit}${isTenantNotice ? 'Inspection notice' : 'HQS inspection letter'}`.replace(
+        /^ · /,
+        '',
+      )
     out.push({
       id: `hqs-doc-${letter.sourceDocumentId}`,
       fileName,
@@ -266,27 +274,63 @@ async function ensureHqsPmTaskForReport(input: {
   inspectionDate: string | null
 }): Promise<void> {
   try {
+    const standalone = shouldShowStandaloneInspectionActiveTask({
+      letterType: input.letterType,
+      emergencyItemCount: input.emergencyItemCount,
+      standardItemCount: input.standardItemCount,
+      linkedWorkOrderCount: 0,
+    })
+    const plan = standalone
+      ? planStandaloneInspectionPmComplianceTask({
+          inspectionReportId: input.reportId,
+          sourceDocumentId: input.sourceDocumentId,
+          unitLabel: input.unitLabel,
+          building: input.building,
+          letterType: input.letterType,
+          inspectionDate: input.inspectionDate,
+        })
+      : planHqsPmComplianceTask({
+          inspectionReportId: input.reportId,
+          sourceDocumentId: input.sourceDocumentId,
+          unitLabel: input.unitLabel,
+          building: input.building,
+          letterType: input.letterType,
+          isAbated: input.isAbated,
+          emergencyItemCount: input.emergencyItemCount,
+          standardItemCount: input.standardItemCount,
+          reinspectionDate: input.reinspectionDate,
+          inspectionDate: input.inspectionDate,
+        })
+    const expectedSource = plan.metadata.source
+
     const { data: existing } = await supabase
       .from('preventive_maintenance_tasks')
-      .select('id')
+      .select('id, metadata')
       .eq('landlord_id', input.landlordId)
       .contains('metadata', { inspection_report_id: input.reportId })
       .neq('status', 'cancelled')
-      .limit(1)
-    if (existing?.length) return
+      .limit(5)
 
-    const plan = planHqsPmComplianceTask({
-      inspectionReportId: input.reportId,
-      sourceDocumentId: input.sourceDocumentId,
-      unitLabel: input.unitLabel,
-      building: input.building,
-      letterType: input.letterType,
-      isAbated: input.isAbated,
-      emergencyItemCount: input.emergencyItemCount,
-      standardItemCount: input.standardItemCount,
-      reinspectionDate: input.reinspectionDate,
-      inspectionDate: input.inspectionDate,
+    const matching = (existing ?? []).filter((row) => {
+      const meta =
+        row.metadata && typeof row.metadata === 'object'
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      return String(meta.source ?? '') === expectedSource
     })
+    if (matching.length > 0) return
+
+    // Wrong-shaped leftovers (e.g. HQS plan on a tenant_notice) — cancel then insert.
+    const wrongIds = (existing ?? [])
+      .map((row) => String(row.id))
+      .filter(Boolean)
+    if (wrongIds.length > 0) {
+      await supabase
+        .from('preventive_maintenance_tasks')
+        .update({ status: 'cancelled' })
+        .in('id', wrongIds)
+    }
+
     await supabase.from('preventive_maintenance_tasks').insert({
       landlord_id: input.landlordId,
       title: plan.title,

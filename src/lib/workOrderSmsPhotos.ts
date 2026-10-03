@@ -21,3 +21,37 @@ export function smsMessageBelongsToWorkOrder(input: {
   if (Number.isFinite(nextTs) && messageTs >= nextTs - lookback) return false
   return true
 }
+
+/**
+ * Detail-panel gallery merges ticket `photo_paths` with inbound
+ * `sms_messages.media_urls` in the work-order time window. When a later
+ * request re-homes media onto its own `photo_paths` (split / remediation),
+ * those refs must not keep rendering on the earlier ticket via the SMS
+ * extras path — even though the messages still fall in the earlier window.
+ */
+export function smsMediaExtraAllowedOnWorkOrder(input: {
+  ref: string
+  thisTicketPhotoPaths: ReadonlySet<string>
+  claimedByOtherTicketPhotoPaths: ReadonlySet<string>
+}): boolean {
+  const ref = input.ref.trim()
+  if (!ref) return false
+  if (input.thisTicketPhotoPaths.has(ref)) return false
+  if (input.claimedByOtherTicketPhotoPaths.has(ref)) return false
+  return true
+}
+
+/**
+ * Once this ticket already has curated `photo_paths` and a later sibling
+ * work order exists on the same thread, trust `photo_paths` only — do not
+ * pull late unclaimed SMS media (rent receipts, a subsequent repair's
+ * MMS, etc.) into the earlier gallery.
+ */
+export function shouldSkipUnclaimedSmsMediaExtras(input: {
+  thisTicketPhotoPathCount: number
+  nextTicketCreatedAt?: string | null
+}): boolean {
+  if (input.thisTicketPhotoPathCount <= 0) return false
+  const nextTs = Date.parse(input.nextTicketCreatedAt ?? '')
+  return Number.isFinite(nextTs)
+}

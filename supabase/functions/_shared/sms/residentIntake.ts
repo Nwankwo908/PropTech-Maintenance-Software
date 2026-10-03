@@ -1405,10 +1405,23 @@ export async function processResidentMaintenanceIntake(
       .maybeSingle()
     const unitLabel =
       typeof residentRow?.unit === "string" ? residentRow.unit.trim() : ""
-    if (unitLabel) {
+    const unitId = ctx.identity.unit_id?.trim() || null
+    let propertyId: string | null = null
+    if (unitId) {
+      const { data: unitRow } = await supabase
+        .from("units")
+        .select("property_id")
+        .eq("id", unitId)
+        .maybeSingle()
+      propertyId =
+        typeof unitRow?.property_id === "string" ? unitRow.property_id.trim() : null
+    }
+    if (unitId || propertyId) {
       state = await attachPriorRelatedTicket(supabase, {
         landlordId: ctx.landlordId,
         unit: unitLabel,
+        unitId,
+        propertyId,
         intake: state,
         excludeTicketId: state.draft_ticket_id,
       })

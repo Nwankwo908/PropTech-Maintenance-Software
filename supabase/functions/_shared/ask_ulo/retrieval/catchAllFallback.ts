@@ -8,6 +8,7 @@ import type { AskUloQuestionSubject } from "../routing/detectSubject.ts"
 import type { OperationalWorkOrder } from "../tools/maintenance/searchOperationalRecords.ts"
 import { polishAskUloProse } from "../synthesis/formatAnswer.ts"
 import type { SearchWorkOrdersResult } from "../tools/maintenance/searchWorkOrders.ts"
+import { formatUnitReference } from "../../properties/unitLabelDisplay.ts"
 
 /** Subjects where a work-order list is a valid answer (not a metric substitution). */
 const CATCHALL_WO_SUBJECTS = new Set<AskUloQuestionSubject>([
@@ -43,7 +44,7 @@ function statusLabel(wo: OperationalWorkOrder): string {
 }
 
 function unitBit(wo: OperationalWorkOrder): string {
-  return wo.unitLabel?.trim() ? `Unit ${wo.unitLabel.trim()}` : "common area / property"
+  return formatUnitReference(wo.unitLabel) || "common area / property"
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   type ToolResult,
 } from "../_shared/toolResult.ts"
 import {
+import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
   searchOperationalRecords,
   type OperationalWorkOrder,
   type SearchOperationalRecordsResult,
@@ -138,7 +139,7 @@ function workOrdersToEvidence(rows: OperationalWorkOrder[]): EvidenceItem[] {
     label: w.title || w.category || w.workOrderId,
     excerpt: [
       w.propertyName,
-      w.unitLabel ? `Unit ${w.unitLabel}` : null,
+      formatUnitReference(w.unitLabel) || null,
       w.category,
       w.daysOpen > 0 ? `${w.daysOpen}d open` : null,
     ]

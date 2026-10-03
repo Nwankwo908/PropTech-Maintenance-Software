@@ -1,4 +1,8 @@
 import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
+import {
+  isSingleFamilyPropertyType,
+  SINGLE_FAMILY_UNIT_LABEL,
+} from '@shared/properties/propertyType'
 
 export type UnitCell =
   | { kind: 'assigned'; unit: string; building: string }
@@ -64,10 +68,12 @@ export type PropertyUnitsSourcePayload = {
   city: string
   state: string
   totalUnits: string
+  propertyType?: string
 }
 
 /**
  * One option per unit slot for a registered property (values use `__pick:` so they round-trip via `unitOptionKeyToCell`).
+ * Single-family properties get one dwelling with no unit number.
  */
 export function buildUnitOptionsFromPropertyPayload(
   p: PropertyUnitsSourcePayload,
@@ -76,6 +82,16 @@ export function buildUnitOptionsFromPropertyPayload(
   if (!Number.isFinite(n) || n < 1) return []
   const building = p.propertyName.trim()
   if (!building) return []
+
+  if (isSingleFamilyPropertyType(p.propertyType)) {
+    return [
+      {
+        value: customUnitPickKey(SINGLE_FAMILY_UNIT_LABEL, building),
+        label: building,
+      },
+    ]
+  }
+
   const out: { value: string; label: string }[] = []
   for (let i = 1; i <= n; i++) {
     const unit = `Unit ${i}`

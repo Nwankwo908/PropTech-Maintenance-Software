@@ -59,6 +59,26 @@ export async function ensureMaintenanceRequestWorkflow(sb, ticketId, opts = {}) 
   if (error) throw error
   if (!ticket?.id) throw new Error(`Ticket not found: ${ticketId}`)
 
+  // Fail closed: unit_id must belong to property_id when both are set.
+  if (ticket.unit_id && ticket.property_id) {
+    const { data: unitRow, error: unitErr } = await sb
+      .from('units')
+      .select('id, property_id, building, unit_label')
+      .eq('id', ticket.unit_id)
+      .maybeSingle()
+    if (unitErr) throw unitErr
+    if (!unitRow?.id) {
+      throw new Error(
+        `Ticket ${ticketId} unit_id ${ticket.unit_id} not found — refuse backfill workflow`,
+      )
+    }
+    if (unitRow.property_id && unitRow.property_id !== ticket.property_id) {
+      throw new Error(
+        `Ticket ${ticketId} unit/property disagree (unit.property_id=${unitRow.property_id}, ticket.property_id=${ticket.property_id})`,
+      )
+    }
+  }
+
   const { data: existing } = await sb
     .from('workflow_runs')
     .select('id')

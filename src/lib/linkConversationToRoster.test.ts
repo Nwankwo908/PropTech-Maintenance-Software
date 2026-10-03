@@ -54,4 +54,9 @@ describe('linkConversationToRosterByPhone', () => {
     expect(resolveUnitIdFromInventory(units, '1', '22 Pine St')).toBe('u-3')
     expect(normalizeUnitLabelForMatch('Unit #1')).toBe('1')
   })
+
+  it('fails closed when unit labels collide and building is missing', () => {
+    expect(resolveUnitIdFromInventory(units, '1')).toBeNull()
+    expect(resolveUnitIdFromInventory(units, '1', '')).toBeNull()
+  })
 })

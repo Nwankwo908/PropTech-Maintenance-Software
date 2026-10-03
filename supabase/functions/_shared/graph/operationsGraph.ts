@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { resolvePropertyId } from "../properties/ensureProperty.ts"
+import { resolveUnitIdForLandlord } from "../sms/resolveUnitId.ts"
 import {
   type GraphEventActorType,
   type GraphEventSource,
@@ -83,22 +84,19 @@ export async function resolveOperationsGraphScope(
   }
 
   if (!unitId && scope.unitLabel?.trim() && scope.landlordId) {
-    let query = supabase
-      .from("units")
-      .select("id, building")
-      .eq("landlord_id", scope.landlordId)
-      .eq("unit_label", scope.unitLabel.trim())
-
-    if (building) {
-      query = query.eq("building", building)
-    }
-
-    const { data: unit } = await query.limit(1).maybeSingle()
-    if (unit?.id) {
-      unitId = String(unit.id)
-      if (!building && unit.building != null) {
-        building = String(unit.building)
-      }
+    unitId = await resolveUnitIdForLandlord(supabase, {
+      landlordId: scope.landlordId,
+      unitLabel: scope.unitLabel,
+      building,
+      propertyId: scope.propertyId,
+    })
+    if (unitId && !building) {
+      const { data: unit } = await supabase
+        .from("units")
+        .select("building")
+        .eq("id", unitId)
+        .maybeSingle()
+      if (unit?.building != null) building = String(unit.building)
     }
   }
 

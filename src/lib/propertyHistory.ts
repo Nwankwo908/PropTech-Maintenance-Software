@@ -104,6 +104,7 @@ export type AssemblePropertyHistoryInput = {
     unit: string
     unitId: string | null
     building: string | null
+    propertyId?: string | null
     issueCategory: string | null
     description: string | null
     vendorWorkStatus: string
@@ -339,9 +340,15 @@ export function assemblePropertyHistory(input: AssemblePropertyHistoryInput): Pr
   const invoiceByTicket = new Map(input.invoices.map((invoice) => [invoice.maintenanceRequestId, invoice]))
 
   function ticketInScope(ticket: AssemblePropertyHistoryInput['tickets'][number]): boolean {
+    if (input.propertyId && ticket.propertyId && ticket.propertyId === input.propertyId) {
+      return true
+    }
     if (ticket.unitId && scopedUnitIds.has(ticket.unitId)) return true
-    if (normalizeBuildingKey(ticket.building ?? '') === buildingKey) return true
-    return scopedUnitLabels.has(normalizeUnitLabel(ticket.unit))
+    if (ticket.building?.trim() && normalizeBuildingKey(ticket.building) === buildingKey) {
+      return true
+    }
+    // Never scope by bare unit label — "1" / "2B" collide across properties.
+    return false
   }
 
   for (const ticket of input.tickets) {
@@ -418,15 +425,24 @@ export function assemblePropertyHistory(input: AssemblePropertyHistoryInput): Pr
     const ctx = findUnitContext(scoped, run.unitId, unitLabel)
     const resident = input.residents.find((row) => row.id === run.residentId)
     const residentName = resident?.fullName || ctx.residentName
-    if (run.unitId && !scopedUnitIds.has(run.unitId) && !scopedUnitLabels.has(normalizeUnitLabel(unitLabel))) {
+    if (input.propertyId && run.propertyId && run.propertyId !== input.propertyId) {
       continue
     }
-    if (
-      !run.unitId &&
-      unitLabel &&
-      !scopedUnitLabels.has(normalizeUnitLabel(unitLabel)) &&
-      !(resident && scopedUnitLabels.has(normalizeUnitLabel(resident.unit)))
-    ) {
+    if (run.unitId) {
+      if (!scopedUnitIds.has(run.unitId)) continue
+    } else if (input.propertyId && run.propertyId && run.propertyId === input.propertyId) {
+      // property_id is enough when unit_id is missing
+    } else if (unitLabel) {
+      // Label-only rent rows: require a unique unit label inside this property scope.
+      const labelMatches = scopedUnits.filter(
+        (unit) => normalizeUnitLabel(unit.unitLabel) === normalizeUnitLabel(unitLabel),
+      )
+      const residentLabelOk =
+        resident != null &&
+        scopedUnitLabels.has(normalizeUnitLabel(resident.unit)) &&
+        normalizeBuildingKey(resident.building ?? '') === buildingKey
+      if (labelMatches.length !== 1 && !residentLabelOk) continue
+    } else if (!(resident && normalizeBuildingKey(resident.building ?? '') === buildingKey)) {
       continue
     }
     if (!unitMatchesFilter(ctx.unitLabel, input.unitFilter)) continue
@@ -533,7 +549,7 @@ export async function fetchPropertyHistory(params: {
     supabase
       .from('maintenance_request_enriched')
       .select(
-        'id, created_at, unit, unit_id, building, issue_category, description, vendor_work_status, assigned_vendor_id',
+        'id, created_at, unit, unit_id, building, property_id, issue_category, description, vendor_work_status, assigned_vendor_id',
       )
       .eq('landlord_id', landlordId)
       .order('created_at', { ascending: false })
@@ -541,7 +557,7 @@ export async function fetchPropertyHistory(params: {
     supabase
       .from('maintenance_requests')
       .select(
-        'id, created_at, assigned_at, completed_at, photo_paths, completion_photo_paths, spend_status, vendor_work_status, assigned_vendor_id, issue_category, description, unit',
+        'id, created_at, assigned_at, completed_at, photo_paths, completion_photo_paths, spend_status, vendor_work_status, assigned_vendor_id, issue_category, description, unit, unit_id, property_id',
       )
       .eq('landlord_id', landlordId)
       .order('created_at', { ascending: false })
@@ -582,7 +598,11 @@ export async function fetchPropertyHistory(params: {
     }))
     .filter((resident) => {
       if (normalizeBuildingKey(resident.building ?? '') === buildingKey) return true
-      return scopedUnitLabels.has(normalizeUnitLabel(resident.unit))
+      // Label-only residents: only when the label is unique inside this property scope.
+      const label = normalizeUnitLabel(resident.unit)
+      if (!label || !scopedUnitLabels.has(label)) return false
+      const matches = units.filter((unit) => normalizeUnitLabel(unit.unitLabel) === label)
+      return matches.length === 1 && !resident.building?.trim()
     })
 
   const extraById = new Map<string, Record<string, unknown>>()
@@ -607,6 +627,7 @@ export async function fetchPropertyHistory(params: {
         unit: asString(merged.unit),
         unitId: asString(merged.unit_id) || null,
         building: asString(merged.building) || null,
+        propertyId: asString(merged.property_id) || null,
         issueCategory: asString(merged.issue_category) || null,
         description: asString(merged.description) || null,
         vendorWorkStatus: asString(merged.vendor_work_status),
@@ -617,9 +638,14 @@ export async function fetchPropertyHistory(params: {
       }
     })
     .filter((ticket) => {
+      if (params.propertyId && ticket.propertyId && ticket.propertyId === params.propertyId) {
+        return true
+      }
       if (ticket.unitId && scopedUnitIds.has(ticket.unitId)) return true
-      if (normalizeBuildingKey(ticket.building ?? '') === buildingKey) return true
-      return scopedUnitLabels.has(normalizeUnitLabel(ticket.unit))
+      if (ticket.building?.trim() && normalizeBuildingKey(ticket.building) === buildingKey) {
+        return true
+      }
+      return false
     })
 
   const ticketIds = tickets.map((ticket) => ticket.id)

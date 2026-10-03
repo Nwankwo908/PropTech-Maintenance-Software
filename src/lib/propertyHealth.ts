@@ -825,7 +825,9 @@ function isTicketOpen(ticket: PropertyHealthTicket): boolean {
 
 type TicketBuildingContext = {
   unitIdBuildingMap: Map<string, string>
-  uniqueUnitLabelBuildingMap: Map<string, string>
+  unitIdPropertyMap: Map<string, string>
+  propertyIdBuildingMap: Map<string, string>
+  propertyIdUnitBuildings: Map<string, Set<string>>
   knownBuildingNames: string[]
 }
 
@@ -881,33 +883,38 @@ function parseBuildingPrefixFromUnit(
 
 function buildTicketBuildingContext(units: PropertyHealthUnit[]): TicketBuildingContext {
   const unitIdBuildingMap = new Map<string, string>()
-  const labelToBuildings = new Map<string, Set<string>>()
+  const unitIdPropertyMap = new Map<string, string>()
+  const propertyIdBuildingMap = new Map<string, string>()
+  const propertyIdUnitBuildings = new Map<string, Set<string>>()
   const knownBuildingNamesSet = new Set<string>()
 
   for (const unit of units) {
+    const buildingKey = normalizeBuildingKey(unit.building)
     if (unit.building?.trim()) {
-      knownBuildingNamesSet.add(normalizeBuildingKey(unit.building))
+      knownBuildingNamesSet.add(buildingKey)
     }
     if (unit.id) {
-      unitIdBuildingMap.set(unit.id, normalizeBuildingKey(unit.building))
+      unitIdBuildingMap.set(unit.id, buildingKey)
+      if (unit.propertyId?.trim()) {
+        unitIdPropertyMap.set(unit.id, unit.propertyId.trim())
+      }
     }
-    const label = normalizeUnitLabel(unit.unitLabel)
-    if (!label) continue
-    const buildings = labelToBuildings.get(label) ?? new Set<string>()
-    buildings.add(normalizeBuildingKey(unit.building))
-    labelToBuildings.set(label, buildings)
-  }
-
-  const uniqueUnitLabelBuildingMap = new Map<string, string>()
-  for (const [label, buildings] of labelToBuildings) {
-    if (buildings.size === 1) {
-      uniqueUnitLabelBuildingMap.set(label, [...buildings][0]!)
+    if (unit.propertyId?.trim()) {
+      const propertyId = unit.propertyId.trim()
+      if (!propertyIdBuildingMap.has(propertyId)) {
+        propertyIdBuildingMap.set(propertyId, buildingKey)
+      }
+      const buildings = propertyIdUnitBuildings.get(propertyId) ?? new Set<string>()
+      buildings.add(buildingKey)
+      propertyIdUnitBuildings.set(propertyId, buildings)
     }
   }
 
   return {
     unitIdBuildingMap,
-    uniqueUnitLabelBuildingMap,
+    unitIdPropertyMap,
+    propertyIdBuildingMap,
+    propertyIdUnitBuildings,
     knownBuildingNames: [...knownBuildingNamesSet],
   }
 }
@@ -917,6 +924,10 @@ function ticketBuilding(
   ctx: TicketBuildingContext,
   emailBuildingMap?: Map<string, string>,
 ): string {
+  if (ticket.propertyId?.trim()) {
+    const fromProperty = ctx.propertyIdBuildingMap.get(ticket.propertyId.trim())
+    if (fromProperty) return fromProperty
+  }
   if (ticket.building?.trim()) {
     return resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames)
   }
@@ -930,8 +941,7 @@ function ticketBuilding(
     const fromUnitId = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
     if (fromUnitId) return fromUnitId
   }
-  const fromLabel = ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(ticket.unit))
-  if (fromLabel) return fromLabel
+  // Never attribute by bare unit label ("1" repeats across the portfolio).
   // Single-property portfolios: SMS tickets often lack building/unit_id — still count them.
   if (ctx.knownBuildingNames.length === 1) {
     return ctx.knownBuildingNames[0]!
@@ -939,7 +949,20 @@ function ticketBuilding(
   return 'Portfolio'
 }
 
-/** Scope maintenance tickets to one building (uses unit_id when unit labels repeat across properties). */
+function propertyIdMatchesBuilding(
+  propertyId: string,
+  buildingKey: string,
+  building: string,
+  ctx: TicketBuildingContext,
+): boolean {
+  const buildings = ctx.propertyIdUnitBuildings.get(propertyId)
+  if (buildings?.has(buildingKey)) return true
+  const mapped = ctx.propertyIdBuildingMap.get(propertyId)
+  if (!mapped) return false
+  return mapped === buildingKey || buildingsLikelySamePlace(mapped, building)
+}
+
+/** Scope maintenance tickets to one building (property_id / unit_id first — never bare unit labels). */
 export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
   tickets: T[],
   building: string,
@@ -951,6 +974,19 @@ export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
   const emailBuildingMap = buildResidentEmailBuildingMap(residents)
 
   return tickets.filter((ticket) => {
+    if (ticket.propertyId?.trim()) {
+      if (propertyIdMatchesBuilding(ticket.propertyId.trim(), key, building, ctx)) {
+        // Explicit building on the ticket still wins when it names a different address.
+        if (
+          ticket.building?.trim() &&
+          !buildingsLikelySamePlace(ticket.building, building) &&
+          resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames) !== key
+        ) {
+          return false
+        }
+        return true
+      }
+    }
     // Explicit building wins — never override with a resident email on another address.
     if (ticket.building?.trim()) {
       const resolved = resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames)
@@ -966,7 +1002,11 @@ export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
     if (ticketEmail && emailBuildingMap.get(ticketEmail) === key) {
       return true
     }
-    return ticketBuilding(ticket, ctx, emailBuildingMap) === key
+    // Fail closed for multi-property portfolios — bare unit labels are not scope keys.
+    if (ctx.knownBuildingNames.length === 1 && ctx.knownBuildingNames[0] === key) {
+      return true
+    }
+    return false
   })
 }
 
@@ -1011,7 +1051,14 @@ export function filterResidentsForPropertyScope(
     if (matchingUnits.length === 0) return false
 
     const residentBuilding = resident.building?.trim()
-    if (!residentBuilding) return true
+    if (!residentBuilding) {
+      // Empty building text: only attach when this unit label is unique across the
+      // whole portfolio. Labels like "1" repeat and must not cross properties.
+      const portfolioLabelCount = units.filter(
+        (unit) => normalizeUnitLabel(unit.unitLabel) === unitKey,
+      ).length
+      return portfolioLabelCount === 1 && matchingUnits.length === 1
+    }
 
     const residentBuildingKey = normalizeBuildingKey(residentBuilding)
     if (buildingMatchesScopeAliases(residentBuilding, aliases)) return true
@@ -1114,7 +1161,8 @@ function filterInspectionsForScope(
   })
 }
 
-function filterTicketsForScope(
+/** Scope tickets to one property/building (unit_id, building text, then property_id). */
+export function filterTicketsForScope(
   tickets: PropertyHealthTicket[],
   building: string,
   units: PropertyHealthUnit[],
@@ -1177,11 +1225,12 @@ function filterFeedbackForScope(
   const aliases = buildingScopeAliasKeys(building, property, units)
   return feedback.filter((f) => {
     if (f.building?.trim()) return aliases.has(normalizeBuildingKey(f.building))
-    if (f.unit) {
-      const mapped = ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(f.unit))
-      return mapped != null && aliases.has(mapped)
+    // Bare unit labels are not property keys — only attribute unlabeled feedback in
+    // single-building portfolios.
+    if (ctx.knownBuildingNames.length === 1) {
+      return aliases.has(ctx.knownBuildingNames[0]!)
     }
-    return aliases.has('Portfolio')
+    return false
   })
 }
 

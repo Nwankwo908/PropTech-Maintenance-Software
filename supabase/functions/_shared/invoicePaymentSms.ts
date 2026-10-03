@@ -15,6 +15,7 @@ import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import { logOutboundNoLandlordMain } from "./sms/logOutboundNoLandlordMain.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
 import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
 import {
   landlordRecipients,
@@ -34,10 +35,12 @@ export function buildLandlordInvoicePaymentSms(input: {
   vendorName: string
   totalCost: number
   unit: string
+  propertyType?: string | null
 }): string {
   const dashboard = uloAppUrl.admin("analytics")
+  const unitRef = formatUnitReference(input.unit, input.propertyType)
   return [
-    `Invoice ready for ${input.workOrderRef}${input.unit ? ` (Unit ${input.unit})` : ""}.`,
+    `Invoice ready for ${input.workOrderRef}${unitRef ? ` (${unitRef})` : ""}.`,
     `${input.vendorName} · ${money(input.totalCost)}`,
     "",
     "How would you like to pay?",

@@ -578,7 +578,10 @@ export async function importMockExtraction(
   const financialRecords = (review.financialRecords ?? []).filter((row) => row.selected)
   const financialImport = await importExtractedFinancialRecords(financialRecords, {
     landlordId,
-    properties: persistedProperties.map((property) => ({ name: property.name })),
+    properties: persistedProperties.map((property) => ({
+      name: property.name,
+      propertyType: property.propertyType ?? null,
+    })),
     units: importUnits,
     residents: importResidents,
     vendors: importVendors.map((vendor) => ({

@@ -93,7 +93,8 @@ export async function findUnitRow(
     )
     if (sameBuilding.length === 1) return sameBuilding[0]!
   }
-  return matches[0] ?? null
+  // Fail closed when the unit label is ambiguous across properties.
+  return null
 }
 
 export async function ensureUnitRow(

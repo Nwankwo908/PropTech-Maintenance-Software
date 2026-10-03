@@ -1,7 +1,11 @@
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 
-/** When a lease has no readable unit number, assign unit 1. */
+/** When a multifamily lease has no readable unit number, assign unit 1. */
 export const DEFAULT_LEASE_UNIT = '1'
+
+/** No invented unit for single-family leases without a unit field. */
+export const SINGLE_FAMILY_LEASE_UNIT_DEFAULT = ''
 
 const ILLEGIBLE_UNIT_RE =
   /^(n ?a|na|none|null|nil|unknown|unk|tbd|tba|illegible|unreadable|undecipherable|not (visible|legible|readable|listed|provided|specified|available)|see (lease|doc|document|above|below)|unable to (read|determine|tell)|cannot (read|determine)|blank|missing|ocr fail(ure)?|unintelligible)$/i
@@ -22,12 +26,24 @@ export function usableLeaseUnit(unit: string | null | undefined): string {
   return isIllegibleLeaseUnit(trimmed) ? '' : trimmed
 }
 
-export function leaseUnitOrDefault(unit: string | null | undefined): string {
-  return usableLeaseUnit(unit) || DEFAULT_LEASE_UNIT
+function defaultLeaseUnitForPropertyType(propertyType?: string | null): string {
+  return isSingleFamilyPropertyType(propertyType)
+    ? SINGLE_FAMILY_LEASE_UNIT_DEFAULT
+    : DEFAULT_LEASE_UNIT
 }
 
-/** One shared unit for people on the same lease/property, or unit 1 when none are readable. */
-export function sharedUnitForCoTenants(units: Array<string | null | undefined>): string | null {
+export function leaseUnitOrDefault(
+  unit: string | null | undefined,
+  propertyType?: string | null,
+): string {
+  return usableLeaseUnit(unit) || defaultLeaseUnitForPropertyType(propertyType)
+}
+
+/** One shared unit for people on the same lease/property, or unit 1 when none are readable (multifamily only). */
+export function sharedUnitForCoTenants(
+  units: Array<string | null | undefined>,
+  propertyType?: string | null,
+): string | null {
   const labels = units.map((unit) => (unit ?? '').trim())
   const unique = new Map<string, string>()
   for (const unit of labels) {
@@ -37,7 +53,10 @@ export function sharedUnitForCoTenants(units: Array<string | null | undefined>):
     unique.set(key, unit)
   }
   if (unique.size === 1) return [...unique.values()][0] ?? null
-  if (unique.size === 0 && labels.length >= 2) return DEFAULT_LEASE_UNIT
+  if (unique.size === 0 && labels.length >= 2) {
+    const fallback = defaultLeaseUnitForPropertyType(propertyType)
+    return fallback || null
+  }
   return null
 }
 
@@ -58,7 +77,7 @@ export function assignSharedUnitToLeaseCoTenants<
     needsReview?: boolean
     confidence?: number
   },
->(rows: T[]): T[] {
+>(rows: T[], propertyType?: string | null): T[] {
   const groups = new Map<string, number[]>()
   rows.forEach((row, index) => {
     const source = leaseSourceKey(row.sourceDocumentName)
@@ -73,16 +92,15 @@ export function assignSharedUnitToLeaseCoTenants<
   const next = [...rows]
   for (const indexes of groups.values()) {
     if (indexes.length < 2) continue
-    const shared = sharedUnitForCoTenants(indexes.map((index) => next[index]?.unit))
+    const shared = sharedUnitForCoTenants(
+      indexes.map((index) => next[index]?.unit),
+      propertyType,
+    )
     if (!shared) continue
     for (const index of indexes) {
       const row = next[index]
       if (!row || !isIllegibleLeaseUnit(row.unit)) continue
-      next[index] = {
-        ...row,
-        unit: shared,
-        needsReview: Boolean(row.needsReview && (row.confidence ?? 100) < 75),
-      }
+      next[index] = { ...row, unit: shared }
     }
   }
   return next

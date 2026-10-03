@@ -1,0 +1,61 @@
+---
+description: Tenant-forwarded inspection schedule notices (distinct from landlord HQS fail letters)
+globs: shared/maintenance/tenantInspectionNotice.ts,shared/maintenance/standaloneInspectionTask.ts,supabase/functions/_shared/sms/tenantInspectionNoticeIntake.ts,supabase/functions/_shared/sms/inboundInterpretation*.ts,src/lib/adminWorkflows.ts,src/lib/adminWorkflowKanban.ts,src/lib/propertyHqsInspectionReports.ts
+alwaysApply: false
+---
+
+# Tenant inspection notices
+
+When a resident forwards or reports an upcoming housing inspection (HABC annual schedule, date change, etc.), treat it as **`inspection_notice`** — not `maintenance_new`.
+
+## Model
+
+| Piece | Value |
+|---|---|
+| `inspection_reports.letter_type` | `tenant_notice` |
+| Deficiencies / checklist WOs | **none** — notice stands alone |
+| Source screenshot | `inspection_source_documents` → `source_document_id` |
+| Related repairs | **Separate** maintenance tickets; at most a plain-text timing note (`Timing note: ahead of 10/8 HABC inspection.`) — **no** `inspection_report_id` |
+| PM Compliance | `preventive_maintenance_tasks` via `planStandaloneInspectionPmComplianceTask` (due on inspection date) |
+
+## Flow
+
+1. Classify `inspection_notice` before repair keywords swallow the thread.
+2. `ensureTenantInspectionNoticeReport` creates/reuses an open notice row for the unit + date (source doc when media is present) and ensures a PM Compliance row.
+3. Repairs in the same message continue as **standalone** work orders. Do not attach them as checklist items under the inspection.
+
+## Distinct from landlord HQS letters
+
+| | Landlord HQS letter | Tenant notice |
+|---|---|---|
+| Who | Landlord MMS | Resident SMS |
+| Confirm | YES before create | Create on notice |
+| Checklist | Fail items → `inspection_report_id` WOs (N-of-M when **>1**) | No linked WOs |
+| `letter_type` | `standard_fail` / `hap_abatement` | `tenant_notice` |
+| Active Tasks | Existing grouped visit card only | Standalone card (`inspection_notice_task`) |
+
+## Active Tasks — standalone card (zero-checklist only)
+
+Standalone Active Tasks cards exist because **tenant notices have no checklist** to anchor an N-of-M visit card — not because of which channel submitted them. Same treatment for manual admin entry (or any path) when itemized fail counts are zero.
+
+| Record | Active Tasks |
+|---|---|
+| `tenant_notice` (0 itemized fails) | Standalone card: “[Letter type] inspection — [date]”, next step **Prepare for inspection** |
+| Unknown / manual with `emergency_item_count + standard_item_count === 0` | Same standalone card |
+| `standard_fail` / `hap_abatement` (HQS) | **No** standalone card — existing N-of-M visit card only (avoid duplicate) |
+
+Helpers: `shouldShowStandaloneInspectionActiveTask` / `loadStandaloneInspectionTaskRows`. Synthetic row id `inspection-report:{uuid}`.
+
+Creating or viewing the inspection task must **never** auto-link, gate, or absorb work orders.
+
+## Do not
+
+- Route the notice into an open pest/repair ticket
+- Put the HABC screenshot on a repair WO’s `photo_paths` — it belongs on the inspection source document
+- Set `inspection_report_id` / shared due_at / visit-card membership from a tenant notice onto unrelated repairs
+- Add a second Active Tasks card for HQS letters that already have the N-of-M visit group
+- Invent a parallel inspection or compliance product — reuse `inspection_reports` + `preventive_maintenance_tasks`
+
+## Future (architecture)
+
+Intent classification is still an expanding set of special-case rules (water-outage vocab, multi-issue split, recurring false-positives, inspection notices absorbed into repairs). Schedule a dedicated review of the classification architecture itself rather than another one-off per symptom.

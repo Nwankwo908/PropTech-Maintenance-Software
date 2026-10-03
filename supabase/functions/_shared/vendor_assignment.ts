@@ -631,36 +631,31 @@ export async function loadJobStateForTicket(
 
   const unitLabel = typeof ticket?.unit === "string" ? ticket.unit.trim() : ""
   if (unitLabel && landlordId) {
+    // Fail closed: repeating labels like "1" across properties must not
+    // pick matches[0]. Only persist when exactly one inventory unit matches.
     const { data: labeled } = await supabase
       .from("units")
       .select("id, property_id")
       .eq("landlord_id", landlordId)
       .eq("unit_label", unitLabel)
       .limit(50)
-    const labeledLocations = []
-    for (const row of labeled ?? []) {
+    const candidates = (labeled ?? []).filter((row) => {
       const uid = typeof row.id === "string" ? row.id.trim() : ""
       const pid = typeof row.property_id === "string" ? row.property_id.trim() : ""
-      if (!uid || !pid) continue
+      return Boolean(uid && pid)
+    })
+    if (candidates.length === 1) {
+      const row = candidates[0]!
+      const uid = String(row.id).trim()
+      const pid = String(row.property_id).trim()
       const fromProperty = await locationFromPropertyId(pid)
       if (fromProperty) {
-        labeledLocations.push({
-          state: fromProperty.state,
+        await persistLocation({
           propertyId: fromProperty.propertyId,
           unitId: uid,
         })
+        return fromProperty.state
       }
-    }
-    const labeledStates = new Set(labeledLocations.map((row) => row.state))
-    if (labeledStates.size === 1 && labeledLocations[0]) {
-      const uniqueUnits = new Set(labeledLocations.map((row) => row.unitId))
-      const uniqueProperties = new Set(labeledLocations.map((row) => row.propertyId))
-      await persistLocation({
-        propertyId:
-          uniqueProperties.size === 1 ? labeledLocations[0].propertyId : null,
-        unitId: uniqueUnits.size === 1 ? labeledLocations[0].unitId : null,
-      })
-      return labeledLocations[0].state
     }
   }
 
