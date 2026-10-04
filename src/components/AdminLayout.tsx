@@ -179,7 +179,7 @@ function AdminTopBar() {
   }
 
   return (
-    <header className="sticky top-0 z-10 hidden h-[68px] shrink-0 items-center border-b border-[#e5e7eb] bg-white px-8 lg:flex">
+    <header className="sticky top-0 z-40 hidden h-[68px] shrink-0 items-center border-b border-[#e5e7eb] bg-white px-8 lg:flex">
       <div className="flex w-full items-center gap-4">
         <AdminUniversalSearch />
         <button

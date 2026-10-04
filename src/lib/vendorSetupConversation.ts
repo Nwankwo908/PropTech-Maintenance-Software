@@ -539,6 +539,7 @@ export function buildVendorSetupMonitoringDetail(
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join('') || 'V',
     residentId: null,
+    vendorId: null,
     transcript,
     readOnlyNote: vendorSetupSmsReadOnlyNote(),
     vendorOutreachChannels: {

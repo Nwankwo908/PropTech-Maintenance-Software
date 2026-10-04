@@ -65,6 +65,8 @@ export type ConversationMonitoringDetail = {
   tenantInitials: string
   /** When set, the rail title (resident name) links to this tenant profile. */
   residentId: string | null
+  /** When set and the rail title is the vendor name, links to this vendor profile. */
+  vendorId: string | null
   transcript: MonitoringTranscriptItem[]
   readOnlyNote: string
   canTakeOver: boolean
@@ -198,6 +200,7 @@ type ConversationContext = {
   status: string
   residentId: string
   residentName: string
+  vendorId: string
   vendorName: string
   building: string
   unitLabel: string
@@ -718,7 +721,9 @@ export function buildAdminMonitoringSummary(input: {
     id: 'test',
     conversationType: input.conversationType ?? 'resident_intake',
     status: input.status ?? 'open',
+    residentId: '',
     residentName: input.residentName ?? '',
+    vendorId: '',
     vendorName: input.vendorName ?? '',
     building: input.building ?? '',
     unitLabel: input.unitLabel ?? '',
@@ -1059,6 +1064,7 @@ function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoring
     !isVendorThread && residentName && heading.title === residentName && ctx.residentId
       ? ctx.residentId
       : null
+  const profileVendorId = ctx.vendorId.trim() || null
 
   return {
     conversationId: ctx.id,
@@ -1070,6 +1076,7 @@ function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoring
     tenantName: ctx.residentName || ctx.vendorName || 'Participant',
     tenantInitials: monitoringInitials(ctx.residentName || ctx.vendorName || '?'),
     residentId: profileResidentId,
+    vendorId: profileVendorId,
     transcript: buildTranscript(ctx),
     readOnlyNote: ctx.pendingEstimateDecision
       ? 'Approve or decline this estimate here, or reply APPROVE / DECLINE by text on the ops notify thread.'
@@ -1225,6 +1232,7 @@ async function loadConversationContext(
     status: asString(row.status) || 'open',
     residentId,
     residentName: asString(resident?.full_name),
+    vendorId,
     vendorName: asString(vendor?.name),
     building: resolveBuilding({
       unitBuilding: asString(unit?.building),
@@ -1592,6 +1600,7 @@ function buildSyntheticMoveOutThread(input: MoveOutUloThreadInput): Conversation
     tenantName: tenant,
     tenantInitials: monitoringInitials(tenant),
     residentId: input.residentId?.trim() || null,
+    vendorId: null,
     transcript,
     readOnlyNote: 'Read-only · Coordination SMS is automated on this thread until a live inbox conversation is linked.',
     canTakeOver: false,
@@ -1697,6 +1706,7 @@ function buildSyntheticMoveInThread(input: MoveInUloThreadInput): ConversationMo
     tenantName: input.residentName,
     tenantInitials: monitoringInitials(input.residentName),
     residentId: input.residentId?.trim() || null,
+    vendorId: null,
     transcript,
     readOnlyNote:
       'Read-only · Ulo sends coordination SMS on schedule; resident replies are brief confirmations only.',
@@ -1896,6 +1906,7 @@ function buildSyntheticInspectionThread(input: InspectionUloThreadInput): Conver
     tenantName: input.residentName,
     tenantInitials: monitoringInitials(input.residentName),
     residentId: input.residentId?.trim() || null,
+    vendorId: null,
     transcript,
     readOnlyNote:
       'Read-only · Ulo runs inspections as guided SMS conversations, not static PDFs or portal forms.',
@@ -1911,6 +1922,7 @@ function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): Conver
     status: 'in_progress',
     residentId,
     residentName: input.residentName,
+    vendorId: '',
     vendorName: input.vendorName || '',
     building: input.propertyLabel,
     unitLabel: input.unitLabel,
@@ -1947,6 +1959,7 @@ function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): Conver
     tenantName: input.residentName || 'Resident',
     tenantInitials: monitoringInitials(input.residentName || 'Resident'),
     residentId: profileResidentId,
+    vendorId: null,
     transcript,
     readOnlyNote: 'Read-only · Ulo handles resident SMS automatically on every maintenance work order.',
     canTakeOver: false,
@@ -1986,6 +1999,7 @@ async function buildSyntheticWorkOrderThreadWithEvents(
     status: 'in_progress',
     residentId: input.residentId?.trim() || '',
     residentName: input.residentName,
+    vendorId: '',
     vendorName: input.vendorName || '',
     building: input.propertyLabel,
     unitLabel: input.unitLabel,

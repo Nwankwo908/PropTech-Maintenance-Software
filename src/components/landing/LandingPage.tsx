@@ -33,7 +33,7 @@ import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
 import { useLandingSmoothScroll } from '@/components/landing/useLandingSmoothScroll'
 import { bindHideOverlappingLogoColumnRules } from '@/components/landing/hideOverlappingLogoColumnRule'
 import { LANDING_DOCUMENT_DESCRIPTION, LANDING_DOCUMENT_TITLE, useDocumentMeta } from '@/lib/documentMeta'
-import howItWorksIpad from '@/assets/iPad Pro (portrait).png'
+import propertyDashboardShot from '@/assets/Dashboard_2.svg'
 
 const TEAL_GRADIENT =
   'linear-gradient(169deg, rgb(34, 154, 127) 0%, rgb(14, 92, 68) 100%)'
@@ -890,7 +890,7 @@ export function LandingPage() {
           <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
           <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
           <div className={`landing-features-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} overflow-visible pt-[calc(4rem*1.3)]`}>
-            <div className="landing-3840-2160-features-scale flex flex-col">
+            <div className="landing-3840-2160-features-scale flex flex-col overflow-visible">
               <div className="flex flex-col items-start text-left">
                 <p className="sa-pill inline-flex items-center gap-2 rounded-full bg-transparent px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-[#611879] landing-4096-2304:text-[0.975rem] landing-5120-2880:text-[0.975rem] landing-4096-2304:gap-[0.65rem] landing-5120-2880:gap-[0.65rem] landing-4096-2304:px-5 landing-5120-2880:px-5 landing-4096-2304:py-2.5 landing-5120-2880:py-2.5 landing-7680-4320:text-[1.875rem] landing-7680-4320:gap-5 landing-7680-4320:px-10 landing-7680-4320:py-5">
                   <IconFocusFeature className="size-4 shrink-0 text-[#81228A] landing-4096-2304:size-[1.3rem] landing-5120-2880:size-[1.3rem] landing-7680-4320:size-10" />
@@ -935,17 +935,25 @@ export function LandingPage() {
               </div>
 
               <div
-                className="landing-property-dashboard-shot mt-10 overflow-hidden"
-                style={{ aspectRatio: '6163 / 4115' }}
+                className="landing-property-dashboard-shot relative mt-10 overflow-hidden"
+                style={{ aspectRatio: '6583 / 5576' }}
               >
                 <img
-                  src={howItWorksIpad}
-                  alt="Ulo property operations dashboard on iPad"
-                  width={1233}
-                  height={823}
-                  className="block h-full w-full object-cover object-top"
+                  src={propertyDashboardShot}
+                  alt="Ulo property operations dashboard"
+                  width={1317}
+                  height={1115}
+                  className="block h-full w-full object-cover object-top [mask-image:linear-gradient(to_bottom,#000_40%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_bottom,#000_40%,transparent_100%)]"
                   loading="lazy"
                   decoding="async"
+                />
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[60%]"
+                  style={{
+                    background:
+                      'linear-gradient(to bottom, rgba(240,253,244,0) 0%, rgba(240,253,244,0.7) 50%, #f0fdf4 85%, #f0fdf4 100%)',
+                  }}
                 />
               </div>
             </div>

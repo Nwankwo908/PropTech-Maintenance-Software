@@ -29,6 +29,7 @@ import {
   takeOverConversation,
 } from '@/api/adminConversationSms'
 import { residentDetailPath } from '@/lib/propertyRoutes'
+import { vendorDetailPath } from '@/lib/vendorRoutes'
 
 function CloseIcon() {
   return (
@@ -666,6 +667,14 @@ export function ConversationMonitoringBody({
               {detail.residentId ? (
                 <Link
                   to={residentDetailPath(detail.residentId)}
+                  state={{ from: `${location.pathname}${location.search}` }}
+                  className="sa-link text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                >
+                  {detail.title}
+                </Link>
+              ) : detail.vendorId && detail.title === detail.tenantName ? (
+                <Link
+                  to={vendorDetailPath(detail.vendorId)}
                   state={{ from: `${location.pathname}${location.search}` }}
                   className="sa-link text-[#186179] hover:text-[#0f4d5f] hover:underline"
                 >

@@ -21,6 +21,7 @@ function baseDetail(
     tenantName: 'Participant',
     tenantInitials: '?',
     residentId: null,
+    vendorId: null,
     transcript: [],
     readOnlyNote: 'Read-only',
     canTakeOver: false,

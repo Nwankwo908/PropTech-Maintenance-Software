@@ -1497,8 +1497,6 @@
   .landing-property-dashboard-shot {
     width: min(64rem, calc(100vw - 6rem)) !important;
     max-width: min(64rem, calc(100vw - 6rem)) !important;
-    -webkit-mask-image: linear-gradient(to bottom, #000 52%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 52%, transparent 100%);
   }
 
   /* 1024×600 / 1024×768 / 1280×720 / 1280×800 / 1280×832 (and nearby) — keep dashboard copy + shot to the right of the logo-column rule. */
