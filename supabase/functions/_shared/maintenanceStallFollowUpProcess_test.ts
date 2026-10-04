@@ -124,6 +124,28 @@ function mockSupabase(state: {
 
   return {
     from,
+    rpc: async (fn: string) => {
+      if (fn === "ulo_paused_required_cron_jobs") {
+        // Simulate rematch paused so stall-escalate remains independent.
+        return {
+          data: [
+            {
+              jobname: "ulo-vendor-delayed-auto-reassign",
+              edge_function: "vendor-delayed-auto-reassign",
+              schedule: "25 * * * *",
+              description: "paused for test",
+              pause_reason: "test",
+              pause_owner: "test",
+              resume_by: "2026-10-05T00:00:00+00:00",
+              paused_at: "2026-09-28T00:00:00+00:00",
+              resume_overdue: false,
+            },
+          ],
+          error: null,
+        }
+      }
+      return { data: [], error: null }
+    },
   } as unknown as import("https://esm.sh/@supabase/supabase-js@2.49.1").SupabaseClient
 }
 

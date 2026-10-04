@@ -15,6 +15,10 @@ import {
 } from "./inbound_db.ts"
 import { UNKNOWN_CONTACT_INTAKE_KEY } from "./unknownContactIntake.ts"
 import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
+import {
+  landlordAskRefLine,
+  landlordYesNoPaidReplyHint,
+} from "./landlordAskSms.ts"
 
 export type AwaitingInvoicePaidConfirmation = {
   invoiceId: string
@@ -311,6 +315,7 @@ export function buildInvoiceReadyPaidConfirmationSms(input: {
   amount?: number | null
   jobHeadline?: string | null
   detailsUrl: string
+  workOrderRef?: string | null
 }): string {
   const first = (input.landlordFirstName ?? "").trim() || "there"
   const unitBit = formatUnitReference(input.unit, input.propertyType) ||
@@ -320,19 +325,24 @@ export function buildInvoiceReadyPaidConfirmationSms(input: {
     titleCaseCompanyName(input.vendorName) || "Vendor"
   const amount = formatInvoiceAmount(input.amount)
   const job = (input.jobHeadline ?? "").trim() || "This repair"
+  const ref = landlordAskRefLine(input.workOrderRef)
 
-  return [
+  const lines = [
     `Hi ${first} — invoice ready`,
     "",
     `${unitBit} · ${vendor} · ${amount}`,
     `Job: ${job}`,
     "",
     "Have you paid this invoice?",
-    "Reply YES if paid, or NO if not yet.",
+    landlordYesNoPaidReplyHint(),
     "",
     "Details:",
     input.detailsUrl,
-  ].join("\n")
+  ]
+  if (ref) {
+    lines.push("", ref)
+  }
+  return lines.join("\n")
 }
 
 export function invoiceReadyDetailsUrl(ticketId: string): string {

@@ -29,6 +29,7 @@ import {
   partitionMaintenanceTicketsByStatus,
 } from "./maintenanceTicketContext.ts"
 import { classifyAssistantOtherMessage } from "./tenantAssistantReply.ts"
+import { isConversationCloseAck } from "./conversationCloseAck.ts"
 
 export type FollowUpKind =
   | "update"
@@ -112,8 +113,13 @@ export function shouldKeepActivePendingContext(input: {
   if (!input.activeIntake) return false
   if (input.intent && PENDING_BREAKOUT_INTENTS.has(input.intent)) return false
   if (looksLikeCancelRepair(input.body)) return false
-  // Greetings / thanks are not answers to the current intake question.
-  if (classifyAssistantOtherMessage(input.body) === "small_talk") return false
+  // Greetings / thanks / close-ack during a wizard: leave the step answer alone.
+  if (
+    classifyAssistantOtherMessage(input.body) === "small_talk" ||
+    isConversationCloseAck(input.body)
+  ) {
+    return false
+  }
 
   const resolved = resolveMaintenanceWorkIntent({
     body: input.body,
@@ -388,8 +394,11 @@ export function resolveContextualFollowUp(input: {
     ...historical,
   ]
 
-  // Hello / thanks during a wizard: leave the step answer alone; act path re-asks.
-  if (classifyAssistantOtherMessage(body) === "small_talk") {
+  // Hello / thanks / end-of-conversation ack: leave the step answer alone; act path handles.
+  if (
+    classifyAssistantOtherMessage(body) === "small_talk" ||
+    isConversationCloseAck(body)
+  ) {
     return { action: "switch_intent" }
   }
 

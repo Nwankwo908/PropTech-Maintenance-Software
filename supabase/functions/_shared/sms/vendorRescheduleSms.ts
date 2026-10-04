@@ -289,11 +289,23 @@ export function buildResidentRescheduleNotifySms(input: {
 export function buildLandlordRescheduleSms(input: {
   workOrderRef: string
   newTimeLabel: string
+  locationLabel?: string | null
+  issueHeadline?: string | null
 }): string {
-  return (
-    `Work order ${input.workOrderRef} was rescheduled to ${input.newTimeLabel} by the vendor. ` +
-    `The resident has been notified.`
-  )
+  const when = input.newTimeLabel.trim() || "a new time"
+  const summary = [input.locationLabel?.trim(), input.issueHeadline?.trim()]
+    .filter(Boolean)
+    .join(" · ")
+  const lines = [
+    "Hi — visit rescheduled",
+    "",
+    summary || "Your repair",
+    "",
+    `The vendor moved the visit to ${when}. The resident has been notified.`,
+    "",
+    `Ref: ${input.workOrderRef.trim() || "WO"}`,
+  ]
+  return lines.join("\n")
 }
 
 export function buildLandlordResidentDeclinedRescheduleSms(input: {

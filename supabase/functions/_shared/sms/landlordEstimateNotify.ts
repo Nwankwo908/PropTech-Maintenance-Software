@@ -683,6 +683,7 @@ export async function notifyLandlordEstimatePending(
     vendorName: params.vendorName,
     workOrderRef: wo,
     unit: params.unit,
+    locationLabel: params.unit?.trim() || null,
     totalCost: params.totalCost,
     partsCost: params.partsCost,
     laborCost: params.laborCost,

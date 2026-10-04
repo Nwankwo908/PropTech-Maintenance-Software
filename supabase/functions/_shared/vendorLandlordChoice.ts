@@ -7,7 +7,6 @@ import { isConfirmedDurableInboundTrigger } from "../../../shared/ops/vendorChoi
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { formatWorkOrderRef, vendorCompanyName } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
-import { formatLocationWithOptionalUnit } from "./properties/unitLabelDisplay.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
@@ -17,6 +16,15 @@ import {
 import { UNKNOWN_CONTACT_INTAKE_KEY } from "./sms/unknownContactIntake.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
+import {
+  appendLandlordAskTail,
+  extractWorkOrderRefFromReply,
+  landlordAskOpening,
+  landlordAskSummaryLine,
+  landlordNumberedChoiceReplyHint as sharedLandlordNumberedChoiceReplyHint,
+  landlordYesChoiceReplyHint,
+  replyMentionsLandlordAskLocation,
+} from "./sms/landlordAskSms.ts"
 import type { VendorAssignmentOption } from "./vendor_assignment.ts"
 
 export type DurableLandlordChoiceTrigger =
@@ -270,6 +278,10 @@ export type AwaitingVendorChoice = {
   issueCategory?: string | null
   issueSummary?: string | null
   urgency?: string | null
+  /** Property / address label for multi-ask disambiguation. */
+  locationLabel?: string | null
+  /** WO-XXXX for multi-ask disambiguation + trailing Ref line. */
+  workOrderRef?: string | null
   /** Inspection visit: YES assigns every ticket in this list. */
   visitTicketIds?: string[]
   inspectionReportId?: string | null
@@ -381,6 +393,20 @@ export function readAwaitingVendorChoice(
     issueSummary:
       typeof row.issue_summary === "string" ? row.issue_summary : null,
     urgency: typeof row.urgency === "string" ? row.urgency : null,
+    locationLabel:
+      typeof row.location_label === "string"
+        ? row.location_label
+        : typeof row.locationLabel === "string"
+          ? row.locationLabel
+          : typeof row.search_location === "string"
+            ? row.search_location
+            : null,
+    workOrderRef:
+      typeof row.work_order_ref === "string"
+        ? row.work_order_ref
+        : typeof row.workOrderRef === "string"
+          ? row.workOrderRef
+          : formatWorkOrderRef(ticketId),
     visitTicketIds,
     inspectionReportId:
       typeof row.inspection_report_id === "string" && row.inspection_report_id.trim()
@@ -394,7 +420,10 @@ export function serializeAwaitingVendorChoice(
 ): Record<string, unknown> {
   return {
     ticket_id: awaiting.ticketId,
-    search_location: awaiting.searchLocation ?? null,
+    search_location: awaiting.searchLocation ?? awaiting.locationLabel ?? null,
+    location_label: awaiting.locationLabel ?? awaiting.searchLocation ?? null,
+    work_order_ref:
+      awaiting.workOrderRef?.trim() || formatWorkOrderRef(awaiting.ticketId),
     issue_category: awaiting.issueCategory ?? null,
     issue_summary: awaiting.issueSummary ?? null,
     urgency: awaiting.urgency ?? null,
@@ -441,32 +470,6 @@ export function buildLandlordProbeHoldClarifySms(): string {
   )
 }
 
-function problemContextForLandlordSms(input: {
-  tradeLabel: string
-  issueHeadline?: string | null
-  locationLabel?: string | null
-  unit?: string | null
-  propertyType?: string | null
-}): string {
-  const issueRaw = input.issueHeadline?.trim() || ""
-  const issue = issueRaw
-    ? /^(the|a|an)\s+/i.test(issueRaw)
-      ? issueRaw
-      : `the ${issueRaw}`
-    : ""
-  const loc =
-    input.locationLabel?.trim() ||
-    formatLocationWithOptionalUnit({
-      unitLabel: input.unit,
-      propertyType: input.propertyType,
-    })
-  const trade = input.tradeLabel.trim() || "maintenance"
-  if (issue && loc) return `${issue} at ${loc}`
-  if (issue) return issue
-  if (loc) return `the ${trade} repair at ${loc}`
-  return `the ${trade} repair`
-}
-
 function rematchReasonLine(
   reason: "assign" | "no_response" | "declined" | "noshow" | "availability" | undefined,
 ): string | null {
@@ -474,6 +477,205 @@ function rematchReasonLine(
   if (reason === "declined") return "The assigned vendor isn't able to take this job."
   if (reason === "noshow") return "The assigned vendor didn't make the visit."
   return null
+}
+
+function vendorChoiceAskReason(
+  reason: "assign" | "no_response" | "declined" | "noshow" | "availability" | undefined,
+  optionCount: number,
+): string {
+  if (reason === "availability") {
+    return optionCount <= 1 ? "vendor available" : "vendors available"
+  }
+  if (reason === "no_response" || reason === "declined" || reason === "noshow") {
+    return "new vendor needed"
+  }
+  return "vendor needed"
+}
+
+export function buildLandlordVendorChoiceSms(input: {
+  landlordFirstName?: string | null
+  companyName?: string | null
+  workOrderRef: string
+  unit?: string | null
+  tradeLabel: string
+  options: VendorChoiceOption[]
+  adminUrl?: string | null
+  /** Why we're asking — rematch copy when the current vendor didn't respond. */
+  reason?: "assign" | "no_response" | "declined" | "noshow" | "availability"
+  issueHeadline?: string | null
+  locationLabel?: string | null
+  propertyType?: string | null
+}): string {
+  const available = input.reason === "availability"
+  const rematch = rematchReasonLine(input.reason)
+  const opening = landlordAskOpening(
+    input.landlordFirstName,
+    vendorChoiceAskReason(input.reason, input.options.length),
+  )
+  const summary = landlordAskSummaryLine({
+    locationLabel: input.locationLabel,
+    unit: input.unit,
+    propertyType: input.propertyType,
+    issueHeadline: input.issueHeadline,
+    tradeLabel: input.tradeLabel,
+  })
+  const lines: string[] = [opening]
+  if (summary) {
+    lines.push("", summary)
+  }
+  if (rematch) {
+    lines.push("", rematch)
+  }
+
+  const anyEstimate = input.options.some((o) => Boolean(o.estimateNote?.trim()))
+
+  if (input.options.length === 1) {
+    const only = input.options[0]
+    const name = vendorChoiceDisplayName(only?.name || "your vendor")
+    const verb = available ? "is available" : "can take this job"
+    lines.push("", `${name} ${verb}.`)
+    const window = only?.windowLabel?.trim()
+    const estimate = only?.estimateNote?.trim()
+    if (window) lines.push(window)
+    if (estimate) lines.push(estimate)
+    lines.push("", landlordYesChoiceReplyHint(name))
+  } else {
+    lines.push("")
+    input.options.forEach((option, index) => {
+      const name = vendorChoiceDisplayName(option.name)
+      lines.push(`${index + 1} — ${name}`)
+      const window = option.windowLabel?.trim()
+      const estimate = option.estimateNote?.trim()
+      if (window) lines.push(window)
+      if (estimate) lines.push(estimate)
+      else if (anyEstimate) lines.push("No estimate provided")
+      if (index < input.options.length - 1) lines.push("")
+    })
+    lines.push("", landlordVendorChoiceReplyHint(input.options.length))
+  }
+
+  return appendLandlordAskTail(lines, {
+    adminUrl: input.adminUrl,
+    workOrderRef: input.workOrderRef,
+  })
+}
+
+export type PendingLandlordVendorChoiceAsk = {
+  conversationId: string
+  awaiting: AwaitingVendorChoice
+}
+
+export type ResolveLandlordVendorChoiceAskResult =
+  | {
+    kind: "match"
+    ask: PendingLandlordVendorChoiceAsk
+    option: VendorChoiceOption
+  }
+  | { kind: "ambiguous"; pending: PendingLandlordVendorChoiceAsk[] }
+  | {
+    kind: "unclear"
+    ask: PendingLandlordVendorChoiceAsk | null
+    options: VendorChoiceOption[]
+  }
+  | { kind: "none" }
+
+/**
+ * Pick which pending vendor-choice ask a short landlord reply targets.
+ * One pending ask → bare YES / 1 / 2 is enough. Multiple → need WO or address.
+ */
+export function resolveLandlordVendorChoiceAskFromReply(input: {
+  body: string
+  pending: PendingLandlordVendorChoiceAsk[]
+}): ResolveLandlordVendorChoiceAskResult {
+  const pending = input.pending.filter((p) => p.awaiting.options.length > 0)
+  if (pending.length === 0) return { kind: "none" }
+
+  const wo = extractWorkOrderRefFromReply(input.body)
+  let candidates = pending
+  if (wo) {
+    const byWo = pending.filter((p) => {
+      const ref =
+        p.awaiting.workOrderRef?.trim().toUpperCase() ||
+        formatWorkOrderRef(p.awaiting.ticketId).toUpperCase()
+      return ref === wo
+    })
+    if (byWo.length === 1) {
+      candidates = byWo
+    } else if (byWo.length > 1) {
+      return { kind: "ambiguous", pending: byWo }
+    } else {
+      return {
+        kind: "unclear",
+        ask: pending.length === 1 ? pending[0]! : null,
+        options: pending.length === 1 ? pending[0]!.awaiting.options : [],
+      }
+    }
+  } else {
+    const byLoc = pending.filter((p) =>
+      replyMentionsLandlordAskLocation(
+        input.body,
+        p.awaiting.locationLabel ?? p.awaiting.searchLocation,
+      )
+    )
+    if (byLoc.length === 1) {
+      candidates = byLoc
+    } else if (byLoc.length > 1) {
+      return { kind: "ambiguous", pending: byLoc }
+    } else if (pending.length > 1) {
+      // Bare number / YES with multiple open asks — clarify.
+      return { kind: "ambiguous", pending }
+    }
+  }
+
+  const ask = candidates[0]!
+  const option =
+    parseLandlordVendorChoice(input.body, ask.awaiting.options) ??
+    parseLandlordVendorChoice(
+      stripDisambiguatorsFromChoiceReply(input.body),
+      ask.awaiting.options,
+    )
+  if (!option) {
+    return { kind: "unclear", ask, options: ask.awaiting.options }
+  }
+  return { kind: "match", ask, option }
+}
+
+/** Keep YES / 1 / 2 for parse after stripping WO + address disambiguators. */
+export function stripDisambiguatorsFromChoiceReply(body: string): string {
+  let t = body
+    .replace(/\bWO-[A-Za-z0-9]{4}\b/gi, " ")
+    .replace(/[.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  const m = t.match(
+    /^(yes|y|yeah|yep|no|n|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b/i,
+  )
+  return m?.[1]?.trim() ?? t
+}
+
+export function buildLandlordVendorChoiceAmbiguousSms(
+  pending: PendingLandlordVendorChoiceAsk[],
+): string {
+  const lines = [
+    "You have more than one open request. Which one are you answering?",
+    "",
+  ]
+  for (const p of pending) {
+    const wo =
+      p.awaiting.workOrderRef?.trim() ||
+      formatWorkOrderRef(p.awaiting.ticketId)
+    const loc =
+      (p.awaiting.locationLabel ?? p.awaiting.searchLocation ?? "").trim() ||
+      "this property"
+    const issue =
+      (p.awaiting.issueSummary ?? p.awaiting.issueCategory ?? "").trim()
+    lines.push(issue ? `• ${loc} · ${issue} (${wo})` : `• ${loc} (${wo})`)
+  }
+  lines.push(
+    "",
+    'Reply with the number and the address (or WO code), e.g. "1 563 Springdale" or "YES WO-E6F7".',
+  )
+  return lines.join("\n")
 }
 
 export function formatExternalVendorSmsLine(row: {
@@ -532,11 +734,17 @@ export function choiceOptionsFromExternalSuggestions(
 }
 
 export function landlordNumberedChoiceReplyHint(count: number): string {
+  // Attention copy still wants the short "and we'll contact them" form.
   if (count <= 0) return ""
   if (count === 1) return "Reply 1 and we'll contact them."
   if (count === 2) return "Reply 1 or 2 and we'll contact them."
   const nums = Array.from({ length: count }, (_, i) => String(i + 1))
   return `Reply ${nums.slice(0, -1).join(", ")}, or ${nums[nums.length - 1]} and we'll contact them.`
+}
+
+/** Vendor-choice SMS reply line — WO/address optional for multi-pending threads. */
+export function landlordVendorChoiceReplyHint(count: number): string {
+  return sharedLandlordNumberedChoiceReplyHint(count)
 }
 
 export function canHandleLandlordVendorChoice(input: {
@@ -623,79 +831,6 @@ export function unclearVendorChoiceReply(options: VendorChoiceOption[]): string 
     return `Please reply ${names[0]} or ${names[1]}.`
   }
   return `Please reply ${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}.`
-}
-
-export function buildLandlordVendorChoiceSms(input: {
-  landlordFirstName?: string | null
-  companyName?: string | null
-  workOrderRef: string
-  unit?: string | null
-  tradeLabel: string
-  options: VendorChoiceOption[]
-  adminUrl?: string | null
-  /** Why we're asking — rematch copy when the current vendor didn't respond. */
-  reason?: "assign" | "no_response" | "declined" | "noshow" | "availability"
-  issueHeadline?: string | null
-  locationLabel?: string | null
-}): string {
-  const first = input.landlordFirstName?.trim()
-  const greeting = first ? `Hi ${first}` : "Hi"
-  const problem = problemContextForLandlordSms(input)
-  const available = input.reason === "availability"
-  const rematch = rematchReasonLine(input.reason)
-  const lines: string[] = []
-
-  const anyEstimate = input.options.some((o) => Boolean(o.estimateNote?.trim()))
-
-  if (input.options.length === 1) {
-    const only = input.options[0]
-    const name = vendorChoiceDisplayName(only?.name || "your vendor")
-    const verb = available ? "is available for" : "can take"
-    lines.push(`${greeting} — ${name} ${verb} ${problem}.`)
-    if (rematch) {
-      lines.push("", rematch)
-    }
-    const window = only?.windowLabel?.trim()
-    const estimate = only?.estimateNote?.trim()
-    if (window || estimate) {
-      lines.push("")
-      if (window) lines.push(window)
-      if (estimate) lines.push(estimate)
-    }
-    lines.push("", `Reply YES to send the job to ${name}.`)
-  } else {
-    lines.push(
-      available
-        ? `${greeting} — vendors are available for ${problem}.`
-        : `${greeting} — these vendors can take ${problem}.`,
-    )
-    if (rematch) {
-      lines.push("", rematch)
-    }
-    lines.push("")
-    input.options.forEach((option, index) => {
-      const name = vendorChoiceDisplayName(option.name)
-      lines.push(`${index + 1} — ${name}`)
-      const window = option.windowLabel?.trim()
-      const estimate = option.estimateNote?.trim()
-      if (window) lines.push(window)
-      // When any vendor quoted a price, show a placeholder for the rest so the
-      // landlord doesn't miss that a number was simply omitted.
-      if (estimate) lines.push(estimate)
-      else if (anyEstimate) lines.push("No estimate provided")
-      if (index < input.options.length - 1) lines.push("")
-    })
-    lines.push(
-      "",
-      `${landlordChoiceReplyHint(input.options.length)} to send them the job.`,
-    )
-  }
-
-  const adminUrl = input.adminUrl?.trim() ?? ""
-  if (adminUrl) {
-    lines.push("", "View details:", adminUrl)
-  }
-  return lines.join("\n")
 }
 
 function tradeLabelFromCategory(issueCategory: string | null): string {
@@ -886,6 +1021,7 @@ export async function notifyLandlordVendorChoice(
       estimateNote: primary?.estimateNote ?? null,
       items: params.visitItems!,
       adminUrl: uloAppUrl.adminWorkOrder(wo),
+      workOrderRef: wo,
     })
   } else {
     smsBody = buildLandlordVendorChoiceSms({
@@ -912,6 +1048,11 @@ export async function notifyLandlordVendorChoice(
   const awaiting: AwaitingVendorChoice = {
     ticketId: params.ticketId,
     options: choiceOptions,
+    locationLabel,
+    searchLocation: locationLabel,
+    workOrderRef: wo,
+    issueCategory: params.issueCategory,
+    issueSummary: issueHeadline,
     visitTicketIds: visitTicketIds.length > 0 ? visitTicketIds : undefined,
     inspectionReportId: params.inspectionReportId ?? null,
   }
@@ -1027,35 +1168,77 @@ export async function tryHandleLandlordVendorChoiceInbound(
     conv.intake_state && typeof conv.intake_state === "object"
       ? (conv.intake_state as Record<string, unknown>)
       : {}
-  let awaiting = readAwaitingVendorChoice(priorIntake)
 
-  if (!awaiting) {
-    const phone = normalizeSmsPhone(
-      params.fromPhone?.trim() ||
-        (typeof conv.external_phone_number === "string"
-          ? conv.external_phone_number
-          : ""),
-    )
-    if (phone) {
-      const { data: others } = await supabase
-        .from("sms_conversations")
-        .select("id, intake_state")
-        .eq("landlord_id", params.landlordId)
-        .eq("external_phone_number", phone)
-        .order("updated_at", { ascending: false })
-        .limit(25)
-      const match = (others ?? []).find((row) =>
-        readAwaitingVendorChoice(row.intake_state) != null
-      )
-      if (match?.id) {
-        conversationId = match.id
-        priorIntake =
-          match.intake_state && typeof match.intake_state === "object"
-            ? (match.intake_state as Record<string, unknown>)
-            : {}
-        awaiting = readAwaitingVendorChoice(priorIntake)
-      }
+  const phone = normalizeSmsPhone(
+    params.fromPhone?.trim() ||
+      (typeof conv.external_phone_number === "string"
+        ? conv.external_phone_number
+        : ""),
+  )
+
+  const pendingAsks: PendingLandlordVendorChoiceAsk[] = []
+  const seenConv = new Set<string>()
+  const pushAsk = (conversationId: string, intake: unknown) => {
+    if (seenConv.has(conversationId)) return
+    const awaiting = readAwaitingVendorChoice(intake)
+    if (!awaiting) return
+    seenConv.add(conversationId)
+    pendingAsks.push({ conversationId, awaiting })
+  }
+  pushAsk(conversationId, priorIntake)
+  if (phone) {
+    const { data: others } = await supabase
+      .from("sms_conversations")
+      .select("id, intake_state")
+      .eq("landlord_id", params.landlordId)
+      .eq("external_phone_number", phone)
+      .order("updated_at", { ascending: false })
+      .limit(25)
+    for (const row of others ?? []) {
+      if (typeof row.id !== "string") continue
+      pushAsk(row.id, row.intake_state)
     }
+  }
+
+  const resolved = resolveLandlordVendorChoiceAskFromReply({
+    body: params.body,
+    pending: pendingAsks,
+  })
+  if (resolved.kind === "none") {
+    // fall through to probe-hold handling below
+  } else if (resolved.kind === "ambiguous") {
+    return {
+      handled: true,
+      ticketId: resolved.pending[0]?.awaiting.ticketId ?? "",
+      vendorId: null,
+      replyBody: buildLandlordVendorChoiceAmbiguousSms(resolved.pending),
+    }
+  } else if (resolved.kind === "unclear") {
+    return {
+      handled: true,
+      ticketId: resolved.ask?.awaiting.ticketId ?? "",
+      vendorId: null,
+      replyBody: unclearVendorChoiceReply(
+        resolved.options.length > 0
+          ? resolved.options
+          : resolved.ask?.awaiting.options ?? [],
+      ),
+    }
+  }
+
+  let awaiting =
+    resolved.kind === "match" ? resolved.ask.awaiting : null
+  if (resolved.kind === "match") {
+    conversationId = resolved.ask.conversationId
+    const { data: matchConv } = await supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", conversationId)
+      .maybeSingle()
+    priorIntake =
+      matchConv?.intake_state && typeof matchConv.intake_state === "object"
+        ? (matchConv.intake_state as Record<string, unknown>)
+        : {}
   }
 
   if (!awaiting) {
@@ -1108,17 +1291,17 @@ export async function tryHandleLandlordVendorChoiceInbound(
 
   // Ops phone was mislabeled as resident — treat as landlord for this ask.
   if (params.identityType === "resident") {
-    const phone = normalizeSmsPhone(
+    const repairPhone = normalizeSmsPhone(
       params.fromPhone?.trim() ||
         (typeof conv.external_phone_number === "string"
           ? conv.external_phone_number
           : ""),
     )
-    if (phone) {
+    if (repairPhone) {
       try {
         await upsertSmsIdentityForPhone(supabase, {
           landlordId: params.landlordId,
-          phone,
+          phone: repairPhone,
           identityType: "landlord",
         })
       } catch (e) {
@@ -1127,7 +1310,10 @@ export async function tryHandleLandlordVendorChoiceInbound(
     }
   }
 
-  const chosen = parseLandlordVendorChoice(params.body, awaiting.options)
+  const chosen =
+    resolved.kind === "match"
+      ? resolved.option
+      : parseLandlordVendorChoice(params.body, awaiting.options)
   if (!chosen) {
     return {
       handled: true,

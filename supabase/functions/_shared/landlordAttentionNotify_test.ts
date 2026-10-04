@@ -33,10 +33,12 @@ Deno.test("invoice_ready SMS uses YES/NO paid confirmation (no numbered fake opt
       "Job: Leaking kitchen faucet",
       "",
       "Have you paid this invoice?",
-      "Reply YES if paid, or NO if not yet.",
+      "Reply YES if paid, or NO if not yet — if you have more than one pending, include the address",
       "",
       "Details:",
       "https://www.ulohome.io/admin/requests?q=WO-9E41",
+      "",
+      "Ref: WO-9E41",
     ].join("\n"),
   )
   assertEquals(body.includes("1 — Review the invoice"), false)

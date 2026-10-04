@@ -29,6 +29,12 @@ import { sanitizeResidentAvailabilityForVendor } from "./sms/residentAvailabilit
 import { loadPropertyLocationFromTable } from "./properties/propertyLocation.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import {
+  appendLandlordAskTail,
+  landlordAskOpening,
+  landlordAskSummaryLine,
+  landlordYesChoiceReplyHint,
+} from "./sms/landlordAskSms.ts"
+import {
   findOrCreateConversation,
   upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
@@ -448,36 +454,33 @@ export function buildLandlordInspectionVisitChoiceSms(input: {
   estimateNote?: string | null
   items: Array<{ label: string; workOrderRef?: string }>
   adminUrl?: string | null
+  workOrderRef?: string | null
 }): string {
-  const first = input.landlordFirstName?.trim()
-  const greeting = first ? `Hi ${first}` : "Hi"
   const vendor = vendorCompanyName(input.vendorName)
-  const loc = (input.locationLabel ?? "").trim()
-  const where = loc ? ` at ${loc}` : ""
-  const lines = [
-    `${greeting} — ${vendor} is available for the inspection visit${where}.`,
-  ]
+  const opening = landlordAskOpening(input.landlordFirstName, "vendor available")
+  const summary = landlordAskSummaryLine({
+    locationLabel: input.locationLabel,
+    issueHeadline: "inspection visit",
+  })
+  const lines = [opening]
+  if (summary) lines.push("", summary)
+  lines.push("", `${vendor} can take this inspection visit.`)
   const window = (input.windowLabel ?? "").trim()
   const estimate = (input.estimateNote ?? "").trim()
-  if (window || estimate) {
-    lines.push("")
-    if (window) lines.push(window)
-    if (estimate) lines.push(estimate)
-  }
+  if (window) lines.push(window)
+  if (estimate) lines.push(estimate)
   if (input.items.length > 0) {
     lines.push("", "Items on this visit:")
     for (const item of input.items) {
       const label = item.label.trim() || "Repair item"
-      const wo = (item.workOrderRef ?? "").trim()
-      lines.push(wo ? `• ${label} (${wo})` : `• ${label}`)
+      lines.push(`• ${label}`)
     }
   }
-  lines.push("", `Reply YES to send the visit to ${vendor}.`)
-  const adminUrl = input.adminUrl?.trim() ?? ""
-  if (adminUrl) {
-    lines.push("", "View details:", adminUrl)
-  }
-  return lines.join("\n")
+  lines.push("", landlordYesChoiceReplyHint(vendor))
+  return appendLandlordAskTail(lines, {
+    adminUrl: input.adminUrl,
+    workOrderRef: input.workOrderRef,
+  })
 }
 
 export function buildVendorProbeWhichJobSms(

@@ -42,6 +42,17 @@ function isNestedScrollTarget(node: EventTarget | null): boolean {
   return false
 }
 
+/** `<object>` / `<embed>` / `<iframe>` steal wheel into their document; keep page scroll. */
+function isEmbeddedDocumentSurface(node: EventTarget | null): boolean {
+  let el = node instanceof Element ? node : null
+  while (el && el !== document.documentElement) {
+    const tag = el.tagName
+    if (tag === 'OBJECT' || tag === 'EMBED' || tag === 'IFRAME') return true
+    el = el.parentElement
+  }
+  return false
+}
+
 /**
  * Eases window scroll toward the wheel/nav target so the landing page
  * follows with a short delay instead of jumping 1:1 with the trackpad.
@@ -104,7 +115,9 @@ export function useLandingSmoothScroll() {
 
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey || event.defaultPrevented) return
-      if (isNestedScrollTarget(event.target)) return
+      // Embedded SVG/video documents trap wheel unless we capture + own the scroll.
+      const overEmbed = isEmbeddedDocumentSurface(event.target)
+      if (!overEmbed && isNestedScrollTarget(event.target)) return
 
       event.preventDefault()
       if (!running.current) {
@@ -125,12 +138,12 @@ export function useLandingSmoothScroll() {
       targetY.current = clampScroll(targetY.current)
     }
 
-    window.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
     window.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('resize', onResize)
 
     return () => {
-      window.removeEventListener('wheel', onWheel)
+      window.removeEventListener('wheel', onWheel, { capture: true })
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('resize', onResize)
       stop()

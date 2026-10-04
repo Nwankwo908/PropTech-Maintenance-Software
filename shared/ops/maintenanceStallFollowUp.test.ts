@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { PENDING_ACCEPT_STALE_MS } from './vendorReassignGuards.ts'
 import {
   NO_VENDOR_RESPONSE_FOLLOW_UP_MS,
+  STALL_FOLLOW_UP_ESCALATE_MS,
   STALL_FOLLOW_UP_NEEDS_ADMIN_SIGNATURE,
   buildStallEpisodeKey,
   buildVendorStallFollowUpSms,
@@ -47,9 +48,66 @@ function baseTicket(over: Partial<StallTicketSnapshot> = {}): StallTicketSnapsho
   }
 }
 
+/** pending_accept past soft follow-up + escalate window, still before rematch (48h). */
+function ticketAtAssignedPlus36h(): {
+  ticket: StallTicketSnapshot
+  nowMs: number
+  episodeKey: string
+} {
+  const assignedAt = Date.parse('2026-09-29T00:00:00.000Z')
+  const nowMs = assignedAt + 36 * HOUR
+  const followUpSentAt = assignedAt + NO_VENDOR_RESPONSE_FOLLOW_UP_MS
+  const stalledSinceMs = assignedAt + NO_VENDOR_RESPONSE_FOLLOW_UP_MS
+  const episodeKey = buildStallEpisodeKey({
+    kind: 'no_vendor_response',
+    ticketId: 't-36h',
+    stalledSinceMs,
+  })
+  const ticket = baseTicket({
+    id: 't-36h',
+    assignedAt: new Date(assignedAt).toISOString(),
+    stallFollowUpSentAt: new Date(followUpSentAt).toISOString(),
+    stallFollowUpKind: 'no_vendor_response',
+    stallFollowUpEpisodeKey: episodeKey,
+  })
+  return { ticket, nowMs, episodeKey }
+}
+
+/** pending_accept past rematch ownership (48h+) with a prior soft follow-up. */
+function ticketPastRematchOwnership(): {
+  ticket: StallTicketSnapshot
+  nowMs: number
+  episodeKey: string
+} {
+  const assignedAt = Date.parse('2026-09-28T00:00:00.000Z')
+  const nowMs = assignedAt + PENDING_ACCEPT_STALE_MS + HOUR
+  const followUpSentAt = assignedAt + NO_VENDOR_RESPONSE_FOLLOW_UP_MS
+  const stalledSinceMs = assignedAt + NO_VENDOR_RESPONSE_FOLLOW_UP_MS
+  const episodeKey = buildStallEpisodeKey({
+    kind: 'no_vendor_response',
+    ticketId: 't-rematch',
+    stalledSinceMs,
+  })
+  const ticket = baseTicket({
+    id: 't-rematch',
+    assignedAt: new Date(assignedAt).toISOString(),
+    stallFollowUpSentAt: new Date(followUpSentAt).toISOString(),
+    stallFollowUpKind: 'no_vendor_response',
+    stallFollowUpEpisodeKey: episodeKey,
+  })
+  return { ticket, nowMs, episodeKey }
+}
+
 describe('maintenance stall follow-up policy', () => {
   it('aligns no_vendor_response follow-up with half of pending_accept_stale', () => {
     expect(NO_VENDOR_RESPONSE_FOLLOW_UP_MS).toBe(Math.floor(PENDING_ACCEPT_STALE_MS / 2))
+  })
+
+  it('opens escalate before rematch ownership (follow-up + 12h → assigned + 36h)', () => {
+    expect(STALL_FOLLOW_UP_ESCALATE_MS).toBe(12 * HOUR)
+    expect(
+      NO_VENDOR_RESPONSE_FOLLOW_UP_MS + STALL_FOLLOW_UP_ESCALATE_MS,
+    ).toBeLessThan(PENDING_ACCEPT_STALE_MS)
   })
 
   it('sends exactly one follow-up per stall episode (not every cron cycle)', () => {
@@ -77,12 +135,59 @@ describe('maintenance stall follow-up policy', () => {
     })
   })
 
-  it('skips when rematch owns full-stale pending_accept', () => {
+  it('defers to rematch when rematch owns and rematch cron is active', () => {
     const ticket = baseTicket({
       assignedAt: new Date(NOW - PENDING_ACCEPT_STALE_MS - HOUR).toISOString(),
     })
     expect(rematchOwnsPendingAccept(ticket, NOW)).toBe(true)
+    expect(
+      classifyMaintenanceStallFollowUp(ticket, NOW, undefined, {
+        rematchCronActive: true,
+      }),
+    ).toEqual({
+      action: 'skip',
+      reason: 'rematch_owns_pending_accept',
+    })
+    // Default assumes rematch is live (stronger backstop).
     expect(classifyMaintenanceStallFollowUp(ticket, NOW)).toEqual({
+      action: 'skip',
+      reason: 'rematch_owns_pending_accept',
+    })
+  })
+
+  it('at assigned+36h escalates via stall before rematch ownership', () => {
+    const { ticket, nowMs, episodeKey } = ticketAtAssignedPlus36h()
+    expect(rematchOwnsPendingAccept(ticket, nowMs)).toBe(false)
+    const result = classifyMaintenanceStallFollowUp(ticket, nowMs)
+    expect(result).toEqual({
+      action: 'escalate',
+      kind: 'no_vendor_response',
+      episodeKey,
+      followUpSentAtMs: Date.parse(ticket.stallFollowUpSentAt!),
+    })
+  })
+
+  it('past rematch ownership: stall-escalate when rematch paused; defer when rematch active', () => {
+    const { ticket, nowMs, episodeKey } = ticketPastRematchOwnership()
+    expect(rematchOwnsPendingAccept(ticket, nowMs)).toBe(true)
+
+    const paused = classifyMaintenanceStallFollowUp(ticket, nowMs, undefined, {
+      rematchCronActive: false,
+    })
+    expect(paused).toEqual({
+      action: 'escalate',
+      kind: 'no_vendor_response',
+      episodeKey,
+      followUpSentAtMs: Date.parse(ticket.stallFollowUpSentAt!),
+    })
+    expect(STALL_FOLLOW_UP_NEEDS_ADMIN_SIGNATURE).toBe(
+      'needs_admin_vendor|stall_follow_up',
+    )
+
+    const active = classifyMaintenanceStallFollowUp(ticket, nowMs, undefined, {
+      rematchCronActive: true,
+    })
+    expect(active).toEqual({
       action: 'skip',
       reason: 'rematch_owns_pending_accept',
     })
@@ -150,7 +255,9 @@ describe('maintenance stall follow-up policy', () => {
     expect(first.action).toBe('follow_up')
     if (first.action !== 'follow_up') return
     const after = baseTicket({
-      stallFollowUpSentAt: new Date(NOW - 25 * HOUR).toISOString(),
+      stallFollowUpSentAt: new Date(
+        NOW - (STALL_FOLLOW_UP_ESCALATE_MS + HOUR),
+      ).toISOString(),
       stallFollowUpKind: first.kind,
       stallFollowUpEpisodeKey: first.episodeKey,
     })
@@ -241,15 +348,15 @@ describe('maintenance stall follow-up policy', () => {
     })
   })
 
-  it('uses generateIssueSummary for follow-up labels (not raw description dump)', () => {
+  it('prefers issueHeadline for follow-up labels over raw description dump', () => {
     const label = stallIssueLabel(
       baseTicket({
-        issueHeadline: null,
+        issueHeadline: 'Kitchen sink dripping',
         description:
           'Hi there, I was wondering if you could please look at the kitchen sink which has been dripping for a few days now under the cabinet',
       }),
     )
-    expect(label.toLowerCase()).toMatch(/sink|drip|kitchen/)
+    expect(label).toBe('Kitchen sink dripping')
     expect(label.length).toBeLessThanOrEqual(80)
   })
 

@@ -145,7 +145,7 @@ function HeroInteractionVideo({ matchHeight }: { matchHeight?: number }) {
         width={displayWidth}
         height={displayHeight}
         aria-label="Ulo handling a tenant maintenance text conversation"
-        className="mx-auto block bg-transparent"
+        className="pointer-events-none mx-auto block bg-transparent"
         style={{ width: displayWidth, height: displayHeight }}
       />
     </div>

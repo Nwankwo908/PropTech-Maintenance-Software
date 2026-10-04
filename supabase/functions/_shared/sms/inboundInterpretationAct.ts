@@ -45,6 +45,12 @@ import {
   shouldEscalateAssistantOther,
 } from "./tenantAssistantReply.ts"
 import {
+  buildConversationCloseAckSms,
+  hasOpenPendingAskForCloseAck,
+  isConversationCloseAck,
+  looksLikeInformationalOutbound,
+} from "./conversationCloseAck.ts"
+import {
   dedupeTicketsByRequestLabel,
   isIdentifiableRequestLabel,
   looksLikeStatusInquiryTicketDescription,
@@ -2170,9 +2176,10 @@ async function handleMoveOut(
 async function handleOther(
   ctx: InboundSmsHandlerContext,
   intake: SmsIntakeState,
-  activeIntake: boolean,
+  pending: ReturnType<typeof pendingContextFromIntake>,
   residentName: string | null,
 ): Promise<InboundSmsHandlerResult> {
+  const activeIntake = pending.activeIntake
   if (activeIntake && isAffirmativeReply(ctx.inbound.body)) {
     return { handled: false }
   }
@@ -2241,6 +2248,31 @@ async function handleOther(
           "Tell me what you need in a sentence or two and I'll help from there.",
         ].join("\n"),
         { selection: "something_else" },
+      )
+    }
+  }
+
+  // End-of-conversation ack (same tier as menu echo): brief close after an
+  // informational update — never the generic menu. Pending asks win first.
+  if (
+    isConversationCloseAck(ctx.inbound.body) &&
+    !hasOpenPendingAskForCloseAck(pending, intake)
+  ) {
+    const lastOutbound = await loadLastOutboundBody(
+      ctx.supabase,
+      ctx.conversationId,
+    )
+    if (lastOutbound && looksLikeInformationalOutbound(lastOutbound)) {
+      await logOutcome(ctx, {
+        eventType: "sms.conversation_close_acked",
+        message:
+          "Acknowledged the resident's closing reply without opening the clarify menu.",
+        extra: { notify_staff: false },
+      })
+      return handled(
+        "sms_conversation_close_ack",
+        buildConversationCloseAckSms(who),
+        { notifyStaff: false, preserveIntake: true },
       )
     }
   }
@@ -2327,6 +2359,23 @@ async function handleOther(
     notifyStaff: true,
     preserveIntake: false,
   })
+}
+
+async function loadLastOutboundBody(
+  supabase: SupabaseClient,
+  conversationId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("sms_messages")
+    .select("body")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return null
+  const body = typeof data.body === "string" ? data.body.trim() : ""
+  return body || null
 }
 
 function whichRequestPendingIntent(
@@ -2815,7 +2864,7 @@ export async function tryHandleInterpretedInbound(
           interpretation: markAsNewMaintenanceIssue(interpretation),
         }
       }
-      return handleOther(ctx, intake, pending.activeIntake, profile?.full_name ?? null)
+      return handleOther(ctx, intake, pending, profile?.full_name ?? null)
     }
     default:
       return { handled: false, interpretation }

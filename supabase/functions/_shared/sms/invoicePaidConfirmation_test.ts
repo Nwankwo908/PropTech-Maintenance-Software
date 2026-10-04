@@ -104,7 +104,10 @@ Deno.test("buildInvoiceReadyPaidConfirmationSms title-cases vendor and asks YES/
   assertStringIncludes(body, "Unit 4A · Apex Pipe & Drain · $320.50")
   assertStringIncludes(body, "Job: Clogged bathtub drain")
   assertStringIncludes(body, "Have you paid this invoice?")
-  assertStringIncludes(body, "Reply YES if paid, or NO if not yet.")
+  assertStringIncludes(
+    body,
+    "Reply YES if paid, or NO if not yet — if you have more than one pending, include the address",
+  )
   assertEquals(body.includes("1 —"), false)
 })
 

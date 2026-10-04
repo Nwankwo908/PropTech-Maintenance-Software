@@ -115,8 +115,16 @@ Deno.test("vendor / resident / landlord copy", () => {
     buildLandlordRescheduleSms({
       workOrderRef: "WO-3B00",
       newTimeLabel: "2:00 PM today",
+      locationLabel: "123 Main",
     }),
-    /rescheduled to 2:00 PM today by the vendor/,
+    /visit rescheduled/,
+  )
+  assertMatch(
+    buildLandlordRescheduleSms({
+      workOrderRef: "WO-3B00",
+      newTimeLabel: "2:00 PM today",
+    }),
+    /Ref: WO-3B00/,
   )
   const email = buildLandlordRescheduleEmail({
     workOrderRef: "WO-3B00",

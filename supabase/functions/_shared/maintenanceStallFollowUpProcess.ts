@@ -7,12 +7,14 @@
  * Coordination locks (yield, do not compete):
  * - sticky needs_admin_vendor
  * - awaiting landlord choice / vendor probe
- * - pending_accept past PENDING_ACCEPT_STALE_MS (rematch owns)
+ * - pending_accept past PENDING_ACCEPT_STALE_MS when rematch cron is live
+ *   (when rematch is paused, stall-escalate remains an independent backstop)
  * - active vendor schedule FSM (schedule FSM TTL owns)
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   STALL_FOLLOW_UP_NEEDS_ADMIN_SIGNATURE,
+  VENDOR_DELAYED_AUTO_REASSIGN_CRON_JOBNAME,
   buildResidentStallFollowUpSms,
   buildVendorStallFollowUpSms,
   classifyMaintenanceStallFollowUp,
@@ -25,6 +27,7 @@ import {
   type StallTicketSnapshot,
 } from "../../../shared/ops/maintenanceStallFollowUp.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
+import { loadPausedRequiredCronJobs } from "./missingRequiredCrons.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 import { gateResidentAutomatedReminder } from "./gateResidentAutomatedReminder.ts"
 import { localHourInTimeZone } from "./residentSendTiming.ts"
@@ -714,6 +717,13 @@ export async function processMaintenanceStallFollowUps(
 
   if (tickets.length === 0) return summary
 
+  const pausedCrons = await loadPausedRequiredCronJobs(supabase)
+  const rematchCronActive = !pausedCrons.some(
+    (job) =>
+      job.jobname === VENDOR_DELAYED_AUTO_REASSIGN_CRON_JOBNAME ||
+      job.edgeFunction === "vendor-delayed-auto-reassign",
+  )
+
   const ticketIds = tickets.map((t) => t.id)
   const [linkedTemplates, scheduleCtx] = await Promise.all([
     loadLinkedTemplateIds(supabase, ticketIds),
@@ -747,6 +757,8 @@ export async function processMaintenanceStallFollowUps(
     const result: StallClassifyResult = classifyMaintenanceStallFollowUp(
       snapshot,
       nowMs,
+      undefined,
+      { rematchCronActive },
     )
     if (result.action === "skip") {
       summary.skipped++

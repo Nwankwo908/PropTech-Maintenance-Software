@@ -32,8 +32,15 @@ export const VISIT_OVERDUE_GRACE_MS = 4 * HOUR_MS
 /** in_progress with no activity. */
 export const STALLED_IN_PROGRESS_MS = 3 * DAY_MS
 
-/** After first follow-up, escalate to needs_admin digest if still stalled. */
-export const STALL_FOLLOW_UP_ESCALATE_MS = 24 * HOUR_MS
+/**
+ * After first follow-up, escalate to needs_admin digest if still stalled.
+ *
+ * Kept at 12h (not 24h) so no_vendor_response escalate opens at assigned+36h —
+ * before pending_accept rematch ownership at assigned+48h. The previous 24h
+ * value made escalate and rematch abut with zero overlap, so rematch_owns
+ * always won and stall never promoted to sticky needs_admin.
+ */
+export const STALL_FOLLOW_UP_ESCALATE_MS = 12 * HOUR_MS
 
 /**
  * Soft-nudge exclusivity window. While a stall follow-up SMS is this recent,
@@ -42,6 +49,10 @@ export const STALL_FOLLOW_UP_ESCALATE_MS = 24 * HOUR_MS
  * (rematch already skips sticky) or rematch may proceed on pending_accept_stale.
  */
 export const STALL_FOLLOW_UP_REMATCH_YIELD_MS = STALL_FOLLOW_UP_ESCALATE_MS
+
+/** Jobname for the pending_accept rematch / SLA auto-reassign cron. */
+export const VENDOR_DELAYED_AUTO_REASSIGN_CRON_JOBNAME =
+  'ulo-vendor-delayed-auto-reassign'
 
 export type MaintenanceStallKind =
   | 'no_vendor_response'
@@ -375,10 +386,22 @@ export function detectMaintenanceStallKind(
   return null
 }
 
+export type StallClassifyOptions = {
+  /**
+   * Whether ulo-vendor-delayed-auto-reassign is live (not paused).
+   * When true (default) and rematch owns pending_accept, stall yields so rematch
+   * is the stronger backstop (no double escalation).
+   * When false (rematch paused/lagging), stall-escalate may still promote to
+   * sticky needs_admin — backstop to the backstop.
+   */
+  rematchCronActive?: boolean
+}
+
 export function classifyMaintenanceStallFollowUp(
   ticket: StallTicketSnapshot,
   nowMs: number,
   thresholds: StallThresholds = DEFAULT_STALL_THRESHOLDS,
+  options: StallClassifyOptions = {},
 ): StallClassifyResult {
   if (ticketLinkedToRentOrPayment(ticket)) {
     return { action: 'skip', reason: 'rent_collection_linked' }
@@ -399,8 +422,12 @@ export function classifyMaintenanceStallFollowUp(
   if (ticket.scheduleFsmActive === true) {
     return { action: 'skip', reason: 'schedule_fsm_owns_ticket' }
   }
-  // Coordination lock: rematch owns full-stale pending_accept (any stall kind).
-  if (rematchOwnsPendingAccept(ticket, nowMs, thresholds)) {
+
+  const rematchOwns = rematchOwnsPendingAccept(ticket, nowMs, thresholds)
+  // Rematch is the stronger backstop when its cron is live. When rematch is
+  // paused, fall through so stall-escalate can still fire independently.
+  const rematchCronActive = options.rematchCronActive !== false
+  if (rematchOwns && rematchCronActive) {
     return { action: 'skip', reason: 'rematch_owns_pending_accept' }
   }
 

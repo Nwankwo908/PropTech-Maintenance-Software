@@ -11,6 +11,7 @@ import {
   landlordVendorChoiceResolvedIntake,
   parseLandlordVendorChoice,
   readAwaitingVendorChoice,
+  resolveLandlordVendorChoiceAskFromReply,
   ticketIsAwaitingLandlordVendorChoice,
   vendorChoiceOptionIdsEqual,
 } from "./vendorLandlordChoice.ts"
@@ -194,9 +195,15 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
       { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
     ],
   })
+  assertStringIncludes(one, "Hi Alex — vendor needed")
+  assertStringIncludes(one, "563 Springdale Circle · dripping faucet")
+  assertStringIncludes(one, "Ivanhomesolutions can take this job.")
   assertStringIncludes(one, "Reply YES to send the job to Ivanhomesolutions")
+  assertStringIncludes(one, "if you have more than one pending, include the address")
+  assertStringIncludes(one, "Ref: WO-E6F7")
   assertEquals(one.includes("property management team"), false)
-  assertStringIncludes(one, "Ivanhomesolutions can take the dripping faucet at 563 Springdale Circle")
+  assertEquals(one.indexOf("563 Springdale"), one.indexOf("Hi Alex") + "Hi Alex — vendor needed\n\n".length)
+  assertEquals(one.includes("can take the dripping faucet at"), false)
 
   const two = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",
@@ -204,12 +211,14 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
     workOrderRef: "WO-E6F7",
     unit: "1",
     tradeLabel: "plumbing",
+    locationLabel: "563 Springdale Circle",
     options: [
       { id: "spec-1", name: "Manny Plumber", role: "specialist" },
       { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
     ],
   })
-  assertEquals(two.includes("Reply 1 or 2 to send them the job"), true)
+  assertEquals(two.includes("Reply 1 or 2 — if you have more than one pending"), true)
+  assertStringIncludes(two, "Ref: WO-E6F7")
   const twoHandymen = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",
     companyName: "Ulo Homes",
@@ -239,6 +248,7 @@ Deno.test("buildLandlordVendorChoiceSms rematch copy does not auto-assign", () =
       { id: "gen-2", name: "Handyman Services By Michael", role: "generalist" },
     ],
   })
+  assertEquals(sms.includes("Hi Alex — new vendor needed"), true)
   assertEquals(sms.includes("hasn't responded in time"), true)
   assertEquals(sms.includes("Reply 1 or 2"), true)
   assertEquals(sms.includes("Frank Rooter LLC"), true)
@@ -395,32 +405,45 @@ function mockChoiceSupabase(store: TriggerStore) {
       if (table === "sms_conversations") {
         return {
           select() {
-            return {
-              eq(col1: string, val1: string) {
-                return {
-                  eq(col2: string, val2: string) {
-                    assertEquals(col1, "id")
-                    assertEquals(col2, "landlord_id")
-                    const row = store.conversations.get(val1)
-                    return {
-                      async maybeSingle() {
-                        if (!row || row.landlord_id !== val2) {
-                          return { data: null, error: null }
-                        }
-                        return { data: row, error: null }
-                      },
-                    }
-                  },
-                  order() {
-                    return {
-                      limit() {
-                        return Promise.resolve({ data: [], error: null })
-                      },
-                    }
-                  },
-                }
-              },
+            const filters: Array<{ col: string; val: string }> = []
+            const api: Record<string, unknown> = {}
+            const chain = () => api
+            api.eq = (col: string, val: string) => {
+              filters.push({ col, val })
+              return chain()
             }
+            api.order = () => chain()
+            api.limit = () =>
+              Promise.resolve({
+                data: [...store.conversations.values()].filter((row) => {
+                  const landlord = filters.find((f) => f.col === "landlord_id")
+                  const phone = filters.find((f) => f.col === "external_phone_number")
+                  if (landlord && row.landlord_id !== landlord.val) return false
+                  if (
+                    phone &&
+                    String((row as { external_phone_number?: string }).external_phone_number ?? "") !==
+                      phone.val
+                  ) {
+                    return false
+                  }
+                  return true
+                }),
+                error: null,
+              })
+            api.maybeSingle = async () => {
+              const idFilter = filters.find((f) => f.col === "id")
+              const landlord = filters.find((f) => f.col === "landlord_id")
+              if (idFilter) {
+                const row = store.conversations.get(idFilter.val)
+                if (!row) return { data: null, error: null }
+                if (landlord && row.landlord_id !== landlord.val) {
+                  return { data: null, error: null }
+                }
+                return { data: row, error: null }
+              }
+              return { data: null, error: null }
+            }
+            return api
           },
           update() {
             return {
@@ -593,4 +616,81 @@ Deno.test("tryHandleLandlordVendorChoiceInbound refuses dispatch without durable
     assertStringIncludes(result.replyBody, "couldn't confirm your reply")
   }
   assertEquals(store.assignCalls, 0)
+})
+
+Deno.test("one pending vendor-choice ask: bare number resolves", () => {
+  const pending = [
+    {
+      conversationId: "c1",
+      awaiting: {
+        ticketId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        workOrderRef: "WO-AAAA",
+        locationLabel: "563 Springdale Circle",
+        issueSummary: "dripping faucet",
+        options: [
+          { id: "v1", name: "Manny Plumber", role: "specialist" as const },
+          { id: "v2", name: "Ivanhomesolutions", role: "generalist" as const },
+        ],
+      },
+    },
+  ]
+  const hit = resolveLandlordVendorChoiceAskFromReply({ body: "1", pending })
+  assertEquals(hit.kind, "match")
+  if (hit.kind === "match") {
+    assertEquals(hit.option.id, "v1")
+    assertEquals(hit.ask.conversationId, "c1")
+  }
+})
+
+Deno.test("two pending asks: bare number is ambiguous; property disambiguates", () => {
+  const pending = [
+    {
+      conversationId: "c1",
+      awaiting: {
+        ticketId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        workOrderRef: "WO-AAAA",
+        locationLabel: "563 Springdale Circle",
+        issueSummary: "dripping faucet",
+        options: [
+          { id: "v1", name: "Manny Plumber", role: "specialist" as const },
+          { id: "v2", name: "Ivanhomesolutions", role: "generalist" as const },
+        ],
+      },
+    },
+    {
+      conversationId: "c2",
+      awaiting: {
+        ticketId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        workOrderRef: "WO-BBBB",
+        locationLabel: "14 Maple Ave",
+        issueSummary: "outlet sparking",
+        options: [
+          { id: "v3", name: "Sparks Electric", role: "specialist" as const },
+          { id: "v4", name: "Handy Mike", role: "generalist" as const },
+        ],
+      },
+    },
+  ]
+  const bare = resolveLandlordVendorChoiceAskFromReply({ body: "1", pending })
+  assertEquals(bare.kind, "ambiguous")
+
+  const withAddr = resolveLandlordVendorChoiceAskFromReply({
+    body: "1 14 Maple",
+    pending,
+  })
+  assertEquals(withAddr.kind, "match")
+  if (withAddr.kind === "match") {
+    assertEquals(withAddr.ask.conversationId, "c2")
+    assertEquals(withAddr.option.id, "v3")
+  }
+
+  const withWo = resolveLandlordVendorChoiceAskFromReply({
+    body: "2 WO-AAAA",
+    pending,
+  })
+  assertEquals(withWo.kind, "match")
+  if (withWo.kind === "match") {
+    assertEquals(withWo.ask.conversationId, "c1")
+    assertEquals(withWo.option.id, "v2")
+  }
 })

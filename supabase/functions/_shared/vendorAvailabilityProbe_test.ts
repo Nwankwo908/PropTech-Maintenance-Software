@@ -328,7 +328,9 @@ Deno.test("landlord choice SMS title-cases vendor names and shows missing estima
   assertStringIncludes(body, "2 — Flex Plumbing")
   assertStringIncludes(body, "$200")
   assertStringIncludes(body, "No estimate provided")
-  assertStringIncludes(body, "Reply 1 or 2 to send them the job.")
+  assertStringIncludes(body, "Reply 1 or 2 — if you have more than one pending, include the address")
+  assertStringIncludes(body, "Hi Osita — vendors available")
+  assertStringIncludes(body, "Ref: WO-1234")
   assertEquals(body.includes("mecus handman"), false)
 })
 
@@ -350,8 +352,10 @@ Deno.test("landlord choice SMS single vendor title-cases and asks YES", () => {
       },
     ],
   })
-  assertStringIncludes(body, "Flex Plumbing is available for")
-  assertStringIncludes(body, "Reply YES to send the job to Flex Plumbing.")
+  assertStringIncludes(body, "Hi Osita — vendor available")
+  assertStringIncludes(body, "Flex Plumbing is available.")
+  assertStringIncludes(body, "Reply YES to send the job to Flex Plumbing")
+  assertStringIncludes(body, "Ref: WO-1C50")
   assertEquals(body.includes("flex plumbing"), false)
 })
 
@@ -599,15 +603,19 @@ Deno.test("buildLandlordInspectionVisitChoiceSms consolidates items under one YE
     vendorName: "Handyman Services by Michael",
     locationLabel: "646 Bartlett · Unit 1",
     windowLabel: "Wed 9am–12pm",
+    workOrderRef: "WO-D154",
     items: [
       { label: "Kitchen — Stove", workOrderRef: "WO-D154" },
       { label: "Ceiling", workOrderRef: "WO-5E0A" },
       { label: "Bathtub", workOrderRef: "WO-B7EF" },
     ],
   })
-  assertStringIncludes(body, "inspection visit at 646 Bartlett")
-  assertStringIncludes(body, "Kitchen — Stove (WO-D154)")
-  assertStringIncludes(body, "Reply YES to send the visit")
+  assertStringIncludes(body, "Hi Alex — vendor available")
+  assertStringIncludes(body, "646 Bartlett · Unit 1 · inspection visit")
+  assertStringIncludes(body, "Kitchen — Stove")
+  assertEquals(body.includes("Kitchen — Stove (WO-D154)"), false)
+  assertStringIncludes(body, "Reply YES to send the job to Handyman Services By Michael")
+  assertStringIncludes(body, "Ref: WO-D154")
   assertEquals((body.match(/Reply YES/g) ?? []).length, 1)
 })
 

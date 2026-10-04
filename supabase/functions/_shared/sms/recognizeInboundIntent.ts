@@ -25,6 +25,7 @@ import { resolveAmbiguousMaintenance } from "../../../../shared/maintenance/ambi
 import type { EmergencyType } from "../../../../shared/maintenance/classificationTypes.ts"
 import { semanticMatchDescription } from "../maintenance_classification/semanticMap.ts"
 import { classifyAssistantOtherMessage } from "./tenantAssistantReply.ts"
+import { isConversationCloseAck } from "./conversationCloseAck.ts"
 import { classifyRentSmsIntent } from "./rentIntent.ts"
 import { isLeaseRenewalInquirySms } from "./leaseRenewalInquiry.ts"
 import {
@@ -145,8 +146,15 @@ function emergencyLayer(bridged: string): InboundIntentRecognition | null {
   })
 }
 
-/** Layer 2. Greeting / thanks / acknowledgement. */
+/** Layer 2. Greeting / thanks / end-of-conversation acknowledgment. */
 function smallTalkLayer(body: string): InboundIntentRecognition | null {
+  if (isConversationCloseAck(body)) {
+    return recognition({
+      intent: "small_talk",
+      confidence: 0.92,
+      layer: "small_talk",
+    })
+  }
   if (classifyAssistantOtherMessage(body) !== "small_talk") return null
   return recognition({
     intent: "small_talk",

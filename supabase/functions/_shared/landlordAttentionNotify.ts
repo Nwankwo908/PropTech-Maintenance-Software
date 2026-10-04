@@ -25,6 +25,8 @@ import {
   persistInvoicePaidConfirmationSms,
   type AwaitingInvoicePaidConfirmation,
 } from "./sms/invoicePaidConfirmation.ts"
+import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
+import { landlordAskRefLine } from "./sms/landlordAskSms.ts"
 
 export type LandlordAttentionKind =
   | "invoice_ready"
@@ -94,7 +96,8 @@ export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[]
     case "assign_vendor":
       return []
     case "invoice_ready":
-      return ["Review the invoice", "Pay in Ulo"]
+      // Paid-confirmation SMS owns the ask; don't invent numbered next steps.
+      return []
     case "late_rent":
       return ["Review the account", "Follow up with the resident"]
     case "lease_renewal":
@@ -185,6 +188,7 @@ type AttentionCopyInput = {
   choiceReplyHint?: string | null
   dashboardUrl: string
   actionLabel?: string
+  workOrderRef?: string | null
   /** When set with kind invoice_ready, SMS uses YES/NO paid-confirmation copy. */
   invoicePaid?: {
     landlordFirstName?: string | null
@@ -221,6 +225,10 @@ function attentionCopyParts(input: AttentionCopyInput) {
 }
 
 export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
+  const workOrderRef =
+    input.workOrderRef?.trim() ||
+    (input.dashboardUrl.match(/\bWO-[A-Za-z0-9]{4}\b/i)?.[0]?.toUpperCase() ??
+      null)
   if (input.kind === "invoice_ready" && input.invoicePaid) {
     return buildInvoiceReadyPaidConfirmationSms({
       landlordFirstName: input.invoicePaid.landlordFirstName,
@@ -229,10 +237,12 @@ export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
       amount: input.invoicePaid.amount,
       jobHeadline: input.invoicePaid.jobHeadline,
       detailsUrl: input.dashboardUrl,
+      workOrderRef,
     })
   }
   const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
     attentionCopyParts(input)
+  const ref = landlordAskRefLine(workOrderRef)
   return [
     `Ulo: ${headline}`,
     "",
@@ -243,6 +253,7 @@ export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
     "",
     "Details:",
     input.dashboardUrl,
+    ref ? `\n${ref}` : null,
   ]
     .filter((line): line is string => line != null)
     .join("\n")
@@ -254,6 +265,10 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
   text: string
   html: string
 } {
+  const workOrderRef =
+    input.workOrderRef?.trim() ||
+    (input.dashboardUrl.match(/\bWO-[A-Za-z0-9]{4}\b/i)?.[0]?.toUpperCase() ??
+      null)
   if (input.kind === "invoice_ready" && input.invoicePaid) {
     const sms = buildInvoiceReadyPaidConfirmationSms({
       landlordFirstName: input.invoicePaid.landlordFirstName,
@@ -262,6 +277,7 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
       amount: input.invoicePaid.amount,
       jobHeadline: input.invoicePaid.jobHeadline,
       detailsUrl: input.dashboardUrl,
+      workOrderRef,
     })
     const actionLabel =
       input.actionLabel?.trim() || attentionEmailActionLabel("invoice_ready")
@@ -279,6 +295,7 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
     attentionCopyParts(input)
   const actionLabel =
     input.actionLabel?.trim() || attentionEmailActionLabel(input.kind)
+  const ref = landlordAskRefLine(workOrderRef)
   const text = [
     `Ulo: ${headline}`,
     "",
@@ -289,6 +306,7 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
     "",
     "Details:",
     input.dashboardUrl,
+    ref ? `\n${ref}` : null,
   ]
     .filter((line): line is string => line != null)
     .join("\n")
@@ -393,6 +411,9 @@ async function upgradeInvoiceReadyToPaidConfirmation(
     amount: awaiting.amount,
     jobHeadline: awaiting.jobHeadline,
     detailsUrl: attentionDashboardUrl(params),
+    workOrderRef: params.maintenanceRequestId
+      ? formatWorkOrderRef(params.maintenanceRequestId)
+      : null,
   })
 
   const phones = (await resolveLandlordOpsPhones(supabase, landlordId)).phones
@@ -592,6 +613,9 @@ export async function notifyLandlordNeedsAttention(
     dashboardUrl,
     actionLabel: attentionEmailActionLabel(params.kind),
     invoicePaid,
+    workOrderRef: params.maintenanceRequestId
+      ? formatWorkOrderRef(params.maintenanceRequestId)
+      : null,
   }
   const smsBody = buildLandlordAttentionSms(copy)
   const email = buildLandlordAttentionEmail(copy)
