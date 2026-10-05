@@ -5,6 +5,8 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
+import { isRentCollectionPaused } from "../engine/rentCollectionPolicy.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
   formatRentBillingInquiryRef,
@@ -67,6 +69,13 @@ export async function processRentBillingInquiryTtl(
       skipped += 1
       continue
     }
+
+    const operational = await loadLandlordOperationalSettings(supabase, landlordId)
+    if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+      skipped += 1
+      continue
+    }
+
     if (dryRun) {
       escalated += 1
       continue

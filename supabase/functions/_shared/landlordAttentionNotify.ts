@@ -14,6 +14,7 @@ import {
   loadLandlordOperationalSettings,
   resolveLandlordNotificationDelivery,
 } from "./landlordNotificationPrefs.ts"
+import { isRentCollectionPaused } from "./engine/rentCollectionPolicy.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
 import {
   persistLandlordChoiceSms,
@@ -555,6 +556,22 @@ export async function notifyLandlordNeedsAttention(
     loadLandlordNotificationSettings(supabase, landlordId),
     loadLandlordOperationalSettings(supabase, landlordId),
   ])
+
+  // Platform / landlord pause: never SMS/email landlords about late rent while
+  // rent_collection is paused (covers escalation, billing-inquiry, report TTL).
+  if (
+    params.kind === "late_rent" &&
+    isRentCollectionPaused(operationalSettings.rentCollectionPaused)
+  ) {
+    return {
+      skipped: true,
+      reason: "rent_collection_paused",
+      smsSent: [],
+      emailSent: [],
+      errors: [],
+    }
+  }
+
   const deliveryPlan = resolveLandlordNotificationDelivery({
     settings: notificationSettings,
     attentionKind: params.kind,

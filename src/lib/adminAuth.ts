@@ -7,6 +7,7 @@ import {
 import { emailFromAuthUser } from '@shared/authUserEmail'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { clearTryDemoVisitor, clearTryDemoWelcomePending } from '@/lib/activeLandlord'
 import { landlordIdForPortalMemberEmail } from '@/lib/landlordPortalMembers'
 import { markAdminGoogleOAuthIntent, adminGoogleOAuthRedirectTo } from '@/lib/googleIdentitySignIn'
 
@@ -157,7 +158,14 @@ export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promis
   }
 }
 
-export async function signOutAdmin(): Promise<void> {
+export async function signOutAdmin(options?: {
+  /** When false, keep Try Demo visitor/welcome handoff (AuthGate unauthorized cleanup). */
+  clearTryDemo?: boolean
+}): Promise<void> {
+  if (options?.clearTryDemo !== false) {
+    clearTryDemoVisitor()
+    clearTryDemoWelcomePending()
+  }
   if (!supabase) return
   try {
     await Promise.race([

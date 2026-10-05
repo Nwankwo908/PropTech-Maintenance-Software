@@ -72,6 +72,12 @@ export function isSeededLandlordLoginEmail(email: string | null | undefined): bo
 }
 
 const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
+/** Set when entering Demo via landing Try Demo (hides staff account switcher). */
+const TRY_DEMO_VISITOR_KEY = 'ulo.tryDemoVisitor'
+/** One-shot welcome modal after finishing the landing Try Demo flow. */
+const TRY_DEMO_WELCOME_PENDING_KEY = 'ulo.tryDemoWelcomePending'
+/** Set after the visitor dismisses the welcome so it does not reappear every route change. */
+const TRY_DEMO_WELCOME_SEEN_KEY = 'ulo.tryDemoWelcomeSeen'
 
 /** Landlord bound to the signed-in account email (null for staff logins). */
 let sessionLandlordId: string | null = null
@@ -123,9 +129,11 @@ export function isEmptyOnboardingLandlordId(landlordId: string): boolean {
 
 /**
  * Resolve the landlord id all admin queries must scope to.
- * Precedence: account-bound landlord (login email) → testing override → default.
+ * Precedence: landing Try Demo visitor → account-bound landlord (login email)
+ * → testing override → default.
  */
 export function getActiveLandlordId(): string {
+  if (isTryDemoVisitor()) return DEMO_LANDLORD_ID
   return canonicalizeLandlordId(sessionLandlordId ?? readOverride() ?? DEFAULT_LANDLORD_ID)
 }
 
@@ -150,7 +158,9 @@ export function isDemoAccountActive(): boolean {
 
 /**
  * Persist Demo Property Management as the active landlord scope for the next
- * admin load (public /demo entry + staff switcher). Session-bound emails still win.
+ * admin load (public /demo entry + staff switcher).
+ * Landing Try Demo uses prepareTryDemoLandlordScope so Demo wins over a
+ * session-bound Alpha login for that visit.
  */
 export function prepareDemoLandlordScope(): void {
   try {
@@ -160,11 +170,94 @@ export function prepareDemoLandlordScope(): void {
   }
 }
 
+/** True when the current Demo session came from the landing Try Demo journey. */
+export function isTryDemoVisitor(): boolean {
+  try {
+    return window.localStorage.getItem(TRY_DEMO_VISITOR_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function clearTryDemoVisitor(): void {
+  try {
+    window.localStorage.removeItem(TRY_DEMO_VISITOR_KEY)
+  } catch {
+    // ignore
+  }
+  // Do not clear welcome here — AuthGate may sign out a stale session during the
+  // /demo → /admin hop before AdminLayout mounts. Welcome clears on dismiss / sign-out explicit.
+}
+
+/** True when the landing Try Demo welcome modal should show once. */
+export function isTryDemoWelcomePending(): boolean {
+  try {
+    if (window.localStorage.getItem(TRY_DEMO_WELCOME_SEEN_KEY) === '1') return false
+    if (window.localStorage.getItem(TRY_DEMO_WELCOME_PENDING_KEY) === '1') return true
+    if (window.sessionStorage.getItem(TRY_DEMO_WELCOME_PENDING_KEY) === '1') return true
+    // Fallback: any Try Demo visitor who has not dismissed welcome yet.
+    return window.localStorage.getItem(TRY_DEMO_VISITOR_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function markTryDemoWelcomePending(): void {
+  try {
+    window.localStorage.setItem(TRY_DEMO_WELCOME_PENDING_KEY, '1')
+    window.localStorage.removeItem(TRY_DEMO_WELCOME_SEEN_KEY)
+  } catch {
+    // localStorage unavailable
+  }
+  try {
+    window.sessionStorage.setItem(TRY_DEMO_WELCOME_PENDING_KEY, '1')
+  } catch {
+    // ignore
+  }
+}
+
+export function clearTryDemoWelcomePending(): void {
+  try {
+    window.localStorage.removeItem(TRY_DEMO_WELCOME_PENDING_KEY)
+    window.localStorage.setItem(TRY_DEMO_WELCOME_SEEN_KEY, '1')
+  } catch {
+    // ignore
+  }
+  try {
+    window.sessionStorage.removeItem(TRY_DEMO_WELCOME_PENDING_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+export function isTryDemoWelcomeSeen(): boolean {
+  try {
+    return window.localStorage.getItem(TRY_DEMO_WELCOME_SEEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Enter Demo from the landing Try Demo modal (final Next or Explore).
+ * Hides the staff account switcher for this Demo visit.
+ */
+export function prepareTryDemoLandlordScope(): void {
+  prepareDemoLandlordScope()
+  try {
+    window.localStorage.setItem(TRY_DEMO_VISITOR_KEY, '1')
+  } catch {
+    // localStorage unavailable (private mode)
+  }
+  markTryDemoWelcomePending()
+}
+
 /**
  * Switch the active account for testing (staff logins only) and reload so all
  * dashboards refetch under the new scope.
  */
 export function setActiveLandlordOverride(landlordId: string | null): void {
+  clearTryDemoVisitor()
   try {
     const next = landlordId ? canonicalizeLandlordId(landlordId) : DEFAULT_LANDLORD_ID
     if (!next || next === DEFAULT_LANDLORD_ID) {

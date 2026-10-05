@@ -42,6 +42,7 @@ import { tryStartHqsLetterIntakeFromInbound } from "./hqsInspectionLetterInbound
 import { tryLandlordCantProcessInbound } from "./landlordInboundCantProcess.ts"
 import { isLimitedAlphaTwilioSmsNumber } from "../../../../shared/landlordCapabilities.ts"
 import { getSMSProviderFor } from "./providerFactory.ts"
+import { resolveTryDemoUnmatchedInbound, shouldSilenceTryDemoResidentAfterCap } from "./tryDemoSilence.ts"
 
 export {
   InboundSmsError,
@@ -288,15 +289,63 @@ export async function processInboundSms(
           didOwnerLandlordId: smsNumber.landlord_id,
         },
       )
-      await ackUnmatchedSharedDidInbound(inbound)
+      const tryDemo = await resolveTryDemoUnmatchedInbound(supabase, inbound.from)
+      if (tryDemo.action === "silence") {
+        console.info(
+          "[sms-inbound] try-demo sample — silencing unmatched reply",
+          {
+            from: inbound.from,
+            to: inbound.to,
+            reason: tryDemo.reason,
+          },
+        )
+        return {
+          ok: true,
+          unmatchedSharedDid: true,
+          tryDemoSilence: true,
+          conversationId: null,
+          messageId: null,
+        }
+      }
+      if (tryDemo.action === "resident_intake") {
+        console.info(
+          "[sms-inbound] try-demo resident — continuing Demo intake",
+          {
+            from: inbound.from,
+            to: inbound.to,
+            landlordId: tryDemo.landlordId,
+            residentId: tryDemo.residentId,
+          },
+        )
+        landlordId = tryDemo.landlordId
+      } else {
+        await ackUnmatchedSharedDidInbound(inbound)
+        return {
+          ok: true,
+          unmatchedSharedDid: true,
+          conversationId: null,
+          messageId: null,
+        }
+      }
+    } else {
+      landlordId = resolvedLandlordId
+    }
+
+    // Identity may already exist after the first try-demo resident turn —
+    // still enforce the 3-reply Ulo cap on later messages.
+    if (await shouldSilenceTryDemoResidentAfterCap(supabase, inbound.from)) {
+      console.info(
+        "[sms-inbound] try-demo resident — Ulo reply cap reached",
+        { from: inbound.from, to: inbound.to },
+      )
       return {
         ok: true,
         unmatchedSharedDid: true,
+        tryDemoSilence: true,
         conversationId: null,
         messageId: null,
       }
     }
-    landlordId = resolvedLandlordId
   }
 
   const existingConversation = await findOpenConversation(supabase, {

@@ -121,7 +121,7 @@ function FeatureIcon({ feature, dimmed }: { feature: FeatureItem; dimmed?: boole
   if (feature.iconWrap) {
     return (
       <div
-        className={`flex size-10 shrink-0 items-center justify-center rounded-2xl transition-[opacity,filter] duration-500 ease-in-out motion-reduce:transition-none lg:size-11 ${iconClass}`}
+        className={`flex size-10 shrink-0 items-center justify-center rounded-2xl transition-[opacity,filter] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none lg:size-11 ${iconClass}`}
       >
         <img src={feature.icon} alt="" className="size-7 object-contain lg:size-8" />
       </div>
@@ -132,7 +132,7 @@ function FeatureIcon({ feature, dimmed }: { feature: FeatureItem; dimmed?: boole
     <img
       src={feature.icon}
       alt=""
-      className={`${iconSizeClass} shrink-0 object-contain transition-[opacity,filter] duration-500 ease-in-out motion-reduce:transition-none ${iconClass}`}
+      className={`${iconSizeClass} shrink-0 object-contain transition-[opacity,filter] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none ${iconClass}`}
     />
   )
 }
@@ -159,7 +159,7 @@ function FeatureNavButton({
       onMouseEnter={onHighlight}
       onFocus={onHighlight}
       onClick={onHighlight}
-      className={`landing-how-it-works-feature-item sa-press relative z-0 flex cursor-pointer items-start gap-5 rounded-2xl px-[34px] py-1 text-left transition-[opacity] duration-500 ease-in-out motion-reduce:transition-none lg:gap-4 lg:pl-0 lg:pr-0 landing-4096-2304:py-[0.3rem] landing-5120-2880:py-[0.3rem] landing-compact:!px-0 landing-phone-tall:!px-0 ${LANDING_640_480}:!px-0 ${LANDING_640_480}:gap-2 landing-884:gap-3 landing-884:px-0 landing-884:pl-0 landing-720-1280:!px-0 landing-720-1280:gap-2 ${
+      className={`landing-how-it-works-feature-item sa-press relative z-0 flex cursor-pointer items-start gap-5 rounded-2xl px-[34px] py-1 text-left transition-[opacity,transform,color] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none lg:gap-4 lg:pl-0 lg:pr-0 landing-4096-2304:py-[0.3rem] landing-5120-2880:py-[0.3rem] landing-compact:!px-0 landing-phone-tall:!px-0 ${LANDING_640_480}:!px-0 ${LANDING_640_480}:gap-2 landing-884:gap-3 landing-884:px-0 landing-884:pl-0 landing-720-1280:!px-0 landing-720-1280:gap-2 ${
         compact ? 'w-fit items-center justify-center' : 'w-full lg:w-auto landing-720-1280:w-full'
       } ${isHighlighted ? 'z-10' : 'opacity-50 hover:opacity-65'}`}
     >
@@ -187,7 +187,7 @@ function FeatureNavButton({
             </h3>
             {feature.description ? (
               <div
-                className={`pointer-events-none overflow-hidden transition-[max-height] duration-500 ease-in-out motion-reduce:transition-none ${
+                className={`pointer-events-none overflow-hidden transition-[max-height] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none ${
                   showDescription
                     ? 'max-h-40 landing-compact:!max-h-[22rem] landing-phone-tall:!max-h-[22rem] landing-720-1280:!max-h-[12rem] landing-4096-2304:!max-h-[12rem] landing-5120-2880:!max-h-[12rem] landing-7680-4320:!max-h-[25rem]'
                     : 'max-h-0'
@@ -195,7 +195,7 @@ function FeatureNavButton({
                 aria-hidden={!showDescription}
               >
                 <p
-                  className={`pl-0 pt-1 font-normal text-[#6b7280] transition-transform duration-500 ease-out motion-reduce:transition-none ${descriptionSizeClass} landing-720-1280:break-words landing-720-1280:text-[12px] landing-720-1280:leading-snug ${
+                  className={`pl-0 pt-1 font-normal text-[#6b7280] transition-transform duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none ${descriptionSizeClass} landing-720-1280:break-words landing-720-1280:text-[12px] landing-720-1280:leading-snug ${
                     showDescription ? 'translate-y-0' : '-translate-y-full'
                   }`}
                 >
@@ -229,7 +229,7 @@ function FeaturePreviewPanel({ activeId }: { activeId: FeatureId }) {
             key={activeId}
             src={preview.src}
             alt={preview.alt}
-            className={`landing-how-it-works-preview-img landing-768-360-preview-img landing-991-568-preview-img landing-768-1024-preview-img landing-768-1366-preview-img landing-800-1280-preview-img landing-820-1180-preview-img landing-834-1194-preview-img landing-720-1280-preview-img landing-884-1104-preview-img landing-912-1368-preview-img landing-991-1280-preview-img landing-1024-1366-preview-img landing-1024-600-preview-img landing-1024-1440-preview-img landing-desktop-preview-img landing-3440-1440-preview-img landing-3840-2160-preview-img landing-5120-2880-preview-img landing-7680-4320-preview-img block h-auto max-h-full w-full max-w-full animate-[feature-preview-fade_0.6s_ease-in-out] object-contain object-left max-[410px]:!w-full max-[410px]:!min-w-full max-[410px]:!max-w-none landing-compact:!w-full landing-compact:!min-w-full landing-compact:!max-w-none landing-phone-tall:!w-full landing-phone-tall:!min-w-full landing-phone-tall:!max-w-none landing-tablet-portrait:!w-full landing-tablet-portrait:!min-w-full landing-tablet-portrait:!max-w-none landing-720-1280:!mt-0 landing-720-1280:!ml-0 landing-720-1280:!w-full landing-720-1280:!max-w-full landing-820-1180:!mt-0 landing-820-1180:!ml-0 landing-820-1180:!w-full landing-820-1180:!max-w-full landing-834-1194:!mt-0 landing-834-1194:!ml-0 landing-834-1194:!w-full landing-834-1194:!max-w-full landing-1024-1366:!mt-0 landing-1024-1366:!ml-0 landing-1024-1366:!w-full landing-1024-1366:!max-w-full landing-1024-600:!mt-0 landing-1024-600:!ml-0 landing-1024-600:!w-full landing-1024-600:!max-w-full landing-1024-1440-preview:!mt-0 landing-1024-1440-preview:!ml-0 landing-1024-1440-preview:!w-full landing-1024-1440-preview:!max-w-full ${LANDING_640_480}:max-h-[min(220px,42dvh)] ${cropClass}`}
+            className={`landing-how-it-works-preview-img landing-768-360-preview-img landing-991-568-preview-img landing-768-1024-preview-img landing-768-1366-preview-img landing-800-1280-preview-img landing-820-1180-preview-img landing-834-1194-preview-img landing-720-1280-preview-img landing-884-1104-preview-img landing-912-1368-preview-img landing-991-1280-preview-img landing-1024-1366-preview-img landing-1024-600-preview-img landing-1024-1440-preview-img landing-desktop-preview-img landing-3440-1440-preview-img landing-3840-2160-preview-img landing-5120-2880-preview-img landing-7680-4320-preview-img block h-auto max-h-full w-full max-w-full animate-[feature-preview-fade_var(--sa-duration)_var(--sa-ease)] object-contain object-left max-[410px]:!w-full max-[410px]:!min-w-full max-[410px]:!max-w-none landing-compact:!w-full landing-compact:!min-w-full landing-compact:!max-w-none landing-phone-tall:!w-full landing-phone-tall:!min-w-full landing-phone-tall:!max-w-none landing-tablet-portrait:!w-full landing-tablet-portrait:!min-w-full landing-tablet-portrait:!max-w-none landing-720-1280:!mt-0 landing-720-1280:!ml-0 landing-720-1280:!w-full landing-720-1280:!max-w-full landing-820-1180:!mt-0 landing-820-1180:!ml-0 landing-820-1180:!w-full landing-820-1180:!max-w-full landing-834-1194:!mt-0 landing-834-1194:!ml-0 landing-834-1194:!w-full landing-834-1194:!max-w-full landing-1024-1366:!mt-0 landing-1024-1366:!ml-0 landing-1024-1366:!w-full landing-1024-1366:!max-w-full landing-1024-600:!mt-0 landing-1024-600:!ml-0 landing-1024-600:!w-full landing-1024-600:!max-w-full landing-1024-1440-preview:!mt-0 landing-1024-1440-preview:!ml-0 landing-1024-1440-preview:!w-full landing-1024-1440-preview:!max-w-full ${LANDING_640_480}:max-h-[min(220px,42dvh)] ${cropClass}`}
             width={preview.width}
             height={preview.height}
           />
@@ -267,7 +267,7 @@ export function FeaturesShowcase() {
         className={`landing-how-it-works-stage mx-auto flex w-fit max-w-full flex-col items-center justify-center gap-8 overflow-hidden rounded-3xl border border-[#e5e7eb] bg-[#F3F3F2] px-5 py-6 sm:px-8 sm:py-8 ${LANDING_640_480}:flex-row ${LANDING_640_480}:items-center ${LANDING_640_480}:justify-center ${LANDING_640_480}:gap-3 landing-884:flex-row landing-884:items-center landing-884:justify-center landing-884:gap-4 landing-720-576:!flex-col landing-720-576:!items-center landing-720-576:!gap-10 landing-720-1280:!flex-row landing-720-1280:!items-center landing-720-1280:!justify-center landing-720-1280:!gap-2 landing-desktop:flex landing-desktop:flex-row landing-desktop:items-center landing-desktop:justify-center landing-desktop:gap-4 landing-1920-1080:!justify-center landing-1920-1200:!justify-center landing-3440-1440:flex landing-3440-1440:flex-row landing-3440-1440:items-center landing-3440-1440:justify-center landing-3440-1440:gap-4 landing-3840-2160:flex landing-3840-2160:flex-row landing-3840-2160:items-center landing-3840-2160:justify-center landing-3840-2160:gap-[100px] landing-4096-2304:flex landing-5120-2880:flex landing-4096-2304:flex-row landing-5120-2880:flex-row landing-4096-2304:items-center landing-5120-2880:items-center landing-4096-2304:justify-center landing-5120-2880:justify-center landing-4096-2304:gap-4 landing-5120-2880:gap-4 landing-7680-4320:px-10 landing-7680-4320:py-12 lg:flex-row lg:items-center lg:justify-center lg:gap-8 lg:px-10 lg:py-10`}
       >
           <nav
-            className={`landing-how-it-works-feature-nav flex w-auto min-w-0 max-w-full shrink-0 flex-col items-start gap-[70px] transition-[gap] duration-500 ease-in-out motion-reduce:transition-none ${LANDING_640_480}:max-w-[13rem] ${LANDING_640_480}:gap-[1.15rem] landing-884:max-w-[min(100%,22rem)] landing-884:gap-[2.875rem] landing-720-576:!max-w-none landing-720-576:!gap-[70px] landing-720-1280:!w-[10.5rem] landing-720-1280:!max-w-[10.5rem] landing-720-1280:!shrink-0 landing-720-1280:!gap-[1.725rem] landing-1024-1440:max-w-[calc(463px*0.8)] landing-1440-900:!max-w-[calc(463px*1.4)] landing-1680-1050:!max-w-[calc(463px*1.4)] landing-desktop:shrink-0 landing-3440-1440:shrink-0 landing-3840-2160:shrink-0 landing-4096-2304:shrink-0 landing-5120-2880:shrink-0 landing-4096-2304:!gap-[5.52rem] landing-5120-2880:!gap-[5.52rem] landing-5120-2880:shrink-0 landing-7680-4320:shrink-0 landing-7680-4320:!max-w-[calc(463px*2.5)] landing-7680-4320:!gap-[10.9609375rem] lg:max-w-[463px] lg:!gap-[4.6rem]`}
+            className={`landing-how-it-works-feature-nav flex w-auto min-w-0 max-w-full shrink-0 flex-col items-start gap-[70px] transition-[gap] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none ${LANDING_640_480}:max-w-[13rem] ${LANDING_640_480}:gap-[1.15rem] landing-884:max-w-[min(100%,22rem)] landing-884:gap-[2.875rem] landing-720-576:!max-w-none landing-720-576:!gap-[70px] landing-720-1280:!w-[10.5rem] landing-720-1280:!max-w-[10.5rem] landing-720-1280:!shrink-0 landing-720-1280:!gap-[1.725rem] landing-1024-1440:max-w-[calc(463px*0.8)] landing-1440-900:!max-w-[calc(463px*1.4)] landing-1680-1050:!max-w-[calc(463px*1.4)] landing-desktop:shrink-0 landing-3440-1440:shrink-0 landing-3840-2160:shrink-0 landing-4096-2304:shrink-0 landing-5120-2880:shrink-0 landing-4096-2304:!gap-[5.52rem] landing-5120-2880:!gap-[5.52rem] landing-5120-2880:shrink-0 landing-7680-4320:shrink-0 landing-7680-4320:!max-w-[calc(463px*2.5)] landing-7680-4320:!gap-[10.9609375rem] lg:max-w-[463px] lg:!gap-[4.6rem]`}
             aria-label="Product features"
           >
             {FEATURES.map((feature) => (

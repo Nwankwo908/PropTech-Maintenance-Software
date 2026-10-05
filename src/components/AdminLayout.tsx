@@ -19,6 +19,7 @@ import {
   getActiveLandlordLabel,
   getSessionLandlordId,
   isDemoAccountActive,
+  isTryDemoVisitor,
   LANDLORD_ACCOUNT_OPTIONS,
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
@@ -225,7 +226,7 @@ function AdminTopBar() {
             {workspaceLabel}
           </span>
         )}
-        {getSessionLandlordId() === null ? (
+        {getSessionLandlordId() === null && !isTryDemoVisitor() ? (
           <label className="flex shrink-0 items-center gap-2 text-[12px] text-[#6a7282]">
             Account
             <select

@@ -1,12 +1,29 @@
-import { useLayoutEffect } from 'react'
-import { Navigate } from 'react-router-dom'
-import { prepareDemoLandlordScope } from '@/lib/activeLandlord'
+import { Navigate, useSearchParams } from 'react-router-dom'
+import {
+  prepareDemoLandlordScope,
+  prepareTryDemoLandlordScope,
+} from '@/lib/activeLandlord'
 
 /** Public entry: scope admin to Demo Property Management, then open the overview. */
 export function DemoPageRedirect() {
-  useLayoutEffect(() => {
-    prepareDemoLandlordScope()
-  }, [])
+  const [searchParams] = useSearchParams()
+  const fromTryDemo = searchParams.get('from') === 'try-demo'
+  const welcome = searchParams.get('welcome') === '1'
 
-  return <Navigate to="/admin" replace />
+  // Set scope during render so /admin mounts under Demo (layout effect can lose the race to Navigate).
+  if (fromTryDemo) {
+    prepareTryDemoLandlordScope()
+  } else {
+    prepareDemoLandlordScope()
+  }
+
+  const adminTo =
+    fromTryDemo || welcome
+      ? `/admin?${new URLSearchParams({
+          ...(fromTryDemo ? { from: 'try-demo' } : {}),
+          welcome: '1',
+        }).toString()}`
+      : '/admin'
+
+  return <Navigate to={adminTo} replace />
 }

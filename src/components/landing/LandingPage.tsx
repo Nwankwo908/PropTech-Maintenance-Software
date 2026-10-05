@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
+import { TryDemoModal } from '@/components/landing/TryDemoModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import heroBlueprint from '@/assets/landing/hero-blueprint.png'
 import heroArrow from '@/assets/Arrow_01.svg'
@@ -443,19 +444,19 @@ function HeroHeadlineAndCopy() {
 }
 
 const PRIMARY_BUTTON_CLASS = [
-  'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5 leading-none',
-  'text-sm font-semibold text-white',
-  'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
-  'transition-[transform,box-shadow,filter] duration-150 ease-out',
-  'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
-  'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
-  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
-  'disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none disabled:translate-y-0 disabled:scale-100 disabled:brightness-100',
+  'flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[#55B6A1] px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-white transition-[background-color,transform] duration-150 ease-out',
+  'hover:bg-[#459e8b] hover:-translate-y-0.5',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#55B6A1]/40 focus-visible:ring-offset-2',
+  'disabled:pointer-events-none disabled:opacity-50',
 ].join(' ')
 
 function primaryControlClassName(className = '') {
   return [PRIMARY_BUTTON_CLASS, className].filter(Boolean).join(' ')
 }
+
+const LANDING_CTA_EQUAL_WIDTH =
+  'box-border min-w-0 w-full flex-1 basis-0 justify-center !py-0'
 
 function PrimaryButton({
   children,
@@ -463,12 +464,7 @@ function PrimaryButton({
   ...props
 }: React.ComponentProps<'button'> & { children: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      className={primaryControlClassName(className)}
-      style={{ backgroundImage: TEAL_GRADIENT }}
-      {...props}
-    >
+    <button type="button" className={primaryControlClassName(className)} {...props}>
       {children}
     </button>
   )
@@ -489,11 +485,48 @@ function PrimaryLink({
     <Link
       to={to}
       onClick={onClick}
-      className={primaryControlClassName(className)}
+      className={[
+        'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5 leading-none',
+        'text-sm font-semibold text-white',
+        'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
+        'transition-[transform,box-shadow,filter] duration-150 ease-out',
+        'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
+        'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
+        'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
+        'disabled:pointer-events-none disabled:opacity-50',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={{ backgroundImage: TEAL_GRADIENT }}
     >
       {children}
     </Link>
+  )
+}
+
+const SECONDARY_BUTTON_CLASS = [
+  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#d1d5db] bg-white px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-[#0f1623]',
+  'transition-[transform,box-shadow,border-color,background-color] duration-150 ease-out',
+  'hover:border-[#9ca3af] hover:bg-[#f9fafb] hover:shadow-[0_4px_14px_rgba(15,23,42,0.08)] hover:-translate-y-0.5',
+  'active:translate-y-px active:scale-[0.98]',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d1d5db]/80 focus-visible:ring-offset-2',
+].join(' ')
+
+function SecondaryButton({
+  children,
+  className = '',
+  ...props
+}: React.ComponentProps<'button'> & { children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      className={[SECONDARY_BUTTON_CLASS, className].filter(Boolean).join(' ')}
+      {...props}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -509,7 +542,7 @@ export function LandingPage() {
   const [earlyAccessSuccess, setEarlyAccessSuccess] = useState(false)
   const [earlyAccessReferralLink, setEarlyAccessReferralLink] = useState('')
   const [earlyAccessInitialEmail, setEarlyAccessInitialEmail] = useState('')
-  const [heroWaitlistEmail, setHeroWaitlistEmail] = useState('')
+  const [tryDemoOpen, setTryDemoOpen] = useState(false)
   const { scrollToId } = useLandingSmoothScroll()
   const landingRootRef = useRef<HTMLDivElement>(null)
   const heroRowRef = useRef<HTMLDivElement>(null)
@@ -653,16 +686,14 @@ export function LandingPage() {
     setEarlyAccessInitialEmail('')
   }
 
-  function submitHeroWaitlistEmail(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const formData = new FormData(event.currentTarget)
-    const raw = formData.get('email') ?? formData.get('footer-email')
-    const fromField = typeof raw === 'string' ? raw.trim() : ''
-    const email = fromField || heroWaitlistEmail.trim()
-    if (email && email !== heroWaitlistEmail.trim()) {
-      setHeroWaitlistEmail(email)
-    }
-    openEarlyAccess(email)
+  function openTryDemo() {
+    playUiClickSound()
+    setMobileMenuOpen(false)
+    setTryDemoOpen(true)
+  }
+
+  function closeTryDemo() {
+    setTryDemoOpen(false)
   }
 
   const navLinks = [
@@ -798,7 +829,7 @@ export function LandingPage() {
      >
       <div
        ref={heroRowRef}
-       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-stretch [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-stretch [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-full min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-stretch min-[1024px]:gap-10 min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
+       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-fit [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-stretch [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-fit [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-stretch [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-0 min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-fit min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-stretch min-[1024px]:justify-center min-[1024px]:gap-0 min-[1440px]:gap-0 min-[1440px]:gap-y-0 min-[2560px]:gap-0 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
               style={
                 {
                   '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
@@ -806,7 +837,7 @@ export function LandingPage() {
                 } as React.CSSProperties
               }
             >
-              <div ref={heroCopyRef} className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-1 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-1 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-1 min-[1024px]:shrink min-[1024px]:pb-0">
+              <div ref={heroCopyRef} className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-none min-[1024px]:shrink min-[1024px]:pb-0">
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
                   <span className="landing-alpha-status-dot max-[385px]:hidden" aria-hidden />
                   <span className="font-mono text-[10px] font-normal leading-4 text-[#059669] min-[321px]:text-[12px]">
@@ -817,25 +848,23 @@ export function LandingPage() {
                 <HeroHeadlineAndCopy />
 
                 <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start landing-tablet-portrait:items-stretch">
-                  <form
-                    onSubmit={submitHeroWaitlistEmail}
-                    className="landing-hero-waitlist flex w-full min-w-0 flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center landing-tablet-portrait:!w-full landing-tablet-portrait:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!w-full [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!w-full [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!items-stretch landing-1024-1366:!w-full landing-1024-1366:!flex-row landing-1024-1366:!items-center landing-1024-600:!w-full landing-1024-600:!flex-col landing-1024-600:!items-stretch landing-1280-800:!w-auto landing-1512-982:!w-auto landing-1728-1117:!w-auto landing-1280-800:!flex-row landing-1512-982:!flex-row landing-1728-1117:!flex-row landing-1280-800:!items-center landing-1512-982:!items-center landing-1728-1117:!items-center landing-1366-768:!w-auto landing-1366-768:!flex-row landing-1366-768:!items-center landing-1440-900:!w-auto landing-1440-900:!flex-row landing-1440-900:!items-center landing-1680-1050:!w-auto landing-1680-1050:!flex-row landing-1680-1050:!items-center"
-                  >
-                    <input
-                      type="email"
-                      name="email"
-                      autoComplete="email"
-                      placeholder="Enter your email"
-                      value={heroWaitlistEmail}
-                      onChange={(event) => setHeroWaitlistEmail(event.target.value)}
-                      className="sa-surface landing-waitlist-field landing-3840-2160-footer-waitlist-field box-border w-full min-w-[10.5rem] flex-1 rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#4b5563] placeholder:opacity-100 transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:w-[min(100%,20rem)] sm:text-base landing-tablet-portrait:!min-w-0 landing-tablet-portrait:!flex-1 landing-tablet-portrait:!w-auto landing-3840-2160:rounded-[0.8rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!min-w-[10.5rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!flex-1 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!w-auto [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!w-full landing-1024-1366:!w-auto landing-1024-600:!w-full landing-1280-800:!w-auto landing-1512-982:!w-auto landing-1728-1117:!w-auto landing-1280-800:!flex-1 landing-1512-982:!flex-1 landing-1728-1117:!flex-1 landing-1280-800:!max-w-[min(100%,20rem)] landing-1512-982:!max-w-[min(100%,20rem)] landing-1728-1117:!max-w-[min(100%,20rem)] landing-1366-768:!w-auto landing-1366-768:!flex-1 landing-1366-768:!max-w-[min(100%,20rem)] landing-1440-900:!w-auto landing-1440-900:!flex-1 landing-1440-900:!max-w-[min(100%,20rem)] landing-1680-1050:!w-auto landing-1680-1050:!flex-1 landing-1680-1050:!max-w-[min(100%,20rem)] [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!min-w-0 [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!max-w-none [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!px-4"
-                      aria-label="Email for early access"
-                    />
-                    <PrimaryButton type="submit" className="landing-waitlist-field landing-3840-2160-footer-waitlist-field box-border w-full shrink-0 justify-center !py-0 sm:w-auto landing-tablet-portrait:!w-auto landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!w-full landing-1024-1366:!w-auto landing-1024-600:!w-full landing-1280-800:!w-auto landing-1512-982:!w-auto landing-1728-1117:!w-auto landing-1366-768:!w-auto landing-1440-900:!w-auto landing-1680-1050:!w-auto">
+                  <div className="landing-hero-waitlist flex w-full min-w-0 max-w-xl flex-col items-stretch gap-3 sm:flex-row sm:items-stretch landing-tablet-portrait:!w-full landing-tablet-portrait:flex-row [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col landing-1024-600:!flex-col">
+                    <SecondaryButton
+                      type="button"
+                      onClick={() => openTryDemo()}
+                      className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10`}
+                    >
+                      Try Demo
+                    </SecondaryButton>
+                    <PrimaryButton
+                      type="button"
+                      onClick={() => openEarlyAccess()}
+                      className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10`}
+                    >
                       Request Early Access
                       <IconArrowRight />
                     </PrimaryButton>
-                  </form>
+                  </div>
                   <div className="mt-6 flex flex-nowrap items-center justify-center gap-2 landing-compact:flex-col landing-compact:items-center landing-504:flex-row landing-504:items-center sm:justify-start landing-phone-tall:flex-col landing-phone-tall:items-center">
                     <button
                       type="button"
@@ -859,7 +888,7 @@ export function LandingPage() {
 
               <div
                 aria-hidden
-                className="landing-hero-991-arrow relative z-0 mx-auto box-content flex h-[4.2rem] w-[4.2rem] shrink-0 items-center justify-center self-center px-10 py-10 sm:h-[4.8rem] sm:w-[4.8rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:h-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:px-8 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:py-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:h-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:px-10 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:py-0 min-[1440px]:h-24 min-[1440px]:w-24 min-[1440px]:px-12 min-[1440px]:py-0 min-[2560px]:h-[7.2rem] min-[2560px]:w-[7.2rem]"
+                className="landing-hero-991-arrow relative z-0 mx-auto box-content flex h-[4.2rem] w-[4.2rem] shrink-0 items-center justify-center self-center px-10 py-10 sm:h-[4.8rem] sm:w-[4.8rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:h-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:px-2 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:py-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:h-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:px-2 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:py-0 min-[1024px]:px-2 min-[1440px]:h-24 min-[1440px]:w-24 min-[1440px]:px-2 min-[1440px]:py-0 min-[2560px]:h-[7.2rem] min-[2560px]:w-[7.2rem] min-[2560px]:px-2"
               >
                 <img
                   src={heroArrow}
@@ -868,7 +897,7 @@ export function LandingPage() {
                 />
               </div>
 
-              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 items-stretch justify-center self-stretch [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-auto min-[2560px]:ml-12">
+              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 items-stretch justify-center self-stretch [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-0 min-[1440px]:mr-0 min-[1440px]:w-auto min-[2560px]:ml-0">
                 <HeroInteractionVideo matchHeight={heroVideoMatchHeight} />
               </div>
             </div>
@@ -1004,28 +1033,23 @@ export function LandingPage() {
                 <p className="mt-2 text-base font-normal leading-relaxed text-slate-700 landing-compact:text-center landing-3840-2160:mt-[0.8rem] landing-3840-2160:text-[1.6rem] landing-3840-2160:leading-relaxed landing-4096-2304:mt-[0.7rem] landing-5120-2880:mt-[0.7rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-4096-2304:leading-relaxed landing-5120-2880:leading-relaxed landing-7680-4320:mt-5 landing-7680-4320:text-[2.5rem] landing-7680-4320:leading-relaxed">
                   Join the alpha pilot program; limited spots available.
                 </p>
-                <form
-                  onSubmit={submitHeroWaitlistEmail}
-                  className="landing-footer-waitlist mt-5 flex flex-col gap-3 landing-tablet-portrait:flex-row landing-tablet-portrait:items-center landing-3840-2160:mt-8 landing-3840-2160:gap-[1.2rem] landing-4096-2304:mt-7 landing-5120-2880:mt-7 landing-4096-2304:gap-[1.05rem] landing-5120-2880:gap-[1.05rem] landing-7680-4320:mt-[3.125rem] landing-7680-4320:gap-[1.875rem] [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!items-stretch landing-1024-1366:!flex-row landing-1024-1366:!items-center landing-1024-600:!flex-col landing-1024-600:!items-stretch landing-1280-800:!flex-col landing-1512-982:!flex-col landing-1728-1117:!flex-col landing-1280-800:!items-stretch landing-1512-982:!items-stretch landing-1728-1117:!items-stretch"
-                >
-                  <input
-                    type="email"
-                    name="footer-email"
-                    autoComplete="email"
-                    placeholder="Enter your email"
-                    value={heroWaitlistEmail}
-                    onChange={(event) => setHeroWaitlistEmail(event.target.value)}
-                    className="sa-surface landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field box-border w-full min-w-[10.5rem] flex-1 rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#4b5563] placeholder:opacity-100 transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:text-base landing-tablet-portrait:!min-w-0 landing-tablet-portrait:!flex-1 landing-tablet-portrait:!w-auto landing-3840-2160:min-w-[16.8rem] landing-3840-2160:rounded-[0.8rem] landing-4096-2304:min-w-[14.7rem] landing-5120-2880:min-w-[14.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-7680-4320:min-w-[26.25rem] landing-7680-4320:rounded-[1.25rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!min-w-[10.5rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!flex-1 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!w-auto [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!w-full landing-1024-1366:!w-auto landing-1024-600:!w-full landing-1280-800:!w-full landing-1512-982:!w-full landing-1728-1117:!w-full landing-1280-800:!max-w-none landing-1512-982:!max-w-none landing-1728-1117:!max-w-none [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!px-4"
-                    aria-label="Email for early access"
-                  />
+                <div className="landing-footer-waitlist mt-5 flex w-full flex-col gap-3 landing-tablet-portrait:flex-row landing-tablet-portrait:items-stretch landing-3840-2160:mt-8 landing-3840-2160:gap-[1.2rem] landing-4096-2304:mt-7 landing-5120-2880:mt-7 landing-4096-2304:gap-[1.05rem] landing-5120-2880:gap-[1.05rem] landing-7680-4320:mt-[3.125rem] landing-7680-4320:gap-[1.875rem] [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!items-stretch landing-1024-1366:!flex-row landing-1024-1366:!items-stretch landing-1024-600:!flex-col landing-1024-600:!items-stretch landing-1280-800:!flex-col landing-1512-982:!flex-col landing-1728-1117:!flex-col landing-1280-800:!items-stretch landing-1512-982:!items-stretch landing-1728-1117:!items-stretch">
+                  <SecondaryButton
+                    type="button"
+                    onClick={() => openTryDemo()}
+                    className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem]`}
+                  >
+                    Try Demo
+                  </SecondaryButton>
                   <PrimaryButton
-                    type="submit"
-                    className="landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field box-border w-full shrink-0 justify-center !py-0 landing-tablet-portrait:!w-auto landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem] [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!w-full landing-1024-1366:!w-auto landing-1024-600:!w-full landing-1280-800:!w-full landing-1512-982:!w-full landing-1728-1117:!w-full"
+                    type="button"
+                    onClick={() => openEarlyAccess()}
+                    className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem]`}
                   >
                     Request Early Access
                     <IconArrowRight className="size-4 landing-3840-2160:size-6 landing-4096-2304:size-[1.4rem] landing-5120-2880:size-[1.4rem] landing-7680-4320:size-10" />
                   </PrimaryButton>
-                </form>
+                </div>
               </div>
               <p className="mt-8 text-left text-sm text-[#6b7280] lg:text-right landing-compact:order-4 landing-compact:mt-0 landing-tablet-portrait:col-start-2 landing-tablet-portrait:row-start-3 landing-tablet-portrait:mt-0 landing-tablet-portrait:self-end landing-tablet-portrait:text-left landing-4096-2304:mt-[2.8rem] landing-5120-2880:mt-[2.8rem] landing-4096-2304:text-[1.225rem] landing-5120-2880:text-[1.225rem] landing-7680-4320:mt-20 landing-7680-4320:text-[2.1875rem]">
                 © {new Date().getFullYear()} ülo home. All rights reserved.
@@ -1062,6 +1086,7 @@ export function LandingPage() {
         initialReferralLink={earlyAccessReferralLink}
         initialEmail={earlyAccessInitialEmail}
       />
+      <TryDemoModal open={tryDemoOpen} onClose={closeTryDemo} />
     </div>
   )
 }

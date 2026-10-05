@@ -20,6 +20,8 @@ export type ProcessInboundSmsResult =
       unmatchedSharedDid: true
       conversationId: null
       messageId: null
+      /** Try-demo sample recipient (landlord/resident/vendor) — no unmatched ack SMS. */
+      tryDemoSilence?: true
     }
   | {
       ok: true

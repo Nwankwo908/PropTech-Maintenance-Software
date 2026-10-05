@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -61,119 +62,244 @@ const FEATURE_MARQUEE_ITEMS = [
 ] as const
 
 const TAP_MOVE_PX = 12
+const TRANSITION_MS = 500
 const CARD_CLASS =
   'h-auto w-[calc((100vw-3rem)*0.7)] shrink-0 select-none rounded-2xl border border-[#e5e7eb] max-[410px]:!w-[calc((100vw-3rem)*0.7)] landing-compact:!w-[calc((100vw-3rem)*0.7)] landing-compact:!h-auto landing-phone-tall:!w-[calc(100vw-3rem)] [@media(min-width:580px)_and_(max-width:640px)_and_(min-height:920px)_and_(max-height:1080px)]:!w-[calc((100vw-3rem)*0.56)] [@media(min-width:610px)_and_(max-width:670px)_and_(min-height:450px)_and_(max-height:510px)]:!w-[calc((100vw-3rem)*0.56)] landing-720-576:!w-[calc((100vw-3rem)*0.56)] landing-720-576:!h-auto sm:h-[min(476px,70vw)] sm:w-auto landing-884:!h-[min(333px,49vw)] landing-884:!w-auto landing-1024-600:!h-auto landing-1024-600:!w-[calc((100cqw-2rem)/2.5)] landing-1024-600:!max-w-none landing-7680-4320:!h-[min(1190px,70vw)] landing-7680-4320:!w-auto landing-7680-4320:rounded-[2.5rem] [@media(min-width:580px)_and_(max-width:640px)_and_(min-height:920px)_and_(max-height:1080px)]:!h-auto [@media(min-width:610px)_and_(max-width:670px)_and_(min-height:450px)_and_(max-height:510px)]:!h-auto'
 
 const COUNT = FEATURE_MARQUEE_ITEMS.length
-/** [last clone] + real slides + [first clone] for seamless wrap. */
+/**
+ * Three full copies so the viewport stays filled at both ends.
+ * Live window is the middle copy (indices COUNT .. 2*COUNT-1).
+ */
 const LOOP_SLIDES = [
-  FEATURE_MARQUEE_ITEMS[COUNT - 1]!,
   ...FEATURE_MARQUEE_ITEMS,
-  FEATURE_MARQUEE_ITEMS[0]!,
+  ...FEATURE_MARQUEE_ITEMS,
+  ...FEATURE_MARQUEE_ITEMS,
 ] as const
 
+const START_INDEX = COUNT
+
 function logicalIndexFromTrack(trackIndex: number): number {
-  if (trackIndex <= 0) return COUNT - 1
-  if (trackIndex >= COUNT + 1) return 0
-  return trackIndex - 1
+  return ((trackIndex % COUNT) + COUNT) % COUNT
 }
 
-/** Horizontal feature carousel with dots + prev/next. Slides may cross the section column rule. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+/** Horizontal feature carousel with dots + prev/next. Infinite loop; clips left of the section column rule. */
 export function FeaturesMarquee() {
   const trackRef = useRef<HTMLDivElement>(null)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const animatingRef = useRef(false)
-  /** Track position: 1 = first real slide. */
-  const [trackIndex, setTrackIndex] = useState(1)
-  const [stepPx, setStepPx] = useState(0)
+  const trackIndexRef = useRef(START_INDEX)
+  const wrapTimeoutRef = useRef<number | null>(null)
+  const pendingDeltaRef = useRef(0)
+  const moveIdRef = useRef(0)
+  const settledMoveIdRef = useRef(0)
+  /** Track position: middle-copy start = first real slide. */
+  const [trackIndex, setTrackIndex] = useState(START_INDEX)
+  /** Layout offset of the active slide (offsetLeft — ignores parent `zoom`). */
+  const [offsetPx, setOffsetPx] = useState(0)
   const [enableTransition, setEnableTransition] = useState(true)
+  /** After leaving the default slide, allow cards to overlap the vertical. */
+  const [hasLeftDefault, setHasLeftDefault] = useState(false)
+  const dotsRef = useRef<HTMLDivElement>(null)
+  const [pill, setPill] = useState({ left: 0, width: 8 })
 
   const logicalIndex = logicalIndexFromTrack(trackIndex)
 
-  const measureStep = useCallback(() => {
+  useEffect(() => {
+    trackIndexRef.current = trackIndex
+  }, [trackIndex])
+
+  useEffect(() => {
+    return () => {
+      if (wrapTimeoutRef.current != null) window.clearTimeout(wrapTimeoutRef.current)
+    }
+  }, [])
+
+  const measureOffset = useCallback((index = trackIndexRef.current) => {
     const track = trackRef.current
-    const first = track?.children[0] as HTMLElement | undefined
-    if (!track || !first) return
-    const styles = getComputedStyle(track)
-    const gap = Number.parseFloat(styles.columnGap || styles.gap || '16') || 16
-    setStepPx(first.getBoundingClientRect().width + gap)
+    const slide = track?.children[index] as HTMLElement | undefined
+    if (!track || !slide) return 0
+    const next = slide.offsetLeft
+    setOffsetPx(next)
+    return next
   }, [])
 
   useLayoutEffect(() => {
-    measureStep()
+    measureOffset(trackIndex)
+  }, [measureOffset, trackIndex])
+
+  useLayoutEffect(() => {
     const track = trackRef.current
     if (!track) return
-    const ro = new ResizeObserver(() => measureStep())
+    const ro = new ResizeObserver(() => measureOffset())
     ro.observe(track)
-    const first = track.children[0]
-    if (first instanceof HTMLElement) ro.observe(first)
-    window.addEventListener('resize', measureStep)
+    for (const child of Array.from(track.children)) {
+      if (child instanceof HTMLElement) ro.observe(child)
+    }
+    const onResize = () => measureOffset()
+    window.addEventListener('resize', onResize)
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', measureStep)
+      window.removeEventListener('resize', onResize)
     }
-  }, [measureStep])
+  }, [measureOffset])
 
-  const jumpWithoutTransition = useCallback((nextTrackIndex: number) => {
-    setEnableTransition(false)
-    setTrackIndex(nextTrackIndex)
-    // Re-enable after the browser paints the instant jump.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setEnableTransition(true)
-        animatingRef.current = false
-      })
+  const measurePill = useCallback(() => {
+    const root = dotsRef.current
+    if (!root) return
+    const active = root.querySelector<HTMLElement>('[data-sa-dot][aria-selected="true"]')
+    if (!active) return
+    const dotW = active.offsetWidth
+    // Morph into the elongated active pill (3× dot), centered on the active dot.
+    const pillW = Math.round(dotW * 3)
+    setPill({
+      left: active.offsetLeft - (pillW - dotW) / 2,
+      width: pillW,
     })
   }, [])
+
+  useLayoutEffect(() => {
+    measurePill()
+  }, [logicalIndex, measurePill])
+
+  useLayoutEffect(() => {
+    const root = dotsRef.current
+    if (!root) return
+    const ro = new ResizeObserver(() => measurePill())
+    ro.observe(root)
+    window.addEventListener('resize', measurePill)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measurePill)
+    }
+  }, [measurePill])
+
+  const clearWrapTimeout = useCallback(() => {
+    if (wrapTimeoutRef.current != null) {
+      window.clearTimeout(wrapTimeoutRef.current)
+      wrapTimeoutRef.current = null
+    }
+  }, [])
+
+  const jumpWithoutTransition = useCallback(
+    (nextTrackIndex: number) => {
+      clearWrapTimeout()
+      setEnableTransition(false)
+      trackIndexRef.current = nextTrackIndex
+      setTrackIndex(nextTrackIndex)
+      measureOffset(nextTrackIndex)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setEnableTransition(true)
+          animatingRef.current = false
+          const pending = pendingDeltaRef.current
+          pendingDeltaRef.current = 0
+          if (pending !== 0) {
+            const resume = pending > 0 ? 1 : -1
+            pendingDeltaRef.current = pending - resume
+            requestAnimationFrame(() => {
+              goTrackRef.current(trackIndexRef.current + resume)
+            })
+          }
+        })
+      })
+    },
+    [clearWrapTimeout, measureOffset],
+  )
+
+  const settleAfterMove = useCallback(
+    (index: number, moveId: number) => {
+      if (settledMoveIdRef.current === moveId) return
+      settledMoveIdRef.current = moveId
+      clearWrapTimeout()
+      // Drifted into the trailing copy → snap back one set.
+      if (index >= COUNT * 2) {
+        jumpWithoutTransition(index - COUNT)
+        return
+      }
+      // Drifted into the leading copy → snap forward one set.
+      if (index < COUNT) {
+        jumpWithoutTransition(index + COUNT)
+        return
+      }
+      animatingRef.current = false
+      const pending = pendingDeltaRef.current
+      pendingDeltaRef.current = 0
+      if (pending !== 0) {
+        const resume = pending > 0 ? 1 : -1
+        pendingDeltaRef.current = pending - resume
+        goTrackRef.current(trackIndexRef.current + resume)
+      }
+    },
+    [clearWrapTimeout, jumpWithoutTransition],
+  )
+
+  const goTrackRef = useRef<(next: number) => void>(() => {})
+
+  const goTrack = useCallback(
+    (next: number) => {
+      if (animatingRef.current) {
+        pendingDeltaRef.current = next > trackIndexRef.current ? 1 : -1
+        return
+      }
+      if (next !== START_INDEX) setHasLeftDefault(true)
+      const moveId = moveIdRef.current + 1
+      moveIdRef.current = moveId
+      animatingRef.current = true
+      setEnableTransition(true)
+      trackIndexRef.current = next
+      const slide = trackRef.current?.children[next] as HTMLElement | undefined
+      if (slide) setOffsetPx(slide.offsetLeft)
+      setTrackIndex(next)
+
+      const finish = () => settleAfterMove(next, moveId)
+
+      if (prefersReducedMotion()) {
+        requestAnimationFrame(finish)
+        return
+      }
+
+      clearWrapTimeout()
+      wrapTimeoutRef.current = window.setTimeout(finish, TRANSITION_MS + 80)
+    },
+    [clearWrapTimeout, settleAfterMove],
+  )
+
+  goTrackRef.current = goTrack
 
   const onTransitionEnd = useCallback(
     (event: TransitionEvent<HTMLDivElement>) => {
       if (event.target !== trackRef.current) return
       if (event.propertyName !== 'transform') return
-      if (trackIndex === COUNT + 1) {
-        jumpWithoutTransition(1)
-        return
-      }
-      if (trackIndex === 0) {
-        jumpWithoutTransition(COUNT)
-        return
-      }
-      animatingRef.current = false
+      settleAfterMove(trackIndexRef.current, moveIdRef.current)
     },
-    [jumpWithoutTransition, trackIndex],
+    [settleAfterMove],
   )
 
-  const goTrack = useCallback(
-    (next: number) => {
-      if (animatingRef.current) return
-      animatingRef.current = true
-      setEnableTransition(true)
-      setTrackIndex(next)
-      if (
-        typeof window !== 'undefined' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      ) {
-        requestAnimationFrame(() => {
-          if (next === COUNT + 1) jumpWithoutTransition(1)
-          else if (next === 0) jumpWithoutTransition(COUNT)
-          else animatingRef.current = false
-        })
-      }
-    },
-    [jumpWithoutTransition],
-  )
-
-  const goPrev = useCallback(() => goTrack(trackIndex - 1), [goTrack, trackIndex])
-  const goNext = useCallback(() => goTrack(trackIndex + 1), [goTrack, trackIndex])
+  const goPrev = useCallback(() => goTrack(trackIndexRef.current - 1), [goTrack])
+  const goNext = useCallback(() => goTrack(trackIndexRef.current + 1), [goTrack])
 
   const goToLogical = useCallback(
     (logical: number) => {
-      if (animatingRef.current) return
       const clamped = ((logical % COUNT) + COUNT) % COUNT
-      if (clamped === logicalIndex) return
-      goTrack(clamped + 1)
+      // Prefer the middle copy so neighbors always exist on both sides.
+      const target = COUNT + clamped
+      if (target === trackIndexRef.current && !animatingRef.current) return
+      if (animatingRef.current) {
+        pendingDeltaRef.current = 0
+        animatingRef.current = false
+        clearWrapTimeout()
+      }
+      goTrack(target)
     },
-    [goTrack, logicalIndex],
+    [clearWrapTimeout, goTrack],
   )
 
   const onTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
@@ -202,9 +328,14 @@ export function FeaturesMarquee() {
     touchStartRef.current = null
   }, [])
 
+  const clipLeftAtVertical = !hasLeftDefault && trackIndex === START_INDEX
+
   return (
     <div
-      className="landing-features-marquee relative z-10 mt-10 w-full @container overflow-visible"
+      className={[
+        'landing-features-marquee sa-enter relative z-10 mt-10 w-full @container overflow-visible transition-[clip-path] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none',
+        clipLeftAtVertical ? '[clip-path:inset(0_-100vw_0_0)]' : '[clip-path:inset(0_-100vw_0_-100vw)]',
+      ].join(' ')}
       aria-label="Product feature highlights"
       aria-roledescription="carousel"
     >
@@ -219,12 +350,11 @@ export function FeaturesMarquee() {
           className={[
             'flex w-max gap-4 landing-7680-4320:gap-10',
             enableTransition
-              ? 'transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none'
+              ? 'transition-transform duration-500 ease-[var(--sa-ease)] motion-reduce:transition-none'
               : 'transition-none',
           ].join(' ')}
           style={{
-            transform:
-              stepPx > 0 ? `translateX(-${trackIndex * stepPx}px)` : undefined,
+            transform: `translateX(-${offsetPx}px)`,
           }}
           onTransitionEnd={onTransitionEnd}
         >
@@ -235,9 +365,10 @@ export function FeaturesMarquee() {
               alt={item.alt}
               width={item.width}
               height={item.height}
-              className={CARD_CLASS}
+              className={`sa-card ${CARD_CLASS}`}
               draggable={false}
               loading="eager"
+              onLoad={() => measureOffset()}
             />
           ))}
         </div>
@@ -245,10 +376,20 @@ export function FeaturesMarquee() {
 
       <div className="mt-6 flex items-center justify-between gap-4 landing-4096-2304:mt-[1.95rem] landing-5120-2880:mt-[1.95rem] landing-7680-4320:mt-14">
         <div
-          className="flex items-center gap-2 landing-7680-4320:gap-4"
+          ref={dotsRef}
+          className="relative flex items-center gap-2 landing-7680-4320:gap-4"
           role="tablist"
           aria-label="Feature slides"
         >
+          <span
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-[#611879] landing-7680-4320:h-4 motion-reduce:transition-none"
+            style={{
+              left: pill.left,
+              width: Math.max(pill.width, 8),
+              transition: 'left var(--sa-duration) var(--sa-ease), width var(--sa-duration) var(--sa-ease)',
+            }}
+          />
           {FEATURE_MARQUEE_ITEMS.map((item, i) => {
             const active = i === logicalIndex
             return (
@@ -256,14 +397,13 @@ export function FeaturesMarquee() {
                 key={item.alt}
                 type="button"
                 role="tab"
+                data-sa-dot=""
                 aria-selected={active}
                 aria-label={`Show feature ${i + 1} of ${COUNT}`}
                 onClick={() => goToLogical(i)}
                 className={[
-                  'sa-press rounded-full outline-none transition-[width,background-color] duration-300 focus-visible:ring-2 focus-visible:ring-[#611879] focus-visible:ring-offset-2',
-                  active
-                    ? 'h-2 w-6 bg-[#611879] landing-7680-4320:h-4 landing-7680-4320:w-12'
-                    : 'size-2 bg-[#d1d5db] hover:bg-[#9ca3af] landing-7680-4320:size-4',
+                  'sa-press relative z-10 size-2 rounded-full outline-none transition-[background-color,transform] duration-[var(--sa-fast)] ease-[var(--sa-ease)] focus-visible:ring-2 focus-visible:ring-[#611879] focus-visible:ring-offset-2 landing-7680-4320:size-4 motion-reduce:transition-none',
+                  active ? 'bg-transparent' : 'bg-[#d1d5db] hover:bg-[#9ca3af]',
                 ].join(' ')}
               />
             )
@@ -275,17 +415,17 @@ export function FeaturesMarquee() {
             type="button"
             aria-label="Previous feature"
             onClick={goPrev}
-            className="sa-press flex size-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-white text-slate-700 outline-none hover:border-[#d1d5db] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#611879] focus-visible:ring-offset-2 landing-7680-4320:size-20"
+            className="sa-press sa-surface flex size-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-white text-slate-700 outline-none hover:border-[#d1d5db] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#611879] focus-visible:ring-offset-2 landing-7680-4320:size-20"
           >
-            <IconArrowRight className="size-4 rotate-180 landing-7680-4320:size-8" />
+            <IconArrowRight className="size-4 rotate-180 transition-transform duration-[var(--sa-fast)] ease-[var(--sa-ease)] landing-7680-4320:size-8" />
           </button>
           <button
             type="button"
             aria-label="Next feature"
             onClick={goNext}
-            className="sa-press flex size-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-white text-slate-700 outline-none hover:border-[#d1d5db] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#611879] focus-visible:ring-offset-2 landing-7680-4320:size-20"
+            className="sa-press sa-surface flex size-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-white text-slate-700 outline-none hover:border-[#d1d5db] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#611879] focus-visible:ring-offset-2 landing-7680-4320:size-20"
           >
-            <IconArrowRight className="size-4 landing-7680-4320:size-8" />
+            <IconArrowRight className="size-4 transition-transform duration-[var(--sa-fast)] ease-[var(--sa-ease)] landing-7680-4320:size-8" />
           </button>
         </div>
       </div>

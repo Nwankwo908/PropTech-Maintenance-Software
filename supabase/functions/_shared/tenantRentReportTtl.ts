@@ -4,6 +4,8 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
+import { loadLandlordOperationalSettings } from "./landlordNotificationPrefs.ts"
+import { isRentCollectionPaused } from "./engine/rentCollectionPolicy.ts"
 import { notifyLandlordNeedsAttention } from "./landlordAttentionNotify.ts"
 import { sendInboundAutoReply } from "./sms/inboundReply.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
@@ -94,6 +96,25 @@ export async function processTenantRentReportConfirmTtl(
     const landlordId = String(row.landlord_id ?? "").trim()
     const conversationId = String(row.id ?? "").trim()
     if (!landlordId || !conversationId) {
+      skipped += 1
+      continue
+    }
+
+    const operational = await loadLandlordOperationalSettings(supabase, landlordId)
+    if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+      // Drop pending confirms while rent is paused — no landlord re-nudge.
+      if (!dryRun) {
+        const prior = await loadConversationIntake(supabase, conversationId)
+        if (readAwaitingTenantRentReportConfirmations(prior).length > 0) {
+          const cleared = { ...(prior ?? {}) }
+          delete cleared.awaiting_tenant_rent_report_confirmation
+          await persistTenantRentReportConfirmIntake(
+            supabase,
+            conversationId,
+            cleared,
+          )
+        }
+      }
       skipped += 1
       continue
     }

@@ -284,6 +284,13 @@ verify_jwt = false
 import_map = "./functions/join-waitlist/deno.json"
 entrypoint = "./functions/join-waitlist/index.ts"
 
+# Landing Try Demo — public sample SMS (one per phone + experience; @ulohome.io unlimited).
+[functions.send-try-demo-sms]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-try-demo-sms/deno.json"
+entrypoint = "./functions/send-try-demo-sms/index.ts"
+
 # Twilio (and future providers) inbound SMS webhook — signature validated in provider layer.
 [functions.sms-inbound]
 enabled = true

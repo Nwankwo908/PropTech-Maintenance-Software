@@ -150,20 +150,15 @@ for (const landlord of landlords ?? []) {
       name: landlord.name || landlord.email,
       action: 'already_paused',
     })
-    continue
-  }
-
-  if (DRY_RUN) {
+    // Still clear pending landlord rent asks below — don't skip that cleanup.
+  } else if (DRY_RUN) {
     results.push({
       landlordId: landlord.id,
       name: landlord.name || landlord.email,
       action: existing ? 'would_update' : 'would_create_onboarding',
     })
     updated += 1
-    continue
-  }
-
-  if (existing) {
+  } else if (existing) {
     const { error } = await supabase
       .from('landlord_onboarding')
       .update({ account_settings: next })
@@ -176,15 +171,15 @@ for (const landlord of landlords ?? []) {
         action: 'failed',
         error: error.message,
       })
-      continue
+    } else {
+      updated += 1
+      results.push({
+        landlordId: landlord.id,
+        name: landlord.name || landlord.email,
+        action: 'updated',
+      })
     }
-    updated += 1
-    results.push({
-      landlordId: landlord.id,
-      name: landlord.name || landlord.email,
-      action: 'updated',
-    })
-  } else {
+  } else if (!DRY_RUN) {
     // Minimal onboarding row so loadLandlordOperationalSettings can see the pause.
     const { error } = await supabase.from('landlord_onboarding').insert({
       landlord_id: landlord.id,
@@ -199,15 +194,56 @@ for (const landlord of landlords ?? []) {
         action: 'failed_create',
         error: error.message,
       })
-      continue
+    } else {
+      createdOnboarding += 1
+      updated += 1
+      results.push({
+        landlordId: landlord.id,
+        name: landlord.name || landlord.email,
+        action: 'created_onboarding',
+      })
     }
-    createdOnboarding += 1
-    updated += 1
-    results.push({
-      landlordId: landlord.id,
-      name: landlord.name || landlord.email,
-      action: 'created_onboarding',
-    })
+  }
+}
+
+const RENT_ASK_KEYS = [
+  'awaiting_landlord_rent_receipt',
+  'awaiting_landlord_rent_amount',
+  'awaiting_landlord_rent_method',
+  'landlord_rent_receipt_queue',
+  'awaiting_tenant_rent_report_confirmation',
+]
+
+let clearedPendingRentAsks = 0
+if (!DRY_RUN) {
+  const { data: conversations, error: convError } = await supabase
+    .from('sms_conversations')
+    .select('id, intake_state')
+    .not('intake_state', 'is', null)
+    .limit(2000)
+  if (convError) {
+    console.error('clear pending rent asks failed', convError.message)
+  } else {
+    for (const row of conversations ?? []) {
+      const intake =
+        row.intake_state && typeof row.intake_state === 'object' && !Array.isArray(row.intake_state)
+          ? { ...row.intake_state }
+          : null
+      if (!intake) continue
+      let changed = false
+      for (const key of RENT_ASK_KEYS) {
+        if (intake[key] != null) {
+          delete intake[key]
+          changed = true
+        }
+      }
+      if (!changed) continue
+      const { error } = await supabase
+        .from('sms_conversations')
+        .update({ intake_state: intake, updated_at: new Date().toISOString() })
+        .eq('id', row.id)
+      if (!error) clearedPendingRentAsks += 1
+    }
   }
 }
 
@@ -242,10 +278,11 @@ console.log(
       updated,
       createdOnboarding,
       failed,
+      clearedPendingRentAsks,
       stillLiveAfterVerify: stillLive,
       activeOrEscalatedRentRunsPreserved: activeRentRuns ?? null,
       note:
-        'Pause is per-landlord (no global env). Outbound rent SMS/email stops; in-flight run rows are kept. PAID/PARTIAL/QUESTIONS inbound still processes if a resident replies to a prior ask (handler does not read pause).',
+        'Pause is per-landlord (no global env). Outbound rent SMS/email and late-rent landlord attention stop; pending landlord rent asks are cleared. In-flight rent_collection run rows are kept.',
       results,
     },
     null,

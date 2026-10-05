@@ -80,9 +80,10 @@ export function PropertyUnitsTable({
 
   return (
     <div className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-      <div className="overflow-x-auto">
+      {/* ~5 body rows visible; remainder scrolls inside the table. */}
+      <div className="max-h-[calc(2.75rem+5*3.5rem)] overflow-auto">
         <table className="min-w-full border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10">
             <tr className="border-b border-[#e5e7eb] bg-[#fafafa]">
               {['Unit', 'Resident', 'Status', 'Open workflow', 'Balance', 'Lease ends'].map(
                 (heading) => (
