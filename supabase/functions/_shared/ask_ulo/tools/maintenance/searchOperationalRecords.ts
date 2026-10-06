@@ -11,6 +11,7 @@ import {
 } from "./deepOperationalInvestigation.ts"
 import { sanitizeBuildingFilter } from "../properties/buildingFilter.ts"
 import { loadVendorNameById } from "../vendors/vendorNames.ts"
+import { summarizeWorkOrderIssue } from "./workOrderPresentation.ts"
 
 export type OperationalCostSource =
   | "invoice"
@@ -28,6 +29,8 @@ export type OperationalWorkOrder = {
   title: string
   description: string
   priority: string | null
+  /** Raw urgency band from the ticket when present (emergency / medium / low / …). */
+  urgency: string | null
   estimatedCost: number | null
   estimatedCostSource: OperationalCostSource | null
   repairScope: string
@@ -511,9 +514,11 @@ export async function searchOperationalRecords(
       (typeof ticket.issue_category === "string" && ticket.issue_category) ||
       (typeof metadata.issue_category === "string" && metadata.issue_category) ||
       "general"
-    const description =
+    const rawDescription =
       (typeof ticket.description === "string" && ticket.description.trim()) || ""
-    const hay = `${category} ${description} ${parsed.propertyName} ${parsed.unitLabel ?? ""}`
+    const issueLabel = summarizeWorkOrderIssue(rawDescription, category)
+    const hay =
+      `${category} ${rawDescription} ${parsed.propertyName} ${parsed.unitLabel ?? ""}`
 
     // Structural category match first (issue_category = hvac). Do not require "HVAC" in the title.
     const categoryNorm = category.toLowerCase()
@@ -562,6 +567,13 @@ export async function searchOperationalRecords(
       (typeof run?.started_at === "string" && run.started_at) ||
       new Date(now).toISOString()
 
+    const urgency =
+      (typeof ticket.urgency === "string" && ticket.urgency) ||
+      (typeof metadata.urgency === "string" && metadata.urgency) ||
+      null
+    const priority =
+      (typeof ticket.priority === "string" && ticket.priority) || urgency || null
+
     workOrders.push({
       workOrderId: formatWorkOrderId(ticketId),
       maintenanceRequestId: ticketId,
@@ -569,13 +581,11 @@ export async function searchOperationalRecords(
       propertyName: parsed.propertyName,
       unitLabel: parsed.unitLabel,
       category,
-      title: description.slice(0, 120) || category.replace(/_/g, " "),
-      description: description || category.replace(/_/g, " "),
-      priority:
-        (typeof ticket.priority === "string" && ticket.priority) ||
-        (typeof ticket.urgency === "string" && ticket.urgency) ||
-        (typeof metadata.urgency === "string" && metadata.urgency) ||
-        null,
+      // Shared extractor — never surface "Tenant update:" / "Timing note:" scaffolding.
+      title: issueLabel,
+      description: issueLabel,
+      priority,
+      urgency,
       estimatedCost: cost.amount,
       estimatedCostSource: cost.source,
       repairScope: DEFAULT_REPAIR_SCOPE,

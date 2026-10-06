@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   formatLandlordEscalationReason,
   isMaintenanceAdminVendorEscalationReason,
+  isStalePendingAcceptNeedsAdminVendor,
   looksLikeInternalEscalationCode,
   maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
   shouldSkipSlaReassignForNeedsAdminVendor,
+  STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL,
 } from '@/lib/maintenanceAdminVendor'
 
 describe('maintenanceAdminVendor', () => {
@@ -36,5 +38,39 @@ describe('maintenanceAdminVendor', () => {
     const plain = formatLandlordEscalationReason('sla_expired_no_vendor', 'appliance')
     expect(plain).toMatch(/response time has passed/i)
     expect(plain).not.toMatch(/sla_expired/i)
+  })
+
+  it('flags sticky needs_admin + stale pending_accept as unresponsive, not ordinary waiting', () => {
+    expect(
+      isStalePendingAcceptNeedsAdminVendor({
+        vendorWorkStatus: 'pending_accept',
+        assignedVendorId: 'vendor-1',
+        autoReassignLastOutcome: 'needs_admin_vendor|sla_expired',
+      }),
+    ).toBe(true)
+    expect(
+      isStalePendingAcceptNeedsAdminVendor({
+        vendorWorkStatus: 'pending_accept',
+        assignedVendorId: 'vendor-1',
+        autoReassignLastOutcome: null,
+        workflowNeedsAdminVendor: true,
+      }),
+    ).toBe(true)
+    expect(
+      isStalePendingAcceptNeedsAdminVendor({
+        vendorWorkStatus: 'pending_accept',
+        assignedVendorId: 'vendor-1',
+        autoReassignLastOutcome: null,
+        workflowNeedsAdminVendor: false,
+      }),
+    ).toBe(false)
+    expect(
+      isStalePendingAcceptNeedsAdminVendor({
+        vendorWorkStatus: 'pending_accept',
+        assignedVendorId: null,
+        autoReassignLastOutcome: 'needs_admin_vendor|stall_follow_up',
+      }),
+    ).toBe(false)
+    expect(STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL).toMatch(/unresponsive/i)
   })
 })

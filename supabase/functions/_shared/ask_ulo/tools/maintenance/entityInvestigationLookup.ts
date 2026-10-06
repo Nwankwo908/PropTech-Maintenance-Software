@@ -12,6 +12,7 @@ import { classifyEntityInvestigation } from "./entityInvestigation.ts"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { formatIncompleteAnswer } from "../../guards/refusalBuilder.ts"
 import { loadVendorNameById } from "../vendors/vendorNames.ts"
+import { summarizeWorkOrderIssue } from "./workOrderPresentation.ts"
 
 export type EntityInvestigationTicket = {
   id: string
@@ -287,7 +288,11 @@ function toTicket(
     building,
     unit: typeof t.unit === "string" ? t.unit : null,
     issueCategory: typeof t.issue_category === "string" ? t.issue_category : "maintenance",
-    description: typeof t.description === "string" ? t.description : null,
+    description: summarizeWorkOrderIssue(
+      typeof t.description === "string" ? t.description : null,
+      typeof t.issue_category === "string" ? t.issue_category : null,
+      120,
+    ),
     status,
     priority:
       typeof t.priority === "string"

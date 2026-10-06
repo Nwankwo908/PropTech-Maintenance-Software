@@ -110,8 +110,16 @@ export function isStrategicBriefingQuestion(question: string): boolean {
   if (!q) return false
   // "Do first" / "if you owned" are prioritization — not a status briefing.
   if (isFirstActionPriorityQuestion(q)) return false
+  // Bare / today "focus on" is open work prioritization (urgency-first WO list),
+  // not a multi-domain executive briefing. Week/month horizon stays strategic.
   if (
-    /\b(what\s+should\s+i\s+(?:be\s+)?worr(?:y|ied)\s+about|what\s+am\s+i\s+missing|what\s+would\s+you\s+do(?!\s+first)|what\s+should\s+i\s+prioriti[sz]e|what\s+should\s+i\s+focus\s+on(?:\s+(?:this|the)\s+(?:week|month))?)\b/i
+    /\bwhat\s+should\s+i\s+focus\s+on\b/i.test(q) &&
+    !/\bwhat\s+should\s+i\s+focus\s+on\s+(?:this|the)\s+(?:week|month)\b/i.test(q)
+  ) {
+    return false
+  }
+  if (
+    /\b(what\s+should\s+i\s+(?:be\s+)?worr(?:y|ied)\s+about|what\s+am\s+i\s+missing|what\s+would\s+you\s+do(?!\s+first)|what\s+should\s+i\s+prioriti[sz]e|what\s+should\s+i\s+focus\s+on\s+(?:this|the)\s+(?:week|month))\b/i
       .test(q)
   ) {
     return true

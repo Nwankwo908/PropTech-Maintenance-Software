@@ -19,6 +19,8 @@ import propertyHealthIcon from '@/assets/hospital.png'
 import ytdMaintenanceCostIcon from '@/assets/price-up.png'
 import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
+import { useAskUlo } from '@/components/AskUloContext'
+import { TryDemoAttentionTooltip } from '@/components/TryDemoAttentionTooltip'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
 import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
 import { LateRentAccountMessageRail } from '@/components/LateRentAccountMessageRail'
@@ -34,6 +36,29 @@ import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
 import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
+  consumeTryDemoAttentionGuidePending,
+  dismissTryDemoAttentionGuide,
+  isTryDemoAttentionGuidePending,
+  markTryDemoAttentionGuideSeen,
+  readTryDemoAttentionGuideActiveStep,
+  TRY_DEMO_ATTENTION_GUIDE_EVENT,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL,
+  tryDemoAttentionGuideBody,
+  tryDemoAttentionGuideExtraTargetIds,
+  tryDemoAttentionGuidePageLabel,
+  tryDemoAttentionGuideSkipHoleClamp,
+  tryDemoAttentionGuideTargetId,
+  tryDemoAttentionGuideTitle,
+  writeTryDemoAttentionGuideActiveStep,
+  type TryDemoAttentionGuideStep,
+} from '@/lib/tryDemoAttentionGuide'
+import {
   clearSetupSuccessCardDismissed,
   setProfileSetupNavPointed,
   SETUP_SUCCESS_ITEMS,
@@ -47,9 +72,12 @@ import {
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
   isMaintenanceAdminVendorEscalationReason,
+  isStalePendingAcceptNeedsAdminVendor,
   maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
   shouldSkipSlaReassignForNeedsAdminVendor,
+  STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE,
+  STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT,
 } from '@/lib/maintenanceAdminVendor'
 import {
   emptyAdminWorkflowDashboardData,
@@ -204,6 +232,8 @@ type OverviewTicket = {
   assignedVendorId: string | null
   assignedVendorName: string | null
   assignedAt: string | null
+  /** Sticky `needs_admin_vendor|…` — board must not treat as ordinary waiting. */
+  autoReassignLastOutcome: string | null
   residentName: string | null
   estimatedMinutes: number | null
   /** Actual total from an extracted vendor invoice (labor + materials + tax), when available. */
@@ -344,6 +374,7 @@ function normalizeTicketRow(
     assignedVendorId,
     assignedVendorName: embeddedVendor?.trim() || null,
     assignedAt: asString(raw.assigned_at) || null,
+    autoReassignLastOutcome: asString(raw.auto_reassign_last_outcome) || null,
     residentName: asString(raw.resident_name) || null,
     estimatedMinutes:
       typeof raw.estimated_minutes === 'number' && Number.isFinite(raw.estimated_minutes)
@@ -1037,6 +1068,12 @@ export function AdminOverviewDashboard() {
   const [awaitingDecisionListOpen, setAwaitingDecisionListOpen] = useState(false)
   const [awaitingDecisionOutcome, setAwaitingDecisionOutcome] =
     useState<AwaitingDecisionOutcome | null>(null)
+  const [tryDemoAttentionGuideActive, setTryDemoAttentionGuideActive] = useState(false)
+  const [tryDemoAttentionGuideStep, setTryDemoAttentionGuideStep] =
+    useState<TryDemoAttentionGuideStep>(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+  const tryDemoAttentionSectionRef = useRef<HTMLElement | null>(null)
+  const tryDemoPortfolioSnapshotRef = useRef<HTMLElement | null>(null)
+  const { setDocked: setAskUloDocked, closeAskUlo } = useAskUlo()
   const prevAttentionItemsRef = useRef<AttentionItem[]>([])
   const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
   const findVendorDeepLinkHandledRef = useRef<string | null>(null)
@@ -1196,7 +1233,7 @@ export function AdminOverviewDashboard() {
             ? supabase
                 .from('maintenance_request_enriched')
                 .select(
-                  'id, created_at, assigned_at, unit, unit_id, property_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at, inspection_report_id, resident_reported_recurring',
+                  'id, created_at, assigned_at, unit, unit_id, property_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, auto_reassign_last_outcome, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at, inspection_report_id, resident_reported_recurring',
                 )
                 .eq('landlord_id', landlordId)
                 .order('created_at', { ascending: false })
@@ -1738,7 +1775,7 @@ export function AdminOverviewDashboard() {
           ? supabase
               .from('maintenance_request_enriched')
               .select(
-                'id, created_at, assigned_at, unit, unit_id, property_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at, inspection_report_id, resident_reported_recurring',
+                'id, created_at, assigned_at, unit, unit_id, property_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, auto_reassign_last_outcome, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at, inspection_report_id, resident_reported_recurring',
               )
               .eq('landlord_id', landlordId)
               .order('created_at', { ascending: false })
@@ -1966,13 +2003,22 @@ export function AdminOverviewDashboard() {
           continue
         }
         const issueCategory = run.issueCategory ?? linkedTicket?.issueCategory ?? null
-        const fallbackMeta = needsVendor
-          ? maintenanceAdminVendorAttentionMeta(adminVendorReason, issueCategory)
-          : run.lastEventAt
-            ? isLeaseRenewal
-              ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
-              : `Escalated ${formatRelativeTime(run.lastEventAt)}`
-            : 'Awaiting input'
+        const stalePendingAccept = isStalePendingAcceptNeedsAdminVendor({
+          vendorWorkStatus: linkedTicket?.vendorWorkStatus ?? run.vendorWorkStatus,
+          assignedVendorId: linkedTicket?.assignedVendorId ?? run.assignedVendorId,
+          autoReassignLastOutcome:
+            linkedTicket?.autoReassignLastOutcome ?? run.autoReassignLastOutcome,
+          workflowNeedsAdminVendor: needsVendor,
+        })
+        const fallbackMeta = stalePendingAccept
+          ? STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT
+          : needsVendor
+            ? maintenanceAdminVendorAttentionMeta(adminVendorReason, issueCategory)
+            : run.lastEventAt
+              ? isLeaseRenewal
+                ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
+                : `Escalated ${formatRelativeTime(run.lastEventAt)}`
+              : 'Awaiting input'
         const scoped = ticketId
           ? buildInspectionScopedAttentionCopy({
               ticketId,
@@ -1993,21 +2039,78 @@ export function AdminOverviewDashboard() {
             }
         items.push({
           key: `run-${run.id}`,
-          badge: needsVendor || isLeaseRenewal ? 'critical' : 'warning',
-          title: needsVendor
-            ? maintenanceAdminVendorAttentionTitle(adminVendorReason)
-            : isLeaseRenewal
-              ? 'Lease Renewal Escalated'
-              : `${run.templateName} Escalated`,
+          badge: needsVendor || isLeaseRenewal || stalePendingAccept ? 'critical' : 'warning',
+          title: stalePendingAccept
+            ? STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE
+            : needsVendor
+              ? maintenanceAdminVendorAttentionTitle(adminVendorReason)
+              : isLeaseRenewal
+                ? 'Lease Renewal Escalated'
+                : `${run.templateName} Escalated`,
           context: scoped.context,
           meta: scoped.meta,
-          actionLabel: needsVendor ? 'Assign vendor' : 'Review',
+          actionLabel: needsVendor || stalePendingAccept ? 'Assign vendor' : 'Review',
           onAction: isLeaseRenewal
             ? () => openLeaseRenewalRail(run.id)
-            : needsVendor
+            : needsVendor || stalePendingAccept
               ? () => openEscalatedRailForRun(run.id, true)
               : () => openEscalatedRailForRun(run.id),
-          actionStyle: needsVendor ? 'alert' : undefined,
+          actionStyle: needsVendor || stalePendingAccept ? 'alert' : undefined,
+        })
+      }
+
+      // Sticky needs_admin + dead pending_accept on active runs (stall path) —
+      // not only escalated workflow rows.
+      const attentionTicketKeys = new Set(
+        items
+          .map((item) => item.key)
+          .filter((key) => key.startsWith('sla-') || key.startsWith('run-')),
+      )
+      for (const ticket of openTickets) {
+        if (completedTicketIds.has(ticket.id)) continue
+        if (
+          !isStalePendingAcceptNeedsAdminVendor({
+            vendorWorkStatus: ticket.vendorWorkStatus,
+            assignedVendorId: ticket.assignedVendorId,
+            autoReassignLastOutcome: ticket.autoReassignLastOutcome,
+            workflowNeedsAdminVendor: slaEscalatedNoVendorKeys.has(ticket.id),
+          })
+        ) {
+          continue
+        }
+        if (isNeedsAttentionDismissed(dismissedAttention, { ticketId: ticket.id })) continue
+        if (attentionTicketKeys.has(`sla-${ticket.id}`)) continue
+        const alreadyViaRun = (workflowData.escalated ?? []).some((run) => {
+          const tid = maintenanceTicketIdFromWorkflowRun({
+            ...run,
+            metadata: workflowData.runMetadata[run.id],
+          })
+          return tid === ticket.id
+        })
+        if (alreadyViaRun) continue
+        const building =
+          ticket.building ??
+          units.find(
+            (u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit),
+          )?.building ??
+          null
+        const scoped = buildInspectionScopedAttentionCopy({
+          ticketId: ticket.id,
+          workflowData,
+          propertyLabel: building,
+          unitLabel: ticket.unit,
+          residentName: ticket.residentName,
+          fallbackMeta: STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT,
+        })
+        items.push({
+          key: `stale-admin-${ticket.id}`,
+          badge: 'critical',
+          title: STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE,
+          context: scoped.context,
+          meta: scoped.meta,
+          actionLabel: 'Assign vendor',
+          actionStyle: 'alert',
+          onAction: () => openEscalatedRailForTicket(ticket.id),
         })
       }
 
@@ -2129,6 +2232,103 @@ export function AdminOverviewDashboard() {
     setAwaitingDecisionListOpen(false)
     item.onAction?.()
   }, [])
+
+  const advanceTryDemoAttentionTooltip = useCallback(() => {
+    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION) {
+      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO)
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO)
+      return
+    }
+    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO) {
+      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO)
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO)
+      return
+    }
+    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO) {
+      // Persist step before dock navigate so layout sync cannot re-apply step 3.
+      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED)
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED)
+      setAskUloDocked(true)
+      return
+    }
+    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED) {
+      // Write step 5 (full) before undocking — a layout effect was racing and
+      // re-applying docked from the still-stored step 4.
+      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS)
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS)
+      setAskUloDocked(false)
+      return
+    }
+    closeAskUlo()
+    dismissTryDemoAttentionGuide()
+    setTryDemoAttentionGuideActive(false)
+    setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+  }, [tryDemoAttentionGuideStep, closeAskUlo, setAskUloDocked])
+
+  // Keep Ask Ulo layout matched when the tip *step* changes (not on every
+  // setAskUloDocked identity change — that snapped Expand back to docked).
+  const lastAskUloTipLayoutStepRef = useRef<TryDemoAttentionGuideStep | null>(null)
+  useEffect(() => {
+    if (!tryDemoAttentionGuideActive) {
+      lastAskUloTipLayoutStepRef.current = null
+      return
+    }
+    if (lastAskUloTipLayoutStepRef.current === tryDemoAttentionGuideStep) return
+    lastAskUloTipLayoutStepRef.current = tryDemoAttentionGuideStep
+    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS) {
+      setAskUloDocked(false)
+      return
+    }
+    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED) {
+      setAskUloDocked(true)
+    }
+  }, [tryDemoAttentionGuideActive, tryDemoAttentionGuideStep, setAskUloDocked])
+
+  // Sidebar Expand/Dock can advance tip step via storage event — keep local tip UI in sync.
+  useEffect(() => {
+    function onTipStep(event: Event) {
+      const ce = event as CustomEvent<{ step?: number | null }>
+      const step = ce.detail?.step
+      if (
+        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION ||
+        step === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO ||
+        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO ||
+        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED ||
+        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS
+      ) {
+        setTryDemoAttentionGuideStep(step)
+        setTryDemoAttentionGuideActive(true)
+      }
+    }
+    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onTipStep)
+    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onTipStep)
+  }, [])
+
+  // Try Demo: after Welcome Ok (or remount mid-tour), resume Attention → Ask Ulo views.
+  useEffect(() => {
+    if (loading || tryDemoAttentionGuideActive) return
+
+    const resumeStep = readTryDemoAttentionGuideActiveStep()
+    if (resumeStep != null) {
+      setTryDemoAttentionGuideStep(resumeStep)
+      setTryDemoAttentionGuideActive(true)
+      return
+    }
+
+    const maybeArm = () => {
+      if (!isTryDemoAttentionGuidePending()) return
+      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+      setTryDemoAttentionGuideActive(true)
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+      consumeTryDemoAttentionGuidePending()
+      // Seen so refresh does not re-arm; keep activeStep until the tour finishes.
+      markTryDemoAttentionGuideSeen()
+    }
+
+    maybeArm()
+    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, maybeArm)
+    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, maybeArm)
+  }, [loading, tryDemoAttentionGuideActive])
 
   useEffect(() => {
     if (loading) return
@@ -3275,7 +3475,10 @@ export function AdminOverviewDashboard() {
       </div>
 
       {/* Needs Your Attention — top of page, under greeting */}
-      <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section
+        ref={tryDemoAttentionSectionRef}
+        className="relative z-0 flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+      >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -3462,7 +3665,7 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <section className="flex min-w-0 flex-col gap-3">
+      <section ref={tryDemoPortfolioSnapshotRef} className="relative z-0 flex min-w-0 flex-col gap-3">
         <h2 className="text-[20px] font-semibold leading-7 text-[#0a0a0a]">
           Portfolio Snapshot
         </h2>
@@ -3876,6 +4079,35 @@ export function AdminOverviewDashboard() {
         open={awaitingDecisionOutcome != null}
         outcome={awaitingDecisionOutcome}
         onClose={() => setAwaitingDecisionOutcome(null)}
+      />
+
+      <TryDemoAttentionTooltip
+        active={tryDemoAttentionGuideActive}
+        targetRef={
+          tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO
+            ? tryDemoPortfolioSnapshotRef
+            : tryDemoAttentionSectionRef
+        }
+        targetId={tryDemoAttentionGuideTargetId(tryDemoAttentionGuideStep)}
+        spotlightKey={tryDemoAttentionGuideStep}
+        side={
+          tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED
+            ? 'left'
+            : 'auto'
+        }
+        extraTargetIds={
+          tryDemoAttentionGuideSkipHoleClamp(tryDemoAttentionGuideStep)
+            ? tryDemoAttentionGuideExtraTargetIds(tryDemoAttentionGuideStep)
+            : undefined
+        }
+        skipHoleClamp={tryDemoAttentionGuideSkipHoleClamp(tryDemoAttentionGuideStep)}
+        title={tryDemoAttentionGuideTitle(tryDemoAttentionGuideStep)}
+        body={tryDemoAttentionGuideBody(tryDemoAttentionGuideStep)}
+        pageLabel={tryDemoAttentionGuidePageLabel(
+          tryDemoAttentionGuideStep,
+          TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL,
+        )}
+        onNext={advanceTryDemoAttentionTooltip}
       />
     </div>
   )

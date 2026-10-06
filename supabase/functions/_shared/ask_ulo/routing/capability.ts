@@ -27,6 +27,11 @@ import { isRepairsToApproveQuestion } from "../tools/maintenance/repairsToApprov
 import { isRecurringRepairsQuestion } from "../tools/maintenance/recurringRepairsLookup.ts"
 import { isMissingUpdatesQuestion } from "../tools/maintenance/missingUpdatesLookup.ts"
 import { isOldestWaitingWorkOrderQuestion } from "../tools/maintenance/taskCompletion.ts"
+import {
+  isCriticalMaintenanceByPropertyQuestion,
+  isOverdueWorkOrdersQuestion,
+  isPortfolioWorkPrioritizationQuestion,
+} from "../tools/maintenance/workOrderPresentation.ts"
 import { isRepairCostQuestion } from "../tools/maintenance/deepOperationalInvestigation.ts"
 import {
   isVendorBestQuestion,
@@ -62,6 +67,8 @@ export type AskUloCapabilityResult = {
     approvalRequired?: boolean
     includeCompleted?: boolean
     pendingJobsOnly?: boolean
+    slaExpired?: boolean
+    sortBy?: "created_at" | "days_open" | "priority"
     vendorMetric?:
       | "response_time"
       | "completion_rate"
@@ -144,6 +151,35 @@ export function detectAskUloCapability(
     return { capability: "search", confidence: "high", hints: { metric: "market_rent" } }
   }
 
+  // "Which properties have critical maintenance?" — property ranking by
+  // critical/urgent tickets (severity only; no invented cost figures).
+  if (isCriticalMaintenanceByPropertyQuestion(q)) {
+    return {
+      capability: "rank",
+      confidence: "high",
+      hints: {
+        sortBy: "priority",
+        order: "desc",
+        priorities: ["emergency", "critical", "urgent", "high"],
+        metric: "critical_maintenance",
+      },
+    }
+  }
+
+  // Open-ended "what should I focus on / what's most urgent" — rank known open
+  // work by urgency (same path as overdue lists). Not an entity search.
+  if (isPortfolioWorkPrioritizationQuestion(q)) {
+    return {
+      capability: "search",
+      confidence: "high",
+      hints: {
+        sortBy: "priority",
+        order: "desc",
+        priorities: ["emergency", "critical", "urgent", "high"],
+      },
+    }
+  }
+
   if (isFirstActionPriorityQuestion(q)) {
     return { capability: "recommend", confidence: "high", hints: {} }
   }
@@ -161,6 +197,19 @@ export function detectAskUloCapability(
       capability: "search",
       confidence: "high",
       hints: { metric: "vacancy", groupBy: ["unit"] },
+    }
+  }
+
+  if (isOverdueWorkOrdersQuestion(q)) {
+    return {
+      capability: "search",
+      confidence: "high",
+      hints: {
+        slaExpired: true,
+        sortBy: "priority",
+        order: "desc",
+        priorities: ["emergency", "critical", "urgent", "high"],
+      },
     }
   }
 

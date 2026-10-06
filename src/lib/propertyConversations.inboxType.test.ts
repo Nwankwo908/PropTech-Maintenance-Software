@@ -21,7 +21,7 @@ describe('isCommunicationInboxConversationType', () => {
     ).toBe(false)
   })
 
-  it('includes landlord_update only when staff opt-in is set', () => {
+  it('includes landlord_update only when includeLandlordUpdate is set', () => {
     expect(isCommunicationInboxConversationType('landlord_update')).toBe(false)
     expect(
       isCommunicationInboxConversationType('landlord_update', {

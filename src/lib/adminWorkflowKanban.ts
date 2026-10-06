@@ -12,6 +12,11 @@ import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
+import {
+  isMaintenanceAdminVendorEscalationReason,
+  isStalePendingAcceptNeedsAdminVendor,
+  STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL,
+} from '@/lib/maintenanceAdminVendor'
 
 export type OperationsBreakdownLine = {
   id:
@@ -197,6 +202,24 @@ export function deriveInspectionGroupKanbanStage(
   if (statuses.some((s) => s === 'in_progress' || s === 'accepted')) {
     return 'in_progress'
   }
+  const unfinished = items.filter(
+    (item) => !isTerminalVendorWorkStatus(item.vendorWorkStatus),
+  )
+  const unfinishedAreStaleNeedsAdmin =
+    unfinished.length > 0 &&
+    unfinished.every(
+      (item) =>
+        isStalePendingAcceptNeedsAdminVendor({
+          vendorWorkStatus: item.vendorWorkStatus,
+          assignedVendorId: item.assignedVendorId,
+          autoReassignLastOutcome: item.autoReassignLastOutcome,
+        }) ||
+        (item.vendorWorkStatus ?? '').trim().toLowerCase() === 'unassigned' ||
+        !(item.vendorWorkStatus ?? '').trim(),
+    )
+  if (unfinishedAreStaleNeedsAdmin) {
+    return 'new_intake'
+  }
   if (statuses.some((s) => s === 'pending_accept' || s === 'declined')) {
     return 'assigned'
   }
@@ -219,6 +242,23 @@ export function vendorWorkStatusChipLabel(status: string | null | undefined): st
   if (vws === 'declined') return 'Declined'
   if (vws === 'unassigned') return 'Unassigned'
   return 'Open'
+}
+
+/** Chip label that distinguishes sticky needs_admin stale pending_accept from ordinary wait. */
+export function maintenanceKanbanStatusLabel(row: AdminWorkflowRow): string {
+  if (
+    isStalePendingAcceptNeedsAdminVendor({
+      vendorWorkStatus: row.vendorWorkStatus,
+      assignedVendorId: row.assignedVendorId,
+      autoReassignLastOutcome: row.autoReassignLastOutcome,
+      workflowNeedsAdminVendor:
+        row.status === 'escalated' &&
+        isMaintenanceAdminVendorEscalationReason(row.escalationReason),
+    })
+  ) {
+    return STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL
+  }
+  return vendorWorkStatusChipLabel(row.vendorWorkStatus)
 }
 
 export function stageFromVendorWorkStatus(status: string | null | undefined): WorkflowKanbanStageId {
@@ -491,6 +531,20 @@ export function deriveMaintenanceKanbanStage(row: AdminWorkflowRow): WorkflowKan
   if (vendorStatus === 'in_progress' || vendorStatus === 'accepted') {
     return 'in_progress'
   }
+  // Sticky needs_admin + dead pending_accept belongs with unassigned work needing a pick —
+  // not the ordinary Assigned / "Awaiting vendor" column.
+  if (
+    isStalePendingAcceptNeedsAdminVendor({
+      vendorWorkStatus: vendorStatus,
+      assignedVendorId: row.assignedVendorId,
+      autoReassignLastOutcome: row.autoReassignLastOutcome,
+      workflowNeedsAdminVendor:
+        row.status === 'escalated' &&
+        isMaintenanceAdminVendorEscalationReason(row.escalationReason),
+    })
+  ) {
+    return 'new_intake'
+  }
   if (vendorStatus === 'pending_accept' || vendorStatus === 'declined') {
     return 'assigned'
   }
@@ -625,19 +679,37 @@ export function buildWorkflowKanbanCard(
         ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
         : null,
     stage,
-    critical: row.status === 'escalated',
+    critical:
+      row.status === 'escalated' ||
+      isStalePendingAcceptNeedsAdminVendor({
+        vendorWorkStatus: row.vendorWorkStatus,
+        assignedVendorId: row.assignedVendorId,
+        autoReassignLastOutcome: row.autoReassignLastOutcome,
+        workflowNeedsAdminVendor:
+          row.status === 'escalated' &&
+          isMaintenanceAdminVendorEscalationReason(row.escalationReason),
+      }),
     initials: deriveInitials(row),
     inspectionReportId: groupItems ? row.inspectionReportId : null,
     inspectionProgress: progress,
     inspectionChecklist: groupItems
-      ? groupItems.map((item) => ({
-          ticketId: item.ticketId,
-          workOrderRef: item.workOrderRef,
-          label: item.label,
-          statusLabel: vendorWorkStatusChipLabel(item.vendorWorkStatus),
-          stage: stageFromVendorWorkStatus(item.vendorWorkStatus),
-          runId: item.runId,
-        }))
+      ? groupItems.map((item) => {
+          const stale = isStalePendingAcceptNeedsAdminVendor({
+            vendorWorkStatus: item.vendorWorkStatus,
+            assignedVendorId: item.assignedVendorId,
+            autoReassignLastOutcome: item.autoReassignLastOutcome,
+          })
+          return {
+            ticketId: item.ticketId,
+            workOrderRef: item.workOrderRef,
+            label: item.label,
+            statusLabel: stale
+              ? STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL
+              : vendorWorkStatusChipLabel(item.vendorWorkStatus),
+            stage: stale ? 'new_intake' : stageFromVendorWorkStatus(item.vendorWorkStatus),
+            runId: item.runId,
+          }
+        })
       : null,
   }
 }

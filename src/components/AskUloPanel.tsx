@@ -16,8 +16,15 @@ import {
   loadAskUloMessages,
 } from '@/lib/askUloConversations'
 import { askUloLoadingMessagesForPrompt } from '@/lib/askUloLoadingCopy'
+import {
+  clearAskUloPromptAutoSent,
+  consumeAskUloPromptForAutoSend,
+  finishAskUloAutoSend,
+  isAskUloAutoSendInFlight,
+} from '@/lib/askUloPendingPrompt'
 import { streamAskUloAnswer } from '@/lib/askUloStreamText'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { TRY_DEMO_SPOTLIGHT_ASK_ULO_CONTENT_ID } from '@/lib/tryDemoAttentionGuide'
 
 type AskUloPanelProps = {
   onClose: () => void
@@ -58,11 +65,11 @@ function stripSourcesUsedSection(markdown: string): string {
     .trimEnd()
 }
 
-const SUGGESTIONS: Array<{ id: string; prompt: string; icon: 'attention' | 'money' | 'wrench' | 'user' }> = [
-  { id: 'attention', prompt: 'What needs my attention right now?', icon: 'attention' },
-  { id: 'market', prompt: 'How do my rents compare to the local market?', icon: 'money' },
-  { id: 'maintenance', prompt: 'Summarize open maintenance across my portfolio', icon: 'wrench' },
-  { id: 'renewal', prompt: 'Which leases are coming up for renewal?', icon: 'user' },
+const SUGGESTIONS: Array<{ id: string; prompt: string }> = [
+  { id: 'attention', prompt: 'What needs my attention right now?' },
+  { id: 'market', prompt: 'How do my rents compare to the local market?' },
+  { id: 'maintenance', prompt: 'Summarize open maintenance across my portfolio' },
+  { id: 'renewal', prompt: 'Which leases are coming up for renewal?' },
 ]
 
 type AskUloAgentMode =
@@ -202,58 +209,6 @@ function MiniSparkleIcon({ className = 'size-3.5' }: { className?: string }) {
       />
       <path d="M26.6666 12.5V15.8333" strokeLinecap="round" />
       <path d="M28.3333 14.1667H25" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function SuggestionIcon({ kind }: { kind: (typeof SUGGESTIONS)[number]['icon'] }) {
-  if (kind === 'attention') {
-    return (
-      <svg className="size-4 shrink-0 text-[#b45309]" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path
-          d="M12 3.5L21.5 20h-19L12 3.5z"
-          stroke="currentColor"
-          strokeWidth={1.75}
-          strokeLinejoin="round"
-        />
-        <path d="M12 10v4M12 17h.01" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" />
-      </svg>
-    )
-  }
-  if (kind === 'money') {
-    return (
-      <svg className="size-4 shrink-0 text-[#047857]" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <circle cx="12" cy="12" r="8.25" stroke="currentColor" strokeWidth={1.75} />
-        <path
-          d="M12 7.5v9M14.5 9.5c0-1-1.1-1.75-2.5-1.75S9.5 8.5 9.5 9.5 10.6 11.25 12 11.25s2.5.75 2.5 1.75-1.1 1.75-2.5 1.75-2.5-.75-2.5-1.75"
-          stroke="currentColor"
-          strokeWidth={1.75}
-          strokeLinecap="round"
-        />
-      </svg>
-    )
-  }
-  if (kind === 'wrench') {
-    return (
-      <svg className="size-4 shrink-0 text-[#c2410c]" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path
-          d="M14.7 6.3a4.5 4.5 0 00-6.1 5.9L4 17.5 6.5 20l5.3-4.6a4.5 4.5 0 005.9-6.1l-2.2 2.2-2.8-2.2 2-2z"
-          stroke="currentColor"
-          strokeWidth={1.6}
-          strokeLinejoin="round"
-        />
-      </svg>
-    )
-  }
-  return (
-    <svg className="size-4 shrink-0 text-[#4f46e5]" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="8" r="3.25" stroke="currentColor" strokeWidth={1.75} />
-      <path
-        d="M5.5 19.5c.8-3.2 3.2-5 6.5-5s5.7 1.8 6.5 5"
-        stroke="currentColor"
-        strokeWidth={1.75}
-        strokeLinecap="round"
-      />
     </svg>
   )
 }
@@ -986,6 +941,9 @@ function MessageActions({
   )
 }
 
+const ASK_ULO_DOCUMENT_ACCEPT =
+  '.pdf,.doc,.docx,.txt,.rtf,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg,image/webp'
+
 function Composer({
   draft,
   setDraft,
@@ -996,6 +954,8 @@ function Composer({
   id,
   agentMode,
   onAgentModeChange,
+  attachments,
+  onAttachmentsChange,
 }: {
   draft: string
   setDraft: (v: string) => void
@@ -1006,9 +966,12 @@ function Composer({
   id: string
   agentMode: AskUloAgentMode
   onAgentModeChange: (mode: AskUloAgentMode) => void
+  attachments: File[]
+  onAttachmentsChange: (files: File[]) => void
 }) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const modeTheme = AGENT_MODE_CHIP_THEME[agentMode]
   const ModeGlyph = modeTheme?.Glyph
 
@@ -1029,6 +992,26 @@ function Composer({
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [modeMenuOpen])
+
+  function addDocuments(list: FileList | null) {
+    if (!list?.length) return
+    const incoming = Array.from(list)
+    onAttachmentsChange(
+      (() => {
+        const next = [...attachments]
+        for (const file of incoming) {
+          const dup = next.some(
+            (x) =>
+              x.name === file.name &&
+              x.size === file.size &&
+              x.lastModified === file.lastModified,
+          )
+          if (!dup) next.push(file)
+        }
+        return next
+      })(),
+    )
+  }
 
   return (
     <div className="w-full rounded-[18px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_8px_30px_rgba(16,24,40,0.06)]">
@@ -1051,6 +1034,40 @@ function Composer({
         placeholder="Write your message..."
         className="min-h-[72px] w-full resize-none bg-transparent text-[15px] leading-6 tracking-[-0.15px] text-[#0a0a0a] outline-none placeholder:text-[#9ca3af] disabled:opacity-60"
       />
+      {attachments.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Attached documents">
+          {attachments.map((file) => (
+            <span
+              key={`${file.name}-${file.size}-${file.lastModified}`}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[#F1E4F1] px-2.5 py-1 text-[12px] font-medium text-[#0a0a0a]"
+            >
+              <span className="truncate">{file.name}</span>
+              <button
+                type="button"
+                disabled={loading}
+                aria-label={`Remove ${file.name}`}
+                onClick={() =>
+                  onAttachmentsChange(
+                    attachments.filter(
+                      (x) =>
+                        !(
+                          x.name === file.name &&
+                          x.size === file.size &&
+                          x.lastModified === file.lastModified
+                        ),
+                    ),
+                  )
+                }
+                className="sa-press inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-[#6a7282] outline-none hover:bg-[#e9d8e9] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg className="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+                  <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+                </svg>
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <div className="relative min-w-0" ref={modeMenuRef}>
@@ -1126,25 +1143,50 @@ function Composer({
             ) : null}
           </div>
         </div>
-        <button
-          type="button"
-          disabled={!canSend || loading}
-          onClick={onSend}
-          className={[
-            'sa-press inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#d1d5db] text-white outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed',
-            modeTheme?.send ??
-              'enabled:bg-[#101828] enabled:hover:bg-[#1e2939] focus-visible:ring-[#101828]',
-          ].join(' ')}
-          aria-label="Send message"
-        >
-          {loading ? (
-            <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-          ) : (
-            <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
-              <path d="M12 19V5M6 11l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+        <div className="flex shrink-0 items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ASK_ULO_DOCUMENT_ACCEPT}
+            className="sr-only"
+            tabIndex={-1}
+            onChange={(e) => {
+              addDocuments(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => fileInputRef.current?.click()}
+            className="sa-press inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent text-[#9ca3af] outline-none hover:bg-[#f3f4f6] hover:text-[#6a7282] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Upload document"
+          >
+            <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} aria-hidden>
+              <path d="M12 5v14M5 12h14" strokeLinecap="round" />
             </svg>
-          )}
-        </button>
+          </button>
+          <button
+            type="button"
+            disabled={!canSend || loading}
+            onClick={onSend}
+            className={[
+              'sa-press inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#d1d5db] text-white outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed',
+              modeTheme?.send ??
+                'enabled:bg-[#101828] enabled:hover:bg-[#1e2939] focus-visible:ring-[#101828]',
+            ].join(' ')}
+            aria-label="Send message"
+          >
+            {loading ? (
+              <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : (
+              <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
+                <path d="M12 19V5M6 11l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -1355,6 +1397,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
   } = useAskUlo()
 
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<File[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [hydrating, setHydrating] = useState(false)
@@ -1363,7 +1406,9 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
   const [agentMode, setAgentMode] = useState<AskUloAgentMode>('ulo_agent')
   /** Skip one hydrate after we create a thread mid-send (avoid wiping in-flight messages). */
   const skipHydrateOnceRef = useRef(false)
-  const canSend = draft.trim().length > 0 && !loading
+  const sendInFlightRef = useRef(false)
+  const autoSendClaimedRef = useRef<string | null>(null)
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !loading
   const hasMessages = messages.length > 0
 
   useEffect(() => {
@@ -1383,6 +1428,12 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
     let cancelled = false
     void (async () => {
       if (!conversationId) {
+        // Launch/auto-send briefly clears askUloChat — do not wipe the in-flight
+        // question/answer or the landlord lands on an empty thread.
+        if (sendInFlightRef.current || isAskUloAutoSendInFlight()) {
+          setHydrating(false)
+          return
+        }
         setMessages([])
         setDraft('')
         setLastPrompt(null)
@@ -1393,7 +1444,13 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
       if (skipHydrateOnceRef.current) {
         skipHydrateOnceRef.current = false
         setHydrating(false)
-        return
+        // If a race already cleared local messages, fall through and load from DB.
+        let localCount = 0
+        setMessages((prev) => {
+          localCount = prev.length
+          return prev
+        })
+        if (localCount > 0 || !persistEnabled) return
       }
       if (!persistEnabled) {
         setHydrating(false)
@@ -1447,19 +1504,28 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
     inputRef.current?.focus()
   }
 
-  async function handleSend(overridePrompt?: string, opts?: { regenerate?: boolean }) {
-    const question = (overridePrompt ?? draft).trim()
-    if (!question || loading) return
+  async function handleSend(
+    overridePrompt?: string,
+    opts?: { regenerate?: boolean },
+  ): Promise<boolean> {
+    const draftText = (overridePrompt ?? draft).trim()
+    const attachmentNames = attachments.map((file) => file.name).filter(Boolean)
+    const attachmentNote =
+      attachmentNames.length > 0 ? `Attached: ${attachmentNames.join(', ')}` : ''
+    const question = draftText
+      ? attachmentNote
+        ? `${draftText}\n\n${attachmentNote}`
+        : draftText
+      : attachmentNote
+        ? `Please review this document: ${attachmentNames.join(', ')}`
+        : ''
+    if (!question) return false
+    // Ref lock — React state `loading` is too late to stop same-tick re-entry.
+    if (sendInFlightRef.current || loading) return false
+    sendInFlightRef.current = true
 
-    streamAbortRef.current?.abort()
     const gen = ++requestGenRef.current
-    const abort = new AbortController()
-    streamAbortRef.current = abort
-
-    const history = messages
-      .filter((m) => !m.error && !m.pending && (m.role === 'user' || m.role === 'assistant'))
-      .map((m) => ({ role: m.role, content: m.text }))
-
+    let rotateTimer = 0
     const userMsg: ChatMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
@@ -1474,37 +1540,46 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
       liveReveal: true,
     }
 
-    setLastPrompt(question)
-    setMessages((prev) =>
-      opts?.regenerate ? [...prev, assistantShell] : [...prev, userMsg, assistantShell],
-    )
-    setDraft('')
-    setLoading(true)
-
-    const rotateLines = askUloLoadingMessagesForPrompt(question)
-    let rotateIdx = 0
-    setStatusLine(rotateLines[0] ?? 'Gathering the right context…')
-    const rotateTimer = window.setInterval(() => {
-      rotateIdx = (rotateIdx + 1) % rotateLines.length
-      setStatusLine(rotateLines[rotateIdx] ?? null)
-    }, 700)
-
-    let activeConversationId = conversationId
-
     try {
+      streamAbortRef.current?.abort()
+      const abort = new AbortController()
+      streamAbortRef.current = abort
+
+      const history = messages
+        .filter((m) => !m.error && !m.pending && (m.role === 'user' || m.role === 'assistant'))
+        .map((m) => ({ role: m.role, content: m.text }))
+
+      setLastPrompt(question)
+      setMessages((prev) =>
+        opts?.regenerate ? [...prev, assistantShell] : [...prev, userMsg, assistantShell],
+      )
+      setDraft('')
+      setAttachments([])
+      setLoading(true)
+
+      const rotateLines = askUloLoadingMessagesForPrompt(question)
+      let rotateIdx = 0
+      setStatusLine(rotateLines[0] ?? 'Gathering the right context…')
+      rotateTimer = window.setInterval(() => {
+        rotateIdx = (rotateIdx + 1) % rotateLines.length
+        setStatusLine(rotateLines[rotateIdx] ?? null)
+      }, 700)
+
+      let activeConversationId = conversationId
+
       if (persistEnabled) {
         const conv = await ensureAskUloConversationForPrompt({
           conversationId,
           prompt: question,
           landlordId: getActiveLandlordId(),
         })
-        if (gen !== requestGenRef.current) return
+        if (gen !== requestGenRef.current) return true
         if (conv) {
           activeConversationId = conv.id
-          if (conversationId !== conv.id) {
-            skipHydrateOnceRef.current = true
-            setConversationId(conv.id)
-          }
+          // Pin the thread in the URL before the answer streams so later
+          // askUloQ cleanup cannot drop the landlord onto a blank chat.
+          skipHydrateOnceRef.current = true
+          setConversationId(conv.id)
           if (!opts?.regenerate) {
             const stored = await appendAskUloMessage({
               conversationId: conv.id,
@@ -1512,7 +1587,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
               content: question,
               landlordId: getActiveLandlordId(),
             })
-            if (gen !== requestGenRef.current) return
+            if (gen !== requestGenRef.current) return true
             if (stored) {
               setMessages((prev) =>
                 prev.map((m) => (m.id === userMsg.id ? { ...m, id: stored.id } : m)),
@@ -1530,7 +1605,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
         conversationId: activeConversationId,
         agentMode,
       })
-      if (gen !== requestGenRef.current) return
+      if (gen !== requestGenRef.current) return true
 
       window.clearInterval(rotateTimer)
       setStatusLine(null)
@@ -1552,14 +1627,14 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
       await streamAskUloAnswer(
         result.answer,
         (partial) => {
-          if (gen !== requestGenRef.current) return
+          if (gen !== requestGenRef.current) return true
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, text: partial } : m)),
           )
         },
         { signal: abort.signal },
       )
-      if (gen !== requestGenRef.current) return
+      if (gen !== requestGenRef.current) return true
 
       setMessages((prev) =>
         prev.map((m) =>
@@ -1604,7 +1679,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
             safetyBoundary: result.safetyBoundary ?? null,
           },
         })
-        if (gen !== requestGenRef.current) return
+        if (gen !== requestGenRef.current) return true
         if (stored) {
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, id: stored.id } : m)),
@@ -1613,7 +1688,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
         void refreshConversations()
       }
     } catch (err) {
-      if (gen !== requestGenRef.current) return
+      if (gen !== requestGenRef.current) return true
       window.clearInterval(rotateTimer)
       setStatusLine(null)
       const message = getErrorMessage(err, "Ask Ulo couldn't answer that. Please try again.")
@@ -1636,35 +1711,55 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
         window.clearInterval(rotateTimer)
         setLoading(false)
         setStatusLine(null)
+        sendInFlightRef.current = false
         queueMicrotask(() => inputRef.current?.focus())
       }
     }
+    return true
   }
 
   const handleSendRef = useRef(handleSend)
   handleSendRef.current = handleSend
 
-  // Defer consume so React Strict Mode remount (and docked panel mount) does not
-  // clear the prompt before a stable panel can send it — otherwise the first
-  // search-suggestion click opens Ask Ulo empty and only the second click sends.
+  const clearPendingPromptRef = useRef(clearPendingPrompt)
+  clearPendingPromptRef.current = clearPendingPrompt
+
+  // One-shot auto-send from universal search.
+  // Claim is sync; clear URL/pending only after send has started so the open
+  // effect cannot restore an older chat over the new messages.
   useEffect(() => {
-    if (!pendingPrompt || loading || hydrating) return
-    const q = pendingPrompt.trim()
-    if (!q) {
-      clearPendingPrompt()
-      return
-    }
-    let cancelled = false
+    if (hydrating) return
+    const q = (pendingPrompt ?? '').trim()
+    if (!q) return
+    if (autoSendClaimedRef.current === q) return
+
+    let cancelledBeforeClaim = false
     const timer = window.setTimeout(() => {
-      if (cancelled) return
-      clearPendingPrompt()
-      void handleSendRef.current(q)
+      if (cancelledBeforeClaim) return
+      const claimed = consumeAskUloPromptForAutoSend(q)
+      if (!claimed) {
+        clearPendingPromptRef.current()
+        return
+      }
+      autoSendClaimedRef.current = claimed
+      void (async () => {
+        const started = await handleSendRef.current(claimed)
+        // Keep auto-send in-flight until after URL cleanup so a wiped
+        // askUloChat cannot clear the visible answer.
+        clearPendingPromptRef.current()
+        finishAskUloAutoSend()
+        if (!started) {
+          // Allow the landlord to click the suggested question again.
+          clearAskUloPromptAutoSent()
+          autoSendClaimedRef.current = null
+        }
+      })()
     }, 0)
     return () => {
-      cancelled = true
+      cancelledBeforeClaim = true
       window.clearTimeout(timer)
     }
-  }, [pendingPrompt, loading, hydrating, clearPendingPrompt])
+  }, [pendingPrompt, hydrating])
 
   return (
     <section
@@ -1693,6 +1788,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
 
       {!hasMessages && !hydrating ? (
         <div
+          id={TRY_DEMO_SPOTLIGHT_ASK_ULO_CONTENT_ID}
           className={[
             'mx-auto flex w-full flex-col items-center px-4',
             isRail
@@ -1759,30 +1855,47 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
               inputRef={inputRef}
               agentMode={agentMode}
               onAgentModeChange={setAgentMode}
+              attachments={attachments}
+              onAttachmentsChange={setAttachments}
             />
           </div>
 
-          <div
-            className={[
-              'mt-4 grid w-full gap-3',
-              isRail ? 'grid-cols-1' : 'sm:grid-cols-2',
-            ].join(' ')}
-          >
-            {SUGGESTIONS.map((suggestion) => (
-              <button
-                key={suggestion.id}
-                type="button"
-                onClick={() => applySuggestion(suggestion.prompt)}
-                className="sa-card flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border border-[#e5e7eb] bg-white px-4 py-3 text-left text-[13px] font-medium leading-5 text-[#0a0a0a] outline-none hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
-              >
-                <SuggestionIcon kind={suggestion.icon} />
-                <span>{suggestion.prompt}</span>
-              </button>
-            ))}
+          <div className="mt-[40px] w-full">
+            <p className="mb-2 text-right text-[12px] font-medium leading-4 text-[#6a7282]">
+              Suggested action
+            </p>
+            <div
+              className={[
+                'grid w-full gap-3',
+                isRail ? 'grid-cols-1' : 'sm:grid-cols-2',
+              ].join(' ')}
+            >
+              {SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  onClick={() => applySuggestion(suggestion.prompt)}
+                  className="sa-card flex min-h-[52px] cursor-pointer items-center gap-3 rounded-[14px] border border-[#d1d5db] bg-white px-4 py-3 text-left text-[13px] font-medium leading-5 text-[#0a0a0a] outline-none hover:border-[#F1E4F1] hover:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+                >
+                  <span className="min-w-0 flex-1">{suggestion.prompt}</span>
+                  <span
+                    className="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-[#d1d5db] bg-white text-[#0a0a0a]"
+                    aria-hidden
+                  >
+                    <svg className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
+                      <path d="M12 19V5M6 11l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       ) : (
-        <div className={`flex min-h-0 w-full flex-1 flex-col ${isRail ? 'pt-3' : 'pt-4'}`}>
+        <div
+          id={TRY_DEMO_SPOTLIGHT_ASK_ULO_CONTENT_ID}
+          className={`flex min-h-0 w-full flex-1 flex-col ${isRail ? 'pt-3' : 'pt-4'}`}
+        >
           <div
             className={[
               'mx-auto mb-2.5 flex h-8 w-full items-center gap-2.5 px-4',
@@ -1932,6 +2045,8 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
               inputRef={inputRef}
               agentMode={agentMode}
               onAgentModeChange={setAgentMode}
+              attachments={attachments}
+              onAttachmentsChange={setAttachments}
             />
             <p className="mt-2 px-1 text-center text-[11px] leading-4 text-[#9ca3af]">
             I help you make informed decisions, I don't take legal or financial actions on your behalf.

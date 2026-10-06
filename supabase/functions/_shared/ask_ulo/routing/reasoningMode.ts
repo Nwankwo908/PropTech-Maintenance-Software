@@ -9,6 +9,7 @@ import {
   isStrategicBriefingQuestion,
 } from "../tools/_shared/reasoningFirst.ts"
 import { requiresInvestigation } from "../tools/_shared/investigationDefinition.ts"
+import { isPortfolioWorkPrioritizationQuestion } from "../tools/maintenance/workOrderPresentation.ts"
 
 export type AskUloReasoningMode =
   | "factual"
@@ -65,6 +66,9 @@ export function isComparisonRankingQuestion(question: string): boolean {
   const q = question.trim()
   if (!q) return false
   if (MARKET_COMPARE_EXCLUDE_RE.test(q)) return false
+  // "What's most urgent?" without a property/building anchor is open-work
+  // prioritization — not an entity comparison ranking.
+  if (isPortfolioWorkPrioritizationQuestion(q)) return false
   return COMPARISON_RANKING_RE.test(q)
 }
 
@@ -112,6 +116,15 @@ export function classifyAskUloReasoningMode(question: string): AskUloReasoningRe
   const q = question.trim()
   if (!q) {
     return { mode: "factual", confidence: "low", reason: "empty" }
+  }
+
+  // Open-ended focus / urgency across known work orders (not property ranking).
+  if (isPortfolioWorkPrioritizationQuestion(q)) {
+    return {
+      mode: "recommendation",
+      confidence: "high",
+      reason: "portfolio_work_prioritization",
+    }
   }
 
   // Ranking must win over "needs attention" / briefing language.

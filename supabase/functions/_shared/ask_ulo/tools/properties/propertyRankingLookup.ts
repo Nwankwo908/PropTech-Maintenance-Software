@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { buildPropertyRankingIncompleteSignal } from "../../guards/incompleteEvidence.ts"
+import { rankWorkOrderUrgency } from "../maintenance/workOrderPresentation.ts"
 
 export type PropertyRankSignal = {
   label: string
@@ -119,11 +120,20 @@ function emptyAgg(building: string): Agg {
   }
 }
 
+function ticketLooksCritical(t: Record<string, unknown>): boolean {
+  const pri = `${t.priority ?? ""} ${t.urgency ?? ""}`
+  if (CRITICAL_RE.test(pri)) return true
+  const issueText = `${t.description ?? ""} ${t.issue_category ?? ""} ${t.issue_headline ?? ""}`
+  // Same urgency-first bands as overdue / focus-today lists (0–1 = emergency/urgent).
+  return rankWorkOrderUrgency(
+    typeof t.priority === "string" ? t.priority : null,
+    typeof t.urgency === "string" ? t.urgency : null,
+    issueText,
+  ) <= 1
+}
+
 function scoreProperty(agg: Agg, now: number): RankedProperty {
-  const critical = agg.open.filter((t) => {
-    const pri = `${t.priority ?? ""} ${t.urgency ?? ""}`
-    return CRITICAL_RE.test(pri)
-  })
+  const critical = agg.open.filter((t) => ticketLooksCritical(t))
   const aging = agg.open.filter((t) => {
     const created = new Date(String(t.created_at)).getTime()
     if (Number.isNaN(created)) return false
@@ -359,6 +369,73 @@ function scoreProperty(agg: Agg, now: number): RankedProperty {
     whyLines,
     recommendedActions: recommendedActions.slice(0, 4),
   }
+}
+
+/**
+ * Landlord-facing list of properties that currently have critical / urgent open work.
+ * Severity only — no invented cost or timeline figures.
+ */
+export function formatCriticalMaintenanceByPropertyMarkdown(
+  ranked: RankedProperty[],
+): string {
+  const withCritical = ranked
+    .filter((r) => r.criticalWorkOrders > 0)
+    .sort(
+      (a, b) =>
+        b.criticalWorkOrders - a.criticalWorkOrders ||
+        b.rankScore - a.rankScore ||
+        a.building.localeCompare(b.building),
+    )
+  if (withCritical.length === 0) {
+    const anyOpen = ranked.filter((r) => r.openWorkOrders > 0)
+    if (anyOpen.length === 0) {
+      return [
+        "I don’t see critical or urgent open maintenance on any property right now.",
+        "",
+        "If something feels off, tell me the building name and I’ll pull that property’s open tickets.",
+      ].join("\n")
+    }
+    return [
+      "None of your properties currently show **critical / urgent** open work on the tickets I can see.",
+      "",
+      "Properties with other open maintenance (for context):",
+      ...anyOpen.slice(0, 6).map(
+        (r) =>
+          `- **${r.building}** — ${r.openWorkOrders} open` +
+          (r.agingWorkOrders > 0 ? ` · ${r.agingWorkOrders} past response time` : ""),
+      ),
+    ].join("\n")
+  }
+
+  const lines: string[] = [
+    `Here are the properties with **critical or urgent** open maintenance — ranked by severity first.`,
+    "",
+  ]
+  for (const r of withCritical) {
+    const why = r.whyLines[0] ?? `${r.criticalWorkOrders} critical/urgent open request${
+      r.criticalWorkOrders === 1 ? "" : "s"
+    }`
+    lines.push(
+      `### ${r.building}`,
+      `- **Critical / urgent open:** ${r.criticalWorkOrders}`,
+      `- **All open:** ${r.openWorkOrders}`,
+      r.agingWorkOrders > 0
+        ? `- **Past response time:** ${r.agingWorkOrders}`
+        : null,
+      r.awaitingDecision > 0
+        ? `- **Waiting on your decision:** ${r.awaitingDecision}`
+        : null,
+      `- **Why it stands out:** ${why}`,
+      "",
+    )
+  }
+  lines.push(
+    "### What I'd do next",
+    "- Start with the top property’s critical / urgent tickets — same wait time is not the same risk.",
+    "- Confirm vendor assignment (or pick a replacement) on anything still unassigned.",
+    "- I can pull the ticket list for any building by name if you want the detail row by row.",
+  )
+  return lines.filter((x) => x != null).join("\n")
 }
 
 export async function propertyRankingLookup(

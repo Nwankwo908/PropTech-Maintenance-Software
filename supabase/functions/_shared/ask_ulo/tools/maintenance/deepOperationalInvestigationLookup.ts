@@ -16,6 +16,7 @@ import {
   type OperationalRetrievalLog,
 } from "./searchOperationalRecords.ts"
 import { searchWorkOrders } from "./searchWorkOrders.ts"
+import { summarizeWorkOrderIssue } from "./workOrderPresentation.ts"
 import { sanitizeBuildingFilter } from "../properties/buildingFilter.ts"
 
 export type DeepOpsTicket = {
@@ -149,7 +150,7 @@ export function buildOperationalFindingMarkdown(
     `- **Work order:** ${primary.workOrderId}`,
     `- **Property:** ${primary.propertyName}`,
     `- **Unit:** ${primary.unitLabel?.trim() || "—"}`,
-    `- **Issue:** ${primary.description.slice(0, 180)}`,
+    `- **Issue:** ${summarizeWorkOrderIssue(primary.description, primary.category, 160)}`,
     `- **Priority:** ${primary.priority?.replace(/_/g, " ") || "—"}`,
     `- **Status:** ${(primary.workflowStage || primary.vendorWorkStatus || "open").replace(/_/g, " ")}`,
     `- **Open for:** ${primary.daysOpen} day${primary.daysOpen === 1 ? "" : "s"}`,

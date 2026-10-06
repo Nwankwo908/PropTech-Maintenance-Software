@@ -321,6 +321,9 @@ export async function updatePropertyDetails(input: {
     metadata: { message: `Updated ${name}.` },
   })
 
+  const { invalidateAdminSearchIndex } = await import('@/lib/adminUniversalSearch')
+  invalidateAdminSearchIndex(getActiveLandlordId())
+
   return { ok: true, propertyId }
 }
 

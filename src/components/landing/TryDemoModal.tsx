@@ -1,51 +1,23 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import cleanPlatformIllustration from '@/assets/landing/clean-platform.png'
-import puzzleHouseIllustration from '@/assets/landing/puzzle-house.png'
-import technicianSinkRepairIllustration from '@/assets/landing/technician-sink-repair.png'
-import tenantSinkLeakIllustration from '@/assets/landing/tenant-sink-leak.png'
 import { IconClose } from '@/components/landing/LandingIcons'
 import { prepareTryDemoLandlordScope } from '@/lib/activeLandlord'
-import {
-  applyTryDemoSession,
-  mintTryDemoSession,
-  sendTryDemoExperienceSms,
-} from '@/lib/tryDemoSms'
+import { applyTryDemoSession, mintTryDemoSession } from '@/lib/tryDemoSms'
 import { playUiClickSound } from '@/lib/uiClickSound'
 
 const PROPERTY_COUNT_OPTIONS = [
-  { id: '1-10', label: '1–10' },
-  { id: '11-50', label: '11–50' },
-  { id: 'none', label: 'I don’t own any properties yet.' },
+  { id: '0-1', label: '0–1 units' },
+  { id: '2-4', label: '2–4 units' },
+  { id: '5-10', label: '5–10 units' },
+  { id: '11+', label: '11+ units' },
 ] as const
 
 type PropertyCountId = (typeof PROPERTY_COUNT_OPTIONS)[number]['id']
 
-const EXPERIENCE_OPTIONS = [
-  {
-    id: 'landlord',
-    title: 'I’m a landlord',
-    description: 'See how Ulo handles a tenant issue and keeps you informed.',
-    image: puzzleHouseIllustration,
-  },
-  {
-    id: 'resident',
-    title: 'I’m a resident',
-    description: 'Submit a sample maintenance request by text.',
-    image: tenantSinkLeakIllustration,
-  },
-  {
-    id: 'vendor',
-    title: 'I’m a vendor',
-    description: 'See how a job arrives and what to do next.',
-    image: technicianSinkRepairIllustration,
-  },
-] as const
+const PROPERTY_COUNT_IDS = new Set<string>(PROPERTY_COUNT_OPTIONS.map((o) => o.id))
 
-type ExperienceId = (typeof EXPERIENCE_OPTIONS)[number]['id']
+const DEMO_STEP_TOTAL = 2
 
-const DEMO_STEP_TOTAL = 5
-
-/** Survives HMR remounts so “no properties” still reaches step 6. */
 const TRY_DEMO_PROPERTY_COUNT_KEY = 'ulo.tryDemoPropertyCount'
 /** True while the modal is open — prevents HMR remounts from wiping mid-flow. */
 const TRY_DEMO_FLOW_ACTIVE_KEY = 'ulo.tryDemoFlowActive'
@@ -54,7 +26,7 @@ const TRY_DEMO_STEP_KEY = 'ulo.tryDemoStep'
 function readLockedPropertyCount(): PropertyCountId | null {
   try {
     const raw = window.sessionStorage.getItem(TRY_DEMO_PROPERTY_COUNT_KEY)
-    if (raw === 'none' || raw === '1-10' || raw === '11-50') return raw
+    if (raw && PROPERTY_COUNT_IDS.has(raw)) return raw as PropertyCountId
   } catch {
     // ignore
   }
@@ -77,7 +49,7 @@ function readPersistedStep(): number | null {
   try {
     const raw = window.sessionStorage.getItem(TRY_DEMO_STEP_KEY)
     const n = raw ? Number(raw) : NaN
-    if (Number.isInteger(n) && n >= 1 && n <= 6) return n
+    if (Number.isInteger(n) && n >= 1 && n <= 2) return n
   } catch {
     // ignore
   }
@@ -142,19 +114,13 @@ type TryDemoModalProps = {
 
 export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
   const [step, setStep] = useState(() => readPersistedStep() ?? 1)
-  const [propertyCount, setPropertyCount] = useState<PropertyCountId | null>(() => readLockedPropertyCount())
+  const [propertyCount, setPropertyCount] = useState<PropertyCountId | null>(() =>
+    readLockedPropertyCount(),
+  )
   const [workEmail, setWorkEmail] = useState('')
   const [emailError, setEmailError] = useState<string | null>(null)
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [nameError, setNameError] = useState<string | null>(null)
-  const [phone, setPhone] = useState('')
-  const [phoneError, setPhoneError] = useState<string | null>(null)
-  const [experience, setExperience] = useState<ExperienceId | null>(null)
-  const [experienceError, setExperienceError] = useState<string | null>(null)
-  const [experienceSubmitting, setExperienceSubmitting] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const wasOpenRef = useRef(false)
-  /** Locked when leaving step 1 so remounts/HMR cannot skip the no-properties outcome. */
   const propertyCountRef = useRef<PropertyCountId | null>(readLockedPropertyCount())
 
   useEffect(() => {
@@ -175,14 +141,7 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
       lockPropertyCount(null)
       setWorkEmail('')
       setEmailError(null)
-      setFirstName('')
-      setLastName('')
-      setNameError(null)
-      setPhone('')
-      setPhoneError(null)
-      setExperience(null)
-      setExperienceError(null)
-      setExperienceSubmitting(false)
+      setSubmitting(false)
     } else {
       const locked = readLockedPropertyCount()
       if (locked) {
@@ -215,42 +174,19 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
 
   if (!open) return null
 
-  const isNoPropertiesOutcome = step === 6
-  const progressPct = isNoPropertiesOutcome ? 100 : Math.round((step / DEMO_STEP_TOTAL) * 100)
-  const displayFirstName = firstName.trim() || 'there'
+  const progressPct = Math.round((step / DEMO_STEP_TOTAL) * 100)
 
   function looksLikeEmail(value: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
   }
 
-  function looksLikePhone(value: string): boolean {
-    const digits = value.replace(/\D/g, '')
-    return digits.length >= 10 && digits.length <= 15
-  }
-
-  async function establishDemoAndNavigate(options?: {
-    sendSampleSms?: boolean
-  }): Promise<void> {
+  async function establishDemoAndNavigate(): Promise<void> {
     prepareTryDemoLandlordScope()
 
-    const sendSampleSms = options?.sendSampleSms !== false
-    const result =
-      sendSampleSms && experience
-        ? await sendTryDemoExperienceSms({
-            experience,
-            phone,
-            email: workEmail,
-            firstName,
-            forceResend: true,
-          })
-        : await mintTryDemoSession({ email: workEmail })
+    const result = await mintTryDemoSession({ email: workEmail })
 
     if (!result.ok) {
       throw new Error(result.error || 'Could not open the demo account.')
-    }
-
-    if (result.smsError) {
-      console.warn('[try-demo] sample SMS failed', result.smsError)
     }
 
     // Dev without edge mint still allows local /demo entry.
@@ -269,12 +205,9 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
   }
 
   function onBack() {
-    if (experienceSubmitting) return
+    if (submitting) return
     playUiClickSound()
     setEmailError(null)
-    setNameError(null)
-    setPhoneError(null)
-    setExperienceError(null)
     setStep((current) => Math.max(1, current - 1))
   }
 
@@ -286,8 +219,9 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
     setStep(2)
   }
 
-  function onNextFromEmail(e: FormEvent) {
+  async function onNextFromEmail(e: FormEvent) {
     e.preventDefault()
+    if (submitting) return
     const email = workEmail.trim()
     if (!looksLikeEmail(email)) {
       setEmailError('Enter a valid work email.')
@@ -295,101 +229,17 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
     }
     setEmailError(null)
     playUiClickSound()
-    setStep(3)
-  }
-
-  function onNextFromNames(e: FormEvent) {
-    e.preventDefault()
-    const first = firstName.trim()
-    const last = lastName.trim()
-    if (!first || !last) {
-      setNameError('Enter your first and last name.')
-      return
-    }
-    setNameError(null)
-    playUiClickSound()
-    setStep(4)
-  }
-
-  function onNextFromPhone(e: FormEvent) {
-    e.preventDefault()
-    const value = phone.trim()
-    if (!looksLikePhone(value)) {
-      setPhoneError('Enter a valid phone number.')
-      return
-    }
-    setPhoneError(null)
-    playUiClickSound()
-    setStep(5)
-  }
-
-  async function onNextFromExperience() {
-    if (!experience || experienceSubmitting) return
-    playUiClickSound()
-    setExperienceError(null)
-    setExperienceSubmitting(true)
-
+    setSubmitting(true)
     try {
-      const lockedCount = propertyCountRef.current ?? propertyCount ?? readLockedPropertyCount()
-      if (lockedCount === 'none') {
-        // Sample text only — do not apply the demo session yet. LandingPage
-        // redirects to /admin on SIGNED_IN, which would skip this outcome step.
-        const result = await sendTryDemoExperienceSms({
-          experience,
-          phone,
-          email: workEmail,
-          firstName,
-          forceResend: true,
-        })
-        if (!result.ok) {
-          throw new Error(result.error || 'Could not send the sample text.')
-        }
-        if (result.smsError) {
-          console.warn('[try-demo] sample SMS failed', result.smsError)
-          setExperienceError(
-            'We could not send the sample text yet. You can still explore the demo, or tap Next again to retry.',
-          )
-        }
-        setStep(6)
-        return
-      }
-
-      await establishDemoAndNavigate({ sendSampleSms: true })
+      await establishDemoAndNavigate()
     } catch (err) {
       console.error('[try-demo] enter failed', err)
-      setExperienceError(
+      setEmailError(
         err instanceof Error ? err.message : 'Could not open the demo account.',
       )
     } finally {
-      setExperienceSubmitting(false)
+      setSubmitting(false)
     }
-  }
-
-  async function onExploreUlo() {
-    if (experienceSubmitting) return
-    playUiClickSound()
-    setExperienceError(null)
-    setExperienceSubmitting(true)
-    try {
-      // Re-send sample on Explore so “no properties” visitors still get the text
-      // even if the earlier send was skipped or failed quietly.
-      await establishDemoAndNavigate({ sendSampleSms: true })
-    } catch (err) {
-      console.error('[try-demo] explore enter failed', err)
-      setExperienceError(
-        err instanceof Error ? err.message : 'Could not open the demo account.',
-      )
-    } finally {
-      setExperienceSubmitting(false)
-    }
-  }
-
-  function onBackToHome() {
-    playUiClickSound()
-    onClose()
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    })
   }
 
   return (
@@ -430,37 +280,32 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
               id="try-demo-title"
               className="font-[family-name:var(--font-landing-heading)] text-[clamp(1.5rem,4vw,1.875rem)] font-bold leading-tight text-[#1f2937]"
             >
-              {isNoPropertiesOutcome
-                ? 'Ulo is built for rental property owners'
-                : 'Get a live demo of Ulo Home'}
+              Get a live demo of Ulo Home
             </h2>
           </div>
 
-          {!isNoPropertiesOutcome ? (
-            <div className="mt-6" aria-label={`Step ${step} of ${DEMO_STEP_TOTAL}`}>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#e5e7eb]">
-                <div
-                  className="h-full rounded-full bg-[#55B6A1] transition-[width] duration-[var(--sa-duration)] ease-[var(--sa-ease)]"
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
+          <div className="mt-6" aria-label={`Step ${step} of ${DEMO_STEP_TOTAL}`}>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#e5e7eb]">
+              <div
+                className="h-full rounded-full bg-[#55B6A1] transition-[width] duration-[var(--sa-duration)] ease-[var(--sa-ease)]"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
-          ) : null}
+          </div>
 
           {step === 1 ? (
             <>
               <fieldset className="mt-8 border-0 p-0">
                 <legend className="w-full text-left text-sm font-medium text-[#1f2937]">
-                  How many properties do you have?
+                  How many units do you have?
                 </legend>
                 <div
                   className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
                   role="radiogroup"
-                  aria-label="Property count"
+                  aria-label="Unit count"
                 >
                   {PROPERTY_COUNT_OPTIONS.map((option) => {
                     const selected = propertyCount === option.id
-                    const fullWidth = option.id === 'none'
                     return (
                       <button
                         key={option.id}
@@ -470,7 +315,6 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
                         onClick={() => setPropertyCount(option.id)}
                         className={[
                           'sa-press sa-surface flex min-h-[50px] items-center justify-center rounded-2xl border px-3 py-3 text-center text-sm font-semibold outline-none transition-[border-color,background-color,box-shadow] duration-[var(--sa-fast)] ease-[var(--sa-ease)] focus-visible:ring-2 focus-visible:ring-[#55B6A1]/40 focus-visible:ring-offset-2',
-                          fullWidth ? 'sm:col-span-2' : '',
                           selected
                             ? 'border-[#C68EC6] bg-[#faf5ff] text-[#0f1623] shadow-[0_0_0_1px_#C68EC6]'
                             : 'border-[#e5e7eb] bg-white text-[#1f2937] hover:border-[#d1d5db] hover:bg-[#f9fafb]',
@@ -522,229 +366,23 @@ export function TryDemoModal({ open, onClose }: TryDemoModalProps) {
                 ) : null}
               </div>
               <div className="mt-8 flex gap-3">
-                <button type="button" onClick={onBack} className={BACK_CLASS}>
-                  Back
-                </button>
-                <button type="submit" disabled={!workEmail.trim()} className={NEXT_CLASS}>
-                  Next
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {step === 3 ? (
-            <form className="mt-8 flex flex-col" onSubmit={onNextFromNames} noValidate>
-              <p className="text-left text-sm font-medium text-[#1f2937]">What&apos;s your name?</p>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="try-demo-first-name" className="sr-only">
-                    First name
-                  </label>
-                  <input
-                    id="try-demo-first-name"
-                    name="firstName"
-                    type="text"
-                    autoComplete="given-name"
-                    placeholder="First name"
-                    value={firstName}
-                    onChange={(e) => {
-                      setFirstName(e.target.value)
-                      if (nameError) setNameError(null)
-                    }}
-                    className={INPUT_CLASS}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="try-demo-last-name" className="sr-only">
-                    Last name
-                  </label>
-                  <input
-                    id="try-demo-last-name"
-                    name="lastName"
-                    type="text"
-                    autoComplete="family-name"
-                    placeholder="Last name"
-                    value={lastName}
-                    onChange={(e) => {
-                      setLastName(e.target.value)
-                      if (nameError) setNameError(null)
-                    }}
-                    className={INPUT_CLASS}
-                  />
-                </div>
-              </div>
-              <div className="mt-2 min-h-4" aria-live="polite">
-                {nameError ? (
-                  <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
-                    {nameError}
-                  </p>
-                ) : null}
-              </div>
-              <div className="mt-8 flex gap-3">
-                <button type="button" onClick={onBack} className={BACK_CLASS}>
-                  Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={!firstName.trim() || !lastName.trim()}
-                  className={NEXT_CLASS}
-                >
-                  Next
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {step === 4 ? (
-            <form className="mt-8 flex flex-col" onSubmit={onNextFromPhone} noValidate>
-              <label htmlFor="try-demo-phone" className="text-left text-sm font-medium text-[#1f2937]">
-                Thanks {displayFirstName}, what&apos;s your phone number?
-              </label>
-              <input
-                id="try-demo-phone"
-                name="phone"
-                type="tel"
-                autoComplete="tel"
-                inputMode="tel"
-                placeholder="(555) 123-4567"
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value)
-                  if (phoneError) setPhoneError(null)
-                }}
-                className={`${INPUT_CLASS} mt-4`}
-              />
-              <div className="mt-2 min-h-4" aria-live="polite">
-                {phoneError ? (
-                  <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
-                    {phoneError}
-                  </p>
-                ) : null}
-              </div>
-              <div className="mt-8 flex gap-3">
-                <button type="button" onClick={onBack} className={BACK_CLASS}>
-                  Back
-                </button>
-                <button type="submit" disabled={!phone.trim()} className={NEXT_CLASS}>
-                  Next
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {step === 5 ? (
-            <>
-              <fieldset className="mt-8 border-0 p-0">
-                <legend className="w-full text-left text-sm font-medium text-[#1f2937]">
-                  What would you like to experience?
-                </legend>
-                <div
-                  className="mt-4 grid grid-cols-3 gap-3"
-                  role="radiogroup"
-                  aria-label="Demo experience"
-                >
-                  {EXPERIENCE_OPTIONS.map((option) => {
-                    const selected = experience === option.id
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => {
-                          setExperience(option.id)
-                          if (experienceError) setExperienceError(null)
-                        }}
-                        className={[
-                          'sa-press sa-surface flex min-h-[50px] flex-col items-start gap-2 rounded-2xl border px-3 py-3 text-left outline-none transition-[border-color,background-color,box-shadow] duration-[var(--sa-fast)] ease-[var(--sa-ease)] focus-visible:ring-2 focus-visible:ring-[#55B6A1]/40 focus-visible:ring-offset-2',
-                          selected
-                            ? 'border-[#C68EC6] bg-[#faf5ff] text-[#0f1623] shadow-[0_0_0_1px_#C68EC6]'
-                            : 'border-[#e5e7eb] bg-white text-[#1f2937] hover:border-[#d1d5db] hover:bg-[#f9fafb]',
-                        ].join(' ')}
-                      >
-                        {option.image ? (
-                          <img
-                            src={option.image}
-                            alt=""
-                            aria-hidden
-                            className="pointer-events-none mb-1 block h-auto w-auto max-h-[88px] max-w-full shrink-0 self-start"
-                          />
-                        ) : null}
-                        <span className="flex min-w-0 flex-col gap-1">
-                          <span className="text-sm font-semibold">{option.title}</span>
-                          <span className="text-sm font-normal leading-snug text-[#6b7280]">
-                            {option.description}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </fieldset>
-
-              <div className="mt-2 min-h-4" aria-live="polite">
-                {experienceError ? (
-                  <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
-                    {experienceError}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="mt-8 flex gap-3">
                 <button
                   type="button"
                   onClick={onBack}
-                  disabled={experienceSubmitting}
+                  disabled={submitting}
                   className={BACK_CLASS}
                 >
                   Back
                 </button>
                 <button
-                  type="button"
-                  disabled={!experience || experienceSubmitting}
-                  onClick={() => {
-                    void onNextFromExperience()
-                  }}
+                  type="submit"
+                  disabled={!workEmail.trim() || submitting}
                   className={NEXT_CLASS}
                 >
-                  {experienceSubmitting ? 'Opening…' : 'Next'}
+                  {submitting ? 'Opening…' : 'Next'}
                 </button>
               </div>
-            </>
-          ) : null}
-
-          {isNoPropertiesOutcome ? (
-            <div className="mt-8 flex flex-col">
-              <p className="text-left text-sm leading-relaxed text-[#4b5563]">
-                Our demo is designed for landlords managing at least one rental property. Planning to
-                become a landlord? You&apos;re welcome to explore what Ulo can do.
-              </p>
-              <div className="mt-2 min-h-4" aria-live="polite">
-                {experienceError ? (
-                  <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
-                    {experienceError}
-                  </p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                disabled={experienceSubmitting}
-                onClick={() => {
-                  void onExploreUlo()
-                }}
-                className={`${CTA_CLASS} mt-8`}
-              >
-                {experienceSubmitting ? 'Opening…' : 'Explore Demo'}
-              </button>
-              <button
-                type="button"
-                onClick={onBackToHome}
-                disabled={experienceSubmitting}
-                className="sa-press mt-4 text-center text-sm font-medium text-[#6b7280] underline-offset-2 outline-none hover:text-[#1f2937] hover:underline focus-visible:ring-2 focus-visible:ring-[#d1d5db]/80 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-              >
-                Back to home
-              </button>
-            </div>
+            </form>
           ) : null}
         </div>
       </div>

@@ -21,6 +21,12 @@ import { assignAdminPath } from '@/lib/assignAdminPath'
 import {
   PROFILE_SETUP_NAV_POINT_EVENT,
 } from '@/lib/setupSuccessChecklist'
+import {
+  readTryDemoAttentionGuideActiveStep,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED,
+  writeTryDemoAttentionGuideActiveStep,
+} from '@/lib/tryDemoAttentionGuide'
 
 const navBase =
   'flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
@@ -177,6 +183,19 @@ export function AdminSidebarContent({
   const activeTasksCount = useActiveTasksNavCount()
   const [profileSetupPointed, setProfileSetupPointed] = useState(false)
 
+  function toggleAskUloDock() {
+    const nextDocked = !askUloDocked
+    const tipStep = readTryDemoAttentionGuideActiveStep()
+    // Keep Try Demo tip step aligned with the view the landlord chose so layout
+    // sync does not immediately undo Expand / Dock.
+    if (!nextDocked && tipStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED) {
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS)
+    } else if (nextDocked && tipStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS) {
+      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED)
+    }
+    setAskUloDocked(nextDocked)
+  }
+
   useEffect(() => {
     const onPoint = (event: Event) => {
       const detail = (event as CustomEvent<{ active?: boolean }>).detail
@@ -229,7 +248,7 @@ export function AdminSidebarContent({
             {askUloOpen ? (
               <button
                 type="button"
-                onClick={() => setAskUloDocked(!askUloDocked)}
+                onClick={toggleAskUloDock}
                 className={`${sidebarChromeIconBtn} size-9`}
                 aria-label={
                   askUloDocked
@@ -258,7 +277,7 @@ export function AdminSidebarContent({
               {askUloOpen ? (
                 <button
                   type="button"
-                  onClick={() => setAskUloDocked(!askUloDocked)}
+                  onClick={toggleAskUloDock}
                   className={sidebarChromeIconBtn}
                   aria-label={
                     askUloDocked

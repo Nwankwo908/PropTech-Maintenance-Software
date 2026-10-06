@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { getAdminSession, isAdminSessionAllowed, signOutAdmin, emailFromAuthSession } from '@/lib/adminAuth'
 import {
@@ -64,6 +64,7 @@ function stripTryDemoWelcomeParams(): void {
  */
 export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const [state, setState] = useState<GateState>('loading')
   const [tryDemoWelcomeOpen, setTryDemoWelcomeOpen] = useState(() =>
     shouldOpenTryDemoWelcome(
@@ -89,6 +90,12 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   function dismissTryDemoWelcome() {
     stripTryDemoWelcomeParams()
     setTryDemoWelcomeOpen(false)
+    // Needs Your Attention coachmark lives on Overview — land there after Ok.
+    const onOverview =
+      location.pathname === '/admin' || location.pathname === '/admin/'
+    if (!onOverview) {
+      navigate('/admin', { replace: true })
+    }
   }
 
   useEffect(() => {

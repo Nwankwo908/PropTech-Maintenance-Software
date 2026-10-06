@@ -28,6 +28,10 @@ import {
 import type { AskUloCitation } from "../retrieval/searchInternalData.ts"
 import type { AskUloEvidencePacket } from "../retrieval/buildEvidencePacket.ts"
 import { formatOrganizedEvidenceBlock } from "../retrieval/buildEvidencePacket.ts"
+import {
+  formatUnsupportedFiguresClarifyMarkdown,
+  isUnsupportedFiguresRejection,
+} from "./groundedRetryAfterFiguresRejection.ts"
 
 export type PostAnswerCheckId =
   | "faithfulness"
@@ -166,16 +170,58 @@ export function runPostAnswerQualityChecks(input: {
   }
 }
 
+/** Map internal check ids → landlord-facing bullets. Never echo raw labels. */
+function landlordFacingFailClosedBullets(reasons: string[], question?: string): string[] {
+  const bullets: string[] = []
+  const q = question ?? ""
+
+  if (isUnsupportedFiguresRejection(reasons)) {
+    if (/\b(cost|costs|estimate|\$|spend|budget|how much)\b/i.test(q)) {
+      bullets.push("I don't have cost data recorded for these tickets yet.")
+    } else if (/\b(timeline|how long|when will|deadline|eta)\b/i.test(q)) {
+      bullets.push("I don't have reliable timeline figures on file for this yet.")
+    } else {
+      bullets.push(
+        "Some numbers in the draft weren’t backed by your live records, so I won’t show that version.",
+      )
+    }
+  }
+  if (reasons.some((r) => r.startsWith("wrong_property:"))) {
+    bullets.push("The draft mentioned a different property than the one this question is about.")
+  }
+  if (reasons.some((r) => r.startsWith("pii_leak:") || r === "screening_detail_in_answer")) {
+    bullets.push("The draft included private details that shouldn’t appear in this chat.")
+  }
+  if (reasons.includes("foreign_uuid_in_answer")) {
+    bullets.push("The draft included an internal id that doesn’t belong in a landlord answer.")
+  }
+  if (reasons.includes("overstated_uncertainty_with_evidence")) {
+    bullets.push("I actually have matching records — I shouldn’t have said I couldn’t answer.")
+  }
+  if (reasons.includes("absolute_legal_claim_without_citation")) {
+    bullets.push("A hard legal claim needed an official source citation.")
+  }
+
+  // Drop every internal label (non_legal_intent, unsupported_figures:…, etc.).
+  if (bullets.length === 0) {
+    bullets.push("The draft didn’t stay within the evidence or the correct property scope.")
+  }
+  return bullets
+}
+
 /** Landlord-facing fail-closed replacement when post-answer checks refuse. */
 export function formatPostAnswerFailClosedMarkdown(input: {
   block: "clarify" | "refuse"
   reasons: string[]
   question?: string
 }): string {
-  const why =
-    input.reasons.length > 0
-      ? input.reasons.slice(0, 4).map((r) => `- ${r}`).join("\n")
-      : "- The draft answer did not meet Ulo’s evidence and scope checks."
+  // Unsupported / invented figures — dedicated plain-language path (no diagnostics).
+  if (isUnsupportedFiguresRejection(input.reasons)) {
+    return formatUnsupportedFiguresClarifyMarkdown(input.question)
+  }
+
+  const bullets = landlordFacingFailClosedBullets(input.reasons, input.question)
+  const why = bullets.map((b) => `- ${b}`).join("\n")
 
   if (input.block === "clarify") {
     return [
@@ -193,7 +239,7 @@ export function formatPostAnswerFailClosedMarkdown(input: {
     return [
       "I won’t show that draft answer — it included private information that shouldn’t appear in this chat.",
       "",
-      "### What I checked",
+      "### What's missing",
       why,
       "",
       "### What happens next",
@@ -204,7 +250,7 @@ export function formatPostAnswerFailClosedMarkdown(input: {
   return [
     "I won’t show that draft answer — it didn’t stay within the evidence or the correct property scope.",
     "",
-    "### What I checked",
+    "### What's missing",
     why,
     "",
     "### What happens next",

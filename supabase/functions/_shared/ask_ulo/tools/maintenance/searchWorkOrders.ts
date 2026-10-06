@@ -11,12 +11,13 @@ import {
   type EvidenceItem,
   type ToolResult,
 } from "../_shared/toolResult.ts"
-import {
 import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
+import {
   searchOperationalRecords,
   type OperationalWorkOrder,
   type SearchOperationalRecordsResult,
 } from "./searchOperationalRecords.ts"
+import { rankWorkOrderUrgency } from "./workOrderPresentation.ts"
 
 export type SearchWorkOrdersParams = {
   /** Landlord / organization id (required). */
@@ -47,7 +48,8 @@ export type SearchWorkOrdersResult = SearchOperationalRecordsResult & {
   params: Record<string, unknown>
 }
 
-function sortWorkOrders(
+/** Exported for unit tests — urgency tier first, then age when sorting by priority. */
+export function sortWorkOrders(
   rows: OperationalWorkOrder[],
   sortBy: SearchWorkOrdersParams["sortBy"],
   sortOrder: "asc" | "desc",
@@ -57,14 +59,16 @@ function sortWorkOrders(
   copy.sort((a, b) => {
     if (sortBy === "days_open") return (a.daysOpen - b.daysOpen) * dir
     if (sortBy === "priority") {
-      const rank = (p: string | null) => {
-        const v = (p ?? "").toLowerCase()
-        if (v.includes("critical") || v.includes("emergency")) return 0
-        if (v.includes("urgent") || v.includes("high")) return 1
-        if (v.includes("medium") || v.includes("normal")) return 2
-        return 3
+      // "desc" = most urgent first (fire/habitability before routine), then longer wait.
+      const rankDelta =
+        rankWorkOrderUrgency(a.priority, a.urgency, a.title || a.description) -
+        rankWorkOrderUrgency(b.priority, b.urgency, b.title || b.description)
+      if (sortOrder === "desc") {
+        if (rankDelta !== 0) return rankDelta
+        return b.daysOpen - a.daysOpen
       }
-      return (rank(a.priority) - rank(b.priority)) * dir
+      if (rankDelta !== 0) return -rankDelta
+      return a.daysOpen - b.daysOpen
     }
     return (Date.parse(a.createdAt) - Date.parse(b.createdAt)) * dir
   })
@@ -101,7 +105,9 @@ export async function searchWorkOrders(
     workOrders = workOrders.filter((w) => w.slaExpired)
   }
 
-  const sortBy = params.sortBy ?? "created_at"
+  // Overdue lists default to urgency tier (fire/habitability before routine age).
+  const sortBy =
+    params.sortBy ?? (params.slaExpired ? "priority" : "created_at")
   const sortOrder = params.sortOrder ?? "desc"
   workOrders = sortWorkOrders(workOrders, sortBy, sortOrder)
 
@@ -141,6 +147,7 @@ function workOrdersToEvidence(rows: OperationalWorkOrder[]): EvidenceItem[] {
       w.propertyName,
       formatUnitReference(w.unitLabel) || null,
       w.category,
+      w.urgency || w.priority || null,
       w.daysOpen > 0 ? `${w.daysOpen}d open` : null,
     ]
       .filter(Boolean)

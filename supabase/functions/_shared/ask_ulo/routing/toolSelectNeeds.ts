@@ -98,6 +98,9 @@ export function planToolsFromCapabilityRoute(input: {
     if (id === "search_work_orders") {
       if (input.hints.approvalRequired) args.approvalRequired = true
       if (input.hints.includeCompleted) args.includeCompleted = true
+      if (input.hints.slaExpired) args.slaExpired = true
+      if (input.hints.sortBy) args.sortBy = input.hints.sortBy
+      if (input.hints.order) args.sortOrder = input.hints.order
     }
     if (id === "get_awaiting_decisions" && input.hints.priorities?.length) {
       args.priorities = input.hints.priorities

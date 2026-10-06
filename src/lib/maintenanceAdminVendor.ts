@@ -28,6 +28,45 @@ const LIVE_ASSIGNMENT_WORK_STATUSES = new Set([
   'in_progress',
 ])
 
+/** Sticky hold written by auto-reassign / stall follow-up when staff must pick a vendor. */
+export function isNeedsAdminVendorStickyOutcome(
+  autoReassignLastOutcome?: string | null,
+): boolean {
+  return (autoReassignLastOutcome ?? '')
+    .trim()
+    .toLowerCase()
+    .startsWith('needs_admin_vendor|')
+}
+
+/**
+ * Sticky needs_admin_vendor + still-assigned pending_accept — backend already
+ * escalated; board must not render this as ordinary "Awaiting vendor."
+ */
+export function isStalePendingAcceptNeedsAdminVendor(input: {
+  vendorWorkStatus?: string | null
+  assignedVendorId?: string | null
+  autoReassignLastOutcome?: string | null
+  /** Escalated run with sla_expired_no_vendor / declined / no_vendor reasons. */
+  workflowNeedsAdminVendor?: boolean
+}): boolean {
+  const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
+  if (vws !== 'pending_accept') return false
+  if (!input.assignedVendorId?.trim()) return false
+  return (
+    isNeedsAdminVendorStickyOutcome(input.autoReassignLastOutcome) ||
+    input.workflowNeedsAdminVendor === true
+  )
+}
+
+export const STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL =
+  'Vendor unresponsive · needs reassignment'
+
+export const STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE =
+  'Vendor unresponsive — needs reassignment'
+
+export const STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT =
+  'The assigned vendor never accepted. This needs a new vendor choice — not another wait.'
+
 /**
  * SLA rematch skip must follow the ticket, not a stale `no_vendor_available` run.
  * `pending_accept` + assigned vendor is never "needs admin vendor."

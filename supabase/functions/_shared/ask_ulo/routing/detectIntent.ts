@@ -16,6 +16,10 @@ import {
 } from "./briefingIntent.ts"
 import { isEntityInvestigationQuestion } from "../tools/maintenance/entityInvestigation.ts"
 import { isOldestWaitingWorkOrderQuestion } from "../tools/maintenance/taskCompletion.ts"
+import {
+  isOverdueWorkOrdersQuestion,
+  isPortfolioWorkPrioritizationQuestion,
+} from "../tools/maintenance/workOrderPresentation.ts"
 import { isAnyVendorMetricQuestion } from "../tools/_shared/questionMetricContext.ts"
 import {
   isMarketRentEstimateQuestion,
@@ -112,7 +116,9 @@ const PATTERNS: Array<{
     intent: "property_priority",
     label: "Property Priority",
     weight: 10,
-    re: /\b(which\s+(?:property|building)|needs?\s+(?:my\s+)?attention\s+first|attention\s+first|perform(?:ing|s)?\s+the\s+worst|worst\s+(?:propert|building)|biggest\s+risk|losing\s+money|what\s+should\s+i\s+focus\s+on|what\s+needs\s+(?:my\s+)?attention|is\s+anything\s+becoming\s+a\s+problem)\b/i,
+    // Open-ended "focus on / needs attention / most urgent" → work prioritization
+    // (isPortfolioWorkPrioritizationQuestion), not property ranking.
+    re: /\b(which\s+(?:property|building)|needs?\s+(?:my\s+)?attention\s+first|attention\s+first|perform(?:ing|s)?\s+the\s+worst|worst\s+(?:propert|building)|biggest\s+risk|losing\s+money|is\s+anything\s+becoming\s+a\s+problem)\b/i,
   },
   {
     intent: "executive_briefing",
@@ -285,6 +291,19 @@ export function classifyAskUloIntent(
       intent: "oldest_waiting_work_order",
       confidence: "high",
       label: "Oldest Waiting Work Order",
+    }
+  }
+
+  // Open-ended "what should I focus on today?" — urgency-first open work list,
+  // not executive briefing / property ranking / underspecified search.
+  if (
+    isPortfolioWorkPrioritizationQuestion(latest) ||
+    isOverdueWorkOrdersQuestion(latest)
+  ) {
+    return {
+      intent: "maintenance",
+      confidence: "high",
+      label: "Work Prioritization",
     }
   }
 

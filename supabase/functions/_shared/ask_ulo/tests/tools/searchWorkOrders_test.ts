@@ -4,6 +4,7 @@
 
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import type { OperationalWorkOrder } from "../../tools/maintenance/searchOperationalRecords.ts"
+import { sortWorkOrders } from "../../tools/maintenance/searchWorkOrders.ts"
 
 /** Mirror of sort/filter behavior in searchWorkOrders for pure unit tests. */
 function applySearchWorkOrdersPostFilters(
@@ -23,23 +24,9 @@ function applySearchWorkOrdersPostFilters(
   if (params.slaExpired) {
     workOrders = workOrders.filter((w) => w.slaExpired)
   }
-  const sortBy = params.sortBy ?? "created_at"
+  const sortBy = params.sortBy ?? (params.slaExpired ? "priority" : "created_at")
   const sortOrder = params.sortOrder ?? "desc"
-  const dir = sortOrder === "asc" ? 1 : -1
-  workOrders.sort((a, b) => {
-    if (sortBy === "days_open") return (a.daysOpen - b.daysOpen) * dir
-    if (sortBy === "priority") {
-      const rank = (p: string | null) => {
-        const v = (p ?? "").toLowerCase()
-        if (v.includes("critical") || v.includes("emergency")) return 0
-        if (v.includes("urgent") || v.includes("high")) return 1
-        if (v.includes("medium") || v.includes("normal")) return 2
-        return 3
-      }
-      return (rank(a.priority) - rank(b.priority)) * dir
-    }
-    return (Date.parse(a.createdAt) - Date.parse(b.createdAt)) * dir
-  })
+  workOrders = sortWorkOrders(workOrders, sortBy, sortOrder)
   if (params.limit != null) workOrders = workOrders.slice(0, params.limit)
   return workOrders
 }
@@ -56,6 +43,7 @@ function stubWo(
     title: "Test",
     description: "",
     priority: null,
+    urgency: null,
     estimatedCost: null,
     estimatedCostSource: null,
     repairScope: "Standard",
@@ -112,4 +100,25 @@ Deno.test("searchWorkOrders post-filter: slaExpired", () => {
   ]
   const filtered = applySearchWorkOrdersPostFilters(rows, { slaExpired: true })
   assertEquals(filtered.map((w) => w.workOrderId), ["b"])
+})
+
+Deno.test("searchWorkOrders: slaExpired defaults to urgency-first sort", () => {
+  const rows = [
+    stubWo({
+      workOrderId: "routine",
+      slaExpired: true,
+      daysOpen: 8,
+      priority: "medium",
+      urgency: "medium",
+    }),
+    stubWo({
+      workOrderId: "fire",
+      slaExpired: true,
+      daysOpen: 8,
+      priority: "emergency",
+      urgency: "fire",
+    }),
+  ]
+  const filtered = applySearchWorkOrdersPostFilters(rows, { slaExpired: true })
+  assertEquals(filtered.map((w) => w.workOrderId), ["fire", "routine"])
 })

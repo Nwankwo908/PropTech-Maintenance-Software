@@ -238,8 +238,20 @@ export function buildToolMissIncompleteSignal(input: {
   catchallNone: boolean
   subject: string
   openWorkOrders?: number | null
+  /** When true, open work already answers — do not ask for a property/unit anchor. */
+  portfolioWorkPrioritization?: boolean
 }): IncompleteEvidenceSignal | null {
   if (!input.noToolMatched && !input.catchallNone) return null
+
+  // Broad prioritization with open work in hand is never an "underspecified search."
+  // Callers should prefer catchall ranked WOs; this guard blocks the refuse copy.
+  if (
+    input.portfolioWorkPrioritization &&
+    typeof input.openWorkOrders === "number" &&
+    input.openWorkOrders > 0
+  ) {
+    return null
+  }
 
   const kind: IncompleteEvidenceKind = input.catchallNone ? "catchall_none" : "tool_miss"
   const open =

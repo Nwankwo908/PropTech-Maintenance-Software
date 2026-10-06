@@ -89,7 +89,7 @@ const ROUTES: Partial<Record<RouteKey, Omit<AskUloCapabilityRoute, "subject" | "
     optionalTools: [],
   },
   "property:rank": {
-    requiredTools: ["rank_properties"],
+    requiredTools: ["rank_properties", "search_work_orders"],
     optionalTools: ["get_property_insights"],
   },
   "property:identify_risk": {

@@ -43,6 +43,16 @@ function statusLabel(wo: OperationalWorkOrder): string {
   return raw || "open"
 }
 
+function urgencyLabel(wo: OperationalWorkOrder): string {
+  const raw = (wo.urgency || wo.priority || "").replace(/_/g, " ").trim()
+  if (!raw) return "Routine"
+  if (/\b(fire|gas|smoke|electrical|habitability|emergency|critical)\b/i.test(raw)) {
+    return raw.charAt(0).toUpperCase() + raw.slice(1)
+  }
+  if (/urgent|high/i.test(raw)) return "Urgent"
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
 function unitBit(wo: OperationalWorkOrder): string {
   return formatUnitReference(wo.unitLabel) || "common area / property"
 }
@@ -53,31 +63,41 @@ function unitBit(wo: OperationalWorkOrder): string {
  */
 export function formatCatchAllWorkOrdersMarkdown(
   workOrders: OperationalWorkOrder[],
+  opts?: { prioritization?: boolean },
 ): string {
   if (workOrders.length === 0) return ""
 
   const top = workOrders.slice(0, 8)
-  const lead =
-    top.length === 1
+  const lead = opts?.prioritization
+    ? top.length === 1
+      ? `Here's the open work I'd focus on first — ranked by urgency, then how long it's been waiting.`
+      : `Here's what I'd focus on first across your **${workOrders.length}** open requests — urgency first, then wait time, then anything waiting on your decision.`
+    : top.length === 1
       ? `Here's the work order that best matches what you asked.`
       : `Here are the open work orders that best match what you asked, starting with the one I'd look at first.`
 
   const lines: string[] = [lead, ""]
 
   for (const wo of top) {
-    const issue = (wo.description || wo.title || wo.category || "Maintenance request")
+    // title/description already summarized via generateIssueSummary upstream.
+    const issue = (wo.title || wo.description || wo.category || "Maintenance request")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 160)
+    const urgency = urgencyLabel(wo)
     const est =
       wo.estimatedCost != null ? formatMoney(wo.estimatedCost) : "No estimate on file"
+    const ageBit =
+      wo.slaExpired
+        ? `${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"} open — past the response time`
+        : `${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"}`
     lines.push(
       `### ${wo.workOrderId} — ${wo.propertyName}, ${unitBit(wo)}`,
       `- **Issue:** ${issue}`,
+      `- **Urgency:** ${urgency}`,
       `- **Category:** ${wo.category || "—"}`,
-      `- **Priority:** ${(wo.priority ?? "—").replace(/_/g, " ")}`,
       `- **Status:** ${statusLabel(wo)}`,
-      `- **Open for:** ${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"}`,
+      `- **Open for:** ${ageBit}`,
       `- **Vendor:** ${wo.vendorName?.trim() || "None assigned"}`,
       `- **Estimate:** ${est}`,
       "",
@@ -97,8 +117,9 @@ export function formatCatchAllWorkOrdersMarkdown(
 
   lines.push(
     "### What I'd do next",
-    "- Open the top work order and confirm vendor assignment and the latest update.",
-    "- If the response time has passed, reassign or follow up before it becomes an emergency.",
+    "- Start with emergency / habitability items — same wait time is not the same risk.",
+    "- Confirm vendor assignment and the latest update on the top work order.",
+    "- If the response time has passed on a routine ticket, follow up before it becomes urgent.",
   )
 
   return polishAskUloProse(lines.join("\n").trim())
@@ -106,9 +127,10 @@ export function formatCatchAllWorkOrdersMarkdown(
 
 export function buildCatchAllWorkOrderPacket(
   result: SearchWorkOrdersResult | null | undefined,
+  opts?: { prioritization?: boolean },
 ): CatchAllWorkOrderPacket | null {
   if (!result?.available || !result.workOrders.length) return null
-  const markdown = formatCatchAllWorkOrdersMarkdown(result.workOrders)
+  const markdown = formatCatchAllWorkOrdersMarkdown(result.workOrders, opts)
   if (!markdown.trim()) return null
   const top = result.workOrders[0]!
   return {

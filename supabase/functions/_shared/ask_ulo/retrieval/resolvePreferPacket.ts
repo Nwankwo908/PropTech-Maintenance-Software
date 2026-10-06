@@ -20,6 +20,12 @@ import {
   isWeatherAlertsQuestion,
   detectQuestionSubject,
 } from "../routing/detectSubject.ts"
+import {
+  isCriticalMaintenanceByPropertyQuestion,
+  isPortfolioWorkPrioritizationQuestion,
+} from "../tools/maintenance/workOrderPresentation.ts"
+import { formatCriticalMaintenanceByPropertyMarkdown } from "../tools/properties/propertyRankingLookup.ts"
+import { polishAskUloProse } from "../synthesis/formatAnswer.ts"
 import type { AskUloContext } from "../core/context.ts"
 import type { AskUloTurnPlan } from "../routing/planAskUloTurn.ts"
 import type { AskUloEvidence } from "../core/pipelineTypes.ts"
@@ -62,6 +68,16 @@ export type PreferPacketBag = {
     missingData: string[]
     portfolioOpenWorkOrders: number
     markdown?: string | null
+    ranked?: Array<{
+      building: string
+      rankScore: number
+      openWorkOrders: number
+      criticalWorkOrders: number
+      agingWorkOrders: number
+      awaitingDecision: number
+      whyLines: string[]
+      [key: string]: unknown
+    }> | null
   } | null
   unitMaintenanceRanking?: {
     available: boolean
@@ -254,7 +270,14 @@ export function resolvePreferPacket(bag: PreferPacketBag): PreferPacketResult {
       bag.intent === "unit_maintenance_ranking" || Boolean(bag.needsUnitRanking),
   })
 
-  if (incompleteRanking && rankingPrimary) {
+  // Property/unit ranking gaps must not refuse open-ended "focus today" or
+  // critical-by-property asks — those answer from ranked open work packets.
+  if (
+    incompleteRanking &&
+    rankingPrimary &&
+    !isPortfolioWorkPrioritizationQuestion(bag.question) &&
+    !isCriticalMaintenanceByPropertyQuestion(bag.question)
+  ) {
     logIncompleteEvidence({
       kind: incompleteRanking.kind,
       status: incompleteRanking.status,
@@ -271,6 +294,39 @@ export function resolvePreferPacket(bag: PreferPacketBag): PreferPacketResult {
 
   const draftMd = bag.draftCommunication?.markdown
   if (draftMd) return hit("draft_communication", draftMd)
+
+  // Critical maintenance by property — severity ranking, never invented $ / timelines.
+  if (
+    isCriticalMaintenanceByPropertyQuestion(bag.question) &&
+    Array.isArray(bag.gatedPropertyRanking?.ranked) &&
+    bag.gatedPropertyRanking.ranked.length > 0
+  ) {
+    const criticalMd = formatCriticalMaintenanceByPropertyMarkdown(
+      bag.gatedPropertyRanking.ranked as Parameters<
+        typeof formatCriticalMaintenanceByPropertyMarkdown
+      >[0],
+    )
+    if (criticalMd.trim()) {
+      return hit(
+        "critical_maintenance_by_property",
+        polishAskUloProse(criticalMd),
+        "critical_maintenance_by_property",
+      )
+    }
+  }
+
+  // Focus / urgency / "where should I start" — prefer ranked open work immediately.
+  if (
+    isPortfolioWorkPrioritizationQuestion(bag.question) &&
+    bag.catchAllWorkOrders?.found &&
+    bag.catchAllWorkOrders.markdown
+  ) {
+    return hit(
+      "catchall_search_work_orders",
+      bag.catchAllWorkOrders.markdown,
+      "portfolio_work_prioritization",
+    )
+  }
 
   const workflowsMd = availableMarkdown(bag.activeWorkflows)
   if (workflowsMd) return hit("list_active_workflows", workflowsMd)
@@ -356,6 +412,9 @@ export function resolvePreferPacket(bag: PreferPacketBag): PreferPacketResult {
       ),
       subject: bag.subject ?? "other",
       openWorkOrders: bag.openWorkOrdersHint ?? null,
+      portfolioWorkPrioritization: isPortfolioWorkPrioritizationQuestion(
+        bag.question,
+      ),
     })
     if (toolMiss) {
       logIncompleteEvidence({

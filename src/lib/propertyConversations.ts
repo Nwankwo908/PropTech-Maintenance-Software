@@ -29,15 +29,16 @@ export function isAdminDirectedConversationType(conversationType: string): boole
 
 export type CommunicationInboxTypeOptions = {
   /**
-   * Staff (osi@ / emeka@) Messages: include the Ulo ↔ landlord SMS thread
-   * (`landlord_update`). Still excluded for landlord portal logins (bell only).
+   * Include the Ulo ↔ landlord SMS thread (`landlord_update`) on Messages.
+   * Staff and portal landlord logins both need it so phone alerts match the inbox.
+   * `ai_copilot` stays bell-only either way.
    */
   includeLandlordUpdate?: boolean
 }
 
 /**
  * Types shown on the Messages / Communication inbox.
- * `ai_copilot` stays bell-only. `landlord_update` is opt-in for staff.
+ * `ai_copilot` stays bell-only. `landlord_update` is opt-in via includeLandlordUpdate.
  */
 export function isCommunicationInboxConversationType(
   conversationType: string,

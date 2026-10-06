@@ -8,6 +8,7 @@ import { emailFromAuthUser } from '@shared/authUserEmail'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { clearTryDemoVisitor, clearTryDemoWelcomePending } from '@/lib/activeLandlord'
+import { clearTryDemoAttentionGuide } from '@/lib/tryDemoAttentionGuide'
 import { landlordIdForPortalMemberEmail } from '@/lib/landlordPortalMembers'
 import { markAdminGoogleOAuthIntent, adminGoogleOAuthRedirectTo } from '@/lib/googleIdentitySignIn'
 
@@ -165,6 +166,7 @@ export async function signOutAdmin(options?: {
   if (options?.clearTryDemo !== false) {
     clearTryDemoVisitor()
     clearTryDemoWelcomePending()
+    clearTryDemoAttentionGuide()
   }
   if (!supabase) return
   try {

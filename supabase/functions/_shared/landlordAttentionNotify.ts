@@ -6,6 +6,12 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
+import {
+  findOrCreateConversation,
+  normalizeSmsPhone,
+  upsertSmsIdentityForPhone,
+} from "./sms/inbound_db.ts"
+import { UNKNOWN_CONTACT_INTAKE_KEY } from "./sms/unknownContactIntake.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import { formatUnitReference } from "./properties/unitLabelDisplay.ts"
@@ -259,6 +265,124 @@ export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
     .filter((line): line is string => line != null)
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
+}
+
+/**
+ * Which inbox-persist path notifyLandlordNeedsAttention should use after a
+ * successful Twilio send. Every attention SMS must land on landlord_update —
+ * phone-only delivery left Messages stale (rent billing TTL, escalations).
+ */
+export function landlordAttentionInboxPersistMode(params: {
+  invoicePaidConfirmation?: AwaitingInvoicePaidConfirmation | null
+  vendorChoice?: AwaitingVendorChoice | null
+}): "invoice_paid" | "vendor_choice" | "mirror" {
+  if (params.invoicePaidConfirmation) return "invoice_paid"
+  if (params.vendorChoice && params.vendorChoice.options.length > 0) {
+    return "vendor_choice"
+  }
+  return "mirror"
+}
+
+/**
+ * Mirror a plain attention SMS into the Ulo ↔ landlord Messages thread.
+ * Does not set awaiting_* intake flags (unlike vendor-choice / invoice-paid).
+ */
+export async function persistLandlordAttentionSms(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    phone: string
+    body: string
+    providerMessageSid: string
+    provider: string
+    fromNumber: string
+    kind: LandlordAttentionKind
+    maintenanceRequestId?: string | null
+    idempotencyKey?: string | null
+  },
+): Promise<void> {
+  const identity = await upsertSmsIdentityForPhone(supabase, {
+    landlordId: params.landlordId,
+    phone: params.phone,
+    identityType: "landlord",
+  })
+  if (!identity) return
+
+  const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
+  if (!main?.id) return
+
+  const ticketId = params.maintenanceRequestId?.trim() || null
+  const { conversationId } = await findOrCreateConversation(supabase, {
+    landlordId: params.landlordId,
+    smsNumberId: main.id,
+    externalPhone: params.phone,
+    identity,
+    maintenanceRequestId: ticketId,
+    conversationStatus: "open",
+  })
+
+  const sid = params.providerMessageSid.trim()
+  if (sid) {
+    const { data: existing } = await supabase
+      .from("sms_messages")
+      .select("id")
+      .eq("provider_message_sid", sid)
+      .maybeSingle()
+    if (existing?.id) {
+      await supabase
+        .from("sms_conversations")
+        .update({
+          updated_at: new Date().toISOString(),
+          status: "open",
+          conversation_type: "landlord_update",
+          ...(ticketId ? { maintenance_request_id: ticketId } : {}),
+        })
+        .eq("id", conversationId)
+      return
+    }
+  }
+
+  await supabase.from("sms_messages").insert({
+    conversation_id: conversationId,
+    landlord_id: params.landlordId,
+    direction: "outbound",
+    from_number: normalizeSmsPhone(params.fromNumber),
+    to_number: normalizeSmsPhone(params.phone),
+    body: params.body,
+    media_urls: [],
+    provider: params.provider,
+    provider_message_sid: params.providerMessageSid,
+    provider_status: "sent",
+    raw_payload: {
+      source: "landlord_attention",
+      kind: params.kind,
+      idempotency_key: params.idempotencyKey ?? null,
+      ticket_id: ticketId,
+    },
+  })
+
+  const { data: conv } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", conversationId)
+    .maybeSingle()
+  const prior =
+    conv?.intake_state && typeof conv.intake_state === "object"
+      ? (conv.intake_state as Record<string, unknown>)
+      : {}
+  const nextIntake = { ...prior }
+  delete nextIntake[UNKNOWN_CONTACT_INTAKE_KEY]
+
+  await supabase
+    .from("sms_conversations")
+    .update({
+      updated_at: new Date().toISOString(),
+      status: "open",
+      conversation_type: "landlord_update",
+      intake_state: nextIntake,
+      ...(ticketId ? { maintenance_request_id: ticketId } : {}),
+    })
+    .eq("id", conversationId)
 }
 
 export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
@@ -680,10 +804,13 @@ export async function notifyLandlordNeedsAttention(
           `landlord-attention:${key}:${to}`
         const providerName = send.provider ?? "twilio"
 
-        // Invoice-ready: always mirror outbound into the landlord thread and
-        // set awaiting_invoice_paid_confirmation (not only when vendorChoice exists).
-        if (params.invoicePaidConfirmation) {
-          try {
+        // Always mirror into landlord_update so staff Messages matches the phone.
+        const persistMode = landlordAttentionInboxPersistMode({
+          invoicePaidConfirmation: params.invoicePaidConfirmation,
+          vendorChoice: params.vendorChoice,
+        })
+        try {
+          if (persistMode === "invoice_paid" && params.invoicePaidConfirmation) {
             await persistInvoicePaidConfirmationSms(supabase, {
               landlordId,
               phone: to,
@@ -693,27 +820,31 @@ export async function notifyLandlordNeedsAttention(
               provider: providerName,
               fromNumber: from,
             })
-          } catch (e) {
-            console.error("[landlord-attention] persist invoice paid ask", e)
-          }
-          continue
-        }
-
-        const awaiting = params.vendorChoice
-        if (awaiting && awaiting.options.length > 0) {
-          try {
+          } else if (persistMode === "vendor_choice" && params.vendorChoice) {
             await persistLandlordChoiceSms(supabase, {
               landlordId,
               phone: to,
               body: smsBody,
-              awaiting,
+              awaiting: params.vendorChoice,
               providerMessageSid,
               provider: providerName,
               fromNumber: from,
             })
-          } catch (e) {
-            console.error("[landlord-attention] persist landlord choice", e)
+          } else {
+            await persistLandlordAttentionSms(supabase, {
+              landlordId,
+              phone: to,
+              body: smsBody,
+              providerMessageSid,
+              provider: providerName,
+              fromNumber: from,
+              kind: params.kind,
+              maintenanceRequestId: params.maintenanceRequestId ?? null,
+              idempotencyKey: key,
+            })
           }
+        } catch (e) {
+          console.error("[landlord-attention] persist inbox mirror", persistMode, e)
         }
       }
     }

@@ -7,6 +7,11 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
 import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
+import {
+  formatPendingLandlordDecisionReason,
+  rankWorkOrderUrgency,
+  summarizeWorkOrderIssue,
+} from "./workOrderPresentation.ts"
 
 const OPEN_VENDOR_STATUSES = [
   "unassigned",
@@ -158,24 +163,42 @@ export async function repairsToApproveLookup(
   }
   if (!landlordId) return empty
 
-  const [ticketsRes, workflowsRes] = await Promise.all([
-    supabase
-      .from("maintenance_request_enriched")
-      .select(
-        "id, building, unit, issue_category, description, vendor_work_status, priority, urgency, created_at, due_at",
-      )
-      .eq("landlord_id", landlordId)
-      .in("vendor_work_status", [...OPEN_VENDOR_STATUSES])
-      .order("created_at", { ascending: true })
-      .limit(200),
-    supabase
-      .from("workflow_runs")
-      .select("id, template_id, status, current_step, entity_id, started_at, metadata")
-      .eq("landlord_id", landlordId)
-      .in("status", ["active", "escalated", "running", "waiting"])
-      .order("started_at", { ascending: true })
-      .limit(150),
-  ])
+  const [ticketsRes, workflowsRes, estimatesRes, pendingAskTicketsRes] =
+    await Promise.all([
+      supabase
+        .from("maintenance_request_enriched")
+        .select(
+          "id, building, unit, issue_category, description, vendor_work_status, priority, urgency, created_at, due_at",
+        )
+        .eq("landlord_id", landlordId)
+        .in("vendor_work_status", [...OPEN_VENDOR_STATUSES])
+        .order("created_at", { ascending: true })
+        .limit(200),
+      supabase
+        .from("workflow_runs")
+        .select("id, template_id, status, current_step, entity_id, started_at, metadata")
+        .eq("landlord_id", landlordId)
+        .in("status", ["active", "escalated", "running", "waiting"])
+        .order("started_at", { ascending: true })
+        .limit(150),
+      supabase
+        .from("maintenance_estimates")
+        .select("maintenance_request_id, status, total_cost")
+        .eq("landlord_id", landlordId)
+        .eq("status", "pending_approval")
+        .limit(100),
+      // Enriched view omits these columns — pull pending-ask flags from the base table.
+      supabase
+        .from("maintenance_requests")
+        .select(
+          "id, unit, issue_category, description, priority, urgency, created_at, awaiting_landlord_choice_at, spend_status",
+        )
+        .eq("landlord_id", landlordId)
+        .or(
+          "awaiting_landlord_choice_at.not.is.null,spend_status.eq.pending_approval",
+        )
+        .limit(100),
+    ])
 
   let tickets: Array<Record<string, unknown>> = (ticketsRes.data ?? []) as Array<
     Record<string, unknown>
@@ -202,9 +225,37 @@ export async function repairsToApproveLookup(
     tickets = (fallback.data ?? []) as Array<Record<string, unknown>>
   }
 
+  const pendingEstimateTicketIds = new Set<string>()
+  if (!estimatesRes.error) {
+    for (const row of estimatesRes.data ?? []) {
+      const id = typeof row.maintenance_request_id === "string"
+        ? row.maintenance_request_id
+        : ""
+      if (id) pendingEstimateTicketIds.add(id)
+    }
+  } else {
+    console.error("[ask_ulo/repairsToApproveLookup] estimates", estimatesRes.error.message)
+  }
+
+  const pendingAskByTicketId = new Map<string, Record<string, unknown>>()
+  if (!pendingAskTicketsRes.error) {
+    for (const row of pendingAskTicketsRes.data ?? []) {
+      const id = String(row.id ?? "")
+      if (id) pendingAskByTicketId.set(id, row as Record<string, unknown>)
+    }
+  } else {
+    console.error(
+      "[ask_ulo/repairsToApproveLookup] pending asks",
+      pendingAskTicketsRes.error.message,
+    )
+  }
+
   const items: RepairToApproveItem[] = []
+  const ticketById = new Map<string, Record<string, unknown>>()
 
   for (const t of tickets) {
+    const id = String(t.id ?? "")
+    if (id) ticketById.set(id, t)
     if (!isCritical(t.priority, t.urgency)) continue
     const unitLabel = normalizeUnit(t.unit) || null
     const building =
@@ -214,10 +265,10 @@ export async function repairsToApproveLookup(
       typeof t.issue_category === "string" && t.issue_category.trim()
         ? t.issue_category.trim()
         : "maintenance"
-    const desc =
-      typeof t.description === "string" && t.description.trim()
-        ? t.description.trim().slice(0, 120)
-        : null
+    const label = summarizeWorkOrderIssue(
+      typeof t.description === "string" ? t.description : null,
+      cat,
+    )
     const pri = String(t.priority ?? t.urgency ?? "urgent").toLowerCase()
     const hours = ageHours(t.created_at)
     const overdue =
@@ -226,7 +277,7 @@ export async function repairsToApproveLookup(
         : null
     items.push({
       kind: "urgent_work_order",
-      label: desc || `${cat} work order`,
+      label,
       building: building || null,
       unitLabel,
       category: cat,
@@ -244,36 +295,103 @@ export async function repairsToApproveLookup(
   }
 
   let awaitingCount = 0
+  const seenAwaitingTickets = new Set<string>()
+
+  // Ticket-level pending asks (estimate approval / vendor choice) — same distinction SMS uses.
+  for (const [id, t] of pendingAskByTicketId) {
+    const awaitingChoice = Boolean(t.awaiting_landlord_choice_at)
+    const pendingEstimate =
+      pendingEstimateTicketIds.has(id) ||
+      String(t.spend_status ?? "").toLowerCase() === "pending_approval"
+    if (!awaitingChoice && !pendingEstimate) continue
+    awaitingCount += 1
+    seenAwaitingTickets.add(id)
+    const enriched = ticketById.get(id)
+    const cat =
+      typeof (enriched?.issue_category ?? t.issue_category) === "string" &&
+        String(enriched?.issue_category ?? t.issue_category).trim()
+        ? String(enriched?.issue_category ?? t.issue_category).trim()
+        : "maintenance"
+    const { reason } = formatPendingLandlordDecisionReason({
+      awaitingLandlordChoice: awaitingChoice,
+      pendingEstimateApproval: pendingEstimate,
+      spendStatus: typeof t.spend_status === "string" ? t.spend_status : null,
+    })
+    items.push({
+      kind: "awaiting_decision",
+      label: summarizeWorkOrderIssue(
+        typeof (enriched?.description ?? t.description) === "string"
+          ? String(enriched?.description ?? t.description)
+          : null,
+        cat,
+      ),
+      building:
+        (typeof enriched?.building === "string" && enriched.building.trim()) ||
+        buildingFromUnit(enriched?.unit ?? t.unit),
+      unitLabel: normalizeUnit(enriched?.unit ?? t.unit) || null,
+      category: cat,
+      reason,
+      ageHours: ageHours(enriched?.created_at ?? t.created_at),
+      priority: "escalated",
+    })
+  }
+
   for (const w of workflows) {
     const status = String(w.status ?? "")
     const meta = (w.metadata ?? {}) as Record<string, unknown>
     if (!isAwaitingDecision(status, meta)) continue
+    const entityId = typeof w.entity_id === "string" ? w.entity_id : ""
+    if (entityId && seenAwaitingTickets.has(entityId)) continue
     awaitingCount += 1
-    const template = String(w.template_id ?? "workflow")
+    const ticket = entityId ? ticketById.get(entityId) : null
+    const pendingAsk = entityId ? pendingAskByTicketId.get(entityId) : null
     const step = String(w.current_step ?? meta.current_step ?? "awaiting decision")
-    const hours = ageHours(w.started_at)
+    const { reason } = formatPendingLandlordDecisionReason({
+      workflowStep: step,
+      workflowStatus: status,
+      awaitingLandlordChoice: Boolean(
+        pendingAsk?.awaiting_landlord_choice_at || meta.awaiting_landlord,
+      ),
+      pendingEstimateApproval: entityId
+        ? pendingEstimateTicketIds.has(entityId)
+        : false,
+      spendStatus:
+        typeof pendingAsk?.spend_status === "string" ? pendingAsk.spend_status : null,
+    })
+    const cat =
+      typeof ticket?.issue_category === "string" && ticket.issue_category.trim()
+        ? ticket.issue_category.trim()
+        : null
+    const label = ticket
+      ? summarizeWorkOrderIssue(
+        typeof ticket.description === "string" ? ticket.description : null,
+        cat,
+      )
+      : String(w.template_id ?? "workflow").replace(/_/g, " ")
     items.push({
       kind: "awaiting_decision",
-      label: template.replace(/_/g, " "),
-      building: typeof meta.building === "string" ? meta.building : null,
-      unitLabel: meta.unit ? normalizeUnit(meta.unit) : null,
-      category: null,
-      reason: `Waiting on your decision (${step})`,
-      ageHours: hours,
+      label,
+      building:
+        (typeof ticket?.building === "string" && ticket.building.trim()) ||
+        (typeof meta.building === "string" ? meta.building : null) ||
+        buildingFromUnit(ticket?.unit ?? meta.unit),
+      unitLabel: ticket?.unit
+        ? normalizeUnit(ticket.unit)
+        : meta.unit
+        ? normalizeUnit(meta.unit)
+        : null,
+      category: cat,
+      reason,
+      ageHours: ageHours(w.started_at),
       priority: status === "escalated" ? "escalated" : "awaiting",
     })
   }
 
-  // Priority: urgent emergency first, then by age.
-  const rank = (p: string | null) => {
-    const s = (p ?? "").toLowerCase()
-    if (s === "urgent" || s === "emergency" || s === "critical") return 0
-    if (s === "escalated") return 1
-    if (s === "high") return 2
-    return 3
-  }
+  // Urgency tier first (fire/habitability before routine), then wait age.
   items.sort((a, b) => {
-    const r = rank(a.priority) - rank(b.priority)
+    const r =
+      rankWorkOrderUrgency(a.priority, a.priority, a.label) -
+      rankWorkOrderUrgency(b.priority, b.priority, b.label)
     if (r !== 0) return r
     return (b.ageHours ?? 0) - (a.ageHours ?? 0)
   })

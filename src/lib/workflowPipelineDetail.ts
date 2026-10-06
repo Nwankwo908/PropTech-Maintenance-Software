@@ -19,7 +19,11 @@ import {
 import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
 import {
   formatLandlordEscalationReason,
+  isMaintenanceAdminVendorEscalationReason,
+  isStalePendingAcceptNeedsAdminVendor,
   looksLikeInternalEscalationCode,
+  STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT,
+  STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL,
 } from '@/lib/maintenanceAdminVendor'
 import { extractStructuredIssueDetails } from '@shared/maintenance/structuredIssueDetails.ts'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
@@ -307,18 +311,12 @@ export function buildMaintenanceOverviewStatusContext(input: {
   issueCategory?: string | null
   /** Ticket is blocked on landlord YES / 1 / 2 vendor pick. */
   awaitingLandlordChoice?: boolean
+  /** Sticky needs_admin + still-assigned pending_accept (display-only signal). */
+  stalePendingAcceptNeedsAdmin?: boolean
 }): string {
   const vendor = input.vendorName?.trim() || 'the vendor'
   const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
   const visit = formatVisitLabel(input.scheduledAt, input.scheduleConfirmedAt)
-
-  if ((input.runStatus ?? '').trim().toLowerCase() === 'escalated') {
-    const plain = formatLandlordEscalationReason(
-      input.escalationReason,
-      input.issueCategory,
-    )
-    if (plain) return plain
-  }
 
   // Landlord choice wins over stale pending_accept (e.g. probe NO that didn't
   // flip vendor_work_status yet, or status lag after decline).
@@ -329,6 +327,21 @@ export function buildMaintenanceOverviewStatusContext(input: {
         : 'Waiting for you to choose a vendor for this work order.'
     }
     return 'Waiting for you to choose a vendor for this work order.'
+  }
+
+  // Sticky needs_admin with a dead pending_accept assignment — not ordinary waiting.
+  if (input.stalePendingAcceptNeedsAdmin) {
+    return input.vendorName?.trim()
+      ? `${vendor} never accepted. Vendor unresponsive — needs a new vendor choice.`
+      : STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT
+  }
+
+  if ((input.runStatus ?? '').trim().toLowerCase() === 'escalated') {
+    const plain = formatLandlordEscalationReason(
+      input.escalationReason,
+      input.issueCategory,
+    )
+    if (plain) return plain
   }
 
   if (visit !== '—') {
@@ -372,13 +385,13 @@ export function buildMaintenanceOverviewStatusContext(input: {
 export function buildMaintenanceOverviewStatusLabel(input: {
   vendorWorkStatus: string | null
   awaitingLandlordChoice?: boolean
+  stalePendingAcceptNeedsAdmin?: boolean
 }): string {
   if (input.awaitingLandlordChoice) {
-    const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
-    if (vws === 'declined' || vws === 'pending_accept') {
-      return 'Needs your vendor choice'
-    }
     return 'Needs your vendor choice'
+  }
+  if (input.stalePendingAcceptNeedsAdmin) {
+    return STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL
   }
   return vendorWorkStatusChipLabel(input.vendorWorkStatus)
 }
@@ -1607,10 +1620,23 @@ export async function fetchWorkflowPipelineDetail(
     asString(ticket?.awaiting_landlord_choice_at) ||
       /awaiting landlord vendor choice/i.test(asString(ticket?.vendor_notify_error)),
   )
+  const vendorWorkStatus =
+    asString(ticket?.vendor_work_status) || row.vendorWorkStatus
+  const assignedVendorId =
+    asString(ticket?.assigned_vendor_id) || row.assignedVendorId
+  const stalePendingAcceptNeedsAdmin = isStalePendingAcceptNeedsAdminVendor({
+    vendorWorkStatus,
+    assignedVendorId,
+    autoReassignLastOutcome:
+      asString(ticket?.auto_reassign_last_outcome) ||
+      row.autoReassignLastOutcome,
+    workflowNeedsAdminVendor:
+      row.status === 'escalated' &&
+      isMaintenanceAdminVendorEscalationReason(row.escalationReason),
+  })
   const statusContext = isMaintenance
     ? buildMaintenanceOverviewStatusContext({
-        vendorWorkStatus:
-          asString(ticket?.vendor_work_status) || row.vendorWorkStatus,
+        vendorWorkStatus,
         vendorName: enrichment.vendorName,
         stageLabel: stage.label,
         lastEventMessage: lastEventPlain,
@@ -1620,6 +1646,7 @@ export async function fetchWorkflowPipelineDetail(
         scheduleConfirmedAt,
         issueCategory,
         awaitingLandlordChoice,
+        stalePendingAcceptNeedsAdmin,
       })
     : isMoveOut
       ? `Move-out is ${moveOutProgress != null ? `${moveOutProgress}% complete` : 'in progress'}${
@@ -1749,9 +1776,9 @@ export async function fetchWorkflowPipelineDetail(
           {
             label: 'Status',
             value: buildMaintenanceOverviewStatusLabel({
-              vendorWorkStatus:
-                asString(ticket?.vendor_work_status) || row.vendorWorkStatus,
+              vendorWorkStatus,
               awaitingLandlordChoice,
+              stalePendingAcceptNeedsAdmin,
             }),
           },
           {

@@ -7,6 +7,7 @@ import {
   buildLandlordAttentionEmail,
   buildLandlordAttentionSms,
   formatReportedAgo,
+  landlordAttentionInboxPersistMode,
   shortRepairLabel,
 } from "./landlordAttentionNotify.ts"
 
@@ -137,4 +138,35 @@ Deno.test("formatReportedAgo uses hours then days", () => {
   const now = new Date("2026-09-15T18:00:00.000Z")
   assertEquals(formatReportedAgo("2026-09-15T16:00:00.000Z", now), "reported 2h ago")
   assertEquals(formatReportedAgo("2026-09-13T18:00:00.000Z", now), "reported 2 days ago")
+})
+
+Deno.test("landlordAttentionInboxPersistMode always picks a Messages mirror path", () => {
+  assertEquals(
+    landlordAttentionInboxPersistMode({}),
+    "mirror",
+  )
+  assertEquals(
+    landlordAttentionInboxPersistMode({
+      vendorChoice: {
+        ticketId: "t1",
+        options: [{ id: "v1", name: "Acme", role: "preferred" }],
+      } as never,
+    }),
+    "vendor_choice",
+  )
+  assertEquals(
+    landlordAttentionInboxPersistMode({
+      vendorChoice: { ticketId: "t1", options: [] } as never,
+    }),
+    "mirror",
+  )
+  assertEquals(
+    landlordAttentionInboxPersistMode({
+      invoicePaidConfirmation: {
+        invoiceId: "i1",
+        ticketId: "t1",
+      } as never,
+    }),
+    "invoice_paid",
+  )
 })

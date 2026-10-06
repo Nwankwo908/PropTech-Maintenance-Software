@@ -22,7 +22,6 @@ import {
   hasAdminGoogleOAuthIntent,
 } from '@/lib/googleIdentitySignIn'
 import {
-  IconArrowRight,
   IconClose,
   IconFocusFeature,
   IconGraph,
@@ -443,62 +442,43 @@ function HeroHeadlineAndCopy() {
   )
 }
 
-const PRIMARY_BUTTON_CLASS = [
-  'flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[#55B6A1] px-7 py-2.5 leading-none',
-  'text-sm font-semibold text-white transition-[background-color,transform] duration-150 ease-out',
-  'hover:bg-[#459e8b] hover:-translate-y-0.5',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#55B6A1]/40 focus-visible:ring-offset-2',
-  'disabled:pointer-events-none disabled:opacity-50',
-].join(' ')
-
-function primaryControlClassName(className = '') {
-  return [PRIMARY_BUTTON_CLASS, className].filter(Boolean).join(' ')
-}
-
-const LANDING_CTA_EQUAL_WIDTH =
-  'box-border min-w-0 w-full flex-1 basis-0 justify-center !py-0'
-
-function PrimaryButton({
-  children,
-  className = '',
-  ...props
-}: React.ComponentProps<'button'> & { children: React.ReactNode }) {
-  return (
-    <button type="button" className={primaryControlClassName(className)} {...props}>
-      {children}
-    </button>
-  )
-}
-
 function PrimaryLink({
   children,
   className = '',
   to,
   onClick,
+  solid = false,
 }: {
   children: React.ReactNode
   className?: string
   to: string
   onClick?: () => void
+  /** Flat solid fill — no gradient, lift, or glow. */
+  solid?: boolean
 }) {
   return (
     <Link
       to={to}
       onClick={onClick}
       className={[
-        'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5 leading-none',
+        'flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5 leading-none',
         'text-sm font-semibold text-white',
-        'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
-        'transition-[transform,box-shadow,filter] duration-150 ease-out',
-        'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
-        'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
         'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
         'disabled:pointer-events-none disabled:opacity-50',
+        solid
+          ? 'sa-press bg-[#229A7F] transition-[background-color,transform] duration-[var(--sa-fast)] ease-[var(--sa-ease)] hover:bg-[#1e8a71] active:bg-[#1a7a64]'
+          : [
+              'sa-press',
+              'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
+              'transition-[transform,box-shadow,filter] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
+              'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
+              'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
+            ].join(' '),
         className,
       ]
         .filter(Boolean)
         .join(' ')}
-      style={{ backgroundImage: TEAL_GRADIENT }}
+      style={solid ? undefined : { backgroundImage: TEAL_GRADIENT }}
     >
       {children}
     </Link>
@@ -506,23 +486,35 @@ function PrimaryLink({
 }
 
 const SECONDARY_BUTTON_CLASS = [
-  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#d1d5db] bg-white px-7 py-2.5 leading-none',
-  'text-sm font-semibold text-[#0f1623]',
-  'transition-[transform,box-shadow,border-color,background-color] duration-150 ease-out',
-  'hover:border-[#9ca3af] hover:bg-[#f9fafb] hover:shadow-[0_4px_14px_rgba(15,23,42,0.08)] hover:-translate-y-0.5',
+  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#70ABC5] bg-[#70ABC5] px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-white',
+  'transition-[transform,box-shadow,border-color,background-color] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
+  'hover:border-[#5f9ab4] hover:bg-[#5f9ab4] hover:shadow-[0_4px_14px_rgba(112,171,197,0.35)] hover:-translate-y-0.5',
   'active:translate-y-px active:scale-[0.98]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d1d5db]/80 focus-visible:ring-offset-2',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#70ABC5]/50 focus-visible:ring-offset-2',
+].join(' ')
+
+const SECONDARY_BUTTON_OUTLINE_CLASS = [
+  'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#70ABC5] bg-transparent px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-[#70ABC5]',
+  'transition-[transform,border-color,background-color,color] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
+  'hover:border-[#5f9ab4] hover:bg-[#70ABC5]/15 hover:text-[#5f9ab4]',
+  'active:translate-y-px active:scale-[0.98] active:bg-[#70ABC5]/25',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#70ABC5]/50 focus-visible:ring-offset-2',
 ].join(' ')
 
 function SecondaryButton({
   children,
   className = '',
+  outline = false,
   ...props
-}: React.ComponentProps<'button'> & { children: React.ReactNode }) {
+}: React.ComponentProps<'button'> & { children: React.ReactNode; outline?: boolean }) {
   return (
     <button
       type="button"
-      className={[SECONDARY_BUTTON_CLASS, className].filter(Boolean).join(' ')}
+      className={[outline ? SECONDARY_BUTTON_OUTLINE_CLASS : SECONDARY_BUTTON_CLASS, className]
+        .filter(Boolean)
+        .join(' ')}
       {...props}
     >
       {children}
@@ -670,15 +662,6 @@ export function LandingPage() {
     }
   }, [navigate])
 
-  function openEarlyAccess(prefillEmail?: string) {
-    playUiClickSound()
-    setMobileMenuOpen(false)
-    setEarlyAccessSuccess(false)
-    setEarlyAccessReferralLink('')
-    setEarlyAccessInitialEmail(prefillEmail?.trim() ?? '')
-    setEarlyAccessOpen(true)
-  }
-
   function closeEarlyAccess() {
     setEarlyAccessOpen(false)
     setEarlyAccessSuccess(false)
@@ -799,13 +782,6 @@ export function LandingPage() {
               >
                 Get Started
               </PrimaryLink>
-              <button
-                type="button"
-                onClick={() => openEarlyAccess()}
-                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827]"
-              >
-                Request Early Access
-              </button>
             </nav>
           </div>
         ) : null}
@@ -848,40 +824,25 @@ export function LandingPage() {
                 <HeroHeadlineAndCopy />
 
                 <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start landing-tablet-portrait:items-stretch">
-                  <div className="landing-hero-waitlist flex w-full min-w-0 max-w-xl flex-col items-stretch gap-3 sm:flex-row sm:items-stretch landing-tablet-portrait:!w-full landing-tablet-portrait:flex-row [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col landing-1024-600:!flex-col">
+                  <div className="landing-hero-waitlist flex w-full min-w-0 max-w-xl flex-col items-stretch gap-3 sm:flex-row sm:items-center landing-tablet-portrait:!w-full landing-tablet-portrait:flex-row [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col landing-1024-600:!flex-col">
                     <SecondaryButton
                       type="button"
                       onClick={() => openTryDemo()}
-                      className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10`}
+                      className="landing-waitlist-field landing-3840-2160-footer-waitlist-field box-border w-full justify-center !py-0 sm:w-auto sm:min-w-[10.5rem] landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10"
                     >
                       Try Demo
                     </SecondaryButton>
-                    <PrimaryButton
-                      type="button"
-                      onClick={() => openEarlyAccess()}
-                      className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10`}
-                    >
-                      Request Early Access
-                      <IconArrowRight />
-                    </PrimaryButton>
-                  </div>
-                  <div className="mt-6 flex flex-nowrap items-center justify-center gap-2 landing-compact:flex-col landing-compact:items-center landing-504:flex-row landing-504:items-center sm:justify-start landing-phone-tall:flex-col landing-phone-tall:items-center">
                     <button
                       type="button"
-                      className="sa-link shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
+                      className="sa-press sa-link flex min-w-0 shrink-0 items-center justify-center gap-2 bg-transparent px-1 text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2 sm:justify-start"
                     >
-                      Bring Your Existing Data
+                      <span className="whitespace-nowrap">Bring Your Existing Data</span>
+                      <span className="flex shrink-0 items-center gap-1" aria-hidden>
+                        {LANDING_DOCUMENT_IMPORT_ICONS.slice(0, 4).map((Icon) => (
+                          <Icon key={Icon.name} className="size-5 shrink-0" />
+                        ))}
+                      </span>
                     </button>
-                    <div className="flex shrink-0 items-center gap-1" aria-hidden>
-                      {LANDING_DOCUMENT_IMPORT_ICONS.map((Icon) => (
-                        <span
-                          key={Icon.name}
-                          className="inline-flex drop-shadow-[0_1px_1px_rgba(15,23,42,0.24)] drop-shadow-[0_1px_2px_rgba(15,23,42,0.18)]"
-                        >
-                          <Icon className="size-[25px] shrink-0" />
-                        </span>
-                      ))}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1033,22 +994,22 @@ export function LandingPage() {
                 <p className="mt-2 text-base font-normal leading-relaxed text-slate-700 landing-compact:text-center landing-3840-2160:mt-[0.8rem] landing-3840-2160:text-[1.6rem] landing-3840-2160:leading-relaxed landing-4096-2304:mt-[0.7rem] landing-5120-2880:mt-[0.7rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-4096-2304:leading-relaxed landing-5120-2880:leading-relaxed landing-7680-4320:mt-5 landing-7680-4320:text-[2.5rem] landing-7680-4320:leading-relaxed">
                   Join the alpha pilot program; limited spots available.
                 </p>
-                <div className="landing-footer-waitlist mt-5 flex w-full flex-col gap-3 landing-tablet-portrait:flex-row landing-tablet-portrait:items-stretch landing-3840-2160:mt-8 landing-3840-2160:gap-[1.2rem] landing-4096-2304:mt-7 landing-5120-2880:mt-7 landing-4096-2304:gap-[1.05rem] landing-5120-2880:gap-[1.05rem] landing-7680-4320:mt-[3.125rem] landing-7680-4320:gap-[1.875rem] [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!items-stretch landing-1024-1366:!flex-row landing-1024-1366:!items-stretch landing-1024-600:!flex-col landing-1024-600:!items-stretch landing-1280-800:!flex-col landing-1512-982:!flex-col landing-1728-1117:!flex-col landing-1280-800:!items-stretch landing-1512-982:!items-stretch landing-1728-1117:!items-stretch">
+                <div className="landing-footer-waitlist mt-5 flex w-full flex-col gap-3 landing-tablet-portrait:flex-row landing-tablet-portrait:items-center landing-3840-2160:mt-8 landing-3840-2160:gap-[1.2rem] landing-4096-2304:mt-7 landing-5120-2880:mt-7 landing-4096-2304:gap-[1.05rem] landing-5120-2880:gap-[1.05rem] landing-7680-4320:mt-[3.125rem] landing-7680-4320:gap-[1.875rem] [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:!items-stretch landing-1024-1366:!flex-row landing-1024-1366:!items-center landing-1024-600:!flex-col landing-1024-600:!items-stretch landing-1280-800:!flex-col landing-1512-982:!flex-col landing-1728-1117:!flex-col landing-1280-800:!items-stretch landing-1512-982:!items-stretch landing-1728-1117:!items-stretch">
                   <SecondaryButton
                     type="button"
+                    outline
                     onClick={() => openTryDemo()}
-                    className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem]`}
+                    className="landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field box-border w-full justify-center !py-0 sm:w-auto sm:min-w-[10.5rem] landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem]"
                   >
                     Try Demo
                   </SecondaryButton>
-                  <PrimaryButton
-                    type="button"
-                    onClick={() => openEarlyAccess()}
-                    className={`landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field ${LANDING_CTA_EQUAL_WIDTH} landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem]`}
+                  <PrimaryLink
+                    to="/admin/get-started"
+                    solid
+                    className="landing-waitlist-field landing-3840-2160-footer-waitlist-field landing-4096-2304-footer-waitlist-field landing-5120-2880-footer-waitlist-field landing-7680-4320-footer-waitlist-field box-border w-full justify-center !py-0 sm:w-auto sm:min-w-[10.5rem] landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10 landing-3840-2160:text-[1.4rem] landing-4096-2304:gap-[0.7rem] landing-5120-2880:gap-[0.7rem] landing-4096-2304:rounded-[0.7rem] landing-5120-2880:rounded-[0.7rem] landing-4096-2304:px-[2.45rem] landing-5120-2880:px-[2.45rem] landing-4096-2304:text-[1.225rem] landing-5120-2880:text-[1.225rem] landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:text-[2.5rem]"
                   >
-                    Request Early Access
-                    <IconArrowRight className="size-4 landing-3840-2160:size-6 landing-4096-2304:size-[1.4rem] landing-5120-2880:size-[1.4rem] landing-7680-4320:size-10" />
-                  </PrimaryButton>
+                    Get Started
+                  </PrimaryLink>
                 </div>
               </div>
               <p className="mt-8 text-left text-sm text-[#6b7280] lg:text-right landing-compact:order-4 landing-compact:mt-0 landing-tablet-portrait:col-start-2 landing-tablet-portrait:row-start-3 landing-tablet-portrait:mt-0 landing-tablet-portrait:self-end landing-tablet-portrait:text-left landing-4096-2304:mt-[2.8rem] landing-5120-2880:mt-[2.8rem] landing-4096-2304:text-[1.225rem] landing-5120-2880:text-[1.225rem] landing-7680-4320:mt-20 landing-7680-4320:text-[2.1875rem]">

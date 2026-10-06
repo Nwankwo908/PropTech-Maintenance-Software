@@ -12,6 +12,7 @@
  *  - nwankwo908@gmail.com      → Limited Alpha 2
  *  - bfamiloni@gmail.com       → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
+ *  - richard@orangegroveproperties.com → Demo Property Management
  *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
  *
  * Full Alpha and New Landlord are retired. Stale overrides and those ids

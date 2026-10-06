@@ -77,8 +77,8 @@ async function deleteLandlordScopedRows(
   if (isIgnorableScopedDeleteError(error.message, bestEffort)) {
     if (bestEffort && !/does not exist|Could not find the table/i.test(error.message)) {
       console.warn(`[landlordOnboarding] skip delete ${table}`, error.message)
-    }
-    return { ok: true }
+  }
+  return { ok: true }
   }
   return { ok: false, error: getErrorMessage(error, 'Something went wrong. Please try again.') }
 }
@@ -271,33 +271,33 @@ export async function purgeOnboardingImportedOperations(
     // RPC missing or failed — fall through to scoped client deletes below.
   } else if (useEmptyLandlordPurgeRpc) {
     // New Landlord (empty): prefer fail-closed SECURITY DEFINER RPC (bypasses missing DELETE RLS on runs).
-    // preservePortfolioSms keeps SMS threads + graph events tied to current portfolio
-    // residents/vendors (e.g. tenant activation welcome texts) while stripping import junk.
-    const { error: rpcError } = await supabase.rpc('purge_empty_landlord_operations', {
-      p_preserve_portfolio_sms: preservePortfolioSms,
-    })
-    if (!rpcError) {
-      const remaining = await countLandlordOps(scope.landlordId)
-      // In preserve mode the purge intentionally keeps vendor_onboarding runs, so a
-      // remaining active run is expected — only gate on leftover imported tickets.
-      const blocked = preservePortfolioSms
-        ? remaining.tickets > 0
-        : remaining.tickets > 0 || remaining.activeWorkflowRuns > 0
-      if (blocked) {
+  // preservePortfolioSms keeps SMS threads + graph events tied to current portfolio
+  // residents/vendors (e.g. tenant activation welcome texts) while stripping import junk.
+  const { error: rpcError } = await supabase.rpc('purge_empty_landlord_operations', {
+    p_preserve_portfolio_sms: preservePortfolioSms,
+  })
+  if (!rpcError) {
+    const remaining = await countLandlordOps(scope.landlordId)
+    // In preserve mode the purge intentionally keeps vendor_onboarding runs, so a
+    // remaining active run is expected — only gate on leftover imported tickets.
+    const blocked = preservePortfolioSms
+      ? remaining.tickets > 0
+      : remaining.tickets > 0 || remaining.activeWorkflowRuns > 0
+    if (blocked) {
         const hardBlocked = await diagnoseHardDeleteBlocked(scope.landlordId)
-        return {
-          ok: false,
-          error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
+      return {
+        ok: false,
+        error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
           opsPurgePath: 'purge_empty_landlord_operations',
           ...(hardBlocked ? { hardDeleteBlocked: hardBlocked } : {}),
-        }
       }
-      return { ok: true, opsPurgePath: 'purge_empty_landlord_operations' }
     }
+      return { ok: true, opsPurgePath: 'purge_empty_landlord_operations' }
+  }
 
-    // RPC missing (migration not applied yet) — fall back to client deletes / cancel.
-    if (!/Could not find the function|PGRST202|404/i.test(rpcError.message)) {
-      console.warn('[landlordOnboarding] purge_empty_landlord_operations', rpcError.message)
+  // RPC missing (migration not applied yet) — fall back to client deletes / cancel.
+  if (!/Could not find the function|PGRST202|404/i.test(rpcError.message)) {
+    console.warn('[landlordOnboarding] purge_empty_landlord_operations', rpcError.message)
     }
   }
 
@@ -1223,8 +1223,8 @@ export async function restartNewLandlordOnboarding(
   // Profile + account_settings wipe after the final upsert so leftovers cannot stick.
   const profileReset = await resetLandlordProfileForFactoryReset(scope.landlordId)
   if (!profileReset.ok) {
-    clearLocalOnboardingStorage(scope.landlordId)
-    writeLocalOnboarding(cleared)
+  clearLocalOnboardingStorage(scope.landlordId)
+  writeLocalOnboarding(cleared)
     const activityFeed = await countFactoryResetActivityFeed(scope.landlordId)
     return {
       ok: false,

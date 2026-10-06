@@ -90,4 +90,27 @@ describe('buildMaintenanceOverviewStatusContext', () => {
       }),
     ).toBe('Needs your vendor choice')
   })
+
+  it('surfaces sticky needs_admin stale pending_accept as unresponsive, not ordinary waiting', () => {
+    const text = buildMaintenanceOverviewStatusContext({
+      vendorWorkStatus: 'pending_accept',
+      vendorName: 'Handyman Services By Michael',
+      stageLabel: 'Assigned',
+      lastEventMessage: null,
+      escalationReason: 'sla_expired_no_vendor',
+      runStatus: 'escalated',
+      scheduledAt: null,
+      scheduleConfirmedAt: null,
+      stalePendingAcceptNeedsAdmin: true,
+    })
+    expect(text).toMatch(/never accepted/i)
+    expect(text).toMatch(/unresponsive/i)
+    expect(text).not.toMatch(/Waiting for Handyman Services By Michael to accept/i)
+    expect(
+      buildMaintenanceOverviewStatusLabel({
+        vendorWorkStatus: 'pending_accept',
+        stalePendingAcceptNeedsAdmin: true,
+      }),
+    ).toMatch(/unresponsive/i)
+  })
 })

@@ -24,6 +24,13 @@ import {
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
 import {
+  readTryDemoAttentionGuideActiveStep,
+  tryDemoAskUloViewModeForStep,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT,
+  TRY_DEMO_SPOTLIGHT_ASK_ULO_ID,
+  TRY_DEMO_SPOTLIGHT_ASK_ULO_PANEL_ID,
+} from '@/lib/tryDemoAttentionGuide'
+import {
   clearOnboardingResetGuard,
   isOnboardingLandlordAccount,
   markOnboardingResetInProgress,
@@ -180,24 +187,30 @@ function AdminTopBar() {
   }
 
   return (
-    <header className="sticky top-0 z-40 hidden h-[68px] shrink-0 items-center border-b border-[#e5e7eb] bg-white px-8 lg:flex">
+    <header className="sticky top-0 z-40 hidden h-[68px] shrink-0 items-center overflow-visible border-b border-[#e5e7eb] bg-white px-8 lg:flex">
       <div className="flex w-full items-center gap-4">
-        <AdminUniversalSearch />
-        <button
-          type="button"
-          title="Ulo AI assistant"
-          aria-pressed={open}
-          onClick={() => openAskUlo()}
-          className={[
-            'sa-press flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
-            open
-              ? 'bg-[#0A4D38]/10'
-              : 'bg-transparent hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10',
-          ].join(' ')}
+        <div
+          id={TRY_DEMO_SPOTLIGHT_ASK_ULO_ID}
+          data-try-demo-spotlight-cluster="1"
+          className="flex min-w-0 flex-1 items-center gap-4"
         >
-          <AiSparkleIcon />
-          Ask Ulo AI
-        </button>
+          <AdminUniversalSearch />
+          <button
+            type="button"
+            title="Ulo AI assistant"
+            aria-pressed={open}
+            onClick={() => openAskUlo()}
+            className={[
+              'sa-press flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
+              open
+                ? 'bg-[#0A4D38]/10'
+                : 'bg-transparent hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10',
+            ].join(' ')}
+          >
+            <AiSparkleIcon />
+            Ask Ulo AI
+          </button>
+        </div>
         <div className="ml-auto flex shrink-0 items-center gap-4">
         {isDemoAccountActive() ? (
           <span className="shrink-0 rounded-full bg-[#fef9c2] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#a65f00]">
@@ -260,49 +273,86 @@ function AdminMainContent() {
   // Full-screen Ask Ulo used to replace <Outlet />, so navigating to Properties
   // while Ask Ulo was open showed a blank/stuck shell. Always keep the route
   // mounted, and auto-dock on path changes so the destination is visible.
+  // Skip while Try Demo tip is forcing a full Ask Ulo view.
   useEffect(() => {
     if (prevPathRef.current === location.pathname) return
     prevPathRef.current = location.pathname
+    const tourMode = tryDemoAskUloViewModeForStep(readTryDemoAttentionGuideActiveStep())
+    if (tourMode === 'full') return
     if (open && !docked) setDocked(true)
   }, [location.pathname, open, docked, setDocked])
 
-  if (!open) {
-    return (
-      <div
-        ref={setScrollEl}
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white"
-        data-admin-scroll-root
-      >
-        <Outlet />
-      </div>
-    )
-  }
+  // Try Demo steps 4–5: open Ask Ulo docked → full from the layout shell so the
+  // tip does not depend on Overview staying mounted through the URL change.
+  // Only apply when the tip *step* changes — re-applying on setDocked identity
+  // changes was fighting the sidebar Expand control (snap-back to docked).
+  const lastTipLayoutStepRef = useRef<number | null | undefined>(undefined)
+  useEffect(() => {
+    const apply = (step: number | null) => {
+      if (lastTipLayoutStepRef.current === step) return
+      lastTipLayoutStepRef.current = step
+      const mode = tryDemoAskUloViewModeForStep(step)
+      if (mode === 'full') {
+        setDocked(false)
+        // Re-assert after any competing dock navigate from the same click.
+        window.setTimeout(() => setDocked(false), 0)
+        return
+      }
+      if (mode === 'docked') setDocked(true)
+    }
+    apply(readTryDemoAttentionGuideActiveStep())
+    const onStep = (event: Event) => {
+      const ce = event as CustomEvent<{ step?: number | null }>
+      const next =
+        typeof ce.detail?.step === 'number' || ce.detail?.step === null
+          ? ce.detail.step
+          : readTryDemoAttentionGuideActiveStep()
+      apply(next)
+    }
+    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onStep)
+    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onStep)
+  }, [setDocked])
 
+  // Keep a single Outlet parent for open/closed so Overview (and Try Demo tour
+  // state) does not remount when Ask Ulo opens on tip steps 4–6.
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
+    <div
+      className={
+        open
+          ? 'relative flex min-h-0 flex-1 overflow-hidden bg-white'
+          : 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white'
+      }
+    >
       <div
         ref={setScrollEl}
-        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain"
+        className={[
+          'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white',
+          open ? '' : 'flex flex-col',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         data-admin-scroll-root
         // Keep the route interactive under the undocked panel. The full-panel
         // overlay already covers it; pointer-events-none left dead clicks if
         // Ask Ulo open state and the overlay ever got out of sync.
-        aria-hidden={!docked}
+        aria-hidden={open && !docked}
       >
         <Outlet />
       </div>
-      {docked ? (
-        <aside
-          className="ask-ulo-rail-enter relative z-20 flex h-full w-[min(100%,440px)] shrink-0 flex-col border-l border-[#e5e7eb] bg-white shadow-[-8px_0_24px_rgba(16,24,40,0.06)]"
+      {open ? (
+        <div
+          id={TRY_DEMO_SPOTLIGHT_ASK_ULO_PANEL_ID}
+          className={
+            docked
+              ? 'ask-ulo-rail-enter relative z-20 flex h-full w-[min(100%,440px)] shrink-0 flex-col border-l border-[#e5e7eb] bg-white shadow-[-8px_0_24px_rgba(16,24,40,0.06)]'
+              : 'sa-enter absolute inset-0 z-30 flex flex-col bg-white'
+          }
           aria-label="Ask Ulo"
+          {...(docked ? { role: 'complementary' as const } : {})}
         >
-          <AskUloPanel onClose={closeAskUlo} variant="rail" />
-        </aside>
-      ) : (
-        <div className="sa-enter absolute inset-0 z-30 flex flex-col bg-white">
-          <AskUloPanel onClose={closeAskUlo} variant="full" />
+          <AskUloPanel onClose={closeAskUlo} variant={docked ? 'rail' : 'full'} />
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -375,6 +425,17 @@ export function AdminLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [thumbtackNotice, setThumbtackNotice] = useState<string | null>(null)
+  // Idle-prefetch search index so dropdown open does not wait on six network queries.
+  useEffect(() => {
+    let cancelled = false
+    void import('@/lib/adminUniversalSearch').then(({ prefetchAdminSearchIndex }) => {
+      if (cancelled) return
+      prefetchAdminSearchIndex(getActiveLandlordId())
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false

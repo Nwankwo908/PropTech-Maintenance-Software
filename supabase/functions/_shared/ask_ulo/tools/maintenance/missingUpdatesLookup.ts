@@ -8,6 +8,10 @@ import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
 import { loadVendorNameById } from "../vendors/vendorNames.ts"
 import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
+import {
+  rankWorkOrderUrgency,
+  summarizeWorkOrderIssue,
+} from "./workOrderPresentation.ts"
 
 const OPEN_VENDOR_STATUSES = [
   "unassigned",
@@ -26,6 +30,7 @@ export type MissingUpdateItem = {
   whyMissing: string
   nextStep: string
   priority: string | null
+  urgency?: string | null
 }
 
 export type MissingUpdatesResult = {
@@ -267,28 +272,34 @@ export async function missingUpdatesLookup(
       typeof t.issue_category === "string" && t.issue_category.trim()
         ? t.issue_category.trim()
         : "maintenance"
-    const desc =
-      typeof t.description === "string" && t.description.trim()
-        ? t.description.trim().slice(0, 100)
-        : null
     const vendorId = typeof t.assigned_vendor_id === "string" ? t.assigned_vendor_id : null
     const vendorHint = vendorId ? vendorNames.get(vendorId) ?? null : null
     const id = String(t.id ?? "")
+    const priority = t.priority ? String(t.priority) : null
+    const urgency = t.urgency ? String(t.urgency) : null
 
     items.push({
       displayId: shortDisplayId(id),
-      label: desc || `${cat} repair`,
+      label: summarizeWorkOrderIssue(
+        typeof t.description === "string" ? t.description : null,
+        cat,
+      ),
       building: building || null,
       unitLabel,
       status,
       daysWaiting: days,
       whyMissing: whyMissingUpdate(status, days, vendorHint, overdue),
       nextStep: nextStepFor(status),
-      priority: t.priority ? String(t.priority) : null,
+      priority,
+      urgency,
     })
   }
 
   items.sort((a, b) => {
+    const urgencyDelta =
+      rankWorkOrderUrgency(a.priority, a.urgency, a.label) -
+      rankWorkOrderUrgency(b.priority, b.urgency, b.label)
+    if (urgencyDelta !== 0) return urgencyDelta
     const rank = (s: string) => {
       if (s === "pending_accept") return 0
       if (s === "unassigned") return 1

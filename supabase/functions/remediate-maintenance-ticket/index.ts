@@ -2,6 +2,9 @@
  * Admin/ops remediation: ensure a maintenance_request workflow run exists for a
  * ticket, optionally text the resident a close-the-loop update, then run normal
  * confirmed dispatch (vendor probe / landlord choice / nearby search).
+ *
+ * Also supports resurfacing landlord assign_vendor attention (SMS/email) after
+ * a stale pending_accept sticky needs_admin clear — runs with edge secrets.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
@@ -11,6 +14,7 @@ import {
   buildOrphanTicketCloseLoopSms,
   remediateOrphanedMaintenanceTicket,
 } from "../_shared/maintenanceTicketRemediation.ts"
+import { resurfaceAssignVendorAttentionForTicket } from "../_shared/remediateStaleNeedsAdminPendingAccept.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -41,6 +45,7 @@ serve(async (req) => {
 
   let body: {
     ticket_id?: string
+    action?: string
     resident_close_loop_sms?: string | null
     skip_resident_sms?: boolean
     skip_dispatch?: boolean
@@ -62,6 +67,28 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
   const supabase = createClient(supabaseUrl, serviceKey)
+
+  const action = (body.action ?? "orphan").trim().toLowerCase()
+  if (action === "resurface_assign_vendor_attention") {
+    const result = await resurfaceAssignVendorAttentionForTicket(supabase, ticketId, {
+      reasonTag: "edge_resurface",
+    })
+    if (!result.ok) {
+      return jsonResponse(result, result.error === "not_found" ? 404 : 500)
+    }
+    return jsonResponse({
+      ok: true,
+      action,
+      ticket_id: ticketId,
+      landlord_id: result.landlordId,
+      attention: {
+        skipped: result.attention.skipped,
+        sms_sent: result.attention.smsSent,
+        email_sent: result.attention.emailSent,
+        errors: result.attention.errors,
+      },
+    })
+  }
 
   let closeLoop: string | null = null
   if (body.skip_resident_sms !== true) {

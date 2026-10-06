@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { clearTryDemoWelcomePending } from '@/lib/activeLandlord'
+import { markTryDemoAttentionGuidePending } from '@/lib/tryDemoAttentionGuide'
 import { playUiClickSound } from '@/lib/uiClickSound'
 
 type TryDemoWelcomeModalProps = {
@@ -18,6 +19,7 @@ export function TryDemoWelcomeModal({ open, onClose }: TryDemoWelcomeModalProps)
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         clearTryDemoWelcomePending()
+        markTryDemoAttentionGuidePending()
         onClose()
       }
     }
@@ -35,6 +37,8 @@ export function TryDemoWelcomeModal({ open, onClose }: TryDemoWelcomeModalProps)
   function dismiss() {
     playUiClickSound()
     clearTryDemoWelcomePending()
+    // Next: pin coachmark on Overview → Needs Your Attention (count badge).
+    markTryDemoAttentionGuidePending()
     onClose()
   }
 

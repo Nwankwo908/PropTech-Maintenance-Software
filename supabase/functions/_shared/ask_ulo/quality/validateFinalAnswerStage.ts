@@ -19,6 +19,11 @@ import {
   formatPostAnswerFailClosedMarkdown,
   runPostAnswerQualityChecks,
 } from "./runPostAnswerChecks.ts"
+import {
+  attemptGroundedRetryAfterFiguresRejection,
+  formatUnsupportedFiguresClarifyMarkdown,
+  isUnsupportedFiguresRejection,
+} from "./groundedRetryAfterFiguresRejection.ts"
 import { applyQualityGateRewrites } from "./applyQualityGateRewrites.ts"
 import { polishAskUloProse } from "../synthesis/formatAnswer.ts"
 import { humanizeOpsLanguage } from "../synthesis/reasoningTransparency.ts"
@@ -120,7 +125,9 @@ export async function validateFinalAnswer(input: {
   const evidenceBundle = d.evidenceBundle ?? (evidence as any).evidenceBundle
   const finalizedEvidence = d.finalizedEvidence ?? (evidence as any).finalizedEvidence
   const evidencePacket = d.evidencePacket ?? (evidence as any).evidencePacket
-  const propertyForSynthesis = d.propertyForSynthesis ?? (evidence as any).propertyForSynthesis
+  const property = d.property ?? (evidence as any).property ?? null
+  const propertyForSynthesis =
+    d.propertyForSynthesis ?? (evidence as any).propertyForSynthesis ?? property
   const portfolioBuildingNames = d.portfolioBuildingNames ?? (evidence as any).portfolioBuildingNames
   const recommendedExpertId = d.recommendedExpertId ?? (evidence as any).recommendedExpertId
   const legalGate = d.legalGate ?? (evidence as any).legalGate
@@ -386,13 +393,35 @@ export async function validateFinalAnswer(input: {
     block: postAnswerReport.block,
     reasons: postAnswerReport.reasons,
   })
+  let postAnswerBlock = postAnswerReport.block
   if (postAnswerReport.failClosed && postAnswerReport.block) {
-    answerWithSources = formatPostAnswerFailClosedMarkdown({
-      block: postAnswerReport.block,
-      reasons: postAnswerReport.reasons,
-      question,
-    })
-    toolsUsed.push(`post_answer:fail_closed:${postAnswerReport.block}`)
+    const figuresRejected = isUnsupportedFiguresRejection(postAnswerReport.reasons)
+    if (figuresRejected) {
+      const grounded = await attemptGroundedRetryAfterFiguresRejection({
+        question,
+        supabase,
+        landlordId,
+        gatedPropertyRanking,
+        catchAllWorkOrders,
+        searchWorkOrdersHit,
+      })
+      if (grounded.markdown) {
+        answerWithSources = polishAskUloProse(humanizeOpsLanguage(grounded.markdown))
+        toolsUsed.push(`post_answer:grounded_retry:${grounded.source}`)
+        postAnswerBlock = null
+      } else {
+        answerWithSources = formatUnsupportedFiguresClarifyMarkdown(question)
+        toolsUsed.push("post_answer:fail_closed:unsupported_figures_clarify")
+        postAnswerBlock = "clarify"
+      }
+    } else {
+      answerWithSources = formatPostAnswerFailClosedMarkdown({
+        block: postAnswerReport.block,
+        reasons: postAnswerReport.reasons,
+        question,
+      })
+      toolsUsed.push(`post_answer:fail_closed:${postAnswerReport.block}`)
+    }
   } else if (postAnswerReport.redactedAnswer) {
     answerWithSources = postAnswerReport.redactedAnswer
     toolsUsed.push("post_answer:privacy_redacted")
@@ -428,11 +457,11 @@ export async function validateFinalAnswer(input: {
     gateStatus === "refuse" ||
     Boolean(safetyFail && intentResult.intent === "legal") ||
     qualityReport.block === "refuse" ||
-    postAnswerReport.block === "refuse"
+    postAnswerBlock === "refuse"
   const clarified =
     gateStatus === "clarify" ||
     qualityReport.block === "clarify" ||
-    postAnswerReport.block === "clarify"
+    postAnswerBlock === "clarify"
   const knownUnknown =
     refused ||
     clarified ||
@@ -455,10 +484,6 @@ export async function validateFinalAnswer(input: {
     retrievalCacheHit || !runLegalTools
       ? 0
       : estimateTokensFromText(retrievalQuestion)
-
-  const property = d.property ?? (evidence as any).property ?? null
-  const propertyForSynthesis =
-    d.propertyForSynthesis ?? (evidence as any).propertyForSynthesis ?? property
 
   const placeBits = [
     jurisdiction?.cityLabel,

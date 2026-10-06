@@ -19,7 +19,11 @@ Deno.test("reasoning modes cover the attention / risk family", () => {
   )
   assertEquals(
     classifyAskUloReasoningMode("What should I focus on today?").mode,
-    "executive_briefing",
+    "recommendation",
+  )
+  assertEquals(
+    classifyAskUloReasoningMode("What should I focus on today?").reason,
+    "portfolio_work_prioritization",
   )
   assertEquals(
     classifyAskUloReasoningMode("Which building is performing the worst?").mode,

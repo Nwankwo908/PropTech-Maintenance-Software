@@ -139,6 +139,9 @@ export function notifyPropertyDetailsChanged(building?: string): void {
     // non-browser
   }
   notifySetupSuccessProgressChanged()
+  void import('@/lib/adminUniversalSearch').then(({ invalidateAdminSearchIndex }) => {
+    invalidateAdminSearchIndex()
+  })
 }
 
 export async function loadPropertyDetailsSections(

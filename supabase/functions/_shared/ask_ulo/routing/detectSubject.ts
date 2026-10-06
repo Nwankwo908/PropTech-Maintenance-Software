@@ -6,6 +6,10 @@
  */
 
 import { isUloActiveTasksQuestion } from "../tools/maintenance/activeWorkflowsLookup.ts"
+import {
+  isOverdueWorkOrdersQuestion,
+  isPortfolioWorkPrioritizationQuestion,
+} from "../tools/maintenance/workOrderPresentation.ts"
 import { isLandlordIncentivesQuestion } from "../tools/finance/landlordIncentivesLookup.ts"
 import { isWeatherAlertsQuestion } from "../tools/localMarket/weatherAlertsLookup.ts"
 
@@ -320,6 +324,14 @@ export function detectQuestionSubject(question: string): AskUloQuestionSubject {
 
   // Work-order vendor waits before bare "vendor" steals the subject.
   if (isWorkOrderVendorWaitQuestion(q) || /\bmissing\s+updates?\b/i.test(q)) {
+    return "work_order"
+  }
+
+  // Open-ended focus / urgency / "where should I start" — rank known open work.
+  if (
+    isPortfolioWorkPrioritizationQuestion(q) ||
+    isOverdueWorkOrdersQuestion(q)
+  ) {
     return "work_order"
   }
 

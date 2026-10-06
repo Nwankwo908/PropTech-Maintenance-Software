@@ -125,7 +125,9 @@ export function AskUloConversationSidebar({
             {loading ? (
               <p className="px-1 py-2 text-[12px] text-[#6a7282]">Loading…</p>
             ) : filtered.length === 0 ? (
-              <p className="px-1 py-2 text-[12px] text-[#6a7282]">No conversations yet.</p>
+              <ul className="list-none px-1 py-2" aria-label="Past chats">
+                <li className="text-[12px] text-[#6a7282]">No conversations yet.</li>
+              </ul>
             ) : (
               <ul className="space-y-0.5">
                 {filtered.map((c) => {

@@ -6,8 +6,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { polishAskUloProse } from "../../synthesis/formatAnswer.ts"
-import {
 import { formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
+import {
   formatLateRentMarkdown,
   searchLateRent,
 } from "../rent/searchLateRent.ts"

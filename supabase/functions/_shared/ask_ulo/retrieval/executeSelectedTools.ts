@@ -68,6 +68,11 @@ import {
   type CatchAllWorkOrderPacket,
 } from "../retrieval/catchAllFallback.ts"
 import {
+  isCriticalMaintenanceByPropertyQuestion,
+  isOverdueWorkOrdersQuestion,
+  isPortfolioWorkPrioritizationQuestion,
+} from "../tools/maintenance/workOrderPresentation.ts"
+import {
   incompleteEntityRootCauseAnswer,
   incompleteInvestigationAnswer,
   incompleteMaintenanceRiskAnswer,
@@ -563,16 +568,43 @@ export async function executeSelectedTools(
     Boolean(oldestWaitingWorkOrder?.found) ||
     Boolean(periodSummary?.canSummarize && periodSummary.markdown)
 
+  // Never pass open-ended focus/urgency phrasing as a text filter — that
+  // zeros the result set while portfolio totals still show open work.
+  const prioritizeOpenWork =
+    isPortfolioWorkPrioritizationQuestion(question) ||
+    isOverdueWorkOrdersQuestion(question) ||
+    isCriticalMaintenanceByPropertyQuestion(question)
+  // Prioritization answers from ranked open work — don't let a property-insights
+  // specialty packet suppress the catch-all work-order list.
   const attemptCatchAll = shouldAttemptCatchAllWorkOrderFallback({
     subject: evidencePlan.subject,
-    hasSpecialtyPacket: specialtyPacketAlready,
+    hasSpecialtyPacket: prioritizeOpenWork ? false : specialtyPacketAlready,
   })
 
   if (toolNeeds.needsSearchWorkOrders || attemptCatchAll) {
-    const plannedForSearch =
-      plannedTools.some((t) => t.name === "search_work_orders")
-        ? plannedTools
-        : [{ name: "search_work_orders" as const, arguments: { query: question } }]
+    const plannedForSearch = plannedTools.some((t) => t.name === "search_work_orders")
+      ? plannedTools.map((t) => {
+          if (t.name !== "search_work_orders" || !prioritizeOpenWork) return t
+          const args = { ...(t.arguments ?? {}) }
+          delete args.query
+          delete args.searchTerms
+          return {
+            ...t,
+            arguments: {
+              ...args,
+              sortBy: args.sortBy ?? "priority",
+              sortOrder: args.sortOrder ?? "desc",
+            },
+          }
+        })
+      : [
+          {
+            name: "search_work_orders" as const,
+            arguments: prioritizeOpenWork
+              ? { sortBy: "priority", sortOrder: "desc" }
+              : { query: question },
+          },
+        ]
     const executed = await executePlannedDomainTools(
       supabase,
       plannedForSearch,
@@ -593,7 +625,9 @@ export async function executeSelectedTools(
   }
 
   if (attemptCatchAll && searchWorkOrdersHit) {
-    catchAllWorkOrders = buildCatchAllWorkOrderPacket(searchWorkOrdersHit.result)
+    catchAllWorkOrders = buildCatchAllWorkOrderPacket(searchWorkOrdersHit.result, {
+      prioritization: prioritizeOpenWork,
+    })
   }
 
   logCatchAllFallback({

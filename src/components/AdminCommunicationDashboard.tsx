@@ -43,7 +43,7 @@ import {
   isCommunicationInboxConversationType,
   landlordUpdateInboxDisplayName,
 } from '@/lib/propertyConversations'
-import { isStaffAdminEmail } from '@shared/admin/staffAllowlist'
+import { isPortalAdminEmailAllowed, isStaffAdminEmail } from '@shared/admin/staffAllowlist'
 import { emailFromAuthSession, getAdminSession } from '@/lib/adminAuth'
 import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
 import { supabase } from '@/lib/supabase'
@@ -796,7 +796,11 @@ export function AdminCommunicationDashboard() {
       const session = await getAdminSession()
       if (cancelled) return
       const sessionEmail = emailFromAuthSession(session)
-      const includeLandlordUpdate = isStaffAdminEmail(sessionEmail)
+      // Staff + portal landlords: show Ulo ↔ landlord ops SMS on Messages.
+      // (Previously staff-only; portal logins only saw the phone, so Alpha
+      // looked "stale" even when attention SMS had already been delivered.)
+      const includeLandlordUpdate =
+        isStaffAdminEmail(sessionEmail) || isPortalAdminEmailAllowed(sessionEmail)
 
       // Strict rule: guided New Landlord only surfaces portfolio-matched threads.
       const dashboardSync = await ensureOnboardingDashboardMatchesPortfolio(landlordId)

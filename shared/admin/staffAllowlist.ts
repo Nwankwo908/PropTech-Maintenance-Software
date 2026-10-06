@@ -7,6 +7,7 @@ export const ADMIN_CORE_ALLOWED_EMAILS = [
 /** Demo / empty-onboarding landlord portal accounts (client admin login only). */
 export const ADMIN_DEMO_ALLOWED_EMAILS = [
   'demo@ulohome.io',
+  'richard@orangegroveproperties.com',
   'limitedalpha1@ulohome.io',
   'limitedalpha2@ulohome.io',
 ] as const

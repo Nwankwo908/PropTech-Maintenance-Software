@@ -2,24 +2,29 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { inAppRouterPath } from '@/lib/inAppRouterPath'
-import { useAskUlo } from '@/components/AskUloContext'
+import { createPortal } from 'react-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { assignAdminPath } from '@/lib/assignAdminPath'
+import { inAppRouterPath } from '@/lib/inAppRouterPath'
+import { launchAskUloFromSearch } from '@/lib/launchAskUloFromSearch'
 import {
+  ADMIN_SEARCH_INVALIDATE_EVENT,
   CATEGORY_META,
   SUGGESTED_ASK_ULO_PROMPTS,
   debounce,
+  ensureAdminSearchIndex,
+  getCachedAdminSearchItems,
   groupSearchResults,
-  loadAdminSearchIndex,
+  hydrateAdminSearchResultDetails,
   loadRecentSearches,
   looksLikeAskUloQuestion,
   pushRecentSearch,
-  searchAdminIndex,
+  queryAdminSearchIndex,
   type RecentSearchItem,
   type UniversalSearchItem,
 } from '@/lib/adminUniversalSearch'
@@ -64,20 +69,41 @@ type AdminUniversalSearchProps = {
   className?: string
 }
 
+type DropdownCoords = { top: number; left: number; width: number }
+
+const OPTION_CLASS = [
+  'flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left transition-colors',
+].join(' ')
+
+function portalRoot(): HTMLElement {
+  // Prefer body so z-index competes with other body-level overlays (tips, modals).
+  return document.body
+}
+
 export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
-  const navigate = useNavigate()
-  const { openAskUloWithPrompt } = useAskUlo()
   const listId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const searchGenRef = useRef(0)
+  const lastActivateAtRef = useRef(0)
+  const flatRowsRef = useRef<FlatRow[]>([])
+  const activateRowRef = useRef<(row: FlatRow) => void>(() => {})
+  const landlordIdRef = useRef(getActiveLandlordId())
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const [index, setIndex] = useState<UniversalSearchItem[]>([])
+  const [matched, setMatched] = useState<UniversalSearchItem[]>([])
+  const [indexReady, setIndexReady] = useState(
+    () => getCachedAdminSearchItems(getActiveLandlordId()) != null,
+  )
   const [indexLoading, setIndexLoading] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [recent, setRecent] = useState<RecentSearchItem[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
+  const [dropdownCoords, setDropdownCoords] = useState<DropdownCoords | null>(null)
   const landlordId = getActiveLandlordId()
+  landlordIdRef.current = landlordId
 
   const applyDebounce = useMemo(
     () =>
@@ -100,19 +126,83 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
   }, [refreshRecent])
 
   useEffect(() => {
+    const onInvalidate = () => {
+      setIndexReady(getCachedAdminSearchItems(landlordId) != null)
+    }
+    window.addEventListener(ADMIN_SEARCH_INVALIDATE_EVENT, onInvalidate)
+    return () => window.removeEventListener(ADMIN_SEARCH_INVALIDATE_EVENT, onInvalidate)
+  }, [landlordId])
+
+  const updateDropdownPosition = useCallback(() => {
+    const el = rootRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setDropdownCoords({
+      top: rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setDropdownCoords(null)
+      return
+    }
+    updateDropdownPosition()
+    window.addEventListener('resize', updateDropdownPosition)
+    window.addEventListener('scroll', updateDropdownPosition, true)
+    return () => {
+      window.removeEventListener('resize', updateDropdownPosition)
+      window.removeEventListener('scroll', updateDropdownPosition, true)
+    }
+  }, [open, updateDropdownPosition])
+
+  useEffect(() => {
     if (!open) return
     let cancelled = false
-    setIndexLoading(true)
-    void (async () => {
-      const items = await loadAdminSearchIndex(landlordId)
-      if (cancelled) return
-      setIndex(items)
+    const warm = getCachedAdminSearchItems(landlordId) != null
+    setIndexReady(warm)
+    if (warm) {
       setIndexLoading(false)
-    })()
+      return
+    }
+    setIndexLoading(true)
+    void ensureAdminSearchIndex(landlordId).then(() => {
+      if (cancelled) return
+      setIndexReady(true)
+      setIndexLoading(false)
+    })
     return () => {
       cancelled = true
     }
   }, [open, landlordId])
+
+  useEffect(() => {
+    const q = debouncedQuery.trim()
+    if (!q) {
+      setMatched([])
+      setSearching(false)
+      return
+    }
+    const gen = ++searchGenRef.current
+    setSearching(true)
+    void queryAdminSearchIndex(landlordId, q)
+      .then(async ({ results }) => {
+        if (gen !== searchGenRef.current) return
+        setMatched(results)
+        setSearching(false)
+        setIndexReady(true)
+        setIndexLoading(false)
+        const hydrated = await hydrateAdminSearchResultDetails(landlordId, results)
+        if (gen !== searchGenRef.current) return
+        setMatched(hydrated)
+      })
+      .catch(() => {
+        if (gen !== searchGenRef.current) return
+        setSearching(false)
+      })
+  }, [debouncedQuery, landlordId])
 
   useEffect(() => {
     function onGlobalKey(e: KeyboardEvent) {
@@ -126,21 +216,63 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
     return () => window.removeEventListener('keydown', onGlobalKey)
   }, [])
 
-  useEffect(() => {
-    if (!open) return
-    function onPointerDown(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [open])
-
-  const matched = useMemo(
-    () => (debouncedQuery.trim() ? searchAdminIndex(index, debouncedQuery) : []),
-    [index, debouncedQuery],
+  const launchAskUlo = useCallback(
+    (prompt: string) => {
+      const q = prompt.trim()
+      if (!q) return
+      pushRecentSearch(landlordIdRef.current, { title: q, kind: 'ask', query: q })
+      setOpen(false)
+      setQuery('')
+      // Hard navigation — does not use React Router or AskUlo context.
+      launchAskUloFromSearch(q, { docked: true })
+    },
+    [],
   )
+
+  const openRecord = useCallback(
+    (item: UniversalSearchItem) => {
+      const href = inAppRouterPath((item.href || '').trim() || '/admin')
+      pushRecentSearch(landlordId, {
+        title: item.title,
+        href,
+        kind: 'record',
+        query: item.title,
+      })
+      refreshRecent()
+      setOpen(false)
+      setQuery('')
+      // Same hard navigation as the sidebar — SPA navigate/Link can go silent after HMR.
+      assignAdminPath(href)
+    },
+    [landlordId, refreshRecent],
+  )
+
+  const activateRow = useCallback(
+    (row: FlatRow) => {
+      const now = Date.now()
+      if (now - lastActivateAtRef.current < 400) return
+      lastActivateAtRef.current = now
+
+      if (row.kind === 'record') openRecord(row.item)
+      else if (row.kind === 'ask' || row.kind === 'suggest') launchAskUlo(row.prompt)
+      else if (row.kind === 'recent') {
+        if (row.item.kind === 'ask') launchAskUlo(row.item.query)
+        else if (row.item.href) {
+          pushRecentSearch(landlordId, row.item)
+          refreshRecent()
+          setOpen(false)
+          setQuery('')
+          assignAdminPath(inAppRouterPath(row.item.href))
+        } else {
+          setQuery(row.item.query)
+        }
+      }
+    },
+    [launchAskUlo, landlordId, openRecord, refreshRecent],
+  )
+
+  activateRowRef.current = activateRow
+
   const grouped = useMemo(() => groupSearchResults(matched), [matched])
   const isQuestion = looksLikeAskUloQuestion(query)
   const trimmed = query.trim()
@@ -171,58 +303,82 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
     return rows
   }, [trimmed, recent, matched, isQuestion])
 
+  flatRowsRef.current = flatRows
+
   useEffect(() => {
     setActiveIndex(0)
   }, [debouncedQuery, open, flatRows.length])
 
-  const launchAskUlo = useCallback(
-    (prompt: string) => {
-      const q = prompt.trim()
-      if (!q) return
-      pushRecentSearch(landlordId, { title: q, kind: 'ask', query: q })
-      refreshRecent()
-      setOpen(false)
-      setQuery('')
-      openAskUloWithPrompt(q, { docked: true })
-    },
-    [landlordId, openAskUloWithPrompt, refreshRecent],
-  )
+  // Document capture — works even when the menu is portaled outside #root and
+  // React synthetic clicks are dead. Prompt/href live on the DOM node.
+  useEffect(() => {
+    if (!open) return
 
-  const openRecord = useCallback(
-    (item: UniversalSearchItem) => {
-      pushRecentSearch(landlordId, {
-        title: item.title,
-        href: item.href,
-        kind: 'record',
-        query: item.title,
-      })
-      refreshRecent()
-      setOpen(false)
-      setQuery('')
-      navigate(inAppRouterPath(item.href))
-    },
-    [landlordId, navigate, refreshRecent],
-  )
+    function onClick(e: MouseEvent) {
+      if (e.button !== 0) return
+      const target = e.target as Element | null
+      const option = target?.closest?.(
+        '[data-ulo-search-menu] [data-ulo-ask-prompt], [data-ulo-search-menu] [data-ulo-search-href], [data-ulo-search-menu] [data-search-activate]',
+      ) as HTMLElement | null
+      if (!option) return
 
-  const activateRow = useCallback(
-    (row: FlatRow) => {
-      if (row.kind === 'record') openRecord(row.item)
-      else if (row.kind === 'ask' || row.kind === 'suggest') launchAskUlo(row.prompt)
-      else if (row.kind === 'recent') {
-        if (row.item.kind === 'ask') launchAskUlo(row.item.query)
-        else if (row.item.href) {
-          pushRecentSearch(landlordId, row.item)
-          refreshRecent()
-          setOpen(false)
-          setQuery('')
-          navigate(inAppRouterPath(row.item.href))
-        } else {
-          setQuery(row.item.query)
-        }
+      const askPrompt = option.getAttribute('data-ulo-ask-prompt')?.trim()
+      if (askPrompt) {
+        e.preventDefault()
+        e.stopPropagation()
+        pushRecentSearch(landlordIdRef.current, {
+          title: askPrompt,
+          kind: 'ask',
+          query: askPrompt,
+        })
+        setOpen(false)
+        setQuery('')
+        launchAskUloFromSearch(askPrompt, { docked: true })
+        return
       }
-    },
-    [launchAskUlo, landlordId, navigate, openRecord, refreshRecent],
-  )
+
+      const hrefAttr = option.getAttribute('data-ulo-search-href')?.trim()
+      if (hrefAttr) {
+        e.preventDefault()
+        e.stopPropagation()
+        const href = inAppRouterPath(hrefAttr)
+        const title =
+          option.getAttribute('data-ulo-search-title')?.trim() || href
+        pushRecentSearch(landlordIdRef.current, {
+          title,
+          href,
+          kind: 'record',
+          query: title,
+        })
+        setOpen(false)
+        setQuery('')
+        assignAdminPath(href)
+        return
+      }
+
+      const key = option.getAttribute('data-search-activate')
+      if (!key) return
+      const row = flatRowsRef.current.find((r) => r.key === key)
+      if (!row) return
+      e.preventDefault()
+      e.stopPropagation()
+      activateRowRef.current(row)
+    }
+
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node | null
+      if (!target) return
+      if (rootRef.current?.contains(target) || listRef.current?.contains(target)) return
+      setOpen(false)
+    }
+
+    document.addEventListener('click', onClick, true)
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      document.removeEventListener('click', onClick, true)
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [open])
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -252,16 +408,237 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveIndex((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      const row = flatRows[activeIndex]
+      if (row) {
+        e.preventDefault()
+        activateRow(row)
+      }
     }
   }
 
-  /** Activate on mousedown so the first press runs (blur/focus races often swallow click). */
-  function rowPointerActivate(e: React.MouseEvent, row: FlatRow) {
-    if (e.button !== 0) return
-    e.preventDefault()
-    e.stopPropagation()
-    activateRow(row)
-  }
+  const showSearching = Boolean(trimmed) && (indexLoading || searching) && matched.length === 0
+
+  const optionActiveClass = (active: boolean, askStyle: boolean) =>
+    active
+      ? askStyle
+        ? 'bg-[#ecfdf5]'
+        : 'bg-[#f3f4f6]'
+      : askStyle
+        ? 'hover:bg-[#f0fdf4]'
+        : 'hover:bg-[#f9fafb]'
+
+  const dropdown =
+    open && dropdownCoords && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            data-ulo-search-menu="1"
+            className="fixed z-[300] max-h-[min(70vh,520px)] overflow-y-auto rounded-[16px] border border-[#e5e7eb] bg-white shadow-[0_16px_48px_rgba(16,24,40,0.14)]"
+            style={{
+              top: dropdownCoords.top,
+              left: dropdownCoords.left,
+              width: dropdownCoords.width,
+            }}
+          >
+            {!trimmed ? (
+              <div className="p-2">
+                {recent.length > 0 ? (
+                  <section className="mb-2">
+                    <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
+                      Recent
+                    </p>
+                    {recent.map((item, i) => {
+                      const key = `recent-${i}-${item.query}`
+                      const idx = flatRows.findIndex((r) => r.key === key)
+                      const active = idx === activeIndex
+                      const href =
+                        item.kind === 'record' && item.href
+                          ? inAppRouterPath(item.href)
+                          : null
+                      const content = (
+                        <>
+                          <span className="text-[16px]" aria-hidden>
+                            {item.kind === 'ask' ? '💬' : '🕒'}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[14px] font-medium text-[#0a0a0a]">
+                              {item.title}
+                            </span>
+                            <span className="block truncate text-[12px] text-[#6a7282]">
+                              {item.kind === 'ask' ? 'Ask Ulo' : 'Record'}
+                            </span>
+                          </span>
+                        </>
+                      )
+                      const className = [
+                        OPTION_CLASS,
+                        optionActiveClass(active, item.kind === 'ask'),
+                      ].join(' ')
+                      if (href) {
+                        return (
+                          <a
+                            key={key}
+                            href={href}
+                            role="option"
+                            aria-selected={active}
+                            data-search-activate={key}
+                            data-ulo-search-href={href}
+                            data-ulo-search-title={item.title}
+                            onMouseEnter={() => setActiveIndex(idx >= 0 ? idx : 0)}
+                            className={className}
+                          >
+                            {content}
+                          </a>
+                        )
+                      }
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          data-search-activate={key}
+                          data-ulo-ask-prompt={item.kind === 'ask' ? item.query : undefined}
+                          onMouseEnter={() => setActiveIndex(idx >= 0 ? idx : 0)}
+                          className={className}
+                        >
+                          {content}
+                        </button>
+                      )
+                    })}
+                  </section>
+                ) : null}
+
+                <section>
+                  <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
+                    Suggested questions
+                  </p>
+                  {SUGGESTED_ASK_ULO_PROMPTS.map((prompt, i) => {
+                    const key = `suggest-${i}`
+                    const idx = flatRows.findIndex((r) => r.key === key)
+                    const active = idx === activeIndex
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        data-search-activate={key}
+                        data-ulo-ask-prompt={prompt}
+                        onMouseEnter={() => setActiveIndex(idx >= 0 ? idx : 0)}
+                        className={[OPTION_CLASS, optionActiveClass(active, true)].join(' ')}
+                      >
+                        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#B4DFD6]/50 text-[#0A4D38]">
+                          <AskUloSparkleIcon className="size-3.5" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[14px] text-[#0a0a0a]">
+                          {prompt}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </section>
+              </div>
+            ) : (
+              <div className="p-2">
+                {showSearching ? (
+                  <p className="px-3 py-4 text-[13px] text-[#6a7282]">Searching…</p>
+                ) : null}
+
+                {!showSearching && matched.length === 0 && !isQuestion ? (
+                  <p className="px-3 py-3 text-[13px] text-[#6a7282]">No matching records found.</p>
+                ) : null}
+
+                {grouped.map((group) => (
+                  <section key={group.category} className="mb-1">
+                    <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
+                      {group.label}
+                    </p>
+                    {group.items.map((item) => {
+                      const idx = flatRows.findIndex((r) => r.key === item.id)
+                      const active = idx === activeIndex
+                      const meta = CATEGORY_META[item.category]
+                      const href = inAppRouterPath((item.href || '').trim() || '/admin')
+                      return (
+                        <a
+                          key={item.id}
+                          href={href}
+                          role="option"
+                          aria-selected={active}
+                          data-search-activate={item.id}
+                          data-ulo-search-href={href}
+                          data-ulo-search-title={item.title}
+                          onMouseEnter={() => setActiveIndex(idx >= 0 ? idx : 0)}
+                          className={[OPTION_CLASS, optionActiveClass(active, false)].join(' ')}
+                        >
+                          <span className="text-[16px]" aria-hidden>
+                            {meta.symbol}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[14px] font-medium text-[#0a0a0a]">
+                              {item.title}
+                            </span>
+                            {item.subtitle ? (
+                              <span className="block truncate text-[12px] text-[#6a7282]">
+                                {item.subtitle}
+                              </span>
+                            ) : null}
+                          </span>
+                        </a>
+                      )
+                    })}
+                  </section>
+                ))}
+
+                {isQuestion || matched.length === 0 ? (
+                  <section className="mt-1 border-t border-[#e5e7eb] pt-1">
+                    <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#0A4D38]">
+                      Ask Ulo
+                    </p>
+                    {(() => {
+                      const askKey = `ask-${trimmed}`
+                      const idx = flatRows.findIndex((r) => r.key === askKey)
+                      const active = idx === activeIndex
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          data-search-activate={askKey}
+                          data-ulo-ask-prompt={trimmed}
+                          onMouseEnter={() => setActiveIndex(idx >= 0 ? idx : 0)}
+                          className={[
+                            'flex w-full items-start gap-3 rounded-[10px] px-3 py-2.5 text-left transition-colors',
+                            optionActiveClass(active, true),
+                          ].join(' ')}
+                        >
+                          <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[#B4DFD6]/60 text-[#0A4D38]">
+                            <AskUloSparkleIcon className="size-3.5" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[13px] font-semibold text-[#0A4D38]">
+                              Ask Ulo
+                            </span>
+                            <span className="mt-0.5 block text-[14px] leading-5 text-[#0a0a0a]">
+                              {matched.length === 0 && !isQuestion
+                                ? `Search didn't find a record. Would you like Ask Ulo to answer “${trimmed}” instead?`
+                                : `“${trimmed}”`}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })()}
+                  </section>
+                ) : null}
+              </div>
+            )}
+          </div>,
+          portalRoot(),
+        )
+      : null
 
   return (
     <div ref={rootRef} className={['relative min-w-0 flex-1 max-w-[800px]', className].filter(Boolean).join(' ')}>
@@ -285,193 +662,14 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
           aria-controls={listId}
           aria-autocomplete="list"
           autoComplete="off"
+          data-search-index-ready={indexReady ? '1' : '0'}
           className="h-9 w-full rounded-[8px] border border-transparent bg-[#f3f3f5] py-1 pl-10 pr-16 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] placeholder:text-[#717182] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[#ececef] focus:border-[#101828]/30 focus:bg-white focus:ring-2 focus:ring-[#101828]/15"
         />
         <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-[#e5e7eb] bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#6a7282] sm:inline">
           ⌘K
         </kbd>
       </form>
-
-      {open ? (
-        <div
-          id={listId}
-          role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(70vh,520px)] overflow-y-auto rounded-[16px] border border-[#e5e7eb] bg-white shadow-[0_16px_48px_rgba(16,24,40,0.14)]"
-        >
-          {!trimmed ? (
-            <div className="p-2">
-              {recent.length > 0 ? (
-                <section className="mb-2">
-                  <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
-                    Recent
-                  </p>
-                  {recent.map((item, i) => {
-                    const idx = flatRows.findIndex((r) => r.key === `recent-${i}-${item.query}`)
-                    const active = idx === activeIndex
-                    const row: FlatRow = {
-                      kind: 'recent',
-                      item,
-                      key: `recent-${i}-${item.query}`,
-                    }
-                    return (
-                      <button
-                        key={row.key}
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        onMouseEnter={() => setActiveIndex(idx)}
-                        onMouseDown={(e) => rowPointerActivate(e, row)}
-                        className={[
-                          'flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left transition-colors',
-                          active ? 'bg-[#f0fdf4]' : 'hover:bg-[#f9fafb]',
-                        ].join(' ')}
-                      >
-                        <span className="text-[16px]" aria-hidden>
-                          {item.kind === 'ask' ? '💬' : '🕒'}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] font-medium text-[#0a0a0a]">
-                            {item.title}
-                          </span>
-                          <span className="block truncate text-[12px] text-[#6a7282]">
-                            {item.kind === 'ask' ? 'Ask Ulo' : 'Record'}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </section>
-              ) : null}
-
-              <section>
-                <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
-                  Suggested questions
-                </p>
-                {SUGGESTED_ASK_ULO_PROMPTS.map((prompt, i) => {
-                  const key = `suggest-${i}`
-                  const idx = flatRows.findIndex((r) => r.key === key)
-                  const active = idx === activeIndex
-                  const row: FlatRow = { kind: 'suggest', prompt, key }
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      onMouseEnter={() => setActiveIndex(idx)}
-                      onMouseDown={(e) => rowPointerActivate(e, row)}
-                      className={[
-                        'flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left transition-colors',
-                        active ? 'bg-[#ecfdf5]' : 'hover:bg-[#f0fdf4]/80',
-                      ].join(' ')}
-                    >
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#B4DFD6]/50 text-[#0A4D38]">
-                        <AskUloSparkleIcon className="size-3.5" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[14px] text-[#0a0a0a]">
-                        {prompt}
-                      </span>
-                    </button>
-                  )
-                })}
-              </section>
-            </div>
-          ) : (
-            <div className="p-2">
-              {indexLoading && matched.length === 0 ? (
-                <p className="px-3 py-4 text-[13px] text-[#6a7282]">Searching…</p>
-              ) : null}
-
-              {!indexLoading && matched.length === 0 && !isQuestion ? (
-                <p className="px-3 py-3 text-[13px] text-[#6a7282]">No matching records found.</p>
-              ) : null}
-
-              {grouped.map((group) => (
-                <section key={group.category} className="mb-1">
-                  <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
-                    {group.label}
-                  </p>
-                  {group.items.map((item) => {
-                    const idx = flatRows.findIndex((r) => r.key === item.id)
-                    const active = idx === activeIndex
-                    const meta = CATEGORY_META[item.category]
-                    const row: FlatRow = { kind: 'record', item, key: item.id }
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        onMouseEnter={() => setActiveIndex(idx)}
-                        onMouseDown={(e) => rowPointerActivate(e, row)}
-                        className={[
-                          'flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left transition-colors',
-                          active ? 'bg-[#f3f4f6]' : 'hover:bg-[#f9fafb]',
-                        ].join(' ')}
-                      >
-                        <span className="text-[16px]" aria-hidden>
-                          {meta.symbol}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] font-medium text-[#0a0a0a]">
-                            {item.title}
-                          </span>
-                          {item.subtitle ? (
-                            <span className="block truncate text-[12px] text-[#6a7282]">
-                              {item.subtitle}
-                            </span>
-                          ) : null}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </section>
-              ))}
-
-              {isQuestion || matched.length === 0 ? (
-                <section className="mt-1 border-t border-[#e5e7eb] pt-1">
-                  <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#0A4D38]">
-                    Ask Ulo
-                  </p>
-                  {(() => {
-                    const askKey = `ask-${trimmed}`
-                    const idx = flatRows.findIndex((r) => r.key === askKey)
-                    const active = idx === activeIndex
-                    const row: FlatRow = { kind: 'ask', prompt: trimmed, key: askKey }
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        onMouseEnter={() => setActiveIndex(idx)}
-                        onMouseDown={(e) => rowPointerActivate(e, row)}
-                        className={[
-                          'flex w-full items-start gap-3 rounded-[10px] px-3 py-2.5 text-left transition-colors',
-                          active ? 'bg-[#ecfdf5]' : 'hover:bg-[#f0fdf4]',
-                        ].join(' ')}
-                      >
-                        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[#B4DFD6]/60 text-[#0A4D38]">
-                          <AskUloSparkleIcon className="size-3.5" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-[13px] font-semibold text-[#0A4D38]">
-                            Ask Ulo
-                          </span>
-                          <span className="mt-0.5 block text-[14px] leading-5 text-[#0a0a0a]">
-                            {matched.length === 0 && !isQuestion
-                              ? `Search didn't find a record. Would you like Ask Ulo to answer “${trimmed}” instead?`
-                              : `“${trimmed}”`}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })()}
-                </section>
-              ) : null}
-            </div>
-          )}
-        </div>
-      ) : null}
+      {dropdown}
     </div>
   )
 }

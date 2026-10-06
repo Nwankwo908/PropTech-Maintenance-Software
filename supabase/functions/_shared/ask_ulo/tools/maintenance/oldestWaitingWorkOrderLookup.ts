@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
 import { incompleteOldestWaitingAnswer } from "../../guards/refusalBuilder.ts"
+import { summarizeWorkOrderIssue } from "./workOrderPresentation.ts"
 
 export type OldestWaitingWorkOrder = {
   id: string
@@ -358,10 +359,11 @@ export async function oldestWaitingWorkOrderLookup(
       typeof row.issue_category === "string" && row.issue_category.trim()
         ? row.issue_category.trim()
         : "maintenance",
-    description:
-      typeof row.description === "string" && row.description.trim()
-        ? row.description.trim().slice(0, 240)
-        : null,
+    description: summarizeWorkOrderIssue(
+      typeof row.description === "string" ? row.description : null,
+      typeof row.issue_category === "string" ? row.issue_category : null,
+      120,
+    ),
     status,
     priority:
       typeof row.priority === "string"

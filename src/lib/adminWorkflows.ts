@@ -88,6 +88,11 @@ export type AdminWorkflowRow = {
   /** From linked `maintenance_requests.assigned_vendor_id` when present. */
   assignedVendorId: string | null
   /**
+   * From linked `maintenance_requests.auto_reassign_last_outcome` when present.
+   * Sticky `needs_admin_vendor|…` means staff must reassign — not ordinary waiting.
+   */
+  autoReassignLastOutcome?: string | null
+  /**
    * HQS / inspection letter grouping. When set, Active Tasks collapses sibling
    * tickets into one visit card.
    */
@@ -107,6 +112,8 @@ export type InspectionGroupTicketItem = {
   workOrderRef: string
   label: string
   vendorWorkStatus: string | null
+  assignedVendorId?: string | null
+  autoReassignLastOutcome?: string | null
   runId: string | null
 }
 
@@ -1091,6 +1098,7 @@ export async function loadStandaloneInspectionTaskRows(
         .join('\n'),
       vendorWorkStatus: null,
       assignedVendorId: null,
+      autoReassignLastOutcome: null,
       inspectionReportId: reportId,
       // Empty / null checklist — must not trigger N-of-M visit grouping.
       inspectionGroupItems: null,
@@ -1254,6 +1262,7 @@ export async function fetchAdminWorkflowDashboard(
     {
       vendor_work_status: string | null
       assigned_vendor_id: string | null
+      auto_reassign_last_outcome: string | null
       issue_category: string | null
       description: string | null
       inspection_report_id: string | null
@@ -1263,7 +1272,7 @@ export async function fetchAdminWorkflowDashboard(
     const { data: tickets, error: ticketsError } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, vendor_work_status, assigned_vendor_id, issue_category, description, inspection_report_id',
+        'id, vendor_work_status, assigned_vendor_id, auto_reassign_last_outcome, issue_category, description, inspection_report_id',
       )
       .in('id', maintenanceTicketIds)
     if (ticketsError) {
@@ -1283,6 +1292,11 @@ export async function fetchAdminWorkflowDashboard(
           assigned_vendor_id:
             typeof ticket.assigned_vendor_id === 'string'
               ? ticket.assigned_vendor_id
+              : null,
+          auto_reassign_last_outcome:
+            typeof ticket.auto_reassign_last_outcome === 'string' &&
+              ticket.auto_reassign_last_outcome.trim()
+              ? ticket.auto_reassign_last_outcome.trim()
               : null,
           issue_category:
             typeof ticket.issue_category === 'string' && ticket.issue_category.trim()
@@ -1315,7 +1329,9 @@ export async function fetchAdminWorkflowDashboard(
   if (reportIds.length > 0) {
     const { data: groupTickets, error: groupErr } = await supabase
       .from('maintenance_requests')
-      .select('id, description, vendor_work_status, inspection_report_id, created_at')
+      .select(
+        'id, description, vendor_work_status, assigned_vendor_id, auto_reassign_last_outcome, inspection_report_id, created_at',
+      )
       .in('inspection_report_id', reportIds)
       .eq('landlord_id', landlordId)
       .order('created_at', { ascending: true })
@@ -1339,6 +1355,15 @@ export async function fetchAdminWorkflowDashboard(
           vendorWorkStatus:
             typeof ticket.vendor_work_status === 'string'
               ? ticket.vendor_work_status
+              : null,
+          assignedVendorId:
+            typeof ticket.assigned_vendor_id === 'string'
+              ? ticket.assigned_vendor_id
+              : null,
+          autoReassignLastOutcome:
+            typeof ticket.auto_reassign_last_outcome === 'string' &&
+              ticket.auto_reassign_last_outcome.trim()
+              ? ticket.auto_reassign_last_outcome.trim()
               : null,
           runId: null,
         })
@@ -1403,6 +1428,7 @@ export async function fetchAdminWorkflowDashboard(
         readMetaString(metadata, 'issue_summary'),
       vendorWorkStatus: ticket?.vendor_work_status ?? null,
       assignedVendorId: ticket?.assigned_vendor_id ?? null,
+      autoReassignLastOutcome: ticket?.auto_reassign_last_outcome ?? null,
       inspectionReportId: ticket?.inspection_report_id ?? null,
       inspectionGroupItems: null,
     }

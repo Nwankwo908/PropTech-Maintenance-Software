@@ -132,5 +132,15 @@ export async function recordActivityLog(
     }
   }
 
+  // Keep admin universal search index fresh after portfolio mutations.
+  if (
+    source === 'dashboard' &&
+    /^(property|resident|vendor|maintenance|unit)\./.test(params.eventType)
+  ) {
+    void import('@/lib/adminUniversalSearch').then(({ invalidateAdminSearchIndex }) => {
+      invalidateAdminSearchIndex(params.landlordId)
+    })
+  }
+
   return eventId
 }
