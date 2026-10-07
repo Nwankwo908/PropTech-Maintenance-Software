@@ -30,6 +30,7 @@ import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
 import { mutateSearchParams, readCsvSet, writeCsvSet } from '@/lib/adminListUrlState'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { tryDemoActiveTasksFirstRowColumnId } from '@/lib/tryDemoAttentionGuide'
 
 type StageId = WorkflowKanbanStageId
 const STAGE_ORDER = WORKFLOW_KANBAN_STAGES
@@ -386,11 +387,14 @@ function KanbanCardItem({
   highlighted,
   stagger = 0,
   onSelect,
+  spotlightId,
 }: {
   card: KanbanCard
   highlighted?: boolean
   stagger?: number
   onSelect: (runId: string) => void
+  /** Tip step 7 cutout — set on first-row cards so the hole matches full card height. */
+  spotlightId?: string
 }) {
   const badge = CATEGORY_BADGE[card.category]
   const [checklistOpen, setChecklistOpen] = useState(false)
@@ -399,14 +403,19 @@ function KanbanCardItem({
 
   return (
     <div
-      id={`workflow-card-${card.id}`}
-      style={{ '--sa-stagger': stagger } as CSSProperties}
+      id={spotlightId ?? `workflow-card-${card.id}`}
+      data-workflow-card-id={card.id}
+      style={spotlightId ? undefined : ({ '--sa-stagger': stagger } as CSSProperties)}
       className={[
-        'sa-stagger sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
+        // Tip cutout targets skip enter animation so getBoundingClientRect matches the card.
+        spotlightId ? '' : 'sa-stagger',
+        'sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
         highlighted
           ? 'border-[#101828] ring-2 ring-[#101828]/20'
           : 'border-[#e5e7eb]',
-      ].join(' ')}
+      ]
+        .filter(Boolean)
+        .join(' ')}
     >
       <button
         type="button"
@@ -501,6 +510,7 @@ function KanbanCardItem({
 
 export function AdminWorkflowOperationsDashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
+
   const selectedRunId = searchParams.get('run')?.trim() || null
   const activeFilters = useMemo(() => readWorkflowFilters(searchParams), [searchParams])
   const [data, setData] = useState<AdminWorkflowDashboardData | null>(null)
@@ -723,6 +733,7 @@ export function AdminWorkflowOperationsDashboard() {
         <div
           className="min-w-0 overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden xl:overflow-visible"
           aria-label="Workflow stages"
+          data-try-demo-active-tasks-ready={loading ? '0' : '1'}
         >
           <div className="flex w-max snap-x snap-mandatory gap-3 p-4 sm:gap-4 xl:grid xl:w-full xl:snap-none xl:grid-cols-4">
             {columns.map((column, columnIndex) => (
@@ -753,11 +764,18 @@ export function AdminWorkflowOperationsDashboard() {
                 </div>
                 <div className="flex flex-col gap-3 px-3 pb-3">
                   {loading ? (
-                    <p className="px-1 py-6 text-center text-[12px] text-[#6a7282]">Loading…</p>
+                    <div className="min-h-[7.5rem] w-full rounded-[10px]">
+                      <p className="px-1 py-6 text-center text-[12px] text-[#6a7282]">Loading…</p>
+                    </div>
                   ) : column.cards.length === 0 ? (
-                    <p className="px-1 py-6 text-center text-[12px] text-[#9ca3af]">
-                      No tasks in this stage
-                    </p>
+                    <div
+                      id={tryDemoActiveTasksFirstRowColumnId(columnIndex)}
+                      className="min-h-[7.5rem] w-full rounded-[10px]"
+                    >
+                      <p className="px-1 py-6 text-center text-[12px] text-[#9ca3af]">
+                        No tasks in this stage
+                      </p>
+                    </div>
                   ) : (
                     column.cards.map((card, cardIndex) => (
                       <KanbanCardItem
@@ -766,6 +784,11 @@ export function AdminWorkflowOperationsDashboard() {
                         stagger={Math.min(cardIndex, 6)}
                         highlighted={highlightRunId === card.id}
                         onSelect={openRun}
+                        spotlightId={
+                          cardIndex === 0
+                            ? tryDemoActiveTasksFirstRowColumnId(columnIndex)
+                            : undefined
+                        }
                       />
                     ))
                   )}

@@ -44,7 +44,7 @@ export function TryDemoWelcomeModal({ open, onClose }: TryDemoWelcomeModalProps)
 
   return createPortal(
     <div
-      className="sa-scrim fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(16,24,40,0.45)] p-4"
+      className="sa-scrim fixed inset-0 z-[300] flex items-center justify-center bg-[rgba(16,24,40,0.45)] p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="try-demo-welcome-title"

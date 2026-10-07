@@ -4,8 +4,13 @@
  * Limited Alpha accounts are empty new-user landlords without payments, bank
  * linking, or native-app channels. Find External Vendor is on — there is often
  * no matching in-network trade.
+ *
+ * Demo Property Management keeps its own seeded portfolio data, but uses the
+ * Limited Alpha product surface (capabilities / gates). Do not scope Demo
+ * queries to a Limited Alpha landlord id.
  */
 
+export const DEMO_LANDLORD_ID = 'de300000-0000-4000-8000-000000000001'
 export const LIMITED_ALPHA_1_LANDLORD_ID = 'de300000-0000-4000-8000-000000000003'
 export const LIMITED_ALPHA_2_LANDLORD_ID = 'de300000-0000-4000-8000-000000000004'
 export const FULL_ALPHA_LANDLORD_ID = '068daf53-07e4-4493-bd7f-6106e3c8c62f'
@@ -30,9 +35,25 @@ export function isOnboardingLandlordId(landlordId: string | null | undefined): b
   return (ONBOARDING_LANDLORD_IDS as readonly string[]).includes(id)
 }
 
+/** True Limited Alpha account ids only (not Demo). */
 export function isLimitedAlphaLandlord(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
   return (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
+}
+
+export function isDemoLandlord(landlordId: string | null | undefined): boolean {
+  return (landlordId ?? '').trim() === DEMO_LANDLORD_ID
+}
+
+/**
+ * Product surface shared by Limited Alpha and Demo: no payments / bank /
+ * native-app channels, Twilio SMS line, Messages onboarding lanes, etc.
+ * Data remains scoped to each landlord's own id.
+ */
+export function landlordUsesLimitedAlphaSurface(
+  landlordId: string | null | undefined,
+): boolean {
+  return isLimitedAlphaLandlord(landlordId) || isDemoLandlord(landlordId)
 }
 
 /** Limited Alpha 1 only — not Alpha 2. Prefer `isLimitedAlphaLandlord` for shared alpha gates. */
@@ -80,7 +101,7 @@ export function resolveSmsIntakeNumber(params: {
   phone?: string | null
   provider?: string | null
 }): string {
-  if (isLimitedAlphaLandlord(params.landlordId)) {
+  if (landlordUsesLimitedAlphaSurface(params.landlordId)) {
     return LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
   }
   const phone = (params.phone ?? '').trim()
@@ -141,16 +162,16 @@ export function pickSettingsTestSmsDestination(
   return null
 }
 
-/** Limited Alpha 1 and 2 send and receive on the shared Twilio DID only —
+/** Limited Alpha (+ Demo surface) send and receive on the shared Twilio DID —
  *  conversations, identities, and rosters stay per-landlord. */
 export function landlordUsesTwilioSms(landlordId: string | null | undefined): boolean {
-  return isLimitedAlphaLandlord(landlordId)
+  return landlordUsesLimitedAlphaSurface(landlordId)
 }
 
 /** Stripe, ACH, Plaid, rent/invoice checkout, vendor payouts, and “pay online” links.
- *  Limited Alpha still records rent by landlord SMS (received / unpaid) without moving money. */
+ *  Limited Alpha / Demo still record rent by landlord SMS without moving money. */
 export function landlordHasPayments(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlphaLandlord(landlordId)
+  return !landlordUsesLimitedAlphaSurface(landlordId)
 }
 
 /** Find External Vendor / Ulo-vetted marketplace dispatch. */
@@ -160,12 +181,12 @@ export function landlordHasVendorMarketplace(_landlordId: string | null | undefi
 
 /** Push / native-app notification channels. */
 export function landlordHasNativeMobileApp(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlphaLandlord(landlordId)
+  return !landlordUsesLimitedAlphaSurface(landlordId)
 }
 
 /** Accounting, bank reconciliation, and related document discovery. */
 export function landlordHasAccounting(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlphaLandlord(landlordId)
+  return !landlordUsesLimitedAlphaSurface(landlordId)
 }
 
 /**

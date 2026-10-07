@@ -29,6 +29,13 @@ import {
   renameAskUloConversation,
   type AskUloConversation,
 } from '@/lib/askUloConversations'
+import {
+  dismissTryDemoAttentionGuide,
+  isTryDemoAskUloShellSyncStep,
+  readTryDemoAttentionGuideActiveStep,
+  tryDemoAttentionGuideRouteForStep,
+} from '@/lib/tryDemoAttentionGuide'
+import { runSmartAnimate } from '@/lib/smartAnimate'
 
 export const ASK_ULO_PARAM = 'askUlo'
 export const ASK_ULO_CHAT_PARAM = 'askUloChat'
@@ -53,6 +60,16 @@ function currentSearchParams(): URLSearchParams {
 
 /** Last chat id pinned during send — clearPending must not drop it. */
 let lastPinnedAskUloChatId: string | null = null
+
+/**
+ * Tip layout sync / delayed setDocked(false) was re-opening Ask Ulo after Close.
+ * Ignore dock/open writes briefly after the landlord closes the panel.
+ */
+let askUloUserClosedAt = 0
+
+function wasAskUloRecentlyClosedByUser(ms = 1600): boolean {
+  return askUloUserClosedAt > 0 && Date.now() - askUloUserClosedAt < ms
+}
 
 /**
  * Copy Ask Ulo open/dock/chat params onto a destination path so the right rail
@@ -91,7 +108,13 @@ type AskUloContextValue = {
   /** Open Ask Ulo and auto-send a natural-language question. */
   openAskUloWithPrompt: (prompt: string, opts?: { docked?: boolean }) => void
   clearPendingPrompt: () => void
-  closeAskUlo: () => void
+  closeAskUlo: (opts?: {
+    preserveTip?: boolean
+    /** Skip the default same-path URL replace (caller will navigate). */
+    skipNavigate?: boolean
+    /** Replace navigation target after close (e.g. Try Demo → Messages). */
+    navigateTo?: string
+  }) => void
   setConversationId: (conversationId: string | null) => void
   setDocked: (docked: boolean) => void
   conversations: AskUloConversation[]
@@ -106,18 +129,22 @@ type AskUloContextValue = {
 const AskUloContext = createContext<AskUloContextValue | null>(null)
 
 /**
- * Ask Ulo open state lives in the URL (`?askUlo=1`) so it survives layout
- * remounts and HMR. Optional `askUloChat=<uuid>` selects a persisted thread.
- * Params are kept on the current admin pathname so the docked right rail can
- * stay open while the landlord moves between nav items.
+ * Ask Ulo open/dock UI state is React-first (instant), mirrored to the URL
+ * (`?askUlo=1`, `askUloDock=1`) so it survives nav. Optional `askUloChat=<uuid>`
+ * selects a persisted thread.
  */
 export function AskUloProvider({ children }: { children: ReactNode }) {
   const [searchParams] = useSearchParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const open = searchParams.get(ASK_ULO_PARAM) === '1'
-  const docked = open && searchParams.get(ASK_ULO_DOCK_PARAM) === '1'
+  const urlOpen = searchParams.get(ASK_ULO_PARAM) === '1'
+  const urlDocked = searchParams.get(ASK_ULO_DOCK_PARAM) === '1'
   const conversationId = searchParams.get(ASK_ULO_CHAT_PARAM)?.trim() || null
+
+  const [open, setOpen] = useState(urlOpen)
+  const [docked, setDockedState] = useState(urlOpen && urlDocked)
+  /** Skip URL→React sync while an optimistic open/dock/close navigate is in flight. */
+  const skipUrlSyncUntilRef = useRef(0)
 
   const [conversations, setConversations] = useState<AskUloConversation[]>([])
   const [conversationsLoading, setConversationsLoading] = useState(false)
@@ -125,6 +152,68 @@ export function AskUloProvider({ children }: { children: ReactNode }) {
   const adminPathname = location.pathname.startsWith('/admin')
     ? location.pathname
     : '/admin'
+
+  const resolveAdminPath = useCallback(() => {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
+      return window.location.pathname
+    }
+    return adminPathname.startsWith('/admin') ? adminPathname : '/admin'
+  }, [adminPathname])
+
+  const markOptimisticShellWrite = useCallback(() => {
+    skipUrlSyncUntilRef.current = Date.now() + 600
+  }, [])
+
+  // Mirror URL → React (back/forward, sidebar nav with askUlo params).
+  // Do not run during optimistic writes — that was snapping Open back to closed
+  // before navigate finished updating searchParams.
+  useEffect(() => {
+    if (Date.now() < skipUrlSyncUntilRef.current) return
+    const tipStep = readTryDemoAttentionGuideActiveStep()
+    const tipRoute =
+      tipStep != null ? tryDemoAttentionGuideRouteForStep(tipStep) : null
+    // Tip steps 6+ own the route. Never reopen Ask Ulo from a stale ?askUlo=1
+    // (same class of bug as setDocked yanking Messages → Dashboard).
+    if (tipStep != null && !isTryDemoAskUloShellSyncStep(tipStep)) {
+      setOpen(false)
+      setDockedState(false)
+      if (urlOpen) {
+        const params = currentSearchParams()
+        for (const key of ASK_ULO_SEARCH_KEYS) params.delete(key)
+        for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
+        const qs = params.toString()
+        navigate(
+          {
+            pathname: tipRoute || resolveAdminPath(),
+            search: qs ? `?${qs}` : '',
+          },
+          { replace: true },
+        )
+      }
+      return
+    }
+    if (wasAskUloRecentlyClosedByUser()) {
+      setOpen(false)
+      setDockedState(false)
+      // Only strip stale askUlo* — tip Host owns route changes (Messages, etc.).
+      if (urlOpen) {
+        const params = currentSearchParams()
+        for (const key of ASK_ULO_SEARCH_KEYS) params.delete(key)
+        for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
+        const qs = params.toString()
+        navigate(
+          {
+            pathname: tipRoute || resolveAdminPath(),
+            search: qs ? `?${qs}` : '',
+          },
+          { replace: true },
+        )
+      }
+      return
+    }
+    setOpen(urlOpen)
+    setDockedState(urlOpen && urlDocked)
+  }, [urlOpen, urlDocked, navigate, resolveAdminPath])
   const urlPrompt = searchParams.get(ASK_ULO_PROMPT_PARAM)?.trim() || null
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(() => {
     const initial = urlPrompt || peekAskUloPendingPrompt()
@@ -162,15 +251,29 @@ export function AskUloProvider({ children }: { children: ReactNode }) {
 
   const openAskUlo = useCallback(
     (nextConversationId?: string | null) => {
-      const params = currentSearchParams()
-      params.set(ASK_ULO_PARAM, '1')
-      // Opening from the header keeps dock state as-is; default undocked (full panel).
-      if (nextConversationId) params.set(ASK_ULO_CHAT_PARAM, nextConversationId)
-      else if (!params.get(ASK_ULO_CHAT_PARAM)) params.delete(ASK_ULO_CHAT_PARAM)
-      for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
-      navigate({ pathname: adminPathname, search: `?${params.toString()}` })
+      runSmartAnimate(() => {
+        askUloUserClosedAt = 0
+        markOptimisticShellWrite()
+        // Tip scrim sits above the panel — clear it so Open is visible/usable.
+        if (readTryDemoAttentionGuideActiveStep() != null) {
+          dismissTryDemoAttentionGuide()
+        }
+        setOpen(true)
+        setDockedState(false)
+        const params = currentSearchParams()
+        params.set(ASK_ULO_PARAM, '1')
+        // Header open always shows the full panel (not the right rail).
+        params.delete(ASK_ULO_DOCK_PARAM)
+        if (nextConversationId) params.set(ASK_ULO_CHAT_PARAM, nextConversationId)
+        else if (!params.get(ASK_ULO_CHAT_PARAM)) params.delete(ASK_ULO_CHAT_PARAM)
+        for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
+        navigate(
+          { pathname: resolveAdminPath(), search: `?${params.toString()}` },
+          { replace: true },
+        )
+      })
     },
-    [adminPathname, navigate],
+    [markOptimisticShellWrite, navigate, resolveAdminPath],
   )
 
   const openAskUloWithPrompt = useCallback(
@@ -236,19 +339,44 @@ export function AskUloProvider({ children }: { children: ReactNode }) {
     )
   }, [adminPathname, navigate])
 
-  const closeAskUlo = useCallback(() => {
-    clearAskUloPendingPrompt()
-    pendingPromptRef.current = null
-    setPendingPrompt(null)
-    const params = currentSearchParams()
-    for (const key of ASK_ULO_SEARCH_KEYS) params.delete(key)
-    for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
-    const qs = params.toString()
-    navigate(
-      { pathname: adminPathname, search: qs ? `?${qs}` : '' },
-      { replace: true },
-    )
-  }, [adminPathname, navigate])
+  const closeAskUlo = useCallback(
+    (opts?: { preserveTip?: boolean; skipNavigate?: boolean; navigateTo?: string }) => {
+      runSmartAnimate(() => {
+        askUloUserClosedAt = Date.now()
+        markOptimisticShellWrite()
+        clearAskUloPendingPrompt()
+        pendingPromptRef.current = null
+        setPendingPrompt(null)
+        // Clear tip on Close so scrim/setDocked cannot reopen Ask Ulo — unless the
+        // Try Demo tour is advancing to another page (Messages) and needs the step.
+        if (!opts?.preserveTip && readTryDemoAttentionGuideActiveStep() != null) {
+          dismissTryDemoAttentionGuide()
+        }
+        if (!opts?.skipNavigate) {
+          const tipStep = readTryDemoAttentionGuideActiveStep()
+          const tipRoute =
+            tipStep != null ? tryDemoAttentionGuideRouteForStep(tipStep) : null
+          const pathname =
+            opts?.navigateTo?.trim() || tipRoute || resolveAdminPath()
+          // Tip → Messages: always clear search so askUlo* cannot stick / reopen.
+          // Other closes keep non-Ask-Ulo query params.
+          if (opts?.navigateTo?.trim()) {
+            navigate({ pathname, search: '' }, { replace: true })
+          } else {
+            const params = currentSearchParams()
+            for (const key of ASK_ULO_SEARCH_KEYS) params.delete(key)
+            for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
+            const qs = params.toString()
+            navigate({ pathname, search: qs ? `?${qs}` : '' }, { replace: true })
+          }
+        }
+        // skipNavigate: tip host owns the route (goAdminPath clears askUlo*).
+        setOpen(false)
+        setDockedState(false)
+      })
+    },
+    [markOptimisticShellWrite, navigate, resolveAdminPath],
+  )
 
   const setConversationId = useCallback(
     (nextConversationId: string | null) => {
@@ -263,29 +391,37 @@ export function AskUloProvider({ children }: { children: ReactNode }) {
       // Never keep one-shot search prompts across chat switches — they re-fire sends.
       for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
       navigate(
-        { pathname: adminPathname, search: `?${params.toString()}` },
+        { pathname: resolveAdminPath(), search: `?${params.toString()}` },
         { replace: true },
       )
     },
-    [adminPathname, navigate],
+    [navigate, resolveAdminPath],
   )
 
   const setDocked = useCallback(
     (nextDocked: boolean) => {
-      const params = currentSearchParams()
-      const alreadyOpen = params.get(ASK_ULO_PARAM) === '1'
-      const alreadyDocked = params.get(ASK_ULO_DOCK_PARAM) === '1'
-      if (alreadyOpen && alreadyDocked === nextDocked) return
-      params.set(ASK_ULO_PARAM, '1')
-      if (nextDocked) params.set(ASK_ULO_DOCK_PARAM, '1')
-      else params.delete(ASK_ULO_DOCK_PARAM)
-      for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
-      navigate(
-        { pathname: adminPathname, search: `?${params.toString()}` },
-        { replace: true },
-      )
+      if (wasAskUloRecentlyClosedByUser()) return
+      // Steps 6+ (Messages, Active Tasks, …): setDocked navigates to
+      // resolveAdminPath() and was yanking the tip off Messages back to Dashboard.
+      const tipStep = readTryDemoAttentionGuideActiveStep()
+      if (tipStep != null && !isTryDemoAskUloShellSyncStep(tipStep)) return
+      runSmartAnimate(() => {
+        askUloUserClosedAt = 0
+        markOptimisticShellWrite()
+        setOpen(true)
+        setDockedState(nextDocked)
+        const params = currentSearchParams()
+        params.set(ASK_ULO_PARAM, '1')
+        if (nextDocked) params.set(ASK_ULO_DOCK_PARAM, '1')
+        else params.delete(ASK_ULO_DOCK_PARAM)
+        for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
+        navigate(
+          { pathname: resolveAdminPath(), search: `?${params.toString()}` },
+          { replace: true },
+        )
+      })
     },
-    [adminPathname, navigate],
+    [markOptimisticShellWrite, navigate, resolveAdminPath],
   )
 
   const refreshConversations = useCallback(async () => {

@@ -149,7 +149,6 @@ export function OnboardingWizardShell() {
     payoutMethodLabel,
     setPayoutMethodLabel,
     goTo,
-    handleStartScratch,
     handleStartFastTrack,
     handleBack,
     refreshCounts,
@@ -247,7 +246,6 @@ export function OnboardingWizardShell() {
           {step === 'entry' ? (
             <OnboardingWelcomeHub
               starting={saving}
-              onStartScratch={() => void handleStartScratch()}
               onStartFastTrack={() => void handleStartFastTrack()}
             />
           ) : null}

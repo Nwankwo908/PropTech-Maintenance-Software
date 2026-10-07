@@ -5,6 +5,7 @@ import {
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
   isVisibleLandlordTimelineDescription,
+  landlordFeedHiddenEventTypes,
 } from './landlordFacingTimeline'
 
 describe('landlordFacingTimeline', () => {
@@ -38,6 +39,16 @@ describe('landlordFacingTimeline', () => {
   it('hides rent-collection cron heartbeats', () => {
     expect(isHiddenOpsHeartbeatTimelineEventType('rent.collection_cron_triggered')).toBe(true)
     expect(isHiddenOpsHeartbeatTimelineEventType('rent.reminder_sent')).toBe(false)
+  })
+
+  it('lists every hidden feed event type for query filters', () => {
+    const hidden = landlordFeedHiddenEventTypes()
+    expect(hidden).toContain('workflow.act')
+    expect(hidden).toContain('sms.delivered')
+    expect(hidden).toContain('rent.collection_cron_triggered')
+    expect(hidden).toContain('tenant.activation_admin_alert_sent')
+    expect(hidden).not.toContain('workflow.escalate')
+    expect(hidden).not.toContain('rent.reminder_sent')
   })
 
   it('hides plumbing labels on Timeline copy', () => {

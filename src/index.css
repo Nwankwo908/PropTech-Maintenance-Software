@@ -1903,6 +1903,81 @@ h6 {
   animation: ask-ulo-rail-in 220ms ease-out both;
 }
 
+/* Ask Ulo shell — smart-animate rail ↔ full (width/shadow morph). */
+.ask-ulo-shell {
+  view-transition-name: ask-ulo-shell;
+  transition:
+    width var(--sa-duration) var(--sa-ease),
+    left var(--sa-duration) var(--sa-ease),
+    right var(--sa-duration) var(--sa-ease),
+    box-shadow var(--sa-duration) var(--sa-ease),
+    border-color var(--sa-duration) var(--sa-ease);
+  will-change: width, left;
+}
+
+.ask-ulo-shell--open {
+  animation: ask-ulo-rail-in var(--sa-duration) var(--sa-ease) both;
+}
+
+/*
+ * Try Demo tip motion modes:
+ * - glide: kill View Transition name so tip morph owns VT; keep Ask Ulo width CSS
+ *   so rail → full can ease while the cutout follows.
+ * - hold: freeze shell/scroll CSS during cross-route tip advances (no double motion).
+ */
+html[data-try-demo-tip-motion] .ask-ulo-shell {
+  view-transition-name: none;
+}
+
+html[data-try-demo-tip-motion='hold'] .ask-ulo-shell {
+  transition: none !important;
+  animation: none !important;
+}
+
+html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
+  transition: none !important;
+}
+
+.ask-ulo-shell--rail {
+  width: min(100%, 440px);
+  left: auto;
+  right: 0;
+  border-left-width: 1px;
+  border-left-style: solid;
+  border-left-color: #e5e7eb;
+  box-shadow: -8px 0 24px rgba(16, 24, 40, 0.06);
+}
+
+.ask-ulo-shell--full {
+  width: 100%;
+  left: 0;
+  right: 0;
+  border-left-color: transparent;
+  box-shadow: none;
+}
+
+.ask-ulo-chrome-icon {
+  transition:
+    opacity var(--sa-fast) var(--sa-ease),
+    transform var(--sa-fast) var(--sa-ease);
+  transform-origin: center;
+}
+
+.ask-ulo-panel-shift {
+  transition:
+    padding var(--sa-duration) var(--sa-ease),
+    max-width var(--sa-duration) var(--sa-ease),
+    gap var(--sa-duration) var(--sa-ease);
+}
+
+::view-transition-old(ask-ulo-shell),
+::view-transition-new(ask-ulo-shell) {
+  animation-duration: var(--sa-duration);
+  animation-timing-function: var(--sa-ease);
+  height: 100%;
+  mix-blend-mode: normal;
+}
+
 .ask-ulo-stream-caret {
   display: inline-block;
   width: 2px;

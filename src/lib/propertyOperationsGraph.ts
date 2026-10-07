@@ -13,6 +13,7 @@ import {
   isHiddenOpsHeartbeatTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
+  landlordFeedHiddenEventTypes,
 } from '@/lib/landlordFacingTimeline'
 import { readLocalOnboardingState } from '@/lib/onboarding/draftStorage'
 import {
@@ -697,12 +698,17 @@ export async function fetchRecentPropertyOperationsEvents(
 
   const landlordId = defaultLandlordId()
   const rawLimit = Math.max(limit * 6, 48)
+  // Exclude pipeline/transport/heartbeat rows at query time so hourly cron
+  // noise cannot bury landlord-facing outcomes in the raw window.
+  const hiddenTypes = landlordFeedHiddenEventTypes()
+  const hiddenInFilter = `(${hiddenTypes.map((t) => `"${t}"`).join(',')})`
 
   let canonicalQuery = supabase
     .from('property_operations_graph_enriched')
     .select(
       'id, landlord_id, unit_id, resident_id, vendor_id, workflow_run_id, event_type, event_source, event_payload, created_at, unit_label, building, resident_name, vendor_name',
     )
+    .not('event_type', 'in', hiddenInFilter)
     .order('created_at', { ascending: false })
     .limit(rawLimit)
 
@@ -715,6 +721,7 @@ export async function fetchRecentPropertyOperationsEvents(
     .select(
       'id, landlord_id, unit_id, resident_id, vendor_id, workflow_run_id, event_type, source, metadata, maintenance_request_id, created_at',
     )
+    .not('event_type', 'in', hiddenInFilter)
     .order('created_at', { ascending: false })
     .limit(rawLimit)
 

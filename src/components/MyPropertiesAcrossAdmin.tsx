@@ -9,9 +9,12 @@ import { propertyDetailPathForBuilding } from '@/lib/propertyRoutes'
 export function MyPropertiesAcrossAdmin({
   className,
   fitContainer = false,
+  spotlightId,
 }: {
   className?: string
   fitContainer?: boolean
+  /** Try Demo tip cutout — place on the My Properties card, not a stretch wrapper. */
+  spotlightId?: string
 } = {}) {
   const [searchParams] = useSearchParams()
   const { open: askUloOpen } = useAskUlo()
@@ -25,6 +28,7 @@ export function MyPropertiesAcrossAdmin({
     <PropertyHealthBuildingGrid
       className={className}
       fitContainer={fitContainer}
+      spotlightId={spotlightId}
       loading={loading}
       buildings={portfolio.previewBuildings}
       buildingCount={portfolio.buildings.length}

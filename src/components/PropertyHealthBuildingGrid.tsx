@@ -37,19 +37,8 @@ export const HEALTH_BADGE_LABELS: Record<PropertyHealthStatus, string> = {
   unknown: 'UNKNOWN',
 }
 
-export const HEALTH_BAR_STYLES: Record<PropertyHealthStatus, string> = {
-  excellent: 'bg-[#00c950]',
-  good: 'bg-[#00c950]',
-  fair: 'bg-[#fdc700]',
-  needs_attention: 'bg-[#ff8904]',
-  high_risk: 'bg-[#fb2c36]',
-  healthy: 'bg-[#00c950]',
-  monitor: 'bg-[#fdc700]',
-  at_risk: 'bg-[#fb2c36]',
-  active: 'bg-[#d1d5dc]',
-  pending_setup: 'bg-[#d1d5dc]',
-  unknown: 'bg-[#d1d5dc]',
-}
+/** Score-column fill — one color for every scored building (matches Property Health donut). */
+export const HEALTH_BAR_STYLE = 'bg-[#5B6CFF]'
 
 function BuildingIcon() {
   return (
@@ -136,6 +125,8 @@ type PropertyHealthBuildingGridProps = {
   buildingLinkState?: (building: string) => unknown
   /** Highlight the first property row (Get set up for success coachmark). */
   firstCardRef?: Ref<HTMLElement | null>
+  /** Try Demo tip cutout host (Overview My Properties). */
+  spotlightId?: string
 }
 
 const HEADER_BTN =
@@ -182,6 +173,7 @@ export function PropertyHealthBuildingGrid({
   buildingHref,
   buildingLinkState,
   firstCardRef,
+  spotlightId,
 }: PropertyHealthBuildingGridProps) {
   const navigate = useNavigate()
   const selectedCount = selection?.selectedBuildings.size ?? 0
@@ -194,6 +186,8 @@ export function PropertyHealthBuildingGrid({
 
   return (
     <section
+      id={spotlightId}
+      data-try-demo-properties-ready={spotlightId ? (loading ? '0' : '1') : undefined}
       className={`flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] ${className}`.trim()}
     >
       <div className="relative z-10 flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
@@ -431,7 +425,7 @@ export function PropertyHealthBuildingGrid({
                         <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
                           <div
                             className={`sa-bar h-full rounded-full ${
-                              showScore ? HEALTH_BAR_STYLES[b.status] : 'bg-[#d1d5dc]'
+                              showScore ? HEALTH_BAR_STYLE : 'bg-[#d1d5dc]'
                             }`}
                             style={{ width: showScore ? `${b.score}%` : '0%' }}
                           />

@@ -7,9 +7,12 @@ import getSetupIcon from '@/assets/noun_complete_6211701_@700.svg'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
 import webSectionIcon from '@/assets/noun-web-section.png'
-import askUloDockRailIcon from '@/assets/ask-ulo-dock-rail.png'
 import { AskUloConversationSidebar } from '@/components/AskUloConversationSidebar'
 import { useAskUlo, withAskUloSearch } from '@/components/AskUloContext'
+import {
+  isTryDemoAskUloShellSyncStep,
+  readTryDemoAttentionGuideActiveStep,
+} from '@/lib/tryDemoAttentionGuide'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
   getAdminSidebarNavItems,
@@ -21,12 +24,6 @@ import { assignAdminPath } from '@/lib/assignAdminPath'
 import {
   PROFILE_SETUP_NAV_POINT_EVENT,
 } from '@/lib/setupSuccessChecklist'
-import {
-  readTryDemoAttentionGuideActiveStep,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED,
-  writeTryDemoAttentionGuideActiveStep,
-} from '@/lib/tryDemoAttentionGuide'
 
 const navBase =
   'flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
@@ -165,9 +162,7 @@ export function AdminSidebarContent({
 }) {
   const { profile, hideProfile } = useSidebarAdminProfile()
   const {
-    open: askUloOpen,
-    docked: askUloDocked,
-    setDocked: setAskUloDocked,
+    open: askUloOpenRaw,
     conversationId,
     conversations,
     conversationsLoading,
@@ -177,24 +172,15 @@ export function AdminSidebarContent({
     renameConversation,
     deleteConversation,
   } = useAskUlo()
+  // Tip steps 6+ own navigation — never carry askUlo* onto sidebar targets.
+  const tipStep = readTryDemoAttentionGuideActiveStep()
+  const askUloOpen =
+    askUloOpenRaw && (tipStep == null || isTryDemoAskUloShellSyncStep(tipStep))
   const [searchParams] = useSearchParams()
   const isCollapsedRail = Boolean(forRail && collapsed)
   const setupNavHint = useSetupSuccessNavHint()
   const activeTasksCount = useActiveTasksNavCount()
   const [profileSetupPointed, setProfileSetupPointed] = useState(false)
-
-  function toggleAskUloDock() {
-    const nextDocked = !askUloDocked
-    const tipStep = readTryDemoAttentionGuideActiveStep()
-    // Keep Try Demo tip step aligned with the view the landlord chose so layout
-    // sync does not immediately undo Expand / Dock.
-    if (!nextDocked && tipStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED) {
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS)
-    } else if (nextDocked && tipStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS) {
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED)
-    }
-    setAskUloDocked(nextDocked)
-  }
 
   useEffect(() => {
     const onPoint = (event: Event) => {
@@ -245,26 +231,6 @@ export function AdminSidebarContent({
                 aria-hidden
               />
             </button>
-            {askUloOpen ? (
-              <button
-                type="button"
-                onClick={toggleAskUloDock}
-                className={`${sidebarChromeIconBtn} size-9`}
-                aria-label={
-                  askUloDocked
-                    ? 'Expand Ask Ulo to full panel'
-                    : 'Dock Ask Ulo to the right rail'
-                }
-                title={
-                  askUloDocked
-                    ? 'Expand Ask Ulo'
-                    : 'Dock Ask Ulo to right rail'
-                }
-                aria-pressed={askUloDocked}
-              >
-                <SidebarChromeGlyph src={askUloDockRailIcon} />
-              </button>
-            ) : null}
           </div>
         ) : (
           <div className="flex w-full items-center justify-between gap-3">
@@ -274,26 +240,6 @@ export function AdminSidebarContent({
               className="h-9 w-auto shrink-0 object-contain"
             />
             <div className="flex shrink-0 items-center gap-[4px]">
-              {askUloOpen ? (
-                <button
-                  type="button"
-                  onClick={toggleAskUloDock}
-                  className={sidebarChromeIconBtn}
-                  aria-label={
-                    askUloDocked
-                      ? 'Expand Ask Ulo to full panel'
-                      : 'Dock Ask Ulo to the right rail'
-                  }
-                  title={
-                    askUloDocked
-                      ? 'Expand Ask Ulo'
-                      : 'Dock Ask Ulo to right rail'
-                  }
-                  aria-pressed={askUloDocked}
-                >
-                  <SidebarChromeGlyph src={askUloDockRailIcon} />
-                </button>
-              ) : null}
               {forRail && onCollapse ? (
                 <button
                   type="button"

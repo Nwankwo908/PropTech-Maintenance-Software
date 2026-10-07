@@ -141,15 +141,17 @@ begin
       conversation_type, status, created_at, updated_at
     )
     values
+      -- Keep ages aligned with seed_demo_communication.sql so this patch does not
+      -- push Birch vendor threads into the tip step-6 top-5 cutout when run after.
       (c_bright_1203, demo_landlord, num_main, '+15555610004',
        null, v_bright, u_birch_1203, t02,
-       'vendor_alert', 'in_progress', now_ts - interval '26 hours', now_ts - interval '20 minutes'),
+       'vendor_alert', 'in_progress', now_ts - interval '26 hours', now_ts - interval '1 day'),
       (c_bright_708, demo_landlord, num_main, '+15555610004',
        null, v_bright, u_birch_708, t07,
-       'vendor_alert', 'accepted', now_ts - interval '5 days', now_ts - interval '2 hours'),
+       'vendor_alert', 'accepted', now_ts - interval '5 days', now_ts - interval '3 days'),
       (c_metro_402, demo_landlord, num_main, '+15555610008',
        null, v_metro, u_birch_402, t31,
-       'vendor_alert', 'scheduled', now_ts - interval '2 days', now_ts - interval '45 minutes')
+       'vendor_alert', 'scheduled', now_ts - interval '2 days', now_ts - interval '2 days')
     on conflict (id) do update set
       vendor_id = excluded.vendor_id,
       unit_id = excluded.unit_id,
@@ -168,28 +170,28 @@ begin
     values
       (md5('ulo-demo-msg-bright-1203-1')::uuid, c_bright_1203, demo_landlord, 'outbound',
        ulo_number, '+15555610004',
-       'Job assigned — Birch Tower 1203: breaker panel sparking when AC kicks on. Urgent — please accept in portal.',
-       'twilio', '{}'::text[], now_ts - interval '24 hours'),
+       'Job assigned — Birch Tower 1203: breaker panel sparking when AC kicks on. Urgent — please accept.',
+       'twilio', '{}'::text[], now_ts - interval '30 hours'),
       (md5('ulo-demo-msg-bright-1203-2')::uuid, c_bright_1203, demo_landlord, 'inbound',
        '+15555610004', ulo_number,
-       'Accepted. Crew dispatched — ETA tomorrow 9–11am. Will shut off affected circuits before panel work.',
-       'twilio', '{}'::text[], now_ts - interval '20 minutes'),
+       'Parts ordered for the panel. Earliest return visit is Thursday 9–11am.',
+       'twilio', '{}'::text[], now_ts - interval '1 day'),
       (md5('ulo-demo-msg-bright-708-1')::uuid, c_bright_708, demo_landlord, 'outbound',
        ulo_number, '+15555610004',
-       'New job — Birch Tower 708: half the living room outlets dead after storm. Please confirm availability.',
+       'New job — Birch Tower 708: half the living room outlets dead after the storm.',
        'twilio', '{}'::text[], now_ts - interval '5 days'),
       (md5('ulo-demo-msg-bright-708-2')::uuid, c_bright_708, demo_landlord, 'inbound',
        '+15555610004', ulo_number,
-       'Accepted. Can schedule Thursday afternoon — will test GFCI chain on arrival.',
-       'twilio', '{}'::text[], now_ts - interval '2 hours'),
+       'Can do Thursday afternoon — will test the GFCI chain on arrival.',
+       'twilio', '{}'::text[], now_ts - interval '3 days'),
       (md5('ulo-demo-msg-metro-402-1')::uuid, c_metro_402, demo_landlord, 'outbound',
        ulo_number, '+15555610008',
-       'Job assigned — Birch Tower 402: dishwasher backing up into sink. Normal priority — please accept and propose visit window.',
-       'twilio', '{}'::text[], now_ts - interval '36 hours'),
+       'Job assigned — Birch Tower 402: dishwasher backing up into sink. Please propose a visit window.',
+       'twilio', '{}'::text[], now_ts - interval '3 days'),
       (md5('ulo-demo-msg-metro-402-2')::uuid, c_metro_402, demo_landlord, 'inbound',
        '+15555610008', ulo_number,
-       'Accepted. Scheduled for Friday 1–3pm — will snake drain line and check dishwasher discharge hose.',
-       'twilio', '{}'::text[], now_ts - interval '45 minutes')
+       'Friday 1–3pm works — I''ll snake the drain and check the discharge hose.',
+       'twilio', '{}'::text[], now_ts - interval '2 days')
     on conflict (id) do nothing;
   end if;
 

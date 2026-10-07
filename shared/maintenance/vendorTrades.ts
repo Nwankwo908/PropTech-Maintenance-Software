@@ -223,11 +223,18 @@ export function isGeneralistTrade(raw: string | null | undefined): boolean {
   return slug == null || slug === 'general'
 }
 
+/** Pest jobs need a pest specialist — general / handyman is not eligible. */
+export function isPestControlIssue(
+  issueCategory: string | null | undefined,
+): boolean {
+  return normalizeVendorTrade(issueCategory, { fallbackOther: false }) === 'pest_control'
+}
+
 export function vendorMatchesTicketIssueCategory(
   vendorCategory: string | null | undefined,
   issueSlug: string | null | undefined,
 ): boolean {
-  if (isGeneralistTrade(vendorCategory)) return true
+  if (isGeneralistTrade(vendorCategory)) return !isPestControlIssue(issueSlug)
   const issueTrade = normalizeVendorTrade(issueSlug, { fallbackOther: true })
   if (!issueTrade || issueTrade === 'other' || issueTrade === 'general') return true
   const vendorTrade = normalizeVendorTrade(vendorCategory, { fallbackOther: false })

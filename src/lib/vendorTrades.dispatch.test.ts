@@ -22,12 +22,21 @@ describe('vendorTradeMatchesForDispatch', () => {
     expect(vendorTradeMatchesForDispatch('plumbing', '')).toBe(false)
   })
 
-  it('lets general / handyman take any trade', () => {
+  it('lets general / handyman take non-pest trades', () => {
     expect(vendorTradeMatchesForDispatch('general', 'plumbing')).toBe(true)
     expect(vendorTradeMatchesForDispatch('handyman', 'appliance_repair')).toBe(
       true,
     )
     expect(vendorTradeMatchesForDispatch(null, 'hvac')).toBe(true)
-    expect(vendorTradeMatchesForDispatch('', 'pest_control')).toBe(true)
+  })
+
+  it('does not assign pest jobs to general / handyman', () => {
+    expect(vendorTradeMatchesForDispatch('general', 'pest_control')).toBe(false)
+    expect(vendorTradeMatchesForDispatch('handyman', 'pest')).toBe(false)
+    expect(vendorTradeMatchesForDispatch(null, 'pest_control')).toBe(false)
+    expect(vendorTradeMatchesForDispatch('', 'pest_control')).toBe(false)
+    expect(vendorTradeMatchesForDispatch('pest_control', 'pest_control')).toBe(
+      true,
+    )
   })
 })

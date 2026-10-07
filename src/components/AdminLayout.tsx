@@ -10,6 +10,7 @@ import { LandlordWorkspaceProvider, useLandlordWorkspace } from '@/context/Landl
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
 import { SetupSuccessCardHost } from '@/components/SetupSuccessCardHost'
+import { TryDemoAttentionGuideHost } from '@/components/TryDemoAttentionGuideHost'
 import { IconClose, IconMenu } from '@/components/landing/LandingIcons'
 import type { SidebarAdminProfile } from '@/constants/sidebarAdminProfile'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
@@ -26,7 +27,6 @@ import {
 import {
   readTryDemoAttentionGuideActiveStep,
   tryDemoAskUloViewModeForStep,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT,
   TRY_DEMO_SPOTLIGHT_ASK_ULO_ID,
   TRY_DEMO_SPOTLIGHT_ASK_ULO_PANEL_ID,
 } from '@/lib/tryDemoAttentionGuide'
@@ -118,17 +118,24 @@ function AdminHeaderActions({
   showSignOut = true,
   compact = false,
   showProfileAvatar = false,
+  /** Only one header instance may own the Try Demo Activity tip host (desktop). */
+  tryDemoSpotlightHost = false,
 }: {
   onNavigate?: () => void
   showSignOut?: boolean
   compact?: boolean
   showProfileAvatar?: boolean
+  tryDemoSpotlightHost?: boolean
 }) {
   const { profile, hideProfile } = useSidebarAdminProfile()
 
   return (
     <div className={['flex shrink-0 items-center', compact ? 'gap-4' : 'gap-2'].join(' ')}>
-      <AdminUloNotificationsBell compact={compact} onNavigate={onNavigate} />
+      <AdminUloNotificationsBell
+        compact={compact}
+        onNavigate={onNavigate}
+        tryDemoSpotlightHost={tryDemoSpotlightHost}
+      />
       {showProfileAvatar && !hideProfile && profile ? (
         <AdminProfileAvatar profile={profile} compact={compact} />
       ) : null}
@@ -143,7 +150,7 @@ function AdminHeaderActions({
 }
 
 function AdminTopBar() {
-  const { open, openAskUlo } = useAskUlo()
+  const { open, openAskUlo, closeAskUlo } = useAskUlo()
   const { displayName: workspaceDisplayName } = useLandlordWorkspace()
   const [resettingOnboarding, setResettingOnboarding] = useState(false)
   const workspaceLabel = workspaceDisplayName.trim() || getActiveLandlordLabel()
@@ -197,18 +204,20 @@ function AdminTopBar() {
           <AdminUniversalSearch />
           <button
             type="button"
-            title="Ulo AI assistant"
+            title="Ask Ulo"
             aria-pressed={open}
-            onClick={() => openAskUlo()}
+            onClick={() => {
+              // Toggle: second click closes so the control always does something visible.
+              if (open) closeAskUlo()
+              else openAskUlo()
+            }}
             className={[
-              'sa-press flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
-              open
-                ? 'bg-[#0A4D38]/10'
-                : 'bg-transparent hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10',
+              'sa-press flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] bg-white px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
+              open ? 'hover:bg-white' : 'hover:bg-[#fafafa] active:bg-[#f5f5f5]',
             ].join(' ')}
           >
             <AiSparkleIcon />
-            Ask Ulo AI
+            Ask Ulo
           </button>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-4">
@@ -256,7 +265,7 @@ function AdminTopBar() {
             </select>
           </label>
         ) : null}
-        <AdminHeaderActions />
+        <AdminHeaderActions tryDemoSpotlightHost />
         </div>
       </div>
     </header>
@@ -267,67 +276,50 @@ function AdminMainContent() {
   const { open, docked, closeAskUlo, setDocked } = useAskUlo()
   const location = useLocation()
   const prevPathRef = useRef(location.pathname)
+  const wasOpenRef = useRef(open)
+  const [shellEnter, setShellEnter] = useState(false)
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
   useAdminScrollRestoration(scrollEl)
 
   // Full-screen Ask Ulo used to replace <Outlet />, so navigating to Properties
   // while Ask Ulo was open showed a blank/stuck shell. Always keep the route
   // mounted, and auto-dock on path changes so the destination is visible.
-  // Skip while Try Demo tip is forcing a full Ask Ulo view.
+  // Skip while Try Demo tip owns Ask Ulo layout, or while the tip is moving to
+  // Messages / Active Tasks (close + navigate must not be stolen by auto-dock).
   useEffect(() => {
     if (prevPathRef.current === location.pathname) return
     prevPathRef.current = location.pathname
-    const tourMode = tryDemoAskUloViewModeForStep(readTryDemoAttentionGuideActiveStep())
+    const tipStep = readTryDemoAttentionGuideActiveStep()
+    const tourMode = tryDemoAskUloViewModeForStep(tipStep)
     if (tourMode === 'full') return
+    if (tipStep != null && tourMode == null) return
     if (open && !docked) setDocked(true)
   }, [location.pathname, open, docked, setDocked])
 
-  // Try Demo steps 4–5: open Ask Ulo docked → full from the layout shell so the
-  // tip does not depend on Overview staying mounted through the URL change.
-  // Only apply when the tip *step* changes — re-applying on setDocked identity
-  // changes was fighting the sidebar Expand control (snap-back to docked).
-  const lastTipLayoutStepRef = useRef<number | null | undefined>(undefined)
+  // Play open enter once when Ask Ulo appears; dock↔full morphs via CSS width.
   useEffect(() => {
-    const apply = (step: number | null) => {
-      if (lastTipLayoutStepRef.current === step) return
-      lastTipLayoutStepRef.current = step
-      const mode = tryDemoAskUloViewModeForStep(step)
-      if (mode === 'full') {
-        setDocked(false)
-        // Re-assert after any competing dock navigate from the same click.
-        window.setTimeout(() => setDocked(false), 0)
-        return
-      }
-      if (mode === 'docked') setDocked(true)
+    if (open && !wasOpenRef.current) {
+      setShellEnter(true)
+      const timer = window.setTimeout(() => setShellEnter(false), 320)
+      wasOpenRef.current = true
+      return () => window.clearTimeout(timer)
     }
-    apply(readTryDemoAttentionGuideActiveStep())
-    const onStep = (event: Event) => {
-      const ce = event as CustomEvent<{ step?: number | null }>
-      const next =
-        typeof ce.detail?.step === 'number' || ce.detail?.step === null
-          ? ce.detail.step
-          : readTryDemoAttentionGuideActiveStep()
-      apply(next)
-    }
-    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onStep)
-    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onStep)
-  }, [setDocked])
+    if (!open) wasOpenRef.current = false
+  }, [open])
 
-  // Keep a single Outlet parent for open/closed so Overview (and Try Demo tour
-  // state) does not remount when Ask Ulo opens on tip steps 4–6.
+  // Tip Next calls setDocked directly — do not sync dock from tip storage here.
+  // That re-opened Ask Ulo after Close and snapped Expand back to the rail.
+
+  // Absolute shell morphs rail ↔ full; outlet reserves right margin while docked.
   return (
-    <div
-      className={
-        open
-          ? 'relative flex min-h-0 flex-1 overflow-hidden bg-white'
-          : 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white'
-      }
-    >
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
       <div
         ref={setScrollEl}
         className={[
           'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white',
+          'transition-[margin] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none',
           open ? '' : 'flex flex-col',
+          open && docked ? 'lg:mr-[min(100%,440px)]' : 'mr-0',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -342,11 +334,14 @@ function AdminMainContent() {
       {open ? (
         <div
           id={TRY_DEMO_SPOTLIGHT_ASK_ULO_PANEL_ID}
-          className={
-            docked
-              ? 'ask-ulo-rail-enter relative z-20 flex h-full w-[min(100%,440px)] shrink-0 flex-col border-l border-[#e5e7eb] bg-white shadow-[-8px_0_24px_rgba(16,24,40,0.06)]'
-              : 'sa-enter absolute inset-0 z-30 flex flex-col bg-white'
-          }
+          className={[
+            // Below tip scrim/tooltip (z-250) so the final Ask Ulo tip can dim chrome.
+            'ask-ulo-shell absolute inset-y-0 z-[230] flex flex-col bg-white',
+            docked ? 'ask-ulo-shell--rail' : 'ask-ulo-shell--full',
+            shellEnter ? 'ask-ulo-shell--open' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
           aria-label="Ask Ulo"
           {...(docked ? { role: 'complementary' as const } : {})}
         >
@@ -522,6 +517,7 @@ export function AdminLayout() {
 
           <AdminTopBar />
           <AdminMainContent />
+          <TryDemoAttentionGuideHost />
           <SetupSuccessCardHost />
         </div>
       </div>

@@ -18,9 +18,8 @@ import scheduledVisitsIcon from '@/assets/calendar.png'
 import propertyHealthIcon from '@/assets/hospital.png'
 import ytdMaintenanceCostIcon from '@/assets/price-up.png'
 import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
+import { NeedsAttentionRow } from '@/components/NeedsAttentionRowAction'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
-import { useAskUlo } from '@/components/AskUloContext'
-import { TryDemoAttentionTooltip } from '@/components/TryDemoAttentionTooltip'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
 import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
 import { LateRentAccountMessageRail } from '@/components/LateRentAccountMessageRail'
@@ -34,29 +33,18 @@ import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
 import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import {
   consumeTryDemoAttentionGuidePending,
-  dismissTryDemoAttentionGuide,
   isTryDemoAttentionGuidePending,
   markTryDemoAttentionGuideSeen,
   readTryDemoAttentionGuideActiveStep,
   TRY_DEMO_ATTENTION_GUIDE_EVENT,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED,
   TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL,
-  tryDemoAttentionGuideBody,
-  tryDemoAttentionGuideExtraTargetIds,
-  tryDemoAttentionGuidePageLabel,
-  tryDemoAttentionGuideSkipHoleClamp,
-  tryDemoAttentionGuideTargetId,
-  tryDemoAttentionGuideTitle,
+  TRY_DEMO_SPOTLIGHT_ATTENTION_ID,
+  TRY_DEMO_SPOTLIGHT_PORTFOLIO_ID,
+  TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID,
   writeTryDemoAttentionGuideActiveStep,
-  type TryDemoAttentionGuideStep,
 } from '@/lib/tryDemoAttentionGuide'
 import {
   clearSetupSuccessCardDismissed,
@@ -99,7 +87,6 @@ import {
 } from '@/lib/workflowPipelineDetail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import {
-  ADMIN_ATTENTION_ACTION_CLASS,
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
@@ -988,9 +975,11 @@ export function AdminOverviewDashboard() {
   }, [])
   const { profile: accountHolderProfile } = useSidebarAdminProfile()
   const greetingName = overviewGreetingFirstName(accountHolderProfile?.name)
-  const greetingTitle = greetingName
-    ? `${overviewGreetingSalutation()}, ${greetingName}`
-    : overviewGreetingSalutation()
+  const greetingTitle = isDemoAccountActive()
+    ? 'Welcome to Your Ulo Demo'
+    : greetingName
+      ? `${overviewGreetingSalutation()}, ${greetingName}`
+      : overviewGreetingSalutation()
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [vendors, setVendors] = useState<OverviewVendor[]>([])
@@ -1068,12 +1057,6 @@ export function AdminOverviewDashboard() {
   const [awaitingDecisionListOpen, setAwaitingDecisionListOpen] = useState(false)
   const [awaitingDecisionOutcome, setAwaitingDecisionOutcome] =
     useState<AwaitingDecisionOutcome | null>(null)
-  const [tryDemoAttentionGuideActive, setTryDemoAttentionGuideActive] = useState(false)
-  const [tryDemoAttentionGuideStep, setTryDemoAttentionGuideStep] =
-    useState<TryDemoAttentionGuideStep>(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
-  const tryDemoAttentionSectionRef = useRef<HTMLElement | null>(null)
-  const tryDemoPortfolioSnapshotRef = useRef<HTMLElement | null>(null)
-  const { setDocked: setAskUloDocked, closeAskUlo } = useAskUlo()
   const prevAttentionItemsRef = useRef<AttentionItem[]>([])
   const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
   const findVendorDeepLinkHandledRef = useRef<string | null>(null)
@@ -2233,92 +2216,13 @@ export function AdminOverviewDashboard() {
     item.onAction?.()
   }, [])
 
-  const advanceTryDemoAttentionTooltip = useCallback(() => {
-    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION) {
-      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO)
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO)
-      return
-    }
-    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO) {
-      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO)
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO)
-      return
-    }
-    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO) {
-      // Persist step before dock navigate so layout sync cannot re-apply step 3.
-      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED)
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED)
-      setAskUloDocked(true)
-      return
-    }
-    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED) {
-      // Write step 5 (full) before undocking — a layout effect was racing and
-      // re-applying docked from the still-stored step 4.
-      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS)
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS)
-      setAskUloDocked(false)
-      return
-    }
-    closeAskUlo()
-    dismissTryDemoAttentionGuide()
-    setTryDemoAttentionGuideActive(false)
-    setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
-  }, [tryDemoAttentionGuideStep, closeAskUlo, setAskUloDocked])
-
-  // Keep Ask Ulo layout matched when the tip *step* changes (not on every
-  // setAskUloDocked identity change — that snapped Expand back to docked).
-  const lastAskUloTipLayoutStepRef = useRef<TryDemoAttentionGuideStep | null>(null)
+  // Try Demo: arm the layout tip host after Welcome Ok once Overview data is ready.
   useEffect(() => {
-    if (!tryDemoAttentionGuideActive) {
-      lastAskUloTipLayoutStepRef.current = null
-      return
-    }
-    if (lastAskUloTipLayoutStepRef.current === tryDemoAttentionGuideStep) return
-    lastAskUloTipLayoutStepRef.current = tryDemoAttentionGuideStep
-    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS) {
-      setAskUloDocked(false)
-      return
-    }
-    if (tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED) {
-      setAskUloDocked(true)
-    }
-  }, [tryDemoAttentionGuideActive, tryDemoAttentionGuideStep, setAskUloDocked])
-
-  // Sidebar Expand/Dock can advance tip step via storage event — keep local tip UI in sync.
-  useEffect(() => {
-    function onTipStep(event: Event) {
-      const ce = event as CustomEvent<{ step?: number | null }>
-      const step = ce.detail?.step
-      if (
-        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION ||
-        step === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO ||
-        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO ||
-        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED ||
-        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_CHATS
-      ) {
-        setTryDemoAttentionGuideStep(step)
-        setTryDemoAttentionGuideActive(true)
-      }
-    }
-    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onTipStep)
-    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, onTipStep)
-  }, [])
-
-  // Try Demo: after Welcome Ok (or remount mid-tour), resume Attention → Ask Ulo views.
-  useEffect(() => {
-    if (loading || tryDemoAttentionGuideActive) return
-
-    const resumeStep = readTryDemoAttentionGuideActiveStep()
-    if (resumeStep != null) {
-      setTryDemoAttentionGuideStep(resumeStep)
-      setTryDemoAttentionGuideActive(true)
-      return
-    }
+    if (loading) return
+    if (readTryDemoAttentionGuideActiveStep() != null) return
 
     const maybeArm = () => {
       if (!isTryDemoAttentionGuidePending()) return
-      setTryDemoAttentionGuideStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
-      setTryDemoAttentionGuideActive(true)
       writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
       consumeTryDemoAttentionGuidePending()
       // Seen so refresh does not re-arm; keep activeStep until the tour finishes.
@@ -2328,7 +2232,7 @@ export function AdminOverviewDashboard() {
     maybeArm()
     window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, maybeArm)
     return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, maybeArm)
-  }, [loading, tryDemoAttentionGuideActive])
+  }, [loading])
 
   useEffect(() => {
     if (loading) return
@@ -3476,7 +3380,7 @@ export function AdminOverviewDashboard() {
 
       {/* Needs Your Attention — top of page, under greeting */}
       <section
-        ref={tryDemoAttentionSectionRef}
+        id={TRY_DEMO_SPOTLIGHT_ATTENTION_ID}
         className="relative z-0 flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
@@ -3484,7 +3388,7 @@ export function AdminOverviewDashboard() {
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
               Needs Your Attention
             </h2>
-            <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-[4px] bg-[#DA4951] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
+            <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-[4px] bg-[#fef9c2] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-[#a65f00] tabular-nums">
               {loading ? '—' : allAttentionItems.length}
             </span>
             {!loading && criticalAttentionCount > 0 ? (
@@ -3513,10 +3417,13 @@ export function AdminOverviewDashboard() {
             </p>
           ) : (
             attentionItems.map((item, index) => (
-              <div
+              <NeedsAttentionRow
                 key={item.key}
-                style={{ animationDelay: `${Math.min(index, 3) * 40}ms` }}
+                actionLabel={item.actionLabel}
+                actionTo={item.actionTo}
+                onAction={item.onAction}
                 className="sa-enter flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-6"
+                style={{ animationDelay: `${Math.min(index, 3) * 40}ms` }}
               >
                 <div className="flex w-[4.75rem] shrink-0 items-center sm:justify-start">
                   <span
@@ -3545,31 +3452,7 @@ export function AdminOverviewDashboard() {
                 <p className="min-w-0 flex-1 basis-0 text-[12px] leading-4 text-[#6a7282] sm:text-[13px] sm:leading-5">
                   {item.meta}
                 </p>
-                {item.onAction ? (
-                  <button
-                    type="button"
-                    onClick={item.onAction}
-                    className={
-                      /assign\s*vendor/i.test(item.actionLabel)
-                        ? 'sa-press shrink-0 self-start rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90 sm:self-center'
-                        : `${ADMIN_ATTENTION_ACTION_CLASS} shrink-0 self-start sm:self-center`
-                    }
-                  >
-                    {item.actionLabel} →
-                  </button>
-                ) : (
-                  <Link
-                    to={item.actionTo ?? '/admin/workflows'}
-                    className={
-                      /assign\s*vendor/i.test(item.actionLabel ?? '')
-                        ? 'sa-press shrink-0 self-start rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90 sm:self-center'
-                        : `${ADMIN_ATTENTION_ACTION_CLASS} shrink-0 self-start sm:self-center`
-                    }
-                  >
-                    {item.actionLabel} →
-                  </Link>
-                )}
-              </div>
+              </NeedsAttentionRow>
             ))
           )}
         </div>
@@ -3665,7 +3548,10 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <section ref={tryDemoPortfolioSnapshotRef} className="relative z-0 flex min-w-0 flex-col gap-3">
+      <section
+        id={TRY_DEMO_SPOTLIGHT_PORTFOLIO_ID}
+        className="relative z-0 flex min-w-0 flex-col gap-3"
+      >
         <h2 className="text-[20px] font-semibold leading-7 text-[#0a0a0a]">
           Portfolio Snapshot
         </h2>
@@ -3780,8 +3666,11 @@ export function AdminOverviewDashboard() {
             )}
           </div>
         </section>
-        <div className="flex h-full min-w-0 flex-col">
-          <MyPropertiesAcrossAdmin className="h-full" fitContainer />
+        <div className="flex min-w-0 flex-col">
+          <MyPropertiesAcrossAdmin
+            fitContainer
+            spotlightId={TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID}
+          />
         </div>
       </div>
 
@@ -4081,34 +3970,6 @@ export function AdminOverviewDashboard() {
         onClose={() => setAwaitingDecisionOutcome(null)}
       />
 
-      <TryDemoAttentionTooltip
-        active={tryDemoAttentionGuideActive}
-        targetRef={
-          tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO
-            ? tryDemoPortfolioSnapshotRef
-            : tryDemoAttentionSectionRef
-        }
-        targetId={tryDemoAttentionGuideTargetId(tryDemoAttentionGuideStep)}
-        spotlightKey={tryDemoAttentionGuideStep}
-        side={
-          tryDemoAttentionGuideStep === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO_DOCKED
-            ? 'left'
-            : 'auto'
-        }
-        extraTargetIds={
-          tryDemoAttentionGuideSkipHoleClamp(tryDemoAttentionGuideStep)
-            ? tryDemoAttentionGuideExtraTargetIds(tryDemoAttentionGuideStep)
-            : undefined
-        }
-        skipHoleClamp={tryDemoAttentionGuideSkipHoleClamp(tryDemoAttentionGuideStep)}
-        title={tryDemoAttentionGuideTitle(tryDemoAttentionGuideStep)}
-        body={tryDemoAttentionGuideBody(tryDemoAttentionGuideStep)}
-        pageLabel={tryDemoAttentionGuidePageLabel(
-          tryDemoAttentionGuideStep,
-          TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL,
-        )}
-        onNext={advanceTryDemoAttentionTooltip}
-      />
     </div>
   )
 }

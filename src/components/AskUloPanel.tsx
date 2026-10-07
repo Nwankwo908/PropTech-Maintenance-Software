@@ -191,10 +191,39 @@ const AGENT_MODE_CHIP_THEME: Partial<
   },
 }
 
+const ASK_ULO_CHROME_BTN =
+  'sa-press inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] outline-none hover:bg-[#e5e7eb]/70 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2'
+
 function CloseIcon() {
   return (
     <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Same stroke weight/size as CloseIcon — expand to full panel. */
+function ExpandIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path
+        d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** Collapse full panel back to the right rail. */
+function DockIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path
+        d="M9 3H3v6M15 21h6v-6M3 3l7 7M21 21l-7-7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -1394,6 +1423,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
     refreshConversations,
     pendingPrompt,
     clearPendingPrompt,
+    setDocked,
   } = useAskUlo()
 
   const [draft, setDraft] = useState('')
@@ -1765,7 +1795,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
     <section
       aria-labelledby={titleId}
       className={[
-        'relative flex min-h-0 flex-1 flex-col overflow-hidden',
+        'ask-ulo-panel-shift relative flex min-h-0 flex-1 flex-col overflow-hidden',
         isRail ? 'pb-6 pt-2' : 'pb-10 pt-3',
       ].join(' ')}
       style={{
@@ -1774,28 +1804,70 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
           'conic-gradient(from 45deg at 50% 50%, #ffffff, #f0fdf4, #ffffff, #f0fdf4, #ffffff)',
       }}
     >
-      <button
-        type="button"
-        onClick={onClose}
+      <div
         className={[
-          'sa-press absolute top-1.5 z-20 inline-flex size-8 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] outline-none hover:bg-[#e5e7eb]/70 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
-          isRail ? 'right-3' : 'right-4 sm:right-6',
+          'ask-ulo-panel-shift absolute top-1.5 z-20 flex w-full items-center justify-between gap-2',
+          isRail ? 'px-3' : 'px-4 sm:px-6',
         ].join(' ')}
-        aria-label="Close Ask Ulo"
       >
-        <CloseIcon />
-      </button>
+        <button
+          type="button"
+          onClick={() => {
+            // Rail → full (undock). Full → rail (dock).
+            setDocked(isRail ? false : true)
+          }}
+          className={ASK_ULO_CHROME_BTN}
+          aria-label={isRail ? 'Expand Ask Ulo to full panel' : 'Dock Ask Ulo to the right rail'}
+          title={isRail ? 'Expand Ask Ulo' : 'Dock Ask Ulo'}
+        >
+          <span className="relative inline-flex size-5 items-center justify-center">
+            <span
+              className={[
+                'ask-ulo-chrome-icon absolute inset-0 flex items-center justify-center',
+                isRail ? 'opacity-100 scale-100' : 'pointer-events-none opacity-0 scale-75',
+              ].join(' ')}
+              aria-hidden={!isRail}
+            >
+              <ExpandIcon />
+            </span>
+            <span
+              className={[
+                'ask-ulo-chrome-icon absolute inset-0 flex items-center justify-center',
+                isRail ? 'pointer-events-none opacity-0 scale-75' : 'opacity-100 scale-100',
+              ].join(' ')}
+              aria-hidden={isRail}
+            >
+              <DockIcon />
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className={ASK_ULO_CHROME_BTN}
+          aria-label="Close Ask Ulo"
+          title="Close Ask Ulo"
+        >
+          <CloseIcon />
+        </button>
+      </div>
 
       {!hasMessages && !hydrating ? (
         <div
-          id={TRY_DEMO_SPOTLIGHT_ASK_ULO_CONTENT_ID}
           className={[
-            'mx-auto flex w-full flex-col items-center px-4',
-            isRail
-              ? 'max-w-none pt-5'
-              : 'max-w-[720px] pt-6 sm:px-8 sm:pt-8',
+            // Full-width shell under chrome; tip cutout is the inner copy + UI column.
+            'ask-ulo-panel-shift mt-10 flex min-h-0 w-full flex-1 flex-col',
+            isRail ? 'pt-1' : 'pt-2',
           ].join(' ')}
         >
+          <div
+            id={TRY_DEMO_SPOTLIGHT_ASK_ULO_CONTENT_ID}
+            data-try-demo-ask-ulo-content-ready={isRail ? '0' : '1'}
+            className={[
+              'mx-auto flex w-full flex-col items-center px-4',
+              isRail ? 'max-w-none' : 'max-w-[720px] sm:px-8 sm:pt-2',
+            ].join(' ')}
+          >
           <img
             src={sandboxLogo}
             alt=""
@@ -1890,11 +1962,17 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
               ))}
             </div>
           </div>
+          </div>
         </div>
       ) : (
         <div
           id={TRY_DEMO_SPOTLIGHT_ASK_ULO_CONTENT_ID}
-          className={`flex min-h-0 w-full flex-1 flex-col ${isRail ? 'pt-3' : 'pt-4'}`}
+          data-try-demo-ask-ulo-content-ready={isRail ? '0' : '1'}
+          className={[
+            // Thread UI under chrome — tip clears Ask Ulo copy/UI, not the left rail.
+            'ask-ulo-panel-shift mt-10 flex min-h-0 w-full flex-1 flex-col',
+            isRail ? 'pt-1' : 'pt-2',
+          ].join(' ')}
         >
           <div
             className={[

@@ -425,10 +425,10 @@ begin
      'Anita Patel', 'anita.patel@example.com', '+15555620005', 'Oakwood Apartments · 204',
      'GFCI outlet in kitchen keeps tripping.',
      'completed', 'electrical', v_bright, now_ts - interval '30 days', now_ts - interval '28 days'),
-    (t20, demo_landlord, now_ts - interval '12 days', 'urgent', 'urgent', 'urgent',
+    (t20, demo_landlord, now_ts - interval '2 days', 'urgent', 'urgent', 'urgent',
      'Carmen Reyes', 'carmen.reyes@example.com', '+15555620035', 'Birch Tower · 107',
      'AC down during heat advisory.',
-     'completed', 'hvac', v_summit, now_ts - interval '11 days 20 hours', now_ts - interval '11 days'),
+     'completed', 'hvac', v_summit, now_ts - interval '1 day 8 hours', now_ts - interval '16 hours'),
     (t21, demo_landlord, now_ts - interval '40 days', 'normal', 'normal', 'normal',
      'Haruto Ito', 'haruto.ito@example.com', '+15555620014', 'Birch Tower · 410',
      'Closet door off track.',
@@ -471,10 +471,43 @@ begin
      'David Okafor', 'david.okafor@example.com', '+15555620004', 'Pine Ridge · 301',
      'Same sink leak returned; water damage spreading on cabinet floor.',
      'in_progress', 'plumbing', v_metro, now_ts - interval '8 days', now_ts + interval '1 day'),
-    (t31, demo_landlord, now_ts - interval '2 days', 'normal', 'normal', 'normal',
+    (t31, demo_landlord, now_ts - interval '3 hours', 'normal', 'normal', 'normal',
      'Grace Chen', 'grace.chen@example.com', '+15555620003', 'Birch Tower · 402',
      'Dishwasher backing up into the sink — slow drain and standing water after cycles.',
-     'accepted', 'plumbing', v_metro, now_ts - interval '36 hours', now_ts + interval '2 days');
+     'accepted', 'plumbing', v_metro, now_ts - interval '2 hours', now_ts + interval '2 days');
+
+  -- Confirmed visit windows — Overview "Scheduled Visits" KPI + 4-week delta.
+  -- Upcoming open WOs count toward the card; past windows (incl. completed) drive trend.
+  update public.maintenance_requests mr
+  set scheduled_at = v.scheduled_at
+  from (values
+    -- Upcoming (open) -----------------------------------------------------------
+    (t02, date_trunc('day', now_ts) + interval '1 day 9 hours'),          -- tomorrow AM
+    (t03, date_trunc('day', now_ts) + interval '0 days 14 hours'),         -- today afternoon
+    (t04, date_trunc('day', now_ts) + interval '1 day 11 hours'),          -- tomorrow late morning
+    (t06, date_trunc('day', now_ts) + interval '2 days 10 hours'),
+    (t07, date_trunc('day', now_ts) + interval '3 days 13 hours'),
+    (t08, date_trunc('day', now_ts) + interval '4 days 15 hours'),
+    (t10, date_trunc('day', now_ts) + interval '5 days 9 hours'),
+    (t13, date_trunc('day', now_ts) + interval '2 days 16 hours'),
+    (t14, date_trunc('day', now_ts) + interval '3 days 10 hours'),
+    (t16, date_trunc('day', now_ts) + interval '7 days 11 hours'),
+    (t30, date_trunc('day', now_ts) + interval '1 day 14 hours'),
+    (t31, date_trunc('day', now_ts) + interval '2 days 9 hours'),
+    -- Recent window (last 4 weeks) — completed visits -----------------------------
+    (t17, now_ts - interval '16 days 6 hours'),
+    (t18, now_ts - interval '21 days 4 hours'),
+    (t20, now_ts - interval '1 day 2 hours'),
+    (t24, now_ts - interval '16 days 8 hours'),
+    (t29, now_ts - interval '25 days 5 hours'),
+    -- Previous window (4–8 weeks ago) --------------------------------------------
+    (t19, now_ts - interval '30 days 3 hours'),
+    (t21, now_ts - interval '37 days 6 hours'),
+    (t22, now_ts - interval '46 days 4 hours'),
+    (t23, now_ts - interval '52 days 5 hours')
+  ) as v(id, scheduled_at)
+  where mr.id = v.id
+    and mr.landlord_id = demo_landlord;
 
   -- ---------------------------------------------------------------------------
   -- Workflow runs
@@ -522,9 +555,10 @@ begin
      'logged', 'completed', now_ts - interval '18 days', now_ts - interval '16 days',
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '304', 'building', 'Oakwood Apartments',
        'maintenance_request_id', t17, 'issue_category', 'plumbing')),
+    -- Keep started_at newer than wr_insp2 so Completed’s first-row tip cutout is a WO.
     (wr_maint5, 'maintenance_intake', 'completed', 'maintenance_request', t20,
      p_birch, u_birch_107, null, demo_landlord, 'sms_inbound', 'maintenance',
-     'logged', 'completed', now_ts - interval '12 days', now_ts - interval '11 days',
+     'logged', 'completed', now_ts - interval '1 day', now_ts - interval '16 hours',
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '107', 'building', 'Birch Tower',
        'maintenance_request_id', t20, 'issue_category', 'hvac')),
     (wr_maint6, 'maintenance_intake', 'escalated', 'maintenance_request', t11,
@@ -535,9 +569,10 @@ begin
        'escalation_reason', 'vendor_declined_no_vendor',
        'escalated_at', (now_ts - interval '2 hours')::text,
        'declined_vendor', 'FreshNest Cleaning')),
+    -- Keep newer than inspection runs so In Progress’s first-row tip cutout is a WO.
     (wr_maint7, 'maintenance_intake', 'active', 'maintenance_request', t31,
      p_birch, u_birch_402, r_chen, demo_landlord, 'sms_inbound', 'maintenance',
-     'acted', 'awaiting_vendor_schedule', now_ts - interval '2 days', null,
+     'acted', 'awaiting_vendor_schedule', now_ts - interval '90 minutes', null,
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '402', 'building', 'Birch Tower',
        'maintenance_request_id', t31, 'issue_category', 'plumbing',
        'due_at', (now_ts + interval '2 days')::text)),
@@ -798,7 +833,7 @@ begin
        'unit_label', '107', 'building', 'Maple Heights', 'amount_due', 2400),
      now_ts - interval '1 day'),
     (md5('ulo-demo-graph-feed-5')::uuid, demo_landlord, p_cedar, u_cedar_102, r_johnson, null, wr_lease1,
-     'workflow.act', 'automation',
+     'lease.renewal_reminder_sent', 'automation',
      jsonb_build_object('message', 'Lease renewal reminder sent to Sarah Johnson — lease ends in 14 days.',
        'unit_label', '103', 'building', 'Cedar Court', 'workflow_template_id', 'lease_renewal'),
      now_ts - interval '5 hours'),

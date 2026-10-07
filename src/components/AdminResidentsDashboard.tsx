@@ -85,6 +85,10 @@ import {
   syncAssignedUnitOccupancyFromResidentStatus,
 } from '@/lib/unitActivation'
 import type { PropertyHistoryPaymentStatus } from '@/lib/propertyHistory'
+import {
+  TRY_DEMO_RESIDENTS_SPOTLIGHT_ROW_COUNT,
+  TRY_DEMO_SPOTLIGHT_RESIDENTS_ROWS_ID,
+} from '@/lib/tryDemoAttentionGuide'
 
 type InventoryUnitOption = {
   id: string
@@ -1221,6 +1225,45 @@ export function AdminResidentsDashboard() {
     return expandedHouseholdKeys.has(key) || searchExpandedHouseholdKeys.has(key)
   }
 
+  type VisibleResidentTableRow = {
+    resident: ResidentRow
+    householdKey: string
+    others: ResidentRow[]
+    expanded: boolean
+    isOccupant: boolean
+    animationIndex: number
+  }
+
+  const visibleResidentTableRows = useMemo((): VisibleResidentTableRow[] => {
+    const rows: VisibleResidentTableRow[] = []
+    filteredHouseholds.forEach((household, householdIndex) => {
+      const primary = household.members[0]
+      if (!primary) return
+      const others = household.members.slice(1)
+      const expanded = others.length > 0 && isHouseholdExpanded(household.key)
+      const members = expanded ? [primary, ...others] : [primary]
+      members.forEach((resident, rowIndex) => {
+        rows.push({
+          resident,
+          householdKey: household.key,
+          others,
+          expanded,
+          isOccupant: rowIndex > 0,
+          animationIndex: householdIndex + rowIndex,
+        })
+      })
+    })
+    return rows
+  }, [filteredHouseholds, expandedHouseholdKeys, searchExpandedHouseholdKeys])
+
+  const tipSpotlightResidentRows = visibleResidentTableRows.slice(
+    0,
+    TRY_DEMO_RESIDENTS_SPOTLIGHT_ROW_COUNT,
+  )
+  const tipRestResidentRows = visibleResidentTableRows.slice(
+    TRY_DEMO_RESIDENTS_SPOTLIGHT_ROW_COUNT,
+  )
+
   function toggleHouseholdExpanded(key: string) {
     setExpandedHouseholdKeys((prev) => {
       const next = new Set(prev)
@@ -1410,6 +1453,135 @@ export function AdminResidentsDashboard() {
   const showResidentsErrorBanner =
     residentsBanner?.kind === 'error' && !showOnboardingStartedBanner
 
+  function renderResidentTableRow(row: VisibleResidentTableRow) {
+    const { resident, householdKey, others, expanded, isOccupant, animationIndex } = row
+    const contacts = residentContacts(resident)
+    return (
+      <tr
+        key={resident.id}
+        style={{ animationDelay: `${Math.min(animationIndex, 12) * 30}ms` }}
+        className={[
+          'sa-enter group/row border-b border-[#f3f4f6] last:border-b-0',
+          isOccupant ? 'bg-[#f9fafb] hover:bg-[#f3f4f6]' : 'hover:bg-[#fafafa]',
+        ].join(' ')}
+      >
+        <td className="w-12 px-4 py-4">
+          <div
+            ref={
+              showCheckboxGuide && resident.id === checkboxGuideResidentId
+                ? checkboxGuideTargetRef
+                : undefined
+            }
+            className="inline-flex"
+          >
+            <TableCheckbox
+              aria-label={`Select ${resident.name}`}
+              checked={selectedResidentIds.has(resident.id)}
+              onChange={() => toggleResidentSelected(resident.id)}
+            />
+          </div>
+        </td>
+        <td className="w-[4.5rem] px-2 py-4">
+          <button
+            type="button"
+            aria-label={`Edit ${resident.name}`}
+            onClick={() => setEditingResident(resident)}
+            className="sa-press pointer-events-none inline-flex h-7 items-center justify-center gap-1.5 rounded-[8px] bg-[#F1E4F1] px-2 opacity-0 transition-opacity duration-150 group-hover/row:pointer-events-auto group-hover/row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+          >
+            <img src={editIcon} alt="" className="size-3.5" />
+            <span className="text-[12px] font-medium leading-4 text-[#8B4A8B]">Edit</span>
+          </button>
+        </td>
+        <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
+          <div className={isOccupant ? 'pl-6' : undefined}>
+            <div className="flex min-w-0 flex-col gap-1">
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(residentDetailPath(resident.id), {
+                    state: { from: '/admin/residents' },
+                  })
+                }
+                className="sa-link min-w-0 truncate rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              >
+                {resident.name}
+              </button>
+              {!isOccupant && others.length > 0 ? (
+                searchExpandedHouseholdKeys.has(householdKey) &&
+                !expandedHouseholdKeys.has(householdKey) ? (
+                  <span className="inline-flex w-fit items-center gap-1 text-[12px] font-medium leading-4 text-[#6a7282]">
+                    <OccupantsExpandIcon expanded />
+                    {others.length === 1
+                      ? '1 other occupant'
+                      : `${others.length} other occupants`}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => toggleHouseholdExpanded(householdKey)}
+                    className="admin-quiet-text-action sa-link inline-flex w-fit items-center gap-1 text-[12px]"
+                  >
+                    <OccupantsExpandIcon expanded={expanded} />
+                    {expanded
+                      ? others.length === 1
+                        ? 'Hide other occupant'
+                        : 'Hide other occupants'
+                      : others.length === 1
+                        ? 'Show 1 other occupant'
+                        : `Show ${others.length} other occupants`}
+                  </button>
+                )
+              ) : null}
+              {isOccupant ? (
+                <span className="text-[11px] font-medium leading-4 text-[#9ca3af]">
+                  Other occupant
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </td>
+        <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
+        <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
+          {resident.rentLabel}
+        </td>
+        <td className="px-6 py-4">
+          <PaymentStatusChip status={resident.paymentStatus} />
+        </td>
+        <td className="px-6 py-4">
+          <div className="flex flex-col gap-0.5">
+            {contacts.phones.map((phone) => (
+              <span key={phone} className="text-[13px] leading-5 text-[#0a0a0a]">
+                {phone}
+              </span>
+            ))}
+            {contacts.emails.map((email) => (
+              <span key={email} className="truncate text-[12px] leading-4 text-[#6a7282]">
+                {email}
+              </span>
+            ))}
+            {contacts.phones.length === 0 && contacts.emails.length === 0 ? (
+              <span className="text-[14px] text-[#6a7282]">—</span>
+            ) : null}
+          </div>
+        </td>
+        <td className="px-6 py-4 text-[14px] text-[#6a7282]">
+          {residentOccupancyLabel(resident.status)}
+        </td>
+        <td className="px-6 py-4 align-middle">
+          <TenantActivationStatusChip
+            chip={resolveTenantActivationChip({
+              activationStatus: resident.activationStatus,
+              smsConsentStatus: resident.smsConsentStatus,
+              activationAttemptCount: resident.activationAttemptCount,
+              activationSmsSentAt: resident.activationSmsSentAt,
+            })}
+          />
+        </td>
+      </tr>
+    )
+  }
+
   // Natural height so AdminLayout's scroll region owns vertical scrolling.
   return (
     <main className="px-8 pb-12">
@@ -1590,16 +1762,27 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
               </tr>
             </thead>
-            <tbody>
+            {/*
+              Tip step 9: one stable host for the first five rows (Messages pattern).
+              Remaining rows live in a second tbody so they stay under the scrim.
+            */}
+            <tbody
+              id={TRY_DEMO_SPOTLIGHT_RESIDENTS_ROWS_ID}
+              data-try-demo-spotlight-cluster="1"
+              data-try-demo-residents-ready={loading ? '0' : '1'}
+              data-try-demo-residents-rows={
+                loading ? '0' : String(tipSpotlightResidentRows.length)
+              }
+            >
               {loading ? (
                 <tr>
-                    <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
-              ) : filteredHouseholds.length === 0 ? (
+              ) : visibleResidentTableRows.length === 0 ? (
                 <tr>
-                    <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
@@ -1621,152 +1804,14 @@ export function AdminResidentsDashboard() {
                   </td>
                 </tr>
               ) : (
-                filteredHouseholds.flatMap((household, householdIndex) => {
-                  const primary = household.members[0]
-                  if (!primary) return []
-                  const others = household.members.slice(1)
-                  const expanded = others.length > 0 && isHouseholdExpanded(household.key)
-                  const rows: ResidentRow[] = expanded
-                    ? [primary, ...others]
-                    : [primary]
-
-                  return rows.map((resident, rowIndex) => {
-                    const isOccupant = rowIndex > 0
-                    const contacts = residentContacts(resident)
-                    const animationIndex = householdIndex + rowIndex
-                    return (
-                      <tr
-                        key={resident.id}
-                        style={{ animationDelay: `${Math.min(animationIndex, 12) * 30}ms` }}
-                        className={[
-                          'sa-enter group/row border-b border-[#f3f4f6] last:border-b-0',
-                          isOccupant ? 'bg-[#f9fafb] hover:bg-[#f3f4f6]' : 'hover:bg-[#fafafa]',
-                        ].join(' ')}
-                      >
-                        <td className="w-12 px-4 py-4">
-                          <div
-                            ref={
-                              showCheckboxGuide && resident.id === checkboxGuideResidentId
-                                ? checkboxGuideTargetRef
-                                : undefined
-                            }
-                            className="inline-flex"
-                          >
-                            <TableCheckbox
-                              aria-label={`Select ${resident.name}`}
-                              checked={selectedResidentIds.has(resident.id)}
-                              onChange={() => toggleResidentSelected(resident.id)}
-                            />
-                          </div>
-                        </td>
-                        <td className="w-[4.5rem] px-2 py-4">
-                          <button
-                            type="button"
-                            aria-label={`Edit ${resident.name}`}
-                            onClick={() => setEditingResident(resident)}
-                            className="sa-press pointer-events-none inline-flex h-7 items-center justify-center gap-1.5 rounded-[8px] bg-[#F1E4F1] px-2 opacity-0 transition-opacity duration-150 group-hover/row:pointer-events-auto group-hover/row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
-                          >
-                            <img src={editIcon} alt="" className="size-3.5" />
-                            <span className="text-[12px] font-medium leading-4 text-[#8B4A8B]">
-                              Edit
-                            </span>
-                          </button>
-                        </td>
-                        <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                          <div className={isOccupant ? 'pl-6' : undefined}>
-                            <div className="flex min-w-0 flex-col gap-1">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  navigate(residentDetailPath(resident.id), {
-                                    state: { from: '/admin/residents' },
-                                  })
-                                }
-                                className="sa-link min-w-0 truncate rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                              >
-                                {resident.name}
-                              </button>
-                              {!isOccupant && others.length > 0 ? (
-                                searchExpandedHouseholdKeys.has(household.key) &&
-                                !expandedHouseholdKeys.has(household.key) ? (
-                                  <span className="inline-flex w-fit items-center gap-1 text-[12px] font-medium leading-4 text-[#6a7282]">
-                                    <OccupantsExpandIcon expanded />
-                                    {others.length === 1
-                                      ? '1 other occupant'
-                                      : `${others.length} other occupants`}
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    aria-expanded={expanded}
-                                    onClick={() => toggleHouseholdExpanded(household.key)}
-                                    className="admin-quiet-text-action sa-link inline-flex w-fit items-center gap-1 text-[12px]"
-                                  >
-                                    <OccupantsExpandIcon expanded={expanded} />
-                                    {expanded
-                                      ? others.length === 1
-                                        ? 'Hide other occupant'
-                                        : 'Hide other occupants'
-                                      : others.length === 1
-                                        ? 'Show 1 other occupant'
-                                        : `Show ${others.length} other occupants`}
-                                  </button>
-                                )
-                              ) : null}
-                              {isOccupant ? (
-                                <span className="text-[11px] font-medium leading-4 text-[#9ca3af]">
-                                  Other occupant
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
-                        <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
-                          {resident.rentLabel}
-                        </td>
-                        <td className="px-6 py-4">
-                          <PaymentStatusChip status={resident.paymentStatus} />
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-0.5">
-                            {contacts.phones.map((phone) => (
-                              <span key={phone} className="text-[13px] leading-5 text-[#0a0a0a]">
-                                {phone}
-                              </span>
-                            ))}
-                            {contacts.emails.map((email) => (
-                              <span
-                                key={email}
-                                className="truncate text-[12px] leading-4 text-[#6a7282]"
-                              >
-                                {email}
-                              </span>
-                            ))}
-                            {contacts.phones.length === 0 && contacts.emails.length === 0 ? (
-                              <span className="text-[14px] text-[#6a7282]">—</span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-[14px] text-[#6a7282]">
-                          {residentOccupancyLabel(resident.status)}
-                        </td>
-                        <td className="px-6 py-4 align-middle">
-                          <TenantActivationStatusChip
-                            chip={resolveTenantActivationChip({
-                              activationStatus: resident.activationStatus,
-                              smsConsentStatus: resident.smsConsentStatus,
-                              activationAttemptCount: resident.activationAttemptCount,
-                              activationSmsSentAt: resident.activationSmsSentAt,
-                            })}
-                          />
-                        </td>
-                      </tr>
-                    )
-                  })
-                })
+                tipSpotlightResidentRows.map((row) => renderResidentTableRow(row))
               )}
             </tbody>
+            {!loading && tipRestResidentRows.length > 0 ? (
+              <tbody>
+                {tipRestResidentRows.map((row) => renderResidentTableRow(row))}
+              </tbody>
+            ) : null}
           </table>
         </div>
       </section>

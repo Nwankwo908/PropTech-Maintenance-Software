@@ -39,6 +39,10 @@ import {
   vendorCapacityChipVisualClasses,
 } from '@/lib/vendorStatusChip'
 import {
+  TRY_DEMO_SPOTLIGHT_VENDORS_ROWS_ID,
+  TRY_DEMO_VENDORS_SPOTLIGHT_ROW_COUNT,
+} from '@/lib/tryDemoAttentionGuide'
+import {
   consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
@@ -935,6 +939,149 @@ export function AdminVendorsDashboard() {
     )
   }
 
+  const tipSpotlightVendorRows = filteredVendors.slice(0, TRY_DEMO_VENDORS_SPOTLIGHT_ROW_COUNT)
+  const tipRestVendorRows = filteredVendors.slice(TRY_DEMO_VENDORS_SPOTLIGHT_ROW_COUNT)
+
+  function renderVendorTableRow(vendor: VendorRow, index: number) {
+    return (
+      <tr
+        key={vendor.id}
+        style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
+        className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
+      >
+        <td className="w-12 px-4 py-4">
+          <div
+            ref={
+              showCheckboxGuide && vendor.id === checkboxGuideVendorId
+                ? checkboxGuideTargetRef
+                : undefined
+            }
+            className="inline-flex"
+          >
+            <TableCheckbox
+              aria-label={`Select ${vendor.name}`}
+              checked={selectedVendorIds.has(vendor.id)}
+              onChange={() => toggleVendorSelected(vendor.id)}
+            />
+          </div>
+        </td>
+        <td className="w-10 px-2 py-4 text-center">
+          {vendor.preferredEmergency ? (
+            <span
+              className="inline-flex items-center justify-center"
+              title="Preferred vendor"
+              aria-label={`${vendor.name} is a preferred vendor`}
+            >
+              <svg
+                className="size-4 text-[#186179]"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden
+              >
+                <path
+                  d="M3.5 8.5L6.5 11.5L12.5 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          ) : (
+            <span className="sr-only">{vendor.name} is not a preferred vendor</span>
+          )}
+        </td>
+        <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
+          <Link
+            to={vendorDetailPath(vendor.id)}
+            className="sa-link rounded-[4px] text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          >
+            {vendor.name}
+          </Link>
+        </td>
+        <td className="px-6 py-4 text-[14px] text-[#6a7282]">{vendor.trade}</td>
+        <td className="px-6 py-4 align-top">
+          {(() => {
+            const blocked = vendorBlockedFromAutoAssignBySettings({
+              onboardedFromExternal: vendor.onboardedFromExternal,
+              marketplacePreference,
+            })
+            return (
+              <div>
+                <p className="text-[14px] text-[#0a0a0a]">
+                  {vendorSourceLabel(vendor.onboardedFromExternal)}
+                </p>
+                {blocked ? (
+                  <p
+                    className="mt-0.5 text-[12px] leading-4 text-[#6a7282]"
+                    title={VENDOR_SOURCE_SETTINGS_HINT}
+                  >
+                    Cannot assign.{' '}
+                    <Link
+                      to={adminNavPath('settings_organization')}
+                      className="sa-link font-medium text-[#186179] hover:underline"
+                    >
+                      Settings
+                    </Link>
+                  </p>
+                ) : null}
+              </div>
+            )
+          })()}
+        </td>
+        <td className="px-6 py-4">
+          {vendor.rating != null ? (
+            <span className="inline-flex items-center gap-1.5 text-[14px] text-[#0a0a0a]">
+              <span className="text-[#f59e0b]">
+                <StarIcon />
+              </span>
+              <span className="tabular-nums">
+                {formatRating(vendor.rating, vendor.reviewCount)}
+              </span>
+            </span>
+          ) : (
+            <span className="text-[14px] text-[#6a7282]">—</span>
+          )}
+        </td>
+        <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
+          {vendor.completedJobs}
+        </td>
+        <td
+          className={[
+            'px-6 py-4 text-[14px] tabular-nums',
+            vendor.avgResponseMinutes == null ? 'text-[#6a7282]' : 'text-[#0a0a0a]',
+          ].join(' ')}
+        >
+          {formatAvgResponse(vendor.avgResponseMinutes)}
+        </td>
+        <td className="px-6 py-4 align-middle">
+          {(() => {
+            const chip = resolveVendorCapacityChip({
+              verificationStatus: verificationByVendor.get(vendor.id),
+              vendorActive: vendor.active,
+              availability: availabilityByVendor.get(vendor.id),
+              rosterStatus: vendor.rosterStatus,
+              onboardingOverriddenAt: vendor.onboardingOverriddenAt,
+            })
+            const styles = vendorCapacityChipVisualClasses(chip.status)
+            return (
+              <span
+                title={chip.detail}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium ${styles.pill}`}
+              >
+                <span
+                  className={`inline-block size-2 shrink-0 rounded-full ${styles.dot}`}
+                  aria-hidden
+                />
+                {chip.label}
+              </span>
+            )
+          })()}
+        </td>
+      </tr>
+    )
+  }
+
   return (
     <main className="px-8 pb-12">
       <SetupSuccessCheckboxGuide
@@ -1110,7 +1257,7 @@ export function AdminVendorsDashboard() {
       ) : null}
 
       <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <div className="overflow-x-auto overflow-y-clip">
+        <div className="overflow-x-auto overscroll-x-contain">
           <table className="min-w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-[#e5e7eb]">
@@ -1145,7 +1292,18 @@ export function AdminVendorsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
               </tr>
             </thead>
-            <tbody>
+            {/*
+              Tip step 10: one stable host for the first five rows (Residents pattern).
+              Remaining rows live in a second tbody so they stay under the scrim.
+            */}
+            <tbody
+              id={TRY_DEMO_SPOTLIGHT_VENDORS_ROWS_ID}
+              data-try-demo-spotlight-cluster="1"
+              data-try-demo-vendors-ready={loading ? '0' : '1'}
+              data-try-demo-vendors-rows={
+                loading ? '0' : String(tipSpotlightVendorRows.length)
+              }
+            >
               {loading ? (
                 <tr>
                   <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
@@ -1161,145 +1319,18 @@ export function AdminVendorsDashboard() {
                   </td>
                 </tr>
               ) : (
-                filteredVendors.map((vendor, index) => (
-                  <tr
-                    key={vendor.id}
-                    style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
-                    className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
-                  >
-                    <td className="w-12 px-4 py-4">
-                      <div
-                        ref={
-                          showCheckboxGuide && vendor.id === checkboxGuideVendorId
-                            ? checkboxGuideTargetRef
-                            : undefined
-                        }
-                        className="inline-flex"
-                      >
-                        <TableCheckbox
-                          aria-label={`Select ${vendor.name}`}
-                          checked={selectedVendorIds.has(vendor.id)}
-                          onChange={() => toggleVendorSelected(vendor.id)}
-                        />
-                      </div>
-                    </td>
-                    <td className="w-10 px-2 py-4 text-center">
-                      {vendor.preferredEmergency ? (
-                        <span
-                          className="inline-flex items-center justify-center"
-                          title="Preferred vendor"
-                          aria-label={`${vendor.name} is a preferred vendor`}
-                        >
-                          <svg
-                            className="size-4 text-[#186179]"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            aria-hidden
-                          >
-                            <path
-                              d="M3.5 8.5L6.5 11.5L12.5 4.5"
-                              stroke="currentColor"
-                              strokeWidth="1.8"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </span>
-                      ) : (
-                        <span className="sr-only">{vendor.name} is not a preferred vendor</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                      <Link
-                        to={vendorDetailPath(vendor.id)}
-                        className="sa-link rounded-[4px] text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                      >
-                        {vendor.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-4 text-[14px] text-[#6a7282]">{vendor.trade}</td>
-                    <td className="px-6 py-4 align-top">
-                      {(() => {
-                        const blocked = vendorBlockedFromAutoAssignBySettings({
-                          onboardedFromExternal: vendor.onboardedFromExternal,
-                          marketplacePreference,
-                        })
-                        return (
-                          <div>
-                            <p className="text-[14px] text-[#0a0a0a]">
-                              {vendorSourceLabel(vendor.onboardedFromExternal)}
-                            </p>
-                            {blocked ? (
-                              <p
-                                className="mt-0.5 text-[12px] leading-4 text-[#6a7282]"
-                                title={VENDOR_SOURCE_SETTINGS_HINT}
-                              >
-                                Cannot assign.{' '}
-                                <Link
-                                  to={adminNavPath('settings_organization')}
-                                  className="sa-link font-medium text-[#186179] hover:underline"
-                                >
-                                  Settings
-                                </Link>
-                              </p>
-                            ) : null}
-                          </div>
-                        )
-                      })()}
-                    </td>
-                    <td className="px-6 py-4">
-                      {vendor.rating != null ? (
-                        <span className="inline-flex items-center gap-1.5 text-[14px] text-[#0a0a0a]">
-                          <span className="text-[#f59e0b]">
-                            <StarIcon />
-                          </span>
-                          <span className="tabular-nums">
-                            {formatRating(vendor.rating, vendor.reviewCount)}
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="text-[14px] text-[#6a7282]">—</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
-                      {vendor.completedJobs}
-                    </td>
-                    <td
-                      className={[
-                        'px-6 py-4 text-[14px] tabular-nums',
-                        vendor.avgResponseMinutes == null ? 'text-[#6a7282]' : 'text-[#0a0a0a]',
-                      ].join(' ')}
-                    >
-                      {formatAvgResponse(vendor.avgResponseMinutes)}
-                    </td>
-                    <td className="px-6 py-4 align-middle">
-                      {(() => {
-                        const chip = resolveVendorCapacityChip({
-                          verificationStatus: verificationByVendor.get(vendor.id),
-                          vendorActive: vendor.active,
-                          availability: availabilityByVendor.get(vendor.id),
-                          rosterStatus: vendor.rosterStatus,
-                          onboardingOverriddenAt: vendor.onboardingOverriddenAt,
-                        })
-                        const styles = vendorCapacityChipVisualClasses(chip.status)
-                        return (
-                          <span
-                            title={chip.detail}
-                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium ${styles.pill}`}
-                          >
-                            <span
-                              className={`inline-block size-2 shrink-0 rounded-full ${styles.dot}`}
-                              aria-hidden
-                            />
-                            {chip.label}
-                          </span>
-                        )
-                      })()}
-                    </td>
-                  </tr>
-                ))
+                tipSpotlightVendorRows.map((vendor, index) =>
+                  renderVendorTableRow(vendor, index),
+                )
               )}
             </tbody>
+            {!loading && tipRestVendorRows.length > 0 ? (
+              <tbody>
+                {tipRestVendorRows.map((vendor, index) =>
+                  renderVendorTableRow(vendor, index + TRY_DEMO_VENDORS_SPOTLIGHT_ROW_COUNT),
+                )}
+              </tbody>
+            ) : null}
           </table>
         </div>
       </section>

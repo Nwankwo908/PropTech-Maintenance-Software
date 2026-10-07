@@ -72,6 +72,16 @@ export function isHiddenOpsHeartbeatTimelineEventType(
   return HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
 }
 
+/** All event types the activity feed should not fetch (PostgREST `not in` list). */
+export function landlordFeedHiddenEventTypes(): string[] {
+  return [
+    ...HIDDEN_PIPELINE_TIMELINE_EVENT_TYPES,
+    ...HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES,
+    ...HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES,
+    ...HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES,
+  ].sort()
+}
+
 /** Hide engine-stage labels when a timeline row only has the plumbing copy. */
 export function isVisibleLandlordTimelineDescription(description: string | null | undefined): boolean {
   return !HIDDEN_PIPELINE_TIMELINE_LABELS.has((description ?? '').trim().toLowerCase())

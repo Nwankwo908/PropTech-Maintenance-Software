@@ -1,13 +1,12 @@
 import { useEffect, useId } from 'react'
-import { Link } from 'react-router-dom'
 import {
-  ADMIN_ATTENTION_ACTION_CLASS,
   ADMIN_RAIL_FOOTER_CLASS,
   ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
 } from '@/lib/adminRightRail'
+import { NeedsAttentionRow } from '@/components/NeedsAttentionRowAction'
 
 export type AwaitingDecisionItem = {
   key: string
@@ -96,7 +95,14 @@ export function AwaitingDecisionListRail({
           ) : (
             <div className="flex flex-col divide-y divide-[#f3f4f6]">
               {items.map((item) => (
-                <div key={item.key} className="flex items-center gap-4 px-6 py-4">
+                <NeedsAttentionRow
+                  key={item.key}
+                  actionLabel={item.actionLabel}
+                  actionTo={item.actionTo}
+                  onAction={item.onAction ? () => onItemAction(item) : undefined}
+                  onNavigate={onClose}
+                  className="items-center gap-4 px-6 py-4"
+                >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
@@ -120,32 +126,7 @@ export function AwaitingDecisionListRail({
                     ) : null}
                     <p className="text-[12px] leading-4 text-[#6a7282]">{item.meta}</p>
                   </div>
-                  {item.onAction ? (
-                    <button
-                      type="button"
-                      onClick={() => onItemAction(item)}
-                      className={
-                        /assign\s*vendor/i.test(item.actionLabel)
-                          ? 'sa-press shrink-0 rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90'
-                          : ADMIN_ATTENTION_ACTION_CLASS
-                      }
-                    >
-                      {item.actionLabel} →
-                    </button>
-                  ) : (
-                    <Link
-                      to={item.actionTo ?? '/admin/workflows'}
-                      onClick={() => onClose()}
-                      className={
-                        /assign\s*vendor/i.test(item.actionLabel ?? '')
-                          ? 'sa-press shrink-0 rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90'
-                          : ADMIN_ATTENTION_ACTION_CLASS
-                      }
-                    >
-                      {item.actionLabel} →
-                    </Link>
-                  )}
-                </div>
+                </NeedsAttentionRow>
               ))}
             </div>
           )}

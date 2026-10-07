@@ -875,10 +875,6 @@ export function useOnboardingWizard() {
     trackProductEventOnce('signup_started', 'onboarding')
   }
 
-  async function handleStartScratch() {
-    await beginOnboarding('guided', 'account_setup')
-  }
-
   async function handleStartFastTrack() {
     await beginOnboarding('fast_track', 'document_upload')
   }
@@ -1528,7 +1524,6 @@ export function useOnboardingWizard() {
     // actions
     goTo,
     goBack: handleBack,
-    handleStartScratch,
     handleStartFastTrack,
     handleBack,
     refreshCounts,

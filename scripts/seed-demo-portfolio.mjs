@@ -20,6 +20,7 @@ const SEED_FILES = [
   'supabase/seed_demo_communication.sql',
   'supabase/seed_demo_preventive_maintenance.sql',
   'supabase/seed_demo_maintenance_spend.sql',
+  'supabase/seed_demo_ulo_activity_feed_patch.sql',
 ]
 
 function runSeed(relativePath) {

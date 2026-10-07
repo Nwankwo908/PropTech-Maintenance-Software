@@ -486,12 +486,12 @@ function PrimaryLink({
 }
 
 const SECONDARY_BUTTON_CLASS = [
-  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#70ABC5] bg-[#70ABC5] px-7 py-2.5 leading-none',
-  'text-sm font-semibold text-white',
-  'transition-[transform,box-shadow,border-color,background-color] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
-  'hover:border-[#5f9ab4] hover:bg-[#5f9ab4] hover:shadow-[0_4px_14px_rgba(112,171,197,0.35)] hover:-translate-y-0.5',
-  'active:translate-y-px active:scale-[0.98]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#70ABC5]/50 focus-visible:ring-offset-2',
+  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#d1d5db] bg-white px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-[#364153]',
+  'transition-[transform,box-shadow,border-color,background-color,color] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
+  'hover:border-[#9ca3af] hover:bg-[#f9fafb] hover:shadow-[0_4px_14px_rgba(16,24,40,0.08)] hover:-translate-y-0.5',
+  'active:translate-y-px active:scale-[0.98] active:bg-[#f3f4f6]',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d1d5db] focus-visible:ring-offset-2',
 ].join(' ')
 
 const SECONDARY_BUTTON_OUTLINE_CLASS = [

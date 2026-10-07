@@ -2,8 +2,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
-import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
+import { landlordUsesLimitedAlphaSurface } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { TRY_DEMO_SPOTLIGHT_MESSAGES_KPI_ID } from '@/lib/tryDemoAttentionGuide'
 import {
   mutateSearchParams,
   writeStringParam,
@@ -688,38 +689,6 @@ function MessageLaneTabList({
   )
 }
 
-function MessageLaneRows({
-  rows,
-  empty,
-  selectedIds,
-  onToggleSelect,
-  onOpen,
-}: {
-  rows: Conversation[]
-  empty: string
-  selectedIds: Set<string>
-  onToggleSelect: (id: string) => void
-  onOpen: (id: string) => void
-}) {
-  if (rows.length === 0) {
-    return <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">{empty}</p>
-  }
-  return (
-    <>
-      {rows.map((c, index) => (
-        <ConversationListRow
-          key={c.id}
-          conversation={c}
-          index={index}
-          selected={selectedIds.has(c.id)}
-          onToggleSelect={onToggleSelect}
-          onOpen={onOpen}
-        />
-      ))}
-    </>
-  )
-}
-
 export function AdminCommunicationDashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -1220,7 +1189,7 @@ export function AdminCommunicationDashboard() {
         }
       }
 
-      const mapped: Conversation[] = scopedRows.map((r) => {
+      const mapped: Conversation[] = scopedRows.flatMap((r) => {
         const id = asString(r.id)
         let resident = residentById.get(asString(r.resident_id))
         const phoneDigits = inboxPhoneDigits(asString(r.external_phone_number))
@@ -1276,6 +1245,9 @@ export function AdminCommunicationDashboard() {
         const latest = latestMessageByConversation.get(id)
         const residentRating = ticketId ? ratingByTicketId.get(ticketId) ?? null : null
         const awaitingRating = Boolean(ticketId && awaitingRatingTicketIds.has(ticketId))
+        // Empty SMS shells (no messages) show "No messages yet" and crowd the
+        // tip top-5 — hide them unless we have feedback/rating context to show.
+        if (!latest && residentRating == null && !awaitingRating) return []
         const status = asString(r.status) || 'open'
         const statusLabel = conversationStatusLabel(
           asString(r.conversation_type),
@@ -1305,26 +1277,28 @@ export function AdminCommunicationDashboard() {
           )
         }
 
-        return {
-          id,
-          name,
-          kind,
-          context,
-          preview,
-          status: statusLabel,
-          unread: isCommunicationConversationUnread({
-            landlordId,
-            conversationId: id,
-            lastActivityMs: lastActivity,
-            activityLooksUnread,
-          }),
-          lastActivity,
-          threadLane: classifyLimitedAlphaMessageLane({
-            hasMaintenanceRequest: Boolean(ticketId),
-            hasOnboardingCopy: onboardingCopyConversationIds.has(id),
-            hasNonOnboardingInbound: nonOnboardingInboundConversationIds.has(id),
-          }),
-        }
+        return [
+          {
+            id,
+            name,
+            kind,
+            context,
+            preview,
+            status: statusLabel,
+            unread: isCommunicationConversationUnread({
+              landlordId,
+              conversationId: id,
+              lastActivityMs: lastActivity,
+              activityLooksUnread,
+            }),
+            lastActivity,
+            threadLane: classifyLimitedAlphaMessageLane({
+              hasMaintenanceRequest: Boolean(ticketId),
+              hasOnboardingCopy: onboardingCopyConversationIds.has(id),
+              hasNonOnboardingInbound: nonOnboardingInboundConversationIds.has(id),
+            }),
+          },
+        ]
       })
 
       // Guided onboarding: never merge synthetic workflow / leftover import threads.
@@ -1452,7 +1426,8 @@ export function AdminCommunicationDashboard() {
     })
   }, [searchParams])
 
-  const splitOnboardingFromRequests = isLimitedAlphaLandlord(getActiveLandlordId())
+  // Demo follows Limited Alpha Messages lanes; data stays on DEMO_LANDLORD_ID.
+  const splitOnboardingFromRequests = landlordUsesLimitedAlphaSurface(getActiveLandlordId())
 
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
@@ -1602,84 +1577,133 @@ export function AdminCommunicationDashboard() {
       ) : null}
 
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
-      <div className="py-6">
-        <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-          Messages
-        </h1>
-        <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          {splitOnboardingFromRequests
-            ? 'Switch between maintenance requests and onboarding texts.'
-            : 'See all resident and vendor conversations in one place.'}
-        </p>
-      </div>
-
-      {error ? (
-        <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
-          {error}
+      {/*
+        Tip step 6: one stable host from title through the first five threads.
+        Dual KPI/threads targets kept settling on KPIs alone after route changes.
+      */}
+      <div
+        id={TRY_DEMO_SPOTLIGHT_MESSAGES_KPI_ID}
+        data-try-demo-spotlight-cluster="1"
+        data-try-demo-messages-ready={loading ? '0' : '1'}
+        data-try-demo-messages-rows={loading ? '0' : String(Math.min(5, visibleThreads.length))}
+      >
+        <div className="py-6">
+          <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
+            Messages
+          </h1>
+          <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+            {splitOnboardingFromRequests
+              ? 'Switch between maintenance requests and onboarding texts.'
+              : 'See all resident and vendor conversations in one place.'}
+          </p>
         </div>
-      ) : null}
-      {deleteError ? (
-        <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
-          Could not delete selected conversations: {deleteError}
+
+        <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+          {metrics == null ? (
+            <>
+              <KpiCardSkeleton />
+              <KpiCardSkeleton />
+              <KpiCardSkeleton />
+              <KpiCardSkeleton />
+            </>
+          ) : (
+            <>
+              <KpiCard
+                label="Open Conversations"
+                value={String(metrics.openConversations)}
+                delta={metrics.openDelta}
+                goodWhenUp={false}
+                caption={`Compared to 4 weeks ago · ${updatedCaption}`}
+              />
+              <KpiCard
+                label="Unread Messages"
+                value={String(metrics.unreadMessages)}
+                delta={metrics.unreadDelta}
+                goodWhenUp={false}
+                caption={`Compared to 4 weeks ago · ${updatedCaption}`}
+              />
+              <KpiCard
+                label="Failed Deliveries"
+                value={String(metrics.failedDeliveries)}
+                delta={metrics.failedDelta}
+                goodWhenUp={false}
+                caption={`vs previous 4 weeks · ${updatedCaption}`}
+              />
+              <KpiCard
+                label="Response Rate"
+                value={metrics.responseRate == null ? '—' : `${metrics.responseRate}%`}
+                delta={metrics.responseRateDelta}
+                deltaFormatter={formatSignedPercent}
+                goodWhenUp={true}
+                caption={`Inbound replies in 24h · vs prior 4 weeks · ${updatedCaption}`}
+                title={MESSAGE_RESPONSE_RATE_TOOLTIP}
+              />
+            </>
+          )}
         </div>
-      ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
-        {metrics == null ? (
-          <>
-            <KpiCardSkeleton />
-            <KpiCardSkeleton />
-            <KpiCardSkeleton />
-            <KpiCardSkeleton />
-          </>
-        ) : (
-          <>
-            <KpiCard
-              label="Open Conversations"
-              value={String(metrics.openConversations)}
-              delta={metrics.openDelta}
-              goodWhenUp={false}
-              caption={`Compared to 4 weeks ago · ${updatedCaption}`}
-            />
-            <KpiCard
-              label="Unread Messages"
-              value={String(metrics.unreadMessages)}
-              delta={metrics.unreadDelta}
-              goodWhenUp={false}
-              caption={`Compared to 4 weeks ago · ${updatedCaption}`}
-            />
-            <KpiCard
-              label="Failed Deliveries"
-              value={String(metrics.failedDeliveries)}
-              delta={metrics.failedDelta}
-              goodWhenUp={false}
-              caption={`vs previous 4 weeks · ${updatedCaption}`}
-            />
-            <KpiCard
-              label="Response Rate"
-              value={metrics.responseRate == null ? '—' : `${metrics.responseRate}%`}
-              delta={metrics.responseRateDelta}
-              deltaFormatter={formatSignedPercent}
-              goodWhenUp={true}
-              caption={`Inbound replies in 24h · vs prior 4 weeks · ${updatedCaption}`}
-              title={MESSAGE_RESPONSE_RATE_TOOLTIP}
-            />
-          </>
-        )}
-      </div>
+        {error ? (
+          <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
+            {error}
+          </div>
+        ) : null}
+        {deleteError ? (
+          <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
+            Could not delete selected conversations: {deleteError}
+          </div>
+        ) : null}
 
-      <section className="sa-surface flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        {splitOnboardingFromRequests ? (
-          <MessageLaneTabList
-            active={messageLaneTab}
-            onChange={setMessageLaneTab}
-            requestCount={requestThreads.length}
-            onboardingCount={onboardingThreads.length}
-            participantFilter={participantFilter}
-            onParticipantFilterChange={setParticipantFilter}
-            trailing={
-              selectedCount > 0 ? (
-                <>
+        <section
+          className={[
+            'sa-surface flex min-w-0 flex-col border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
+            !loading && visibleThreads.length > 5
+              ? 'rounded-t-[10px] rounded-b-none border-b-0'
+              : 'rounded-[10px]',
+          ].join(' ')}
+        >
+          {splitOnboardingFromRequests ? (
+            <MessageLaneTabList
+              active={messageLaneTab}
+              onChange={setMessageLaneTab}
+              requestCount={requestThreads.length}
+              onboardingCount={onboardingThreads.length}
+              participantFilter={participantFilter}
+              onParticipantFilterChange={setParticipantFilter}
+              trailing={
+                selectedCount > 0 ? (
+                  <>
+                    <span className="text-[13px] font-medium text-[#364153]">
+                      {selectedCount} selected
+                    </span>
+                    <button
+                      type="button"
+                      disabled={deleteSaving}
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      className="sa-press inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[13px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      <SelectionTrashIcon />
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deleteSaving}
+                      onClick={() => setSelectedIds(new Set())}
+                      className="sa-press inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[13px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      Clear
+                    </button>
+                  </>
+                ) : null
+              }
+            />
+          ) : (
+            <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-3">
+              <ParticipantFilterChip
+                value={participantFilter}
+                onChange={setParticipantFilter}
+              />
+              {selectedCount > 0 ? (
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   <span className="text-[13px] font-medium text-[#364153]">
                     {selectedCount} selected
                   </span>
@@ -1687,7 +1711,7 @@ export function AdminCommunicationDashboard() {
                     type="button"
                     disabled={deleteSaving}
                     onClick={() => setDeleteConfirmOpen(true)}
-                    className="sa-press inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[13px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                    className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                   >
                     <SelectionTrashIcon />
                     Delete
@@ -1696,103 +1720,83 @@ export function AdminCommunicationDashboard() {
                     type="button"
                     disabled={deleteSaving}
                     onClick={() => setSelectedIds(new Set())}
-                    className="sa-press inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[13px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                    className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                   >
                     Clear
                   </button>
-                </>
-              ) : null
-            }
-          />
-        ) : (
-          <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-3">
-            <ParticipantFilterChip
-              value={participantFilter}
-              onChange={setParticipantFilter}
-            />
-            {selectedCount > 0 ? (
-              <div className="ml-auto flex shrink-0 items-center gap-2">
-                <span className="text-[13px] font-medium text-[#364153]">
-                  {selectedCount} selected
-                </span>
-                <button
-                  type="button"
-                  disabled={deleteSaving}
-                  onClick={() => setDeleteConfirmOpen(true)}
-                  className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <SelectionTrashIcon />
-                  Delete
-                </button>
-                <button
-                  type="button"
-                  disabled={deleteSaving}
-                  onClick={() => setSelectedIds(new Set())}
-                  className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-                >
-                  Clear
-                </button>
-              </div>
-            ) : null}
-          </div>
-        )}
-        <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-2.5">
-          <div className="flex size-9 items-center justify-center">
-            <TableCheckbox
-              aria-label="Select all visible conversations"
-              disabled={loading || visibleThreads.length === 0}
-              checked={allFilteredSelected}
-              indeterminate={someFilteredSelected}
-              onChange={toggleAllFilteredSelected}
-            />
-          </div>
-          <span className="text-[12px] font-medium text-[#6a7282]">Select all</span>
-        </div>
-
-        <div className="divide-y divide-[#f3f4f6]">
-          {loading ? (
-            <p className="px-6 py-10 text-center text-[13px] text-[#6a7282]">Loading…</p>
-          ) : filtered.length === 0 ? (
-            <div className="px-6 py-12 text-center">
-              <p className="text-[14px] font-medium text-[#0a0a0a]">
-                {conversations.length === 0
-                  ? 'No conversations yet.'
-                  : 'Nothing matches this filter.'}
-              </p>
-              <p className="mt-1 text-[13px] text-[#6a7282]">
-                {conversations.length === 0
-                  ? splitOnboardingFromRequests
-                    ? 'Tenant onboarding and maintenance request threads will appear under their tabs.'
-                    : 'Tenant and vendor messages will appear here as they come in.'
-                  : 'Try a different filter to see more conversations.'}
-              </p>
+                </div>
+              ) : null}
             </div>
-          ) : splitOnboardingFromRequests ? (
-            <MessageLaneRows
-              rows={laneThreads}
-              empty={
-                messageLaneTab === 'onboarding'
+          )}
+          <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-2.5">
+            <div className="flex size-9 items-center justify-center">
+              <TableCheckbox
+                aria-label="Select all visible conversations"
+                disabled={loading || visibleThreads.length === 0}
+                checked={allFilteredSelected}
+                indeterminate={someFilteredSelected}
+                onChange={toggleAllFilteredSelected}
+              />
+            </div>
+            <span className="text-[12px] font-medium text-[#6a7282]">Select all</span>
+          </div>
+
+          <div className="divide-y divide-[#f3f4f6]">
+            {loading ? (
+              <p className="px-6 py-10 text-center text-[13px] text-[#6a7282]">Loading…</p>
+            ) : filtered.length === 0 ? (
+              <div className="px-6 py-12 text-center">
+                <p className="text-[14px] font-medium text-[#0a0a0a]">
+                  {conversations.length === 0
+                    ? 'No conversations yet.'
+                    : 'Nothing matches this filter.'}
+                </p>
+                <p className="mt-1 text-[13px] text-[#6a7282]">
+                  {conversations.length === 0
+                    ? splitOnboardingFromRequests
+                      ? 'Tenant onboarding and maintenance request threads will appear under their tabs.'
+                      : 'Tenant and vendor messages will appear here as they come in.'
+                    : 'Try a different filter to see more conversations.'}
+                </p>
+              </div>
+            ) : splitOnboardingFromRequests && laneThreads.length === 0 ? (
+              <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
+                {messageLaneTab === 'onboarding'
                   ? 'No onboarding threads.'
-                  : 'No maintenance request threads.'
-              }
-              selectedIds={selectedIds}
-              onToggleSelect={toggleConversationSelected}
-              onOpen={openConversation}
-            />
-          ) : (
-            filtered.map((c, index) => (
+                  : 'No maintenance request threads.'}
+              </p>
+            ) : (
+              visibleThreads.slice(0, 5).map((c, index) => (
+                <ConversationListRow
+                  key={c.id}
+                  conversation={c}
+                  index={index}
+                  selected={selectedIds.has(c.id)}
+                  onToggleSelect={toggleConversationSelected}
+                  onOpen={openConversation}
+                />
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      {!loading && visibleThreads.length > 5 ? (
+        <div className="sa-surface -mt-px flex min-w-0 flex-col rounded-b-[10px] rounded-t-none border border-t-0 border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+          <div className="divide-y divide-[#f3f4f6]">
+            {visibleThreads.slice(5).map((c, index) => (
               <ConversationListRow
                 key={c.id}
                 conversation={c}
-                index={index}
+                index={index + 5}
                 selected={selectedIds.has(c.id)}
                 onToggleSelect={toggleConversationSelected}
                 onOpen={openConversation}
               />
-            ))
-          )}
+            ))}
+          </div>
         </div>
-      </section>
+      ) : null}
       <ConversationMonitoringModal
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}

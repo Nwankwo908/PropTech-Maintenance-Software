@@ -7,7 +7,6 @@ export const ADMIN_CORE_ALLOWED_EMAILS = [
 /** Demo / empty-onboarding landlord portal accounts (client admin login only). */
 export const ADMIN_DEMO_ALLOWED_EMAILS = [
   'demo@ulohome.io',
-  'richard@orangegroveproperties.com',
   'limitedalpha1@ulohome.io',
   'limitedalpha2@ulohome.io',
 ] as const
@@ -21,6 +20,7 @@ export const ADMIN_PRODUCTION_ALLOWED_EMAILS = [
   'otbpictures12@gmail.com',
   'nwankwo908@gmail.com',
   'bfamiloni@gmail.com',
+  'adesanmi.ogunfowora@gmail.com',
 ] as const
 
 export const ADMIN_LOGIN_EMAIL_DOMAIN = 'property-admin.auth.local'

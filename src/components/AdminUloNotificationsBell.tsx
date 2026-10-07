@@ -11,6 +11,12 @@ import { fetchRecentPropertyOperationsEvents, type PropertyOperationsTimelineEve
 import { listPropertiesForLandlord } from '@/lib/properties'
 import { buildPropertyIdByBuilding } from '@/lib/propertyRoutes'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  isTryDemoUloActivityGuideStep,
+  readTryDemoAttentionGuideActiveStep,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT,
+  TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID,
+} from '@/lib/tryDemoAttentionGuide'
 
 function BellIcon({ compact = false }: { compact?: boolean }) {
   return (
@@ -100,12 +106,18 @@ function ActivityFeedPanel({
 type AdminUloNotificationsBellProps = {
   onNavigate?: () => void
   compact?: boolean
+  /**
+   * Desktop header only. Owns the Try Demo step-11 spotlight host id so the tip
+   * never measures the hidden mobile duplicate.
+   */
+  tryDemoSpotlightHost?: boolean
 }
 
 /** Header bell — Ulo Activity Feed with a live activity count. */
 export function AdminUloNotificationsBell({
   onNavigate,
   compact = false,
+  tryDemoSpotlightHost = false,
 }: AdminUloNotificationsBellProps) {
   const navigate = useNavigate()
   const panelId = useId()
@@ -122,6 +134,26 @@ export function AdminUloNotificationsBell({
   const [propertyIdByBuilding, setPropertyIdByBuilding] = useState<Map<string, string>>(
     () => new Map(),
   )
+  const [tipForcesActivityOpen, setTipForcesActivityOpen] = useState(() =>
+    tryDemoSpotlightHost &&
+    isTryDemoUloActivityGuideStep(readTryDemoAttentionGuideActiveStep() ?? -1),
+  )
+
+  useEffect(() => {
+    if (!tryDemoSpotlightHost) return
+    function syncTipStep() {
+      const tipStep = readTryDemoAttentionGuideActiveStep()
+      const forceOpen = isTryDemoUloActivityGuideStep(tipStep ?? -1)
+      setTipForcesActivityOpen((wasForced) => {
+        if (wasForced && !forceOpen) setOpen(false)
+        return forceOpen
+      })
+      if (forceOpen) setOpen(true)
+    }
+    syncTipStep()
+    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, syncTipStep)
+    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, syncTipStep)
+  }, [tryDemoSpotlightHost])
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 1279px)')
@@ -130,6 +162,9 @@ export function AdminUloNotificationsBell({
     mq.addEventListener('change', sync)
     return () => mq.removeEventListener('change', sync)
   }, [compact])
+
+  // Tip step 11 needs the desktop dropdown under the spotlight host (not the side sheet portal).
+  const effectiveUseSideSheet = tipForcesActivityOpen ? false : useSideSheet
 
   useEffect(() => {
     let cancelled = false
@@ -142,8 +177,10 @@ export function AdminUloNotificationsBell({
     }
   }, [landlordId])
 
+  const feedOpen = open || tipForcesActivityOpen
+
   useEffect(() => {
-    if (!open) return
+    if (!feedOpen) return
     let cancelled = false
     setLoading(true)
     void fetchRecentPropertyOperationsEvents(ULO_ACTIVITY_FEED_LIMIT).then((items) => {
@@ -154,10 +191,10 @@ export function AdminUloNotificationsBell({
     return () => {
       cancelled = true
     }
-  }, [open, landlordId])
+  }, [feedOpen, landlordId])
 
   useEffect(() => {
-    if (!open) return
+    if (!feedOpen) return
     let cancelled = false
     void listPropertiesForLandlord(landlordId).then((result) => {
       if (cancelled || !result.ok) return
@@ -166,16 +203,18 @@ export function AdminUloNotificationsBell({
     return () => {
       cancelled = true
     }
-  }, [open, landlordId])
+  }, [feedOpen, landlordId])
 
   useEffect(() => {
-    if (!open || useSideSheet) return
+    if (!feedOpen || effectiveUseSideSheet) return
 
     function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape' && !tipForcesActivityOpen) setOpen(false)
     }
 
     function onPointerDown(event: MouseEvent) {
+      // Keep the open feed visible while the Try Demo tip owns this step.
+      if (tipForcesActivityOpen) return
       if (!rootRef.current?.contains(event.target as Node)) {
         setOpen(false)
       }
@@ -187,17 +226,19 @@ export function AdminUloNotificationsBell({
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onPointerDown)
     }
-  }, [open, useSideSheet])
+  }, [feedOpen, effectiveUseSideSheet, tipForcesActivityOpen])
 
   const activityCount = events.length
 
   function handleOpenTarget(target: FeedTooltipDestination) {
+    if (tipForcesActivityOpen) return
     setOpen(false)
     onNavigate?.()
     navigate(activityFeedNavigatePath(target))
   }
 
   function closePanel() {
+    if (tipForcesActivityOpen) return
     setOpen(false)
   }
 
@@ -210,22 +251,33 @@ export function AdminUloNotificationsBell({
       onOpenTarget={handleOpenTarget}
       onClose={closePanel}
       onNavigate={onNavigate}
-      showClose={useSideSheet}
+      showClose={effectiveUseSideSheet}
     />
   )
 
+  const panelMounted = feedOpen && !effectiveUseSideSheet
+
   return (
     <>
-      <div ref={rootRef} className="relative">
+      <div
+        ref={rootRef}
+        id={tryDemoSpotlightHost ? TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID : undefined}
+        data-try-demo-spotlight-cluster={tryDemoSpotlightHost ? '1' : undefined}
+        data-try-demo-ulo-activity-ready={
+          tryDemoSpotlightHost ? (panelMounted ? '1' : '0') : undefined
+        }
+        className="relative"
+      >
         <button
           type="button"
           aria-label="Ulo Activity Feed"
-          aria-expanded={open}
+          aria-expanded={feedOpen}
           aria-controls={panelId}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
+            if (tipForcesActivityOpen) return
             setOpen((value) => {
               const next = !value
               if (next) onNavigate?.()
@@ -252,7 +304,7 @@ export function AdminUloNotificationsBell({
           ) : null}
         </button>
 
-        {open && !useSideSheet ? (
+        {panelMounted ? (
           <div
             role="dialog"
             aria-labelledby={panelId}
@@ -264,8 +316,8 @@ export function AdminUloNotificationsBell({
       </div>
 
       <AdminBottomSheet
-        open={open && useSideSheet}
-        onClose={closePanel}
+        open={feedOpen && effectiveUseSideSheet}
+        onClose={tipForcesActivityOpen ? () => undefined : closePanel}
         labelledBy={panelId}
         placement="end"
       >
