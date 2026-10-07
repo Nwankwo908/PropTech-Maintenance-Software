@@ -8,7 +8,7 @@ import {
   MIN_PDF_TEXT_CHARS,
   pdfBytesToPageTexts,
 } from "./pdfDocumentText.ts"
-import { shrinkPdfForExtract } from "./pdfShrink.ts"
+import { MAX_RESPONSES_PDF_PAGES, shrinkPdfForExtract } from "./pdfShrink.ts"
 import { pdfPagesToJpegDataUrls } from "./pdfPageImages.ts"
 import {
   detectWordBinaryKind,
@@ -995,7 +995,7 @@ async function extractPdfViaPageImages(input: {
     ? selectedCount > 0
       ? Math.min(selectedCount, INSURANCE_SELECTED_PAGES_MAX)
       : INSURANCE_PAGE_FALLBACK_MAX
-    : 3
+    : MAX_RESPONSES_PDF_PAGES
   try {
     urls = await pdfPagesToJpegDataUrls(input.bytes, {
       maxPages,
@@ -1011,7 +1011,7 @@ async function extractPdfViaPageImages(input: {
   }
   if (urls.length === 0) return null
 
-  const pageUrls = insurancePages ? urls : urls.slice(0, Math.min(urls.length, 2))
+  const pageUrls = urls
   const userContent: Array<Record<string, unknown>> = [
     {
       type: "text",
@@ -1091,7 +1091,7 @@ async function extractWithResponsesPdf(input: {
   const prompt = systemPromptForKind(input.kind)
   const pageCap = input.pageNumbers && input.pageNumbers.length > 0
     ? Math.min(input.pageNumbers.length, INSURANCE_SELECTED_PAGES_MAX)
-    : 4
+    : MAX_RESPONSES_PDF_PAGES
   const attempts = input.pageNumbers && input.pageNumbers.length > 0
     ? [{ maxPages: pageCap, maxBytes: 900_000, pageNumbers: input.pageNumbers }]
     : [
@@ -1764,10 +1764,13 @@ export async function extractPortfolioDocument(input: {
     }
   }
 
+  // Preview images from the browser are a short crop (first pages only).
+  // When the upload is a PDF, read the file itself — including scanned leases
+  // with no text layer — instead of stopping on that crop.
   if (
     pageImages.length > 0 &&
     !wordText?.trim() &&
-    (!hasPdfBytes || !pdfPageTexts.some((page) => page.trim()))
+    !hasPdfBytes
   ) {
     if (kind === "unknown") {
       kind = "generic"
