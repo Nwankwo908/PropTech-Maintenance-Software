@@ -183,11 +183,7 @@ export function OnboardingDocumentUploadStep({
     <section className={onboardingSurfaceSectionClass}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="text-[18px] font-semibold text-[#101828]">Upload your documents</h2>
-          <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
-            Upload leases, spreadsheets, vendor information, or property documents, and Ulo
-            will pull out the important details for you to review before importing.
-          </p>
+          <h2 className="text-[18px] font-semibold text-[#101828]">Upload lease</h2>
         </div>
         <button
           type="button"
