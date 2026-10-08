@@ -952,6 +952,8 @@ function systemPromptForKind(kind: TypedOrGenericExtractKind): string {
   return EXTRACT_SYSTEM_PROMPT
 }
 
+const EXTRACT_TEXT_MODEL = "gpt-4o-mini"
+
 async function extractWithChatCompletions(
   apiKey: string,
   userContent: Array<Record<string, unknown>>,
@@ -961,7 +963,9 @@ async function extractWithChatCompletions(
     "https://api.openai.com/v1/chat/completions",
     apiKey,
     {
-      model: "gpt-4o",
+      // Word, spreadsheets, and photo pages use the same model as scanned PDFs.
+      // gpt-4o quota failures were shown as "Document scanning is temporarily unavailable."
+      model: EXTRACT_TEXT_MODEL,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [

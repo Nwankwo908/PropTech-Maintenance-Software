@@ -1076,7 +1076,10 @@ export function useOnboardingWizard() {
       return
     }
     setError(null)
-    const review = emptyExtractionReview(state.accountSetup)
+    const review = {
+      ...emptyExtractionReview(state.accountSetup),
+      skippedDocumentUpload: true,
+    }
     setExtractionReview(review)
     await goTo('ai_review', {}, { extractionReview: review })
   }
@@ -1089,7 +1092,7 @@ export function useOnboardingWizard() {
       const returnToReview = editingFromReviewRef.current
       let importedPatch: Partial<LandlordOnboardingState> = {}
       const imported = await commitFastTrackImport({
-        review: extractionReview,
+        review: { ...extractionReview, maintenanceIssues: [] },
         accountSetup: state.accountSetup,
         onError: setError,
         onExtractionReview: setExtractionReview,

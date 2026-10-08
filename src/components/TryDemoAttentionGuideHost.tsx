@@ -35,13 +35,74 @@ import {
 } from '@/lib/tryDemoAttentionGuide'
 
 const SETTLE_TICK_MS = 40
-const SETTLE_RETRY_NAV_AT = 8
-/** Prefer ready host; never leave Next stuck — hard-cap ~6s. */
-const SETTLE_MAX_TRIES = 150
+/**
+ * Prefer a ready host. ~12s so a slow kanban/properties fetch can finish
+ * instead of arming the tip early (6→7 exceeded 6s).
+ */
+const SETTLE_MAX_TRIES = 300
 /** Do not arm a route tip on the wrong page before this many tries (~2.5s). */
 const SETTLE_MIN_OFF_ROUTE_TRIES = 60
-/** If React Router navigate never lands, full-assign (tip step is in sessionStorage). */
+/**
+ * Full-assign only when the address bar is still on the old page.
+ * History updates before this host re-renders; reloading in that gap was the
+ * flash on 5→6 and 8→9.
+ */
 const SETTLE_HARD_ASSIGN_AT = 45
+/** Survives assignAdminPath so a hard reload does not drop the timing row. */
+const SETTLE_TIMING_KEY = 'ulo.tryDemoSettleTimings'
+/** First-paint veil so a last-resort reload does not flash an undimmed page. */
+const TIP_HOLD_SCRIM_KEY = 'ulo.tryDemoTipHoldScrim'
+
+type TryDemoSettleTiming = {
+  transition: string
+  dest: string
+  /** performance.now() when Next started this settle. */
+  clickedAt: number
+  /** Ms after click until React Router location matches dest. Null if it never did. */
+  locationMs: number | null
+  /** Ms after click until window.location matches dest. */
+  windowLocationMs: number | null
+  /** Ms after click until the destination page ready signal fires. Null if it never did. */
+  readyMs: number | null
+  triesAtLocation: number | null
+  triesAtReady: number | null
+  triesAtEnd: number
+  /** Last React Router pathname the host rendered. */
+  pathnameAtEnd: string
+  /** window.location at the same moment — catches a URL/router desync. */
+  windowPathAtEnd: string
+  outcome: 'ready' | 'hard-assign' | 'max-on-page' | 'max-off-route'
+}
+
+function holdTipScrimForReload(): void {
+  document.documentElement.setAttribute('data-try-demo-tip-hold-scrim', '1')
+  try {
+    window.sessionStorage.setItem(TIP_HOLD_SCRIM_KEY, '1')
+  } catch {
+    // ignore
+  }
+}
+
+function clearTipHoldScrim(): void {
+  document.documentElement.removeAttribute('data-try-demo-tip-hold-scrim')
+  try {
+    window.sessionStorage.removeItem(TIP_HOLD_SCRIM_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function recordTryDemoSettleTiming(entry: TryDemoSettleTiming): void {
+  console.info('[try-demo-settle]', entry)
+  try {
+    const raw = window.sessionStorage.getItem(SETTLE_TIMING_KEY)
+    const prev = raw ? (JSON.parse(raw) as TryDemoSettleTiming[]) : []
+    prev.push(entry)
+    window.sessionStorage.setItem(SETTLE_TIMING_KEY, JSON.stringify(prev))
+  } catch {
+    // ignore quota / private mode
+  }
+}
 
 function prefetchTipRouteChunk(pathname: string): void {
   const path = pathname.replace(/\/$/, '') || '/'
@@ -195,6 +256,17 @@ export function TryDemoAttentionGuideHost() {
     else if (mode === 'full') withTryDemoTipAnimateSuppress(() => setAskUloDocked(false))
   }, [step, setAskUloDocked])
 
+  // Drop the reload veil once the live tip scrim is up, so the two overlap.
+  useEffect(() => {
+    if (step == null) {
+      clearTipHoldScrim()
+      return
+    }
+    if (!cutoutArmed) return
+    const id = window.requestAnimationFrame(() => clearTipHoldScrim())
+    return () => window.cancelAnimationFrame(id)
+  }, [step, cutoutArmed])
+
   const dismiss = useCallback(() => {
     clearSettleTimer()
     advancingRef.current = false
@@ -231,38 +303,91 @@ export function TryDemoAttentionGuideHost() {
     (nextStep: TryDemoAttentionGuideStep, navigateTo?: string) => {
       clearSettleTimer()
       let tries = 0
-      let lastNavAt = -SETTLE_RETRY_NAV_AT
+      // advance() already issued the one navigate. Do not call navigate()
+      // again until that call has committed (useLocation) or this deadline
+      // says it will not. A 320ms retry was cancelling 8→9 mid-commit.
+      let navigateIssued = Boolean(navigateTo)
+      const clickedAt = performance.now()
+      const fromStep = nextStep - 1
+      const logRoute = Boolean(navigateTo)
+      let locationMs: number | null = null
+      let windowLocationMs: number | null = null
+      let readyMs: number | null = null
+      let triesAtLocation: number | null = null
+      let triesAtReady: number | null = null
+      let logged = false
+      const finishLog = (
+        outcome: TryDemoSettleTiming['outcome'],
+        pathname: string,
+      ) => {
+        if (!logRoute || logged) return
+        logged = true
+        recordTryDemoSettleTiming({
+          transition: `${fromStep}→${nextStep}`,
+          dest: navigateTo ?? '',
+          clickedAt,
+          locationMs,
+          windowLocationMs,
+          readyMs,
+          triesAtLocation,
+          triesAtReady,
+          triesAtEnd: tries,
+          pathnameAtEnd: pathname,
+          windowPathAtEnd: window.location.pathname,
+          outcome,
+        })
+      }
       const tick = () => {
         tries += 1
         const dest = navigateTo ?? tryDemoAttentionGuideRouteForStep(nextStep)
         // Use React Router location only — window.pathname can desync after
         // history.replaceState and falsely report Messages while Overview is mounted.
         const pathname = locationRef.current.pathname
+        const windowPath = window.location.pathname
+        // Router location is the rendered page. window.location can move first
+        // and still leave Dashboard mounted — do not treat that as landed.
         const onPage = !dest || tipRouteMatchesLocation(pathname, dest)
-        if (dest && !onPage && tries - lastNavAt >= SETTLE_RETRY_NAV_AT) {
-          lastNavAt = tries
-          prefetchTipRouteChunk(dest)
-          if (tries >= SETTLE_HARD_ASSIGN_AT) {
-            // SPA navigate stuck (HMR / history desync) — full load; tip resumes.
-            assignAdminPath(dest)
-            return
-          }
-          goAdminPath(navigate, dest)
+        const windowOnPage = !dest || tipRouteMatchesLocation(windowPath, dest)
+        if (onPage && locationMs == null && dest) {
+          locationMs = Math.round(performance.now() - clickedAt)
+          triesAtLocation = tries
         }
-        const ready =
-          onPage && isTryDemoTipDestinationReady(nextStep, pathname)
+        if (windowOnPage && windowLocationMs == null && dest) {
+          windowLocationMs = Math.round(performance.now() - clickedAt)
+        }
+        if (dest && !onPage && !navigateIssued) {
+          navigateIssued = true
+          prefetchTipRouteChunk(dest)
+          goAdminPath(navigate, dest)
+        } else if (dest && !onPage && tries >= SETTLE_HARD_ASSIGN_AT) {
+          finishLog('hard-assign', pathname)
+          holdTipScrimForReload()
+          assignAdminPath(dest)
+          return
+        }
+        const ready = onPage && isTryDemoTipDestinationReady(nextStep, pathname)
+        if (ready && readyMs == null) {
+          readyMs = Math.round(performance.now() - clickedAt)
+          triesAtReady = tries
+        }
         if (ready) {
+          finishLog('ready', pathname)
           finishSettle(nextStep)
           return
         }
         // On-page but host slow — arm so Tooltip can morph with fallbacks.
         if (onPage && tries >= SETTLE_MAX_TRIES) {
+          finishLog('max-on-page', pathname)
           finishSettle(nextStep)
           return
         }
         // Still off-route: keep navigating; only hard-arm after min wait + max.
         if (!onPage && tries >= SETTLE_MAX_TRIES && tries >= SETTLE_MIN_OFF_ROUTE_TRIES) {
-          if (dest) assignAdminPath(dest)
+          finishLog('max-off-route', pathname)
+          if (dest) {
+            holdTipScrimForReload()
+            assignAdminPath(dest)
+          }
           return
         }
         settleTimerRef.current = window.setTimeout(tick, SETTLE_TICK_MS)
@@ -311,14 +436,15 @@ export function TryDemoAttentionGuideHost() {
     if (plan.navigateTo) prefetchTipRouteChunk(plan.navigateTo)
 
     if (plan.askUlo === 'close-to') {
-      // One atomic close + navigate to Messages (empty search strips askUlo*).
-      // Do not call setDocked after this — it would navigate back to /admin.
+      // Close the panel only. goAdminPath is the one navigate for 5→6.
+      // closeAskUlo's own navigate was racing this and leaving the router on Dashboard.
       withTryDemoTipAnimateSuppress(() => {
         closeAskUlo({
           preserveTip: true,
-          navigateTo: plan.navigateTo ?? '/admin/communication',
+          skipNavigate: true,
         })
       })
+      goAdminPath(navigate, plan.navigateTo ?? '/admin/communication')
     } else if (plan.askUlo === 'full') {
       withTryDemoTipAnimateSuppress(() => setAskUloDocked(false))
       if (plan.navigateTo) goAdminPath(navigate, plan.navigateTo)

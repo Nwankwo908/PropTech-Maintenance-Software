@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
-import uloLogo from '@/assets/Ulo_Logo_small.png'
+import uloLogo from '@/assets/landing/ulo-logo.png'
 import {
   getAdminSession,
   isAdminSessionAllowed,
@@ -27,6 +27,18 @@ function safeAdminNextPath(raw: string | null): string {
     return '/admin'
   }
   return decoded
+}
+
+function LoginHomeLogo() {
+  return (
+    <Link
+      to="/"
+      aria-label="Ulo home"
+      className="sa-press absolute top-6 left-6 z-20 block h-11 w-[121px] rounded-lg outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2 sm:top-8 sm:left-8"
+    >
+      <img src={uloLogo} alt="" width={121} height={44} className="h-full w-full object-contain object-left" />
+    </Link>
+  )
 }
 
 function IconGoogle({ className = 'size-5' }: { className?: string }) {
@@ -120,7 +132,9 @@ export function AdminLoginPage() {
 
   if (alreadyAuthed === null) {
     return (
-      <div className="min-h-dvh bg-gradient-to-b from-white to-[#f0fdf4]" aria-busy="true" aria-label="Loading" />
+      <div className="relative min-h-dvh bg-gradient-to-b from-white to-[#f0fdf4]" aria-busy="true" aria-label="Loading">
+        <LoginHomeLogo />
+      </div>
     )
   }
 
@@ -204,18 +218,13 @@ export function AdminLoginPage() {
         aria-hidden
       />
 
+      <LoginHomeLogo />
+
       <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
           <div className="sa-enter-scale sa-surface overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]">
             <div className="px-8 pb-8 pt-8">
               <div className="flex flex-col items-center gap-2 text-center">
-                <Link
-                  to="/"
-                  aria-label="Back to Ulo home"
-                  className="sa-press rounded-lg outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2"
-                >
-                  <img src={uloLogo} alt="ülo home" className="h-10 w-auto object-contain" />
-                </Link>
                 <h1
                   key={isGetStarted ? 'get-started' : 'login'}
                   className="sa-enter text-[24px] font-bold leading-8 tracking-[0.0703px] text-[rgba(16,24,40,0.7)]"

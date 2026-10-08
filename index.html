@@ -13,6 +13,23 @@
     />
     <link rel="canonical" href="https://app.ulohome.io/" />
     <script>
+      try {
+        if (sessionStorage.getItem('ulo.tryDemoTipHoldScrim') === '1') {
+          document.documentElement.setAttribute('data-try-demo-tip-hold-scrim', '1')
+        }
+      } catch (e) {}
+    </script>
+    <style>
+      html[data-try-demo-tip-hold-scrim]::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 240;
+        background: rgba(16, 24, 40, 0.55);
+        pointer-events: none;
+      }
+    </style>
+    <script>
       (function () {
         var host = location.hostname
         if (host !== 'localhost' && host !== '127.0.0.1') return

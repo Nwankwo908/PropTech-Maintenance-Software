@@ -184,6 +184,10 @@ export function OnboardingDocumentUploadStep({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-[18px] font-semibold text-[#101828]">Upload lease</h2>
+          <p className="mt-1 text-[14px] leading-6 text-[#6a7282]">
+            Upload your leases, and Ulo will pull the property and tenant details you need to get
+            started.
+          </p>
         </div>
         <button
           type="button"

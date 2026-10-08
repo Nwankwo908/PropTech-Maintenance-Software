@@ -6,11 +6,9 @@ import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
-  countSelectedInReview,
   formatExtractedUnitPlacement,
   type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
-  type OnboardingExtractedMaintenanceIssue,
   type OnboardingExtractedProperty,
   type OnboardingExtractedResident,
   type OnboardingExtractedUnit,
@@ -40,6 +38,41 @@ const VENDOR_TRADE_OPTIONS: { value: string; label: string }[] = [
     label: trade.label,
   })),
 ]
+
+function createEmptyExtractedProperty(): OnboardingExtractedProperty {
+  return {
+    id: `property-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    address: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    propertyType: '',
+    unitCount: 0,
+    unitLabels: '',
+    propertyManagerName: '',
+    propertyManagerPhone: '',
+    sourceDocumentName: 'Manual entry',
+    confidence: 1,
+    selected: false,
+    needsReview: false,
+  }
+}
+
+function AddRowButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="sa-press inline-flex size-8 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20"
+    >
+      <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden>
+        <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}
 
 function createEmptyExtractedVendor(): OnboardingExtractedVendor {
   return {
@@ -143,6 +176,7 @@ function ReviewItemRow({
   trailing,
   children,
   as = 'li',
+  showSelection = true,
 }: {
   checked: boolean
   onToggle: () => void
@@ -161,14 +195,18 @@ function ReviewItemRow({
   trailing?: ReactNode
   children?: ReactNode
   as?: 'li' | 'div'
+  /** When false, hide the include checkbox and the label beside it. */
+  showSelection?: boolean
 }) {
   const Wrapper = as
   return (
     <Wrapper className="sa-row rounded-[8px] border border-[#eef0f3] px-3 py-3">
-      <div className="flex items-start gap-3">
+      <div className={showSelection ? 'flex items-start gap-3' : undefined}>
+        {showSelection ? (
         <div className="pt-0.5">
           <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
         </div>
+        ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {editing && editMode === 'label' ? (
@@ -183,9 +221,9 @@ function ReviewItemRow({
                   aria-label={editFieldLabel ?? 'Edit name'}
                 />
               </div>
-            ) : (
+            ) : showSelection ? (
               <p className="text-[13px] font-medium text-[#101828]">{label}</p>
-            )}
+            ) : null}
           </div>
           {editing && editMode === 'label' ? (
             <div className="mt-2">
@@ -206,7 +244,9 @@ function ReviewItemRow({
           ) : value?.trim() ? (
             <p className="mt-1 text-[13px] leading-relaxed text-[#364153]">{value}</p>
           ) : null}
-          <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
+          {showSelection ? (
+            <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
+          ) : null}
           {children}
         </div>
         {trailing ? (
@@ -273,6 +313,8 @@ export type OnboardingAiReviewStepProps = {
   /** Landlord SMS line assigned for this account (Review stage). */
   smsIntakeNumber?: string | null
   smsIntakeNumberDisplay?: string | null
+  /** True when the landlord skipped the lease upload step. */
+  skippedUpload?: boolean
 }
 
 export function OnboardingAiReviewStep({
@@ -284,14 +326,15 @@ export function OnboardingAiReviewStep({
   continueLabel = 'Continue',
   smsIntakeNumber = null,
   smsIntakeNumberDisplay = null,
+  skippedUpload = false,
 }: OnboardingAiReviewStepProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const [confirmNoVendorsOpen, setConfirmNoVendorsOpen] = useState(false)
+  const [teamMemberOpen, setTeamMemberOpen] = useState(false)
   const smsConsentId = useId()
   const noVendorsTitleId = useId()
 
-  const selectedCount = countSelectedInReview(review)
   const hasSelectedVendors = review.vendors.some(
     (vendor) => vendor.selected && vendor.name.trim().length > 0,
   )
@@ -301,10 +344,26 @@ export function OnboardingAiReviewStep({
     review.residents.length === 0 &&
     review.leases.length === 0 &&
     review.vendors.length === 0 &&
-    review.maintenanceIssues.length === 0 &&
     review.financialRecords.length === 0
+  const manualAdd = skippedUpload || review.skippedDocumentUpload === true
 
   useEffect(() => {
+    const backup = review.account
+    if (
+      backup.backupContactName.trim() ||
+      backup.backupContactPhone.trim() ||
+      backup.backupContactEmail.trim()
+    ) {
+      setTeamMemberOpen(true)
+    }
+  }, [
+    review.account.backupContactName,
+    review.account.backupContactPhone,
+    review.account.backupContactEmail,
+  ])
+
+  useEffect(() => {
+    if (manualAdd) return
     if (review.vendors.length > 0) return
     onReviewChange({
       ...review,
@@ -312,7 +371,7 @@ export function OnboardingAiReviewStep({
     })
     // Seed one blank row for manual entry when extraction found none.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the list is empty
-  }, [review.vendors.length])
+  }, [review.vendors.length, manualAdd])
 
   function requestContinue() {
     if (!hasSelectedVendors) {
@@ -357,6 +416,20 @@ export function OnboardingAiReviewStep({
     })
   }
 
+  function addPropertyForm() {
+    onReviewChange({
+      ...review,
+      properties: [...review.properties, createEmptyExtractedProperty()],
+    })
+  }
+
+  function removePropertyForm(id: string) {
+    onReviewChange({
+      ...review,
+      properties: review.properties.filter((row) => row.id !== id),
+    })
+  }
+
   function addVendorForm() {
     onReviewChange({
       ...review,
@@ -368,7 +441,7 @@ export function OnboardingAiReviewStep({
     if (review.vendors.length <= 1) {
       onReviewChange({
         ...review,
-        vendors: [createEmptyExtractedVendor()],
+        vendors: manualAdd ? [] : [createEmptyExtractedVendor()],
       })
       return
     }
@@ -541,13 +614,14 @@ export function OnboardingAiReviewStep({
 
     const propertyRows =
       review.properties.length > 0
-        ? review.properties.map((item) => {
+        ? review.properties.map((item, index) => {
             const propertyUnits = unitsForProperty(item, review.units, review.properties)
             propertyUnits.forEach((unit) => assignedUnitIds.add(unit.id))
 
             return (
+              <li key={item.id} className="list-none">
               <ReviewItemRow
-                key={item.id}
+                as="div"
                 checked={item.selected}
                 onToggle={() => patchProperty(item.id, { selected: !item.selected })}
                 label={item.name}
@@ -557,14 +631,33 @@ export function OnboardingAiReviewStep({
                 onSaveEdit={() => undefined}
                 onCancelEdit={() => undefined}
                 onEditChange={() => undefined}
+                showSelection={!manualAdd}
               >
-                  <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+                  <div
+                    className={
+                      manualAdd
+                        ? 'grid gap-3 sm:grid-cols-2'
+                        : 'mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2'
+                    }
+                  >
                     <label className="block min-w-0">
                       <span className={fieldLabelClass}>Property name</span>
                       <input
                         className={inputClass}
                         value={item.name}
-                        onChange={(e) => patchProperty(item.id, { name: e.target.value })}
+                        onChange={(e) => {
+                          const name = e.target.value
+                          patchProperty(
+                            item.id,
+                            manualAdd
+                              ? {
+                                  name,
+                                  selected:
+                                    name.trim().length > 0 || item.address.trim().length > 0,
+                                }
+                              : { name },
+                          )
+                        }}
                         placeholder="Property name"
                       />
                     </label>
@@ -573,7 +666,18 @@ export function OnboardingAiReviewStep({
                       <StreetAddressAutocomplete
                         className={inputClass}
                         value={item.address}
-                        onChange={(address) => patchProperty(item.id, { address })}
+                        onChange={(address) =>
+                          patchProperty(
+                            item.id,
+                            manualAdd
+                              ? {
+                                  address,
+                                  selected:
+                                    item.name.trim().length > 0 || address.trim().length > 0,
+                                }
+                              : { address },
+                          )
+                        }
                         onPlaceResolved={(parsed) =>
                           patchProperty(item.id, {
                             address: parsed.street || item.address,
@@ -720,6 +824,19 @@ export function OnboardingAiReviewStep({
                     )
                   })()}
               </ReviewItemRow>
+              {manualAdd ? (
+                <div className="mt-2 flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded-[8px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
+                    onClick={() => removePropertyForm(item.id)}
+                    aria-label={`Remove property ${index + 1}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+              </li>
             )
           })
         : []
@@ -1015,15 +1132,15 @@ export function OnboardingAiReviewStep({
 
   return (
     <section className={onboardingSurfaceSectionClass}>
-      <h2 className="text-[18px] font-semibold text-[#101828]">Review and Approve Information</h2>
+      <div className={onboardingSectionStackClass}>
+        <OnboardingUloNumberCard
+          smsIntakeNumber={smsIntakeNumber}
+          smsIntakeNumberDisplay={smsIntakeNumberDisplay}
+        />
 
-      <div className={`${onboardingSectionStackClass} mt-4`}>
         <ReviewSection title="Your organization">
-          <p className="mt-1 text-[13px] text-[#6a7282]">
-            Your name is required. Company name is optional.
-          </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="block sm:col-span-2">
+            <label className="block">
               <span className={fieldLabelClass}>Company name (optional)</span>
               <input
                 className={inputClass}
@@ -1033,7 +1150,22 @@ export function OnboardingAiReviewStep({
               />
             </label>
             <label className="block">
-              <span className={fieldLabelClass}>Your name</span>
+              <span className={fieldLabelClass}>
+                Phone <span className="text-[#b91c1c]">*</span> (Required)
+              </span>
+              <input
+                className={inputClass}
+                type="tel"
+                value={account.phone}
+                onChange={(e) => patchAccount({ phone: e.target.value })}
+                placeholder="(555) 123-4567"
+                aria-describedby={`${smsConsentId}-disclosure`}
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabelClass}>
+                Your name <span className="text-[#b91c1c]">*</span> (Required)
+              </span>
               <input
                 className={inputClass}
                 value={account.contactName}
@@ -1051,16 +1183,7 @@ export function OnboardingAiReviewStep({
                 placeholder="Support email"
               />
             </label>
-            <label className="block sm:col-span-2">
-              <span className={fieldLabelClass}>Phone</span>
-              <input
-                className={inputClass}
-                type="tel"
-                value={account.phone}
-                onChange={(e) => patchAccount({ phone: e.target.value })}
-                placeholder="(555) 123-4567"
-                aria-describedby={`${smsConsentId}-disclosure`}
-              />
+            <div className="sm:col-span-2">
               <p
                 id={`${smsConsentId}-disclosure`}
                 className="mt-2 text-[12px] leading-[18px] text-[#6a7282]"
@@ -1106,48 +1229,55 @@ export function OnboardingAiReviewStep({
                   I agree to receive SMS messages as described above.
                 </span>
               </label>
-            </label>
-            <label className="block">
-              <span className={fieldLabelClass}>Team member name (optional)</span>
-              <input
-                className={inputClass}
-                value={account.backupContactName}
-                onChange={(e) => patchAccount({ backupContactName: e.target.value })}
-                placeholder="Team member name"
-              />
-            </label>
-            <label className="block">
-              <span className={fieldLabelClass}>Team member phone number (optional)</span>
-              <input
-                className={inputClass}
-                type="tel"
-                value={account.backupContactPhone}
-                onChange={(e) => patchAccount({ backupContactPhone: e.target.value })}
-                placeholder="(555) 123-4567"
-              />
-            </label>
-            <label className="block sm:col-span-2">
-              <span className={fieldLabelClass}>Team member email (optional)</span>
-              <input
-                className={inputClass}
-                type="email"
-                value={account.backupContactEmail}
-                onChange={(e) => patchAccount({ backupContactEmail: e.target.value })}
-                placeholder="name@company.com"
-              />
-              <p className="mt-1.5 text-[12px] leading-[18px] text-[#6a7282]">
-                They can sign in to this account and receive the same operational texts you do.
-              </p>
-            </label>
+            </div>
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[15px] font-semibold text-[#101828]">Add Team member</p>
+                {teamMemberOpen ? null : (
+                  <AddRowButton label="Add team member" onClick={() => setTeamMemberOpen(true)} />
+                )}
+              </div>
+              {teamMemberOpen ? (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className={fieldLabelClass}>Team member name (optional)</span>
+                    <input
+                      className={inputClass}
+                      value={account.backupContactName}
+                      onChange={(e) => patchAccount({ backupContactName: e.target.value })}
+                      placeholder="Team member name"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={fieldLabelClass}>Team member phone number (optional)</span>
+                    <input
+                      className={inputClass}
+                      type="tel"
+                      value={account.backupContactPhone}
+                      onChange={(e) => patchAccount({ backupContactPhone: e.target.value })}
+                      placeholder="(555) 123-4567"
+                    />
+                  </label>
+                  <label className="block sm:col-span-2">
+                    <span className={fieldLabelClass}>Team member email (optional)</span>
+                    <input
+                      className={inputClass}
+                      type="email"
+                      value={account.backupContactEmail}
+                      onChange={(e) => patchAccount({ backupContactEmail: e.target.value })}
+                      placeholder="name@company.com"
+                    />
+                    <p className="mt-1.5 text-[12px] leading-[18px] text-[#6a7282]">
+                      They can sign in to this account and receive the same operational texts you do.
+                    </p>
+                  </label>
+                </div>
+              ) : null}
+            </div>
           </div>
         </ReviewSection>
 
-        <OnboardingUloNumberCard
-          smsIntakeNumber={smsIntakeNumber}
-          smsIntakeNumberDisplay={smsIntakeNumberDisplay}
-        />
-
-        {isEmpty ? (
+        {isEmpty && !manualAdd ? (
           <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-8 text-center">
             <p className="text-[14px] font-medium text-[#101828]">No extracted portfolio data yet</p>
             <p className="mt-1 text-[13px] text-[#6a7282]">
@@ -1158,14 +1288,22 @@ export function OnboardingAiReviewStep({
         ) : (
           <>
             <ReviewSection
-              title="Properties Found"
+              title={manualAdd ? 'Add properties' : 'Properties Found'}
               count={
-                review.properties.length ||
-                (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
+                manualAdd
+                  ? undefined
+                  : review.properties.length ||
+                    (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
+              }
+              headerActions={
+                manualAdd ? (
+                  <AddRowButton label="Add property" onClick={addPropertyForm} />
+                ) : undefined
               }
             >
-              {renderPropertyRows()}
+              {manualAdd && review.properties.length === 0 ? null : renderPropertyRows()}
             </ReviewSection>
+            {manualAdd ? null : (
             <ReviewSection
               title="Lease Information Found"
               count={review.leases.length}
@@ -1196,36 +1334,31 @@ export function OnboardingAiReviewStep({
                 'No lease information detected.',
               )}
             </ReviewSection>
-            <ReviewSection title="Vendors" count={review.vendors.filter((v) => v.name.trim()).length || undefined}>
-              {renderVendorForms()}
-            </ReviewSection>
-            <ReviewSection title="Maintenance Issues Found" count={review.maintenanceIssues.length}>
-              {renderSimpleRows<OnboardingExtractedMaintenanceIssue>(
-                review.maintenanceIssues,
-                'maintenanceIssues',
-                (item) => item.description,
-                (item) =>
-                  `${item.building} · Unit ${item.unit}${item.imageTags?.length ? ` · ${item.imageTags.join(', ')}` : ''}`,
-                'description',
-                (item) => item.description,
-                'No maintenance issues detected.',
-              )}
+            )}
+            <ReviewSection
+              title={manualAdd ? 'Add vendor' : 'Vendors'}
+              count={
+                manualAdd
+                  ? undefined
+                  : review.vendors.filter((v) => v.name.trim()).length || undefined
+              }
+              headerActions={
+                manualAdd ? (
+                  <AddRowButton label="Add vendor" onClick={addVendorForm} />
+                ) : undefined
+              }
+            >
+              {manualAdd && review.vendors.length === 0 ? null : renderVendorForms()}
             </ReviewSection>
           </>
         )}
       </div>
 
-      <div className="mt-6 flex flex-col gap-4 border-t border-[#eef0f3] pt-4">
-        <p className="text-[13px] text-[#6a7282]">
-          {selectedCount} item{selectedCount === 1 ? '' : 's'} selected for import
-        </p>
-
-        <OnboardingStepNav showBack onBack={onBackToUploads} saving={saving}>
-          <OnboardingContinueButton disabled={saving} onClick={requestContinue}>
-            {continueLabel}
-          </OnboardingContinueButton>
-        </OnboardingStepNav>
-      </div>
+      <OnboardingStepNav showBack onBack={onBackToUploads} saving={saving}>
+        <OnboardingContinueButton disabled={saving} onClick={requestContinue}>
+          {continueLabel}
+        </OnboardingContinueButton>
+      </OnboardingStepNav>
 
       {confirmNoVendorsOpen ? (
         <NoVendorsContinueModal

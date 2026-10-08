@@ -239,6 +239,8 @@ export type OnboardingExtractionReview = {
    * create properties, units, and residents.
    */
   leaseOnlyPortfolio?: boolean
+  /** True when the landlord skipped lease upload and is adding the portfolio by hand. */
+  skippedDocumentUpload?: boolean
 }
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -2935,7 +2937,10 @@ export function normalizeExtractionReview(
       propertyManagerPhone: item.propertyManagerPhone ?? '',
       }
     })
-    .filter((item) => item.name.trim() || item.address.trim())
+    .filter(
+      (item) =>
+        review.skippedDocumentUpload === true || item.name.trim() || item.address.trim(),
+    )
   const normalizedResidents = (review.residents ?? [])
     .map((item) => {
       const channels = placePhoneEmail(item.phone, item.email)

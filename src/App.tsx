@@ -152,7 +152,7 @@ export default function App() {
   useSessionAutoRefresh(supabase)
 
   return (
-    <BrowserRouter>
+    <BrowserRouter useTransitions={false}>
       <StayOnDevOrigin />
       <AnalyticsRoot />
       <ReferralLandingRedirect />

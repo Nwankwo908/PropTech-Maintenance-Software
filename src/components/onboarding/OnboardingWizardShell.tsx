@@ -3,7 +3,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { markLimitedAlphaPostOnboardingWelcomeSeen, shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
-import { landlordPortfolioLabel } from '@shared/landlordPortfolioLabel'
 import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
 import { OnboardingWelcomeHub } from '@/components/onboarding/OnboardingWelcomeHub'
 import { OnboardingAllSetWelcome } from '@/components/onboarding/OnboardingAllSetWelcome'
@@ -19,6 +18,7 @@ import { OnboardingVendorsStep } from '@/components/onboarding/OnboardingVendors
 import { OnboardingResidentsStep } from '@/components/onboarding/OnboardingResidentsStep'
 import { OnboardingSetupTransition } from '@/components/onboarding/OnboardingSetupTransition'
 import { OnboardingProgressSavedNote } from '@/components/onboarding/OnboardingProgressSavedNote'
+import { OnboardingNavCenterProvider } from '@/components/onboarding/OnboardingStepChrome'
 import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
 import { hasSavedOnboardingUserProgress } from '@/lib/onboarding'
 
@@ -39,6 +39,7 @@ export function OnboardingWizardShell() {
     navigate('/admin', { replace: true })
   }
   const wasCompletingRef = useRef(false)
+  const mainRef = useRef<HTMLElement>(null)
   const [setupFadeOut, setSetupFadeOut] = useState(false)
 
   useLayoutEffect(() => {
@@ -57,6 +58,34 @@ export function OnboardingWizardShell() {
     }
     wasCompletingRef.current = false
   }, [wizard.completingSetup, showAllSet])
+
+  const wizardMainVisible =
+    !wizard.loading &&
+    !wizard.completingSetup &&
+    !setupFadeOut &&
+    !showAllSet &&
+    !wizard.importingPortfolio
+
+  useLayoutEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    const syncStickyNav = () => {
+      const rect = main.getBoundingClientRect()
+      main.style.setProperty('--onb-sticky-nav-left', `${rect.left}px`)
+      main.style.setProperty(
+        '--onb-sticky-nav-right',
+        `${Math.max(0, window.innerWidth - rect.right)}px`,
+      )
+    }
+    syncStickyNav()
+    const observer = new ResizeObserver(syncStickyNav)
+    observer.observe(main)
+    window.addEventListener('resize', syncStickyNav)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', syncStickyNav)
+    }
+  }, [wizardMainVisible])
 
   if (wizard.loading) {
     return (
@@ -175,16 +204,17 @@ export function OnboardingWizardShell() {
 
   return (
     <main
+      ref={mainRef}
       className={
         isWelcomeStep
           ? 'flex flex-1 flex-col items-center overflow-y-auto px-4 pb-10 pt-[60px] sm:px-8 sm:pb-16'
-          : 'flex-1 overflow-y-auto px-4 py-6 sm:px-8 sm:py-8'
+          : 'flex-1 overflow-y-auto px-4 pt-6 pb-28 sm:px-8 sm:pt-8 sm:pb-32'
       }
     >
       <div
         className={
           isWelcomeStep
-            ? 'w-full max-w-[880px]'
+            ? 'w-full max-w-[1120px]'
             : isReviewStep
               ? 'mx-auto w-full max-w-[760px]'
               : 'mx-auto w-full max-w-3xl'
@@ -196,31 +226,28 @@ export function OnboardingWizardShell() {
           </div>
         ) : null}
 
-        {!isWelcomeStep &&
-        hasSavedOnboardingUserProgress({
-          state,
-          propertyForms,
-          vendorForms,
-          residentForms,
-          uploadDocuments,
-          extractionReview,
-          payoutsReady,
-        }) ? (
-          <div className="mb-4">
-            <OnboardingProgressSavedNote />
-          </div>
-        ) : null}
-
-        <div key={step}>
+        <OnboardingNavCenterProvider
+          value={
+            !isWelcomeStep &&
+            hasSavedOnboardingUserProgress({
+              state,
+              propertyForms,
+              vendorForms,
+              residentForms,
+              uploadDocuments,
+              extractionReview,
+              payoutsReady,
+            }) ? (
+              <OnboardingProgressSavedNote />
+            ) : null
+          }
+        >
+        <div key={step} className={isWelcomeStep ? undefined : 'onb-step-panel'}>
           {!isWelcomeStep && !isReviewStep ? (
-            <div className="onb-step-header mb-6">
+            <div className="mb-6">
               <div className="flex items-start justify-between gap-4">
                 <h1 className="text-[24px] font-semibold tracking-[-0.4px] text-[#101828]">
-                  {editingFromReview
-                    ? 'Edit your setup'
-                    : `Set up Ulo for ${
-                        landlordPortfolioLabel(state.accountSetup) || 'your portfolio'
-                      }`}
+                  {editingFromReview ? 'Edit your setup' : 'Set up Ulo for your properties'}
                 </h1>
                 {isComplete ? (
                   <Link to="/admin" className={`${btnSecondary} shrink-0`}>
@@ -242,7 +269,6 @@ export function OnboardingWizardShell() {
             </div>
           ) : null}
 
-          <div className={isWelcomeStep ? undefined : 'onb-step-panel'}>
           {step === 'entry' ? (
             <OnboardingWelcomeHub
               starting={saving}
@@ -421,8 +447,8 @@ export function OnboardingWizardShell() {
               onComplete={() => void finishReview()}
             />
           ) : null}
-          </div>
         </div>
+        </OnboardingNavCenterProvider>
       </div>
     </main>
   )

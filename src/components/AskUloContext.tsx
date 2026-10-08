@@ -175,21 +175,11 @@ export function AskUloProvider({ children }: { children: ReactNode }) {
     // Tip steps 6+ own the route. Never reopen Ask Ulo from a stale ?askUlo=1
     // (same class of bug as setDocked yanking Messages → Dashboard).
     if (tipStep != null && !isTryDemoAskUloShellSyncStep(tipStep)) {
+      // Steps 6+ : the tour's goAdminPath is the only navigate. A second
+      // navigate here (strip askUlo params / resolveAdminPath) cancels 5→6
+      // before React Router commits Messages.
       setOpen(false)
       setDockedState(false)
-      if (urlOpen) {
-        const params = currentSearchParams()
-        for (const key of ASK_ULO_SEARCH_KEYS) params.delete(key)
-        for (const key of ASK_ULO_EPHEMERAL_KEYS) params.delete(key)
-        const qs = params.toString()
-        navigate(
-          {
-            pathname: tipRoute || resolveAdminPath(),
-            search: qs ? `?${qs}` : '',
-          },
-          { replace: true },
-        )
-      }
       return
     }
     if (wasAskUloRecentlyClosedByUser()) {
@@ -466,6 +456,8 @@ export function AskUloProvider({ children }: { children: ReactNode }) {
         isAskUloAutoSendInFlight()
       // Keep a blank thread when universal search queued a prompt to auto-send.
       if (!chatParam && list.length > 0 && !stillQueued) {
+        const tipStep = readTryDemoAttentionGuideActiveStep()
+        if (tipStep != null && !isTryDemoAskUloShellSyncStep(tipStep)) return
         const params = new URLSearchParams(window.location.search)
         params.set(ASK_ULO_PARAM, '1')
         params.set(ASK_ULO_CHAT_PARAM, list[0].id)

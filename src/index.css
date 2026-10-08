@@ -2377,98 +2377,24 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 }
 
 /*
- * Onboarding Smart Animate — step morphing, welcome stagger, progress.
+ * Onboarding motion — one fade per screen. Cards and the sticky bar stay still.
  * Avoid animation-fill-mode: both (can leave content invisible if interrupted).
  */
 @keyframes onb-step-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
-@keyframes onb-progress-saved-in {
+@keyframes onb-fade-in {
   from {
     opacity: 0;
-    transform: translateX(-12px);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes onb-progress-saved-check-draw {
-  from {
-    stroke-dashoffset: 18;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes onb-progress-saved-check-pop {
-  0% {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-  60% {
-    opacity: 1;
-    transform: scale(1.08);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes onb-welcome-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes onb-card-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes onb-marker-pop {
-  0% {
-    transform: scale(0.86);
-  }
-  70% {
-    transform: scale(1.06);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes onb-active-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(0.82);
-    opacity: 0.72;
   }
 }
 
@@ -2609,107 +2535,23 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 }
 
 .onb-step-panel {
-  animation: onb-step-in 320ms var(--sa-ease);
+  /* backwards avoids a first-frame flash at full opacity before the fade starts.
+     Do not use `both` — an interrupted animation can leave the step invisible. */
+  animation: onb-step-in 280ms var(--sa-ease) backwards;
+}
+
+.onb-sticky-nav {
+  transition:
+    left var(--sa-duration) var(--sa-ease),
+    right var(--sa-duration) var(--sa-ease);
 }
 
 .onb-progress-saved {
-  animation: onb-progress-saved-in 380ms var(--sa-ease);
+  animation: onb-fade-in 220ms var(--sa-ease);
 }
 
-.onb-progress-saved-icon {
-  animation: onb-progress-saved-check-pop 420ms var(--sa-ease) 80ms backwards;
-}
-
-.onb-progress-saved-check {
-  stroke-dasharray: 18;
-  stroke-dashoffset: 18;
-  animation: onb-progress-saved-check-draw 420ms var(--sa-ease) 120ms forwards;
-}
-
-.onb-welcome-title {
-  animation: onb-welcome-in 380ms var(--sa-ease);
-}
-
-.onb-welcome-subtitle {
-  animation: onb-welcome-in 380ms var(--sa-ease) 60ms;
-  animation-fill-mode: backwards;
-}
-
-.onb-welcome-card {
-  /* backwards only — `both` can leave cards stuck at opacity:0 after
-     Strict Mode remount / HMR / Reset onboarding hard reload. */
-  animation: onb-card-in 380ms var(--sa-ease) backwards;
-  animation-delay: calc(120ms + var(--onb-stagger, 0) * 70ms);
-}
-
-.onb-form-card {
-  animation: onb-card-in 280ms var(--sa-ease) backwards;
-  animation-delay: calc(var(--onb-stagger, 0) * 45ms);
-}
-
-.onb-review-stack > .onb-form-card:nth-child(1) {
-  --onb-stagger: 0;
-}
-.onb-review-stack > .onb-form-card:nth-child(2) {
-  --onb-stagger: 1;
-}
-.onb-review-stack > .onb-form-card:nth-child(3) {
-  --onb-stagger: 2;
-}
-.onb-review-stack > .onb-form-card:nth-child(4) {
-  --onb-stagger: 3;
-}
-.onb-review-stack > .onb-form-card:nth-child(5) {
-  --onb-stagger: 4;
-}
-.onb-review-stack > .onb-form-card:nth-child(6) {
-  --onb-stagger: 5;
-}
-.onb-review-stack > .onb-form-card:nth-child(n + 7) {
-  --onb-stagger: 6;
-}
-
-.onb-section-stack > .onb-form-card:nth-child(1) {
-  --onb-stagger: 0;
-}
-.onb-section-stack > .onb-form-card:nth-child(2) {
-  --onb-stagger: 1;
-}
-.onb-section-stack > .onb-form-card:nth-child(3) {
-  --onb-stagger: 2;
-}
-.onb-section-stack > .onb-form-card:nth-child(4) {
-  --onb-stagger: 3;
-}
-.onb-section-stack > .onb-form-card:nth-child(5) {
-  --onb-stagger: 4;
-}
-.onb-section-stack > .onb-form-card:nth-child(6) {
-  --onb-stagger: 5;
-}
-.onb-section-stack > .onb-form-card:nth-child(n + 7) {
-  --onb-stagger: 6;
-}
-
-.onb-step-header {
-  animation: onb-welcome-in 320ms var(--sa-ease);
-}
-
-.onb-file-row {
-  animation: onb-card-in 280ms var(--sa-ease) backwards;
-  animation-delay: calc(var(--onb-stagger, 0) * 45ms);
-}
-
-.onb-review-hero-icon {
-  animation: onb-card-in 400ms var(--sa-ease);
-}
-
-.onb-review-hero-title {
-  animation: onb-welcome-in 380ms var(--sa-ease) 80ms backwards;
-}
-
-.onb-review-hero-subtitle {
-  animation: onb-welcome-in 380ms var(--sa-ease) 140ms backwards;
+.onb-welcome-copy {
+  animation: onb-step-in 320ms var(--sa-ease);
 }
 
 .onb-stepper-connector {
@@ -2722,15 +2564,6 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
     border-color 220ms var(--sa-ease),
     box-shadow 220ms var(--sa-ease),
     transform 220ms var(--sa-ease);
-}
-
-.onb-stepper-marker-done,
-.onb-stepper-marker-active {
-  animation: onb-marker-pop 320ms var(--sa-ease);
-}
-
-.onb-stepper-active-dot {
-  animation: onb-active-pulse 1.6s ease-in-out infinite;
 }
 
 .onb-stepper-label {
@@ -2754,7 +2587,7 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 }
 
 .onb-setup-copy {
-  animation: onb-welcome-in 360ms var(--sa-ease);
+  animation: onb-fade-in 280ms var(--sa-ease);
 }
 
 @keyframes onb-setup-fade-out {
@@ -2771,23 +2604,7 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 }
 
 .onb-all-set {
-  animation: onb-step-in 420ms var(--sa-ease);
-}
-
-.onb-all-set-title {
-  animation: onb-welcome-in 420ms var(--sa-ease) 80ms backwards;
-}
-
-.onb-all-set-subtitle {
-  animation: onb-welcome-in 420ms var(--sa-ease) 140ms backwards;
-}
-
-.onb-all-set-art {
-  animation: onb-card-in 560ms var(--sa-ease) 180ms backwards;
-}
-
-.onb-all-set-cta {
-  animation: onb-welcome-in 400ms var(--sa-ease) 280ms backwards;
+  animation: onb-step-in 320ms var(--sa-ease);
 }
 
 .sa-press {
@@ -3331,39 +3148,19 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 
   .onb-step-panel,
   .onb-progress-saved,
-  .onb-progress-saved-icon,
-  .onb-progress-saved-check,
-  .onb-welcome-title,
-  .onb-welcome-subtitle,
-  .onb-welcome-card,
-  .onb-form-card,
-  .onb-step-header,
-  .onb-file-row,
-  .onb-review-hero-icon,
-  .onb-review-hero-title,
-  .onb-review-hero-subtitle,
-  .onb-stepper-marker-done,
-  .onb-stepper-marker-active,
-  .onb-stepper-active-dot,
+  .onb-welcome-copy,
   .onb-setup-spinner,
   .onb-setup-copy,
   .onb-setup-fade-out,
   .onb-all-set,
-  .onb-all-set-title,
-  .onb-all-set-subtitle,
-  .onb-all-set-art,
-  .onb-all-set-cta,
   .onb-review-progress-ring {
     animation: none;
   }
 
-  .onb-progress-saved-check {
-    stroke-dashoffset: 0;
-  }
-
   .onb-stepper-connector,
   .onb-stepper-marker,
-  .onb-stepper-label {
+  .onb-stepper-label,
+  .onb-sticky-nav {
     transition: none;
   }
 
