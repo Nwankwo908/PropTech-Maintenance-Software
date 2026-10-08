@@ -481,6 +481,9 @@ export function TryDemoAttentionGuideHost() {
       title={tryDemoAttentionGuideTitle(step)}
       body={tryDemoAttentionGuideBody(step)}
       pageLabel={tryDemoAttentionGuidePageLabel(step, TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL)}
+      holdLoading={
+        step === TRY_DEMO_ATTENTION_GUIDE_STEP_ACTIVE_TASKS && !cutoutArmed
+      }
       onNext={advance}
       onClose={dismiss}
     />

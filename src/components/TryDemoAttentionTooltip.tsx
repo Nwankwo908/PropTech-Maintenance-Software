@@ -410,6 +410,11 @@ type TryDemoAttentionTooltipProps = {
   title: string
   body: string
   pageLabel: string
+  /**
+   * Active Tasks (step 7) only. The board fetch takes several seconds, so the
+   * held tip must not keep the previous step's copy with no feedback.
+   */
+  holdLoading?: boolean
   onNext?: () => void
   /** Dismiss the tip tour early (close icon). */
   onClose?: () => void
@@ -468,6 +473,7 @@ export function TryDemoAttentionTooltip({
   title,
   body,
   pageLabel,
+  holdLoading = false,
   onNext,
   onClose,
 }: TryDemoAttentionTooltipProps) {
@@ -529,6 +535,14 @@ export function TryDemoAttentionTooltip({
     // Do not blank the card — empty shell + frozen hole is what looks like a "stuck" tip.
     if (!armed) {
       if (contentTimerRef.current != null) window.clearTimeout(contentTimerRef.current)
+      if (holdLoading) {
+        setDisplayed({
+          title: 'Loading Active Tasks',
+          body: 'Your board is still loading. This takes a few seconds.',
+          pageLabel,
+        })
+        setContentVisible(true)
+      }
       return
     }
 
@@ -1157,6 +1171,7 @@ export function TryDemoAttentionTooltip({
     title,
     body,
     pageLabel,
+    holdLoading,
   ])
 
   const primaryHole = holes[0] ?? null
@@ -1311,6 +1326,7 @@ export function TryDemoAttentionTooltip({
         <div
           ref={cardRef}
           className="relative rounded-[12px] bg-[#1a1a1a] px-4 pb-3.5 pt-4 text-left shadow-[0_16px_40px_rgba(0,0,0,0.35)]"
+          aria-busy={holdLoading || undefined}
         >
           <span
             className="absolute size-3 bg-[#1a1a1a]"
@@ -1341,8 +1357,14 @@ export function TryDemoAttentionTooltip({
           >
             <h2
               id="try-demo-attention-tip-title"
-              className="pr-7 text-[16px] font-semibold leading-5 tracking-[-0.01em] text-white"
+              className="flex items-center gap-2 pr-7 text-[16px] font-semibold leading-5 tracking-[-0.01em] text-white"
             >
+              {holdLoading ? (
+                <span
+                  className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white"
+                  aria-hidden
+                />
+              ) : null}
               {displayed.title}
             </h2>
             <p className="mt-1.5 text-[13px] font-normal leading-5 text-white/90">{displayed.body}</p>
