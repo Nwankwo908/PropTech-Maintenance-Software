@@ -25,7 +25,7 @@ import {
   IconClose,
   IconFocusFeature,
   IconGraph,
-  LANDING_DOCUMENT_IMPORT_ICONS,
+  LANDING_HERO_LEASE_ICONS,
   IconMenu,
 } from '@/components/landing/LandingIcons'
 import { FeaturesMarquee } from '@/components/landing/FeaturesMarquee'
@@ -486,21 +486,21 @@ function PrimaryLink({
 }
 
 const SECONDARY_BUTTON_CLASS = [
-  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#d1d5db] bg-white px-7 py-2.5 leading-none',
+  'sa-press sa-surface flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#20967C] bg-white px-7 py-2.5 leading-none',
   'text-sm font-semibold text-[#364153]',
   'transition-[transform,box-shadow,border-color,background-color,color] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
-  'hover:border-[#9ca3af] hover:bg-[#f9fafb] hover:shadow-[0_4px_14px_rgba(16,24,40,0.08)] hover:-translate-y-0.5',
+  'hover:border-[#187a64] hover:bg-[#f9fafb] hover:shadow-[0_4px_14px_rgba(16,24,40,0.08)] hover:-translate-y-0.5',
   'active:translate-y-px active:scale-[0.98] active:bg-[#f3f4f6]',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d1d5db] focus-visible:ring-offset-2',
 ].join(' ')
 
 const SECONDARY_BUTTON_OUTLINE_CLASS = [
-  'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#70ABC5] bg-transparent px-7 py-2.5 leading-none',
-  'text-sm font-semibold text-[#70ABC5]',
+  'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#20967C] bg-transparent px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-[#20967C]',
   'transition-[transform,border-color,background-color,color] duration-[var(--sa-duration)] ease-[var(--sa-ease)]',
-  'hover:border-[#5f9ab4] hover:bg-[#70ABC5]/15 hover:text-[#5f9ab4]',
-  'active:translate-y-px active:scale-[0.98] active:bg-[#70ABC5]/25',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#70ABC5]/50 focus-visible:ring-offset-2',
+  'hover:border-[#187a64] hover:bg-[#20967C]/15 hover:text-[#187a64]',
+  'active:translate-y-px active:scale-[0.98] active:bg-[#20967C]/25',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#20967C]/50 focus-visible:ring-offset-2',
 ].join(' ')
 
 function SecondaryButton({

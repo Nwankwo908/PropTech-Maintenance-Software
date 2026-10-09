@@ -1,3 +1,24 @@
+/** Three dots while a finished upload is being confirmed, before the saved note. */
+export function OnboardingProgressSavedDots() {
+  return (
+    <p
+      role="status"
+      aria-live="polite"
+      className="inline-flex items-center gap-1"
+    >
+      <span className="sr-only">Saving your progress</span>
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          aria-hidden
+          className="onb-saved-dot"
+          style={{ animationDelay: `${index * 160}ms` }}
+        />
+      ))}
+    </p>
+  )
+}
+
 /** Shown only after the landlord has entered something that was actually saved. */
 export function OnboardingProgressSavedNote({ className }: { className?: string }) {
   return (

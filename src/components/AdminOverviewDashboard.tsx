@@ -35,16 +35,9 @@ import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
 import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
 import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import {
-  consumeTryDemoAttentionGuidePending,
-  isTryDemoAttentionGuidePending,
-  markTryDemoAttentionGuideSeen,
-  readTryDemoAttentionGuideActiveStep,
-  TRY_DEMO_ATTENTION_GUIDE_EVENT,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
   TRY_DEMO_SPOTLIGHT_ATTENTION_ID,
   TRY_DEMO_SPOTLIGHT_PORTFOLIO_ID,
   TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID,
-  writeTryDemoAttentionGuideActiveStep,
 } from '@/lib/tryDemoAttentionGuide'
 import {
   clearSetupSuccessCardDismissed,
@@ -2215,24 +2208,6 @@ export function AdminOverviewDashboard() {
     setAwaitingDecisionListOpen(false)
     item.onAction?.()
   }, [])
-
-  // Try Demo: arm the layout tip host after Welcome Ok once Overview data is ready.
-  useEffect(() => {
-    if (loading) return
-    if (readTryDemoAttentionGuideActiveStep() != null) return
-
-    const maybeArm = () => {
-      if (!isTryDemoAttentionGuidePending()) return
-      writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
-      consumeTryDemoAttentionGuidePending()
-      // Seen so refresh does not re-arm; keep activeStep until the tour finishes.
-      markTryDemoAttentionGuideSeen()
-    }
-
-    maybeArm()
-    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, maybeArm)
-    return () => window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, maybeArm)
-  }, [loading])
 
   useEffect(() => {
     if (loading) return

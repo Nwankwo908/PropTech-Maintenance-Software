@@ -10,6 +10,7 @@ import { clearVendorSetupInboxForLandlord } from '@/lib/vendorSetupConversation'
 import { supabase } from '@/lib/supabase'
 import { clearLandlordStripeConnect } from '@/api/landlordStripeConnect'
 import { clearLimitedAlphaPostOnboardingWelcomeSeen } from '@/lib/postOnboardingWelcome'
+import { clearTryDemoAttentionGuide } from '@/lib/tryDemoAttentionGuide'
 import {
   clearSetupSuccessCardDismissed,
   clearSetupSuccessTestDelivery,
@@ -1181,6 +1182,8 @@ export async function restartNewLandlordOnboarding(
   clearSetupSuccessTestDelivery(scope.landlordId)
   clearSetupSuccessNavPercentBaseline(scope.landlordId)
   clearSetupSuccessCheckboxGuide(scope.landlordId)
+  // A tour seen (or left mid-way) before the reset must not block the next one.
+  clearTryDemoAttentionGuide()
 
   const cleared: LandlordOnboardingState = {
     ...defaultOnboardingState(scope.landlordId),

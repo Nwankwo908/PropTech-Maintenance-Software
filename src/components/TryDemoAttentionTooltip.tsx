@@ -1,6 +1,5 @@
-import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { IconClose } from '@/components/landing/LandingIcons'
 import { playUiClickSound } from '@/lib/uiClickSound'
 import {
   TRY_DEMO_ACTIVE_TASKS_KANBAN_COLUMN_COUNT,
@@ -11,8 +10,10 @@ import {
   TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID,
   TRY_DEMO_SPOTLIGHT_RESIDENTS_ROWS_ID,
   TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID,
+  TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID,
   TRY_DEMO_SPOTLIGHT_VENDORS_ROWS_ID,
   isTryDemoRouteMorphStep,
+  readTryDemoAttentionGuideVariant,
   tipRouteMatchesLocation,
 } from '@/lib/tryDemoAttentionGuide'
 
@@ -90,14 +91,17 @@ function holeFromRect(rect: DOMRect, opts?: { skipClamp?: boolean }): HoleRect {
 
 function measureHoleFromElements(
   elements: HTMLElement[],
-  opts?: { skipClamp?: boolean; separate?: boolean },
+  opts?: { skipClamp?: boolean; separate?: boolean; matchFirstHeight?: boolean },
 ): HoleRect[] {
   const rects = elements
     .map((el) => rectFromElement(el))
     .filter((r): r is DOMRect => r != null && (r.width > 0 || r.height > 0))
   if (rects.length === 0) return []
   if (opts?.separate) {
-    return rects.map((rect) => holeFromRect(rect, opts))
+    const holes = rects.map((rect) => holeFromRect(rect, opts))
+    if (!opts.matchFirstHeight) return holes
+    const height = holes[0]!.height
+    return holes.map((hole) => ({ ...hole, height }))
   }
   const top = Math.min(...rects.map((r) => r.top))
   const left = Math.min(...rects.map((r) => r.left))
@@ -158,7 +162,12 @@ function unionHole(holes: HoleRect[]): HoleRect {
     right = Math.max(right, hole.left + hole.width)
     bottom = Math.max(bottom, hole.top + hole.height)
   }
-  return { top, left, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
+  return {
+    top,
+    left,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  }
 }
 
 /** Align hole lists so RAF can always lerp (pad / collapse) instead of snapping. */
@@ -262,10 +271,21 @@ function clampHoleForReadableScrim(hole: HoleRect): HoleRect {
   }
 }
 
+/** Messages step: the left tip sits over the sidebar, so keep it under the Messages nav link. */
+function tipFloorTopForTarget(targetId: string | null): number | null {
+  if (targetId !== TRY_DEMO_SPOTLIGHT_MESSAGES_KPI_ID) return null
+  const link = document.querySelector('nav[aria-label="Admin"] a[href^="/admin/communication"]')
+  if (!link) return null
+  const rect = link.getBoundingClientRect()
+  if (rect.height === 0) return null
+  return rect.bottom + TOOLTIP_GAP
+}
+
 function measureTooltip(
   hole: HoleRect,
   tooltipHeight: number,
   side: TryDemoTooltipSide = 'auto',
+  floorTop: number | null = null,
 ): TooltipCoords {
   const viewportWidth = window.visualViewport?.width ?? window.innerWidth
   const viewportHeight = window.visualViewport?.height ?? window.innerHeight
@@ -299,7 +319,7 @@ function measureTooltip(
     const preferredTop = tallHole
       ? hole.top + TOOLTIP_GAP
       : hole.top + hole.height / 2 - tooltipHeight / 2
-    const top = Math.min(maxTop, Math.max(VIEWPORT_INSET, preferredTop))
+    const top = Math.min(maxTop, Math.max(VIEWPORT_INSET, preferredTop, floorTop ?? 0))
     const anchorY = tallHole
       ? hole.top + Math.min(48, hole.height * 0.12)
       : hole.top + hole.height / 2
@@ -324,12 +344,26 @@ function measureTooltip(
 
   const belowTop = hole.top + hole.height + TOOLTIP_GAP
   if (belowTop + tooltipHeight <= viewportHeight - VIEWPORT_INSET) {
-    return { top: belowTop, left, width, placement: 'below', pointerLeft, pointerTop: 0 }
+    return {
+      top: belowTop,
+      left,
+      width,
+      placement: 'below',
+      pointerLeft,
+      pointerTop: 0,
+    }
   }
 
   const aboveTop = hole.top - tooltipHeight - TOOLTIP_GAP
   if (aboveTop >= VIEWPORT_INSET) {
-    return { top: aboveTop, left, width, placement: 'above', pointerLeft, pointerTop: 0 }
+    return {
+      top: aboveTop,
+      left,
+      width,
+      placement: 'above',
+      pointerLeft,
+      pointerTop: 0,
+    }
   }
 
   // Large clear UI (Messages / Active Tasks): tip inside the cutout near the top.
@@ -410,6 +444,8 @@ type TryDemoAttentionTooltipProps = {
   title: string
   body: string
   pageLabel: string
+  /** Optional preview image shown above the title. */
+  mediaSrc?: string | null
   /**
    * Active Tasks (step 7) only. The board fetch takes several seconds, so the
    * held tip must not keep the previous step's copy with no feedback.
@@ -473,6 +509,7 @@ export function TryDemoAttentionTooltip({
   title,
   body,
   pageLabel,
+  mediaSrc = null,
   holdLoading = false,
   onNext,
   onClose,
@@ -483,7 +520,14 @@ export function TryDemoAttentionTooltip({
   const [animateGeometry, setAnimateGeometry] = useState(false)
   const [contentVisible, setContentVisible] = useState(true)
   const [scrimOpacity, setScrimOpacity] = useState(1)
-  const [displayed, setDisplayed] = useState({ title, body, pageLabel })
+  const [displayed, setDisplayed] = useState<{
+    title: string
+    body: string
+    pageLabel: string
+    mediaSrc?: string | null
+  }>({ title, body, pageLabel, mediaSrc })
+  /** Remeasure the card once the preview image has its real height. */
+  const [mediaLoadTick, setMediaLoadTick] = useState(0)
   const holesRef = useRef<HoleRect[]>([])
   const cardRef = useRef<HTMLDivElement | null>(null)
   const tooltipHeightRef = useRef(ESTIMATED_TOOLTIP_HEIGHT)
@@ -576,7 +620,14 @@ export function TryDemoAttentionTooltip({
       holesRef.current = next
       setAnimateGeometry(false)
       setHoles(next)
-      setTooltip(measureTooltip(next[0]!, tooltipHeightRef.current, sideRef.current))
+      setTooltip(
+        measureTooltip(
+          next[0]!,
+          tooltipHeightRef.current,
+          sideRef.current,
+          tipFloorTopForTarget(targetId),
+        ),
+      )
     }
 
     const morphToHoles = (next: HoleRect[]) => {
@@ -607,14 +658,28 @@ export function TryDemoAttentionTooltip({
         )
         holesRef.current = frame
         setHoles(frame)
-        setTooltip(measureTooltip(frame[0]!, tooltipHeightRef.current, sideRef.current))
+        setTooltip(
+          measureTooltip(
+            frame[0]!,
+            tooltipHeightRef.current,
+            sideRef.current,
+            tipFloorTopForTarget(targetId),
+          ),
+        )
         if (t < 1) {
           morphRafRef.current = window.requestAnimationFrame(tick)
           return
         }
         holesRef.current = next
         setHoles(next)
-        setTooltip(measureTooltip(next[0]!, tooltipHeightRef.current, sideRef.current))
+        setTooltip(
+          measureTooltip(
+            next[0]!,
+            tooltipHeightRef.current,
+            sideRef.current,
+            tipFloorTopForTarget(targetId),
+          ),
+        )
       }
 
       morphRafRef.current = window.requestAnimationFrame(tick)
@@ -636,6 +701,8 @@ export function TryDemoAttentionTooltip({
     const tracksActiveTasksRow =
       typeof targetId === 'string' &&
       targetId.startsWith('try-demo-spotlight-active-tasks-first-row')
+    const matchActiveTasksHeight =
+      tracksActiveTasksRow && readTryDemoAttentionGuideVariant() === 'setup'
     const needsLayoutGate =
       tracksMessagesSection ||
       tracksPropertiesSection ||
@@ -805,7 +872,8 @@ export function TryDemoAttentionTooltip({
       // Top-bar Search + Ask Ulo cluster is sticky — never scroll-chase it.
       const skipScroll =
         targetId === TRY_DEMO_SPOTLIGHT_ASK_ULO_ID ||
-        targetId === TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID
+        targetId === TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID ||
+        targetId === TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID
       // Messages / Properties: pin admin scroller to top (hosts start at page top).
       if (tracksMessagesSection || tracksPropertiesSection) {
         const scrollRoot = adminScrollRoot()
@@ -842,6 +910,7 @@ export function TryDemoAttentionTooltip({
       const next = measureHoleFromElements(elements, {
         skipClamp: skipHoleClamp,
         separate: separateHoles,
+        matchFirstHeight: matchActiveTasksHeight,
       })
       if (next.length === 0) return false
 
@@ -922,6 +991,7 @@ export function TryDemoAttentionTooltip({
               const afterScroll = measureHoleFromElements(elements, {
                 skipClamp: skipHoleClamp,
                 separate: separateHoles,
+                matchFirstHeight: matchActiveTasksHeight,
               })
               if (afterScroll.length > 0) targetHoles = afterScroll
             }
@@ -960,7 +1030,7 @@ export function TryDemoAttentionTooltip({
       if (routeMorph && !contentRevealedRef.current) {
         contentRevealedRef.current = true
         if (contentTimerRef.current != null) window.clearTimeout(contentTimerRef.current)
-        setDisplayed({ title, body, pageLabel })
+        setDisplayed({ title, body, pageLabel, mediaSrc })
         setContentVisible(true)
       }
       return true
@@ -973,17 +1043,17 @@ export function TryDemoAttentionTooltip({
     if (contentTimerRef.current != null) window.clearTimeout(contentTimerRef.current)
     if (routeMorph) {
       contentRevealedRef.current = true
-      setDisplayed({ title, body, pageLabel })
+      setDisplayed({ title, body, pageLabel, mediaSrc })
       setContentVisible(true)
     } else if (isStepChange && !reduceMotion) {
       setContentVisible(false)
       contentTimerRef.current = window.setTimeout(() => {
         if (cancelled) return
-        setDisplayed({ title, body, pageLabel })
+        setDisplayed({ title, body, pageLabel, mediaSrc })
         setContentVisible(true)
       }, contentFadeMs)
     } else {
-      setDisplayed({ title, body, pageLabel })
+      setDisplayed({ title, body, pageLabel, mediaSrc })
       setContentVisible(true)
     }
 
@@ -1006,10 +1076,22 @@ export function TryDemoAttentionTooltip({
       const next = measureHoleFromElements(elements, {
         skipClamp: skipHoleClamp,
         separate: separateHoles,
+        matchFirstHeight: matchActiveTasksHeight,
       })
       if (next.length > 0) applyHolesInstant(next)
     }
     window.addEventListener('resize', remasureHoleToTarget)
+
+    // The setup card slides in and fills its checklist after it mounts, so its
+    // size settles after the first measure. Keep the cutout matched to it.
+    const sizedTarget =
+      targetId === TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID ? document.getElementById(targetId) : null
+    const targetResizeObserver =
+      sizedTarget && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => remasureHoleToTarget())
+        : null
+    if (sizedTarget) targetResizeObserver?.observe(sizedTarget)
+    sizedTarget?.addEventListener('animationend', remasureHoleToTarget)
 
     let scrollFollowRaf = 0
     const onScrollFollow = () => {
@@ -1023,7 +1105,10 @@ export function TryDemoAttentionTooltip({
     const scrollRoot = adminScrollRoot()
     scrollRoot?.addEventListener('scroll', onScrollFollow, { passive: true })
     // Capture nested scrollers (tables, Ask Ulo rails) that are not the admin root.
-    window.addEventListener('scroll', onScrollFollow, { passive: true, capture: true })
+    window.addEventListener('scroll', onScrollFollow, {
+      passive: true,
+      capture: true,
+    })
 
     let attempts = 0
     const maxPollAttempts =
@@ -1031,7 +1116,8 @@ export function TryDemoAttentionTooltip({
       tracksMessagesSection ||
       tracksTableRowsHost ||
       tracksUloActivity ||
-      tracksAskUloContent
+      tracksAskUloContent ||
+      targetId === TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID
         ? 500
         : 280
     const poll = window.setInterval(() => {
@@ -1095,7 +1181,7 @@ export function TryDemoAttentionTooltip({
         // Never leave a route tip as an empty shell if the host never committed.
         if (routeMorph && !contentRevealedRef.current) {
           contentRevealedRef.current = true
-          setDisplayed({ title, body, pageLabel })
+          setDisplayed({ title, body, pageLabel, mediaSrc })
           setContentVisible(true)
         }
         window.clearInterval(poll)
@@ -1116,14 +1202,19 @@ export function TryDemoAttentionTooltip({
         })
       }
     })
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true })
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    })
     const observerStop = window.setTimeout(
       () => observer.disconnect(),
       routeMorph ||
         tracksAskUloShell ||
         tracksMessagesSection ||
         tracksTableRowsHost ||
-        tracksUloActivity
+        tracksUloActivity ||
+        targetId === TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID
         ? 12000
         : 1500,
     )
@@ -1148,6 +1239,8 @@ export function TryDemoAttentionTooltip({
       window.clearInterval(poll)
       window.clearTimeout(observerStop)
       window.removeEventListener('resize', remasureHoleToTarget)
+      targetResizeObserver?.disconnect()
+      sizedTarget?.removeEventListener('animationend', remasureHoleToTarget)
       scrollRoot?.removeEventListener('scroll', onScrollFollow)
       window.removeEventListener('scroll', onScrollFollow, true)
       askUloShellEl?.removeEventListener('transitionend', onAskUloTransitionEnd)
@@ -1171,10 +1264,26 @@ export function TryDemoAttentionTooltip({
     title,
     body,
     pageLabel,
+    mediaSrc,
     holdLoading,
   ])
 
   const primaryHole = holes[0] ?? null
+  const tipShown = active && holes.length > 0 && tooltip != null
+
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  // No close icon: any press outside the tip card ends the tour. Scrolling still works.
+  useEffect(() => {
+    if (!tipShown) return
+    const onPointerDown = (event: PointerEvent) => {
+      const card = cardRef.current
+      if (card && event.target instanceof Node && card.contains(event.target)) return
+      onCloseRef.current?.()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [tipShown])
 
   useLayoutEffect(() => {
     if (!active || !primaryHole || !cardRef.current) return
@@ -1182,14 +1291,17 @@ export function TryDemoAttentionTooltip({
     if (height <= 0) return
     if (Math.abs(height - tooltipHeightRef.current) < 1) return
     tooltipHeightRef.current = height
-    setTooltip(measureTooltip(primaryHole, height, side))
+    setTooltip(measureTooltip(primaryHole, height, side, tipFloorTopForTarget(targetId)))
   }, [
     active,
     primaryHole,
     side,
+    targetId,
     displayed.title,
     displayed.body,
     displayed.pageLabel,
+    displayed.mediaSrc,
+    mediaLoadTick,
     contentVisible,
   ])
 
@@ -1200,11 +1312,6 @@ export function TryDemoAttentionTooltip({
     // (disabled={!armed} was leaving Next dead when settle hung off-route.)
     playUiClickSound()
     onNext?.()
-  }
-
-  function handleClose() {
-    playUiClickSound()
-    onClose?.()
   }
 
   const cardMorphMs = tracksAskUloShell
@@ -1307,7 +1414,7 @@ export function TryDemoAttentionTooltip({
               rx="12"
               ry="12"
               fill="none"
-              stroke="rgba(255, 255, 255, 0.85)"
+              stroke="#20967C"
               strokeWidth="2"
             />
           ))}
@@ -1337,16 +1444,6 @@ export function TryDemoAttentionTooltip({
             }}
             aria-hidden
           />
-          {onClose ? (
-            <button
-              type="button"
-              onClick={handleClose}
-              aria-label="Close tip"
-              className="sa-press absolute right-2 top-2 z-[1] flex size-7 items-center justify-center rounded-[8px] text-white/70 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1a1a]"
-            >
-              <IconClose className="size-3.5" />
-            </button>
-          ) : null}
           <div
             style={{
               opacity: contentVisible ? 1 : 0,
@@ -1355,9 +1452,19 @@ export function TryDemoAttentionTooltip({
                 : `opacity ${tipContentFadeMs}ms var(--sa-ease)`,
             }}
           >
+            {displayed.mediaSrc ? (
+              <div className="mb-3 overflow-hidden rounded-[10px] bg-[#70ABC5] py-2.5 pl-2.5 pr-0">
+                <img
+                  src={displayed.mediaSrc}
+                  alt=""
+                  className="block h-auto w-full rounded-l-[8px]"
+                  onLoad={() => setMediaLoadTick((n) => n + 1)}
+                />
+              </div>
+            ) : null}
             <h2
               id="try-demo-attention-tip-title"
-              className="flex items-center gap-2 pr-7 text-[16px] font-semibold leading-5 tracking-[-0.01em] text-white"
+              className="flex items-center gap-2 text-[16px] font-semibold leading-5 tracking-[-0.01em] text-white"
             >
               {holdLoading ? (
                 <span

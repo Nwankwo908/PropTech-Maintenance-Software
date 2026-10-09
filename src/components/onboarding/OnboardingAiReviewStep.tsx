@@ -6,8 +6,6 @@ import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
-  formatExtractedUnitPlacement,
-  type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
   type OnboardingExtractedProperty,
   type OnboardingExtractedResident,
@@ -39,6 +37,8 @@ const VENDOR_TRADE_OPTIONS: { value: string; label: string }[] = [
   })),
 ]
 
+const MANUAL_PROPERTY_SOURCE = 'Manual entry'
+
 function createEmptyExtractedProperty(): OnboardingExtractedProperty {
   return {
     id: `property-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -52,7 +52,7 @@ function createEmptyExtractedProperty(): OnboardingExtractedProperty {
     unitLabels: '',
     propertyManagerName: '',
     propertyManagerPhone: '',
-    sourceDocumentName: 'Manual entry',
+    sourceDocumentName: MANUAL_PROPERTY_SOURCE,
     confidence: 1,
     selected: false,
     needsReview: false,
@@ -451,39 +451,6 @@ export function OnboardingAiReviewStep({
     })
   }
 
-  function setLeaseSectionSelected(selected: boolean) {
-    onReviewChange({
-      ...review,
-      leases: review.leases.map((row) => ({ ...row, selected })),
-    })
-  }
-
-  function sectionSelectActions(
-    onSelect: () => void,
-    onDeselect: () => void,
-  ) {
-    return (
-      <>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={onSelect}
-          className="text-[12px] font-medium text-[#186179] hover:text-[#0f4d61] disabled:opacity-50"
-        >
-          Select
-        </button>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={onDeselect}
-          className="text-[12px] font-medium text-[#6a7282] hover:text-[#101828] disabled:opacity-50"
-        >
-          Deselect
-        </button>
-      </>
-    )
-  }
-
   function startEdit(id: string, value: string) {
     setEditingId(id)
     setEditDraft(value)
@@ -504,7 +471,10 @@ export function OnboardingAiReviewStep({
     setEditDraft('')
   }
 
-  function renderResidentEditFields(item: OnboardingExtractedResident) {
+  function renderResidentEditFields(
+    item: OnboardingExtractedResident,
+    opts: { showUnit?: boolean } = {},
+  ) {
     return (
       <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
         <label className="block sm:col-span-2">
@@ -516,7 +486,10 @@ export function OnboardingAiReviewStep({
             placeholder="Full name"
           />
         </label>
-        <label className="block">
+        <div
+          className={`grid gap-3 sm:col-span-2 ${opts.showUnit ? 'sm:grid-cols-[1fr_1fr_120px]' : 'sm:grid-cols-2'}`}
+        >
+        <label className="block min-w-0">
           <span className={fieldLabelClass}>Email</span>
           <input
             className={inputClass}
@@ -526,7 +499,7 @@ export function OnboardingAiReviewStep({
             placeholder="Email"
           />
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className={fieldLabelClass}>Phone</span>
           <input
             className={inputClass}
@@ -536,6 +509,18 @@ export function OnboardingAiReviewStep({
             placeholder="Phone"
           />
         </label>
+        {opts.showUnit ? (
+          <label className="block min-w-0">
+            <span className={fieldLabelClass}>Unit</span>
+            <input
+              className={inputClass}
+              value={item.unit}
+              onChange={(e) => patchResident(item.id, { unit: e.target.value })}
+              placeholder="4B"
+            />
+          </label>
+        ) : null}
+        </div>
         <div className="grid grid-cols-3 gap-3 sm:col-span-2">
         <label className="block min-w-0">
           <span className={fieldLabelClass}>Occupancy status</span>
@@ -617,6 +602,11 @@ export function OnboardingAiReviewStep({
         ? review.properties.map((item, index) => {
             const propertyUnits = unitsForProperty(item, review.units, review.properties)
             propertyUnits.forEach((unit) => assignedUnitIds.add(unit.id))
+            const addedByHand = manualAdd || item.sourceDocumentName === MANUAL_PROPERTY_SOURCE
+            const showUnitCount =
+              addedByHand || Math.max(item.unitCount, propertyUnits.length) > 1
+            const isMultifamily =
+              resolveOnboardingPropertyType(item.propertyType) === 'multifamily'
 
             return (
               <li key={item.id} className="list-none">
@@ -649,7 +639,7 @@ export function OnboardingAiReviewStep({
                           const name = e.target.value
                           patchProperty(
                             item.id,
-                            manualAdd
+                            addedByHand
                               ? {
                                   name,
                                   selected:
@@ -669,7 +659,7 @@ export function OnboardingAiReviewStep({
                         onChange={(address) =>
                           patchProperty(
                             item.id,
-                            manualAdd
+                            addedByHand
                               ? {
                                   address,
                                   selected:
@@ -715,7 +705,9 @@ export function OnboardingAiReviewStep({
                         </select>
                       </div>
                     </label>
-                    <div className="grid grid-cols-3 gap-3 sm:col-span-2">
+                    <div
+                      className={`grid gap-3 sm:col-span-2 ${showUnitCount ? 'grid-cols-3' : 'grid-cols-2'}`}
+                    >
                     <label className="block min-w-0">
                       <span className={fieldLabelClass}>ZIP</span>
                       <input
@@ -725,6 +717,7 @@ export function OnboardingAiReviewStep({
                         placeholder="07102"
                       />
                     </label>
+                    {showUnitCount ? (
                     <label className="block min-w-0">
                       <span className={fieldLabelClass}>Units</span>
                       <input
@@ -741,6 +734,7 @@ export function OnboardingAiReviewStep({
                         placeholder="1"
                       />
                     </label>
+                    ) : null}
                     <label className="block min-w-0">
                       <span className={fieldLabelClass}>Property type</span>
                       <div className="relative">
@@ -815,7 +809,7 @@ export function OnboardingAiReviewStep({
                                 onEditChange={() => undefined}
                                 trailing={residentOnboardingTrailing(resident)}
                               >
-                                {renderResidentEditFields(resident)}
+                                {renderResidentEditFields(resident, { showUnit: isMultifamily })}
                               </ReviewItemRow>
                             </li>
                           ))}
@@ -824,7 +818,7 @@ export function OnboardingAiReviewStep({
                     )
                   })()}
               </ReviewItemRow>
-              {manualAdd ? (
+              {addedByHand ? (
                 <div className="mt-2 flex justify-center">
                   <button
                     type="button"
@@ -1082,51 +1076,6 @@ export function OnboardingAiReviewStep({
     )
   }
 
-  function renderSimpleRows<
-    T extends {
-      id: string
-      selected: boolean
-      sourceDocumentName: string
-    },
-  >(
-    items: T[],
-    section: keyof OnboardingExtractionReview,
-    labelFor: (item: T) => string,
-    valueFor: (item: T) => string,
-    editField: string,
-    getEditValue: (item: T) => string,
-    emptyLabel: string,
-  ) {
-    if (items.length === 0) return <p className="mt-2 text-[13px] text-[#6a7282]">{emptyLabel}</p>
-    return (
-      <ul className="mt-3 space-y-2">
-        {items.map((item) => (
-          <ReviewItemRow
-            key={item.id}
-            checked={item.selected}
-            onToggle={() =>
-              onReviewChange({
-                ...review,
-                [section]: items.map((row) =>
-                  row.id === item.id ? { ...row, selected: !row.selected } : row,
-                ),
-              } as OnboardingExtractionReview)
-            }
-            label={labelFor(item)}
-            value={valueFor(item)}
-            sourceDocumentName={item.sourceDocumentName}
-            editing={editingId === item.id}
-            editValue={editDraft}
-            onEdit={() => startEdit(item.id, getEditValue(item))}
-            onSaveEdit={() => saveEdit(section, editField, items)}
-            onCancelEdit={() => setEditingId(null)}
-            onEditChange={setEditDraft}
-          />
-        ))}
-      </ul>
-    )
-  }
-
   const account = review.account
   const smsChecked = Boolean(account.smsConsentAcceptedAt)
 
@@ -1302,37 +1251,19 @@ export function OnboardingAiReviewStep({
               }
             >
               {manualAdd && review.properties.length === 0 ? null : renderPropertyRows()}
+              {manualAdd ? null : (
+                <button
+                  type="button"
+                  className="mt-3 w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[13px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb]"
+                  onClick={addPropertyForm}
+                >
+                  + Add another property
+                </button>
+              )}
             </ReviewSection>
             {manualAdd ? null : (
-            <ReviewSection
-              title="Lease Information Found"
-              count={review.leases.length}
-              headerActions={
-                review.leases.length > 0
-                  ? sectionSelectActions(
-                      () => setLeaseSectionSelected(true),
-                      () => setLeaseSectionSelected(false),
-                    )
-                  : undefined
-              }
-            >
-              {renderSimpleRows<ExtractedLeaseInfo>(
-                review.leases,
-                'leases',
-                (item) => item.residentName,
-                (item) =>
-                  [
-                    formatExtractedUnitPlacement(item.building, item.unit),
-                    `${item.leaseStart} – ${item.leaseEnd}`,
-                    `Rent ${item.rentAmount}`,
-                    `Deposit ${item.securityDeposit}`,
-                  ]
-                    .filter(Boolean)
-                    .join(' · '),
-                'rentAmount',
-                (item) => item.rentAmount,
-                'No lease information detected.',
-              )}
+            <ReviewSection title="Lease Information Found" count={review.leases.length}>
+              {null}
             </ReviewSection>
             )}
             <ReviewSection

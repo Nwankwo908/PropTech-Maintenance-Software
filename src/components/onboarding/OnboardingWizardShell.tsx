@@ -17,10 +17,16 @@ import { OnboardingPropertyStep } from '@/components/onboarding/OnboardingProper
 import { OnboardingVendorsStep } from '@/components/onboarding/OnboardingVendorsStep'
 import { OnboardingResidentsStep } from '@/components/onboarding/OnboardingResidentsStep'
 import { OnboardingSetupTransition } from '@/components/onboarding/OnboardingSetupTransition'
-import { OnboardingProgressSavedNote } from '@/components/onboarding/OnboardingProgressSavedNote'
+import {
+  OnboardingProgressSavedDots,
+  OnboardingProgressSavedNote,
+} from '@/components/onboarding/OnboardingProgressSavedNote'
 import { OnboardingNavCenterProvider } from '@/components/onboarding/OnboardingStepChrome'
 import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
-import { hasSavedOnboardingUserProgress } from '@/lib/onboarding'
+import {
+  clearTryDemoAttentionGuide,
+  markTryDemoAttentionGuidePending,
+} from '@/lib/tryDemoAttentionGuide'
 
 const btnSecondary =
   'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
@@ -36,11 +42,47 @@ export function OnboardingWizardShell() {
   const handleGetStarted = () => {
     markLimitedAlphaPostOnboardingWelcomeSeen(wizard.state.landlordId)
     markLimitedAlphaPostOnboardingWelcomeSeen(getActiveLandlordId())
+    clearTryDemoAttentionGuide()
+    // Arm the 12-step tour (setup card, then the 11 Try Demo steps) on /admin.
+    markTryDemoAttentionGuidePending('setup')
     navigate('/admin', { replace: true })
   }
   const wasCompletingRef = useRef(false)
   const mainRef = useRef<HTMLElement>(null)
   const [setupFadeOut, setSetupFadeOut] = useState(false)
+  const [progressSavedPhase, setProgressSavedPhase] = useState<'idle' | 'dots' | 'shown'>('idle')
+  const seenReadyIdsRef = useRef<Set<string> | null>(null)
+  const savedRevealTimerRef = useRef<number | null>(null)
+  const readyForReviewKey = wizard.uploadDocuments
+    .filter((doc) => doc.uploadStatus === 'ready_for_review')
+    .map((doc) => doc.id)
+    .sort()
+    .join('|')
+
+  useEffect(() => {
+    if (wizard.loading) return
+    const ids = readyForReviewKey ? readyForReviewKey.split('|') : []
+    if (seenReadyIdsRef.current == null) {
+      seenReadyIdsRef.current = new Set(ids)
+      if (ids.length > 0) setProgressSavedPhase('shown')
+      return
+    }
+    const fresh = ids.filter((id) => !seenReadyIdsRef.current?.has(id))
+    if (fresh.length === 0) return
+    for (const id of fresh) seenReadyIdsRef.current.add(id)
+    setProgressSavedPhase('dots')
+    if (savedRevealTimerRef.current != null) window.clearTimeout(savedRevealTimerRef.current)
+    savedRevealTimerRef.current = window.setTimeout(() => {
+      savedRevealTimerRef.current = null
+      setProgressSavedPhase('shown')
+    }, 1000)
+  }, [wizard.loading, readyForReviewKey])
+
+  useEffect(() => {
+    return () => {
+      if (savedRevealTimerRef.current != null) window.clearTimeout(savedRevealTimerRef.current)
+    }
+  }, [])
 
   useLayoutEffect(() => {
     if (wizard.completingSetup) {
@@ -228,16 +270,9 @@ export function OnboardingWizardShell() {
 
         <OnboardingNavCenterProvider
           value={
-            !isWelcomeStep &&
-            hasSavedOnboardingUserProgress({
-              state,
-              propertyForms,
-              vendorForms,
-              residentForms,
-              uploadDocuments,
-              extractionReview,
-              payoutsReady,
-            }) ? (
+            progressSavedPhase === 'dots' && step === 'document_upload' ? (
+              <OnboardingProgressSavedDots />
+            ) : progressSavedPhase === 'shown' && !isWelcomeStep ? (
               <OnboardingProgressSavedNote />
             ) : null
           }

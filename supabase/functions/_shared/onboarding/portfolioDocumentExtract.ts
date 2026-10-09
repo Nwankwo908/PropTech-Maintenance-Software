@@ -8,7 +8,7 @@ import {
   MIN_PDF_TEXT_CHARS,
   pdfBytesToPageTexts,
 } from "./pdfDocumentText.ts"
-import { MAX_RESPONSES_PDF_PAGES, shrinkPdfForExtract } from "./pdfShrink.ts"
+import { shrinkPdfForExtract } from "./pdfShrink.ts"
 import { pdfPagesToJpegDataUrls } from "./pdfPageImages.ts"
 import {
   detectWordBinaryKind,

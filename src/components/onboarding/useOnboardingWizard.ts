@@ -1044,7 +1044,7 @@ export function useOnboardingWizard() {
       await goTo('document_upload')
       return
     }
-    // Drop the prior AI review so the next "Review data" rebuilds from files
+    // Drop the prior AI review so the next Review rebuilds from files
     // instead of reusing (and inflating) a stale lease list.
     setExtractionReview(null)
     await goTo('document_upload', {}, { extractionReview: null })

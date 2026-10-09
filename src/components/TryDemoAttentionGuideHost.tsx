@@ -2,12 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAskUlo } from '@/components/AskUloContext'
 import { TryDemoAttentionTooltip } from '@/components/TryDemoAttentionTooltip'
+import activeTasksPreview from '@/assets/try-demo/active-tasks-preview.png'
+import messagesPreview from '@/assets/try-demo/messages-preview.png'
+import needsAttentionPreview from '@/assets/try-demo/needs-attention-preview.png'
+import vendorsPreview from '@/assets/try-demo/vendors-preview.png'
 import { assignAdminPath } from '@/lib/assignAdminPath'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
+import { isSetupSuccessCardHidden, minimizeSetupSuccessCard } from '@/lib/setupSuccessChecklist'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import {
   dismissTryDemoAttentionGuide,
+  isTryDemoAttentionGuidePending,
   isTryDemoTipDestinationReady,
   planTryDemoAttentionGuideAdvance,
   readTryDemoAttentionGuideActiveStep,
+  readTryDemoAttentionGuideVariant,
+  startTryDemoAttentionGuideIfPending,
+  TRY_DEMO_ATTENTION_GUIDE_EVENT,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS,
   scrollTryDemoTipHostIntoView,
   TRY_DEMO_ATTENTION_GUIDE_STEP_ACTIVE_TASKS,
   TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO,
@@ -17,11 +31,11 @@ import {
   TRY_DEMO_ATTENTION_GUIDE_STEP_MESSAGES,
   TRY_DEMO_ATTENTION_GUIDE_STEP_PROPERTIES,
   TRY_DEMO_ATTENTION_GUIDE_STEP_RESIDENTS,
-  TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_VENDORS,
   tryDemoAskUloViewModeForStep,
   tryDemoAttentionGuideBody,
   tryDemoAttentionGuideExtraTargetIds,
-  tryDemoAttentionGuidePageLabel,
+  tryDemoAttentionGuideDisplayPageLabel,
   tryDemoAttentionGuideRouteForStep,
   tryDemoAttentionGuideSeparateHoles,
   tryDemoAttentionGuideSkipHoleClamp,
@@ -52,6 +66,28 @@ const SETTLE_HARD_ASSIGN_AT = 45
 const SETTLE_TIMING_KEY = 'ulo.tryDemoSettleTimings'
 /** First-paint veil so a last-resort reload does not flash an undimmed page. */
 const TIP_HOLD_SCRIM_KEY = 'ulo.tryDemoTipHoldScrim'
+/** Longest the first tip waits for Get set up for success before opening anyway. */
+const START_CARD_WAIT_MS = 1500
+/** Post-setup tour step 1 is the card itself — wait longer before skipping it. */
+const SETUP_TOUR_CARD_WAIT_MS = 5000
+
+const SETUP_TOUR_STEP_MEDIA: Partial<Record<number, string>> = {
+  [TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION]: needsAttentionPreview,
+  [TRY_DEMO_ATTENTION_GUIDE_STEP_MESSAGES]: messagesPreview,
+  [TRY_DEMO_ATTENTION_GUIDE_STEP_ACTIVE_TASKS]: activeTasksPreview,
+  [TRY_DEMO_ATTENTION_GUIDE_STEP_VENDORS]: vendorsPreview,
+}
+const START_CARD_POLL_MS = 50
+
+/** Whether SetupSuccessCardHost is expected to paint the card for this landlord. */
+function setupSuccessCardExpected(): boolean {
+  const landlordId = getActiveLandlordId()
+  return (
+    isLimitedAlphaLandlord(landlordId) &&
+    hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
+    !isSetupSuccessCardHidden(landlordId)
+  )
+}
 
 type TryDemoSettleTiming = {
   transition: string
@@ -196,6 +232,49 @@ export function TryDemoAttentionGuideHost() {
       setTipMotionMode(null)
     }
   }, [clearSettleTimer])
+
+  // Start the tour from this host. Overview used to do it, but only after that
+  // page finished loading — a reload or a late setup card cancelled the wait
+  // and the guide never opened. Step 1 lives on Overview, so start only there;
+  // give Get set up for success a moment to paint so the tip opens over it.
+  useEffect(() => {
+    if (location.pathname.replace(/\/$/, '') !== '/admin') return
+    let pollId: number | null = null
+    const stopPoll = () => {
+      if (pollId != null) {
+        window.clearInterval(pollId)
+        pollId = null
+      }
+    }
+    const tryStart = () => {
+      if (pollId != null) return
+      if (readTryDemoAttentionGuideActiveStep() != null) return
+      if (!isTryDemoAttentionGuidePending()) return
+      const startedAt = performance.now()
+      const waitForCard = setupSuccessCardExpected()
+      // The 12-step tour opens on the card, so give its progress fetch longer.
+      const waitMs =
+        readTryDemoAttentionGuideVariant() === 'setup'
+          ? SETUP_TOUR_CARD_WAIT_MS
+          : START_CARD_WAIT_MS
+      const attempt = () => {
+        const cardReady = document.querySelector('[data-setup-success-card]') != null
+        const timedOut = performance.now() - startedAt >= waitMs
+        if (waitForCard && !cardReady && !timedOut) return false
+        stopPoll()
+        startTryDemoAttentionGuideIfPending({ setupCardReady: cardReady })
+        return true
+      }
+      if (attempt()) return
+      pollId = window.setInterval(attempt, START_CARD_POLL_MS)
+    }
+    tryStart()
+    window.addEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, tryStart)
+    return () => {
+      window.removeEventListener(TRY_DEMO_ATTENTION_GUIDE_EVENT, tryStart)
+      stopPoll()
+    }
+  }, [location.pathname])
 
   // Prefetch the *next* route chunk while the user reads the current tip.
   useEffect(() => {
@@ -424,6 +503,10 @@ export function TryDemoAttentionGuideHost() {
       return
     }
 
+    if (current === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS) {
+      minimizeSetupSuccessCard(getActiveLandlordId())
+    }
+
     clearSettleTimer()
     advancingRef.current = true
     setCutoutArmed(false)
@@ -470,6 +553,7 @@ export function TryDemoAttentionGuideHost() {
 
   return (
     <TryDemoAttentionTooltip
+      key={`${step}:${location.pathname}`}
       active
       armed={cutoutArmed}
       targetId={tryDemoAttentionGuideTargetId(step)}
@@ -480,7 +564,12 @@ export function TryDemoAttentionGuideHost() {
       separateHoles={tryDemoAttentionGuideSeparateHoles(step)}
       title={tryDemoAttentionGuideTitle(step)}
       body={tryDemoAttentionGuideBody(step)}
-      pageLabel={tryDemoAttentionGuidePageLabel(step, TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL)}
+      pageLabel={tryDemoAttentionGuideDisplayPageLabel(step)}
+      mediaSrc={
+        readTryDemoAttentionGuideVariant() === 'setup'
+          ? (SETUP_TOUR_STEP_MEDIA[step] ?? null)
+          : null
+      }
       holdLoading={
         step === TRY_DEMO_ATTENTION_GUIDE_STEP_ACTIVE_TASKS && !cutoutArmed
       }

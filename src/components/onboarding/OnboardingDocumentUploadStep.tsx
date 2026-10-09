@@ -15,7 +15,6 @@ import {
   OnboardingContinueButton,
   OnboardingStepNav,
 } from './OnboardingStepChrome'
-
 function UploadDocumentsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="size-8 text-[#99a1af]" aria-hidden>
@@ -123,7 +122,9 @@ function FileRow({
           </div>
         </div>
       ) : showStatusText && statusLabel ? (
-        <p className={`mt-2 text-[12px] font-medium ${statusTextClass}`}>{statusLabel}</p>
+        <div className="mt-2">
+          <p className={`text-[12px] font-medium ${statusTextClass}`}>{statusLabel}</p>
+        </div>
       ) : null}
 
       {doc.errorMessage ? (
@@ -292,7 +293,7 @@ export function OnboardingDocumentUploadStep({
           disabled={processing || !canContinue}
           onClick={onContinue}
         >
-          {processing ? 'Processing…' : 'Review data'}
+          {processing ? 'Processing…' : 'Review'}
         </OnboardingContinueButton>
       </OnboardingStepNav>
     </section>

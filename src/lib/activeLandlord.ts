@@ -12,6 +12,7 @@
  *  - nwankwo908@gmail.com      → Limited Alpha 2
  *  - bfamiloni@gmail.com       → Limited Alpha 2
  *  - adesanmi.ogunfowora@gmail.com → Limited Alpha 2
+ *  - braimahm@gmail.com        → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
  *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
  *

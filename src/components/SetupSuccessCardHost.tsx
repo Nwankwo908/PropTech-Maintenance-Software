@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
+import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { loadSetupSuccessProgress } from '@/lib/loadSetupSuccessProgress'
 import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
@@ -29,6 +30,8 @@ import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 export function SetupSuccessCardHost() {
   const location = useLocation()
   const landlordId = getActiveLandlordId()
+  const { profile } = useSidebarAdminProfile()
+  const firstName = profile?.name?.trim().split(/\s+/).filter(Boolean)[0] ?? null
   const eligible =
     isLimitedAlphaLandlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
 
@@ -106,6 +109,7 @@ export function SetupSuccessCardHost() {
   return (
     <GetSetUpForSuccessCard
       progress={progress}
+      firstName={firstName}
       resolveItemTo={resolveItemTo}
       onClose={() => {
         dismissSetupSuccessCard(landlordId)

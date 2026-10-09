@@ -14,7 +14,7 @@ export function OnboardingAllSetWelcome({ onGetStarted }: OnboardingAllSetWelcom
             You&apos;re all set!
           </h1>
           <p className="onb-all-set-subtitle mt-2 max-w-[36rem] text-center text-[16px] font-normal leading-6 tracking-[-0.1504px] text-[#6a7282]">
-            Complete the action-item checklist to get the most out of Ulo.
+            Next Steps! Complete the action-item checklist to get the most out of Ulo.
           </p>
         </div>
 

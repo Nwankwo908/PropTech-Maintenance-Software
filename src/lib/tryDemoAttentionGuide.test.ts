@@ -16,6 +16,12 @@ import {
   markTryDemoAttentionGuidePending,
   markTryDemoAttentionGuideSeen,
   readTryDemoAttentionGuideActiveStep,
+  readTryDemoAttentionGuideVariant,
+  startTryDemoAttentionGuideIfPending,
+  tryDemoAttentionGuideDisplayPageLabel,
+  tryDemoAttentionGuideStartStep,
+  TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS,
+  TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID,
   writeTryDemoAttentionGuideActiveStep,
   TRY_DEMO_ATTENTION_GUIDE_STEP_ACTIVE_TASKS,
   TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO,
@@ -94,7 +100,7 @@ const ASK_ULO_FULL_BODY =
   'Use Ask Ulo in a full view.'
 
 const MESSAGES_BODY =
-  'View tenant and vendor texts, with the latest conversations first. Filter by tenant or vendor, then select a conversation to read messages, reply, or take over from Ulo.'
+  'View tenant and vendor texts, with the latest conversations first.'
 
 const ACTIVE_TASKS_BODY =
   'Track repairs, move-ins, move-outs, inspections, and lease tasks from New Intake to Completed. Select a card to view details or take action. The board updates as work progresses.'
@@ -133,6 +139,46 @@ describe('tryDemoAttentionGuide', () => {
     expect(isTryDemoAttentionGuideSeen()).toBe(true)
     markTryDemoAttentionGuidePending()
     expect(isTryDemoAttentionGuidePending()).toBe(true)
+  })
+
+  it('starts step 1 only when armed and no tour is running', () => {
+    expect(startTryDemoAttentionGuideIfPending()).toBe(false)
+    markTryDemoAttentionGuidePending()
+    expect(startTryDemoAttentionGuideIfPending()).toBe(true)
+    expect(readTryDemoAttentionGuideActiveStep()).toBe(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+    expect(isTryDemoAttentionGuidePending()).toBe(false)
+    expect(isTryDemoAttentionGuideSeen()).toBe(true)
+    // Re-arming mid-tour must not restart it.
+    markTryDemoAttentionGuidePending()
+    expect(startTryDemoAttentionGuideIfPending()).toBe(false)
+  })
+
+  it('post-setup tour starts on the setup card as 1 of 12', () => {
+    markTryDemoAttentionGuidePending('setup')
+    expect(startTryDemoAttentionGuideIfPending({ setupCardReady: true })).toBe(true)
+    expect(readTryDemoAttentionGuideActiveStep()).toBe(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)
+    expect(tryDemoAttentionGuideDisplayPageLabel(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toBe(
+      '1 of 12',
+    )
+    expect(planTryDemoAttentionGuideAdvance(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toEqual({
+      kind: 'step',
+      step: TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
+    })
+  })
+
+  it('post-setup tour skips to Needs Your Attention when the card never appears', () => {
+    markTryDemoAttentionGuidePending('setup')
+    expect(startTryDemoAttentionGuideIfPending({ setupCardReady: false })).toBe(true)
+    expect(readTryDemoAttentionGuideActiveStep()).toBe(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+  })
+
+  it('re-arms after a reset clears a previously seen tour', () => {
+    markTryDemoAttentionGuidePending()
+    startTryDemoAttentionGuideIfPending()
+    dismissTryDemoAttentionGuide()
+    clearTryDemoAttentionGuide()
+    markTryDemoAttentionGuidePending()
+    expect(startTryDemoAttentionGuideIfPending()).toBe(true)
   })
 
   it('formats tooltip copy and page label', () => {
@@ -378,6 +424,43 @@ describe('tryDemoAttentionGuide', () => {
     expect(tryDemoAskUloViewModeForStep(TRY_DEMO_ATTENTION_GUIDE_STEP_RESIDENTS)).toBe(null)
     expect(tryDemoAskUloViewModeForStep(TRY_DEMO_ATTENTION_GUIDE_STEP_VENDORS)).toBe(null)
     expect(tryDemoAskUloViewModeForStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ULO_ACTIVITY)).toBe(null)
+  })
+
+  it('post-setup guide starts on the setup card as step 1 of 12', () => {
+    markTryDemoAttentionGuidePending('setup')
+    expect(readTryDemoAttentionGuideVariant()).toBe('setup')
+    expect(tryDemoAttentionGuideStartStep()).toBe(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)
+    expect(tryDemoAttentionGuideTitle(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toBe(
+      'Stay Ahead of Property Problems',
+    )
+    expect(tryDemoAttentionGuideBody(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toBe(
+      'Finish these steps to help Ulo move your properties from reacting to problems to staying ahead of them.',
+    )
+    expect(tryDemoAttentionGuideTargetId(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toBe(
+      TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID,
+    )
+    expect(tryDemoAttentionGuideRouteForStep(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toBe(
+      '/admin',
+    )
+    expect(
+      tryDemoAttentionGuideDisplayPageLabel(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS),
+    ).toBe('1 of 12')
+    expect(tryDemoAttentionGuideDisplayPageLabel(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)).toBe(
+      '2 of 12',
+    )
+    expect(tryDemoAttentionGuideDisplayPageLabel(TRY_DEMO_ATTENTION_GUIDE_STEP_ULO_ACTIVITY)).toBe(
+      '12 of 12',
+    )
+    expect(planTryDemoAttentionGuideAdvance(TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS)).toEqual({
+      kind: 'step',
+      step: TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
+    })
+    markTryDemoAttentionGuidePending()
+    expect(readTryDemoAttentionGuideVariant()).toBe('demo')
+    expect(tryDemoAttentionGuideStartStep()).toBe(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+    expect(tryDemoAttentionGuideDisplayPageLabel(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)).toBe(
+      '1 of 11',
+    )
   })
 
   it('plans Next advances and expected routes', () => {

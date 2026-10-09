@@ -30,6 +30,8 @@ export function isTryDemoTipAnimateSuppressed(): boolean {
 
 const PENDING_KEY = 'ulo.tryDemoAttentionGuide.pending'
 const SEEN_KEY = 'ulo.tryDemoAttentionGuide.seen'
+/** `setup` inserts the Get set up for success card as step 1. Try Demo stays `demo`. */
+const VARIANT_KEY = 'ulo.tryDemoAttentionGuide.variant'
 /** In-progress tip step — survives Ask Ulo open remounts within the same session. */
 const ACTIVE_STEP_KEY = 'ulo.tryDemoAttentionGuide.activeStep'
 
@@ -86,7 +88,10 @@ export const TRY_DEMO_VENDORS_SPOTLIGHT_ROW_COUNT = 5
  * DOM id for Ulo Activity tip cutout (step 11): bell + open feed panel on Dashboard.
  */
 export const TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID = 'try-demo-spotlight-ulo-activity'
+/** DOM id for the Get set up for success card (post-setup guide step 1). */
+export const TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID = 'try-demo-spotlight-setup-success'
 
+export const TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS = 0
 export const TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION = 1
 export const TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO = 2
 export const TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO = 3
@@ -102,7 +107,10 @@ export const TRY_DEMO_ATTENTION_GUIDE_STEP_ULO_ACTIVITY = 11
 export const TRY_DEMO_ATTENTION_GUIDE_STEP = TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION
 export const TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL = 11
 
+export type TryDemoAttentionGuideVariant = 'demo' | 'setup'
+
 export type TryDemoAttentionGuideStep =
+  | typeof TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS
   | typeof TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION
   | typeof TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO
   | typeof TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO
@@ -120,7 +128,7 @@ const ASK_ULO_DOCKED_BODY = 'Move to side to keep working.'
 const ASK_ULO_FULL_BODY = 'Use Ask Ulo in a full view.'
 
 const MESSAGES_BODY =
-  'View tenant and vendor texts, with the latest conversations first. Filter by tenant or vendor, then select a conversation to read messages, reply, or take over from Ulo.'
+  'View tenant and vendor texts, with the latest conversations first.'
 
 const ACTIVE_TASKS_BODY =
   'Track repairs, move-ins, move-outs, inspections, and lease tasks from New Intake to Completed. Select a card to view details or take action. The board updates as work progresses.'
@@ -262,10 +270,13 @@ export function isTryDemoAttentionGuidePending(): boolean {
   return storageGet(PENDING_KEY) === '1'
 }
 
-/** Arm after Welcome to Ulo Home is dismissed (Try Demo flow). */
-export function markTryDemoAttentionGuidePending(): void {
+/** Arm after Welcome to Ulo Home (Try Demo) or Get Started (post-setup). */
+export function markTryDemoAttentionGuidePending(
+  variant: TryDemoAttentionGuideVariant = 'demo',
+): void {
   storageRemove(SEEN_KEY)
   storageSet(PENDING_KEY, '1')
+  storageSet(VARIANT_KEY, variant)
   try {
     window.dispatchEvent(new Event(TRY_DEMO_ATTENTION_GUIDE_EVENT))
   } catch {
@@ -273,15 +284,47 @@ export function markTryDemoAttentionGuidePending(): void {
   }
 }
 
+export function readTryDemoAttentionGuideVariant(): TryDemoAttentionGuideVariant {
+  return storageGet(VARIANT_KEY) === 'setup' ? 'setup' : 'demo'
+}
+
+/** First tip: Needs Your Attention, or the setup card when this is the post-setup guide. */
+export function tryDemoAttentionGuideStartStep(): TryDemoAttentionGuideStep {
+  return readTryDemoAttentionGuideVariant() === 'setup'
+    ? TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS
+    : TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION
+}
+
 /** Consume the pending arm once the Overview tip opens. */
 export function consumeTryDemoAttentionGuidePending(): void {
   storageRemove(PENDING_KEY)
+}
+
+/**
+ * Open the first tip if the tour is armed and not already running. Returns whether
+ * it started. Marks seen so a refresh does not re-arm; activeStep stays until the
+ * tour finishes. Post-setup opens on the setup card unless it is not on screen.
+ */
+export function startTryDemoAttentionGuideIfPending(
+  opts: { setupCardReady?: boolean } = {},
+): boolean {
+  if (readTryDemoAttentionGuideActiveStep() != null) return false
+  if (!isTryDemoAttentionGuidePending()) return false
+  const start =
+    readTryDemoAttentionGuideVariant() === 'setup' && opts.setupCardReady !== false
+      ? TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS
+      : TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION
+  writeTryDemoAttentionGuideActiveStep(start)
+  consumeTryDemoAttentionGuidePending()
+  markTryDemoAttentionGuideSeen()
+  return true
 }
 
 /** Mark the tour finished (or skip re-arm) and clear any in-progress step. */
 export function dismissTryDemoAttentionGuide(): void {
   storageRemove(PENDING_KEY)
   storageRemove(ACTIVE_STEP_KEY)
+  storageRemove(VARIANT_KEY)
   storageSet(SEEN_KEY, '1')
   try {
     window.dispatchEvent(
@@ -305,6 +348,14 @@ export function clearTryDemoAttentionGuide(): void {
   storageRemove(PENDING_KEY)
   storageRemove(ACTIVE_STEP_KEY)
   storageRemove(SEEN_KEY)
+  storageRemove(VARIANT_KEY)
+  try {
+    window.dispatchEvent(
+      new CustomEvent(TRY_DEMO_ATTENTION_GUIDE_STEP_EVENT, { detail: { step: null } }),
+    )
+  } catch {
+    // ignore
+  }
 }
 
 export function readTryDemoAttentionGuideActiveStep(): TryDemoAttentionGuideStep | null {
@@ -312,6 +363,7 @@ export function readTryDemoAttentionGuideActiveStep(): TryDemoAttentionGuideStep
   if (!raw) return null
   const step = Number(raw)
   if (
+    step === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS ||
     step === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION ||
     step === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO ||
     step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO ||
@@ -358,6 +410,9 @@ export function tryDemoAskUloViewModeForStep(
 export function tryDemoAttentionGuideTitle(
   step: TryDemoAttentionGuideStep = TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
 ): string {
+  if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS) {
+    return 'Stay Ahead of Property Problems'
+  }
   if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO) {
     return 'Your Properties at a Glance'
   }
@@ -391,6 +446,9 @@ export function tryDemoAttentionGuideTitle(
 export function tryDemoAttentionGuideBody(
   stepOrItemCount?: TryDemoAttentionGuideStep | number,
 ): string {
+  if (stepOrItemCount === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS) {
+    return 'Finish these steps to help Ulo move your properties from reacting to problems to staying ahead of them.'
+  }
   if (stepOrItemCount === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO) {
     return 'Get a quick view of your open repairs, upcoming visits, overall property condition, and maintenance costs so far this year.'
   }
@@ -431,10 +489,21 @@ export function tryDemoAttentionGuidePageLabel(
   return `${step} of ${stepTotal}`
 }
 
+/** Page chip for the active variant. Post-setup is 12 steps; Try Demo stays 11. */
+export function tryDemoAttentionGuideDisplayPageLabel(step: number): string {
+  if (readTryDemoAttentionGuideVariant() === 'setup') {
+    return `${step + 1} of ${TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL + 1}`
+  }
+  return tryDemoAttentionGuidePageLabel(step, TRY_DEMO_ATTENTION_GUIDE_STEP_TOTAL)
+}
+
 /** Spotlight DOM id for the active tip step (null = use targetRef). */
 export function tryDemoAttentionGuideTargetId(
   step: TryDemoAttentionGuideStep,
 ): string | null {
+  if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS) {
+    return TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID
+  }
   if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION) {
     return TRY_DEMO_SPOTLIGHT_ATTENTION_ID
   }
@@ -480,6 +549,7 @@ export function tryDemoAttentionGuideRouteForStep(
   if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_RESIDENTS) return '/admin/residents'
   if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_VENDORS) return '/admin/vendors'
   if (
+    step === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS ||
     step === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION ||
     step === TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO ||
     step === TRY_DEMO_ATTENTION_GUIDE_STEP_ASK_ULO ||
@@ -638,6 +708,7 @@ export function scrollTryDemoTipHostIntoView(hostId: string | null | undefined):
 
   // Sticky top-bar / activity bell — never scroll-chase.
   if (
+    hostId === TRY_DEMO_SPOTLIGHT_SETUP_SUCCESS_ID ||
     hostId === TRY_DEMO_SPOTLIGHT_ASK_ULO_ID ||
     hostId === TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID ||
     hostId === TRY_DEMO_SPOTLIGHT_ASK_ULO_PANEL_ID ||
@@ -662,6 +733,9 @@ export type TryDemoAttentionAdvancePlan =
 export function planTryDemoAttentionGuideAdvance(
   step: TryDemoAttentionGuideStep,
 ): TryDemoAttentionAdvancePlan {
+  if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_SETUP_SUCCESS) {
+    return { kind: 'step', step: TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION }
+  }
   if (step === TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION) {
     return { kind: 'step', step: TRY_DEMO_ATTENTION_GUIDE_STEP_PORTFOLIO }
   }

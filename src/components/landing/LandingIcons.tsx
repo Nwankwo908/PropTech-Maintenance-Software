@@ -184,6 +184,14 @@ export const LANDING_DOCUMENT_IMPORT_ICONS = [
   IconTiff,
 ] as const
 
+/** Hero “Bring Your Lease” row: Word document first, no spreadsheet icon. */
+export const LANDING_HERO_LEASE_ICONS = [
+  IconGoogleDocs,
+  IconPdf,
+  IconHeic,
+  IconJpg,
+] as const
+
 export function IconMenu({ className = 'size-5' }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden>

@@ -40,7 +40,7 @@
   }
 }
 
-/** 504×504 square, 440×956, and 480×800–853 — keep “Bring Your Existing Data” on one line with icons. */
+/** 504×504 square, 440×956, and 480×800–853 — keep “Bring Your Lease” on one line with icons. */
 @custom-variant landing-504 {
   @media (min-width: 430px) and (max-width: 510px) and (min-height: 780px) and (max-height: 970px),
     (min-width: 480px) and (max-width: 529px) and (min-height: 480px) and (max-height: 529px) {
@@ -2550,6 +2550,28 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
   animation: onb-fade-in 220ms var(--sa-ease);
 }
 
+@keyframes onb-saved-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.onb-saved-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #364153;
+  animation: onb-saved-dot 0.9s ease-in-out infinite;
+}
+
 .onb-welcome-copy {
   animation: onb-step-in 320ms var(--sa-ease);
 }
@@ -3148,6 +3170,7 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 
   .onb-step-panel,
   .onb-progress-saved,
+  .onb-saved-dot,
   .onb-welcome-copy,
   .onb-setup-spinner,
   .onb-setup-copy,
