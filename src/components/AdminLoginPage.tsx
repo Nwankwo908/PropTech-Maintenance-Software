@@ -175,6 +175,8 @@ export function AdminLoginPage() {
     setSubmitting(true)
     try {
       await verifyAdminEmailOtp(email, otp, { requireAllowlist: isGetStarted })
+      navigate(afterLoginPath, { replace: true })
+    } catch (err) {
       setError(getErrorMessage(err, 'Verification failed'))
     } finally {
       setSubmitting(false)

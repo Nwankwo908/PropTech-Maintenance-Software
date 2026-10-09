@@ -25,6 +25,7 @@ import {
   IconClose,
   IconFocusFeature,
   IconGraph,
+  LANDING_DOCUMENT_IMPORT_ICONS,
   LANDING_HERO_LEASE_ICONS,
   IconMenu,
 } from '@/components/landing/LandingIcons'
