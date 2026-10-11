@@ -1231,7 +1231,6 @@ export function AdminResidentsDashboard() {
     others: ResidentRow[]
     expanded: boolean
     isOccupant: boolean
-    /** Co-tenant rows alternate shades, starting tinted under the primary resident. */
     striped: boolean
     animationIndex: number
   }
@@ -1469,7 +1468,7 @@ export function AdminResidentsDashboard() {
             ? 'hover:bg-[#fafafa]'
             : striped
               ? 'bg-[#f3f4f6] hover:bg-[#e5e7eb]'
-              : 'bg-white hover:bg-[#f3f4f6]',
+              : 'bg-[#f9fafb] hover:bg-[#f3f4f6]',
         ].join(' ')}
       >
         <td className="w-12 px-4 py-4">
@@ -1536,7 +1535,11 @@ export function AdminResidentsDashboard() {
           </div>
         </td>
         <td className="px-6 py-4 text-[14px] text-[#6a7282]">
-          {isOccupant ? null : resident.unitLabel}
+          {isOccupant ? (
+            <span className="text-[12px] font-medium leading-4">Co-tenants</span>
+          ) : (
+            resident.unitLabel
+          )}
         </td>
         <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
           {isOccupant ? null : resident.rentLabel}
