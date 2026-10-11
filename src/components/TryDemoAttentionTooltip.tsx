@@ -33,6 +33,8 @@ const CONTENT_FADE_MS = 240
 const ESTIMATED_TOOLTIP_HEIGHT = 220
 /** Min gutter width before a left tip falls back to inside placement. */
 const LEFT_TIP_MIN_GUTTER = 160
+/** Tip still not on screen after this long → treat the step as stuck; any click ends the tour. */
+const STUCK_TIP_DISMISS_AFTER_MS = 3000
 
 type HoleRect = { top: number; left: number; width: number; height: number }
 
@@ -765,13 +767,6 @@ export function TryDemoAttentionTooltip({
       const tableRowsHole = tableRowsEl ? rectFromElement(tableRowsEl) : null
       const tableRowsReadyAttrValue =
         tableRowsEl?.getAttribute(tableRowsReadyAttr) === '1'
-      const tableRowsCount = Number(
-        tableRowsEl?.getAttribute(
-          tableRowsHostId === TRY_DEMO_SPOTLIGHT_VENDORS_ROWS_ID
-            ? 'data-try-demo-vendors-rows'
-            : 'data-try-demo-residents-rows',
-        ) ?? '0',
-      )
       // Wait for loaded first-five rows (or empty table) — not the loading row.
       // Tall fallback covers slow ready-attr updates after rows paint.
       const tableRowsReady =
@@ -780,12 +775,13 @@ export function TryDemoAttentionTooltip({
           tableRowsEl != null &&
           (tableRowsReadyAttrValue ||
             (tableRowsHole != null && tableRowsHole.height >= 240)))
+      // Loaded tables can be short (1–3 vendors ≈ 52px each); only the
+      // not-yet-ready fallback needs a tall host to rule out the loading row.
       const tableRowsTallEnough =
         !tracksTableRowsHost ||
         (onTableRowsPage &&
           tableRowsHole != null &&
-          tableRowsHole.height >=
-            (tableRowsReadyAttrValue && tableRowsCount === 0 ? 80 : 160))
+          tableRowsHole.height >= (tableRowsReadyAttrValue ? 40 : 160))
       const uloActivityEl = tracksUloActivity
         ? resolveElementByIdPreferVisible(TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID)
         : null
@@ -1273,17 +1269,23 @@ export function TryDemoAttentionTooltip({
 
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const tipShownRef = useRef(tipShown)
+  tipShownRef.current = tipShown
   // No close icon: any press outside the tip card ends the tour. Scrolling still works.
+  // A step whose tip never appears (target missing) must not trap the landlord:
+  // the host would keep routing every nav click back to the step's page.
   useEffect(() => {
-    if (!tipShown) return
+    if (!active) return
+    const mountedAt = Date.now()
     const onPointerDown = (event: PointerEvent) => {
+      if (!tipShownRef.current && Date.now() - mountedAt < STUCK_TIP_DISMISS_AFTER_MS) return
       const card = cardRef.current
       if (card && event.target instanceof Node && card.contains(event.target)) return
       onCloseRef.current?.()
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [tipShown])
+  }, [active])
 
   useLayoutEffect(() => {
     if (!active || !primaryHole || !cardRef.current) return

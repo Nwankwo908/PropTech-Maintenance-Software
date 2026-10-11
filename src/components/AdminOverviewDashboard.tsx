@@ -185,8 +185,9 @@ import {
   type SynthesizedInsightCard,
 } from '@shared/portfolioIntelligence'
 import {
-  postSynthesizePropertyInsights,
+  readCachedPropertyInsightCards,
   resolveSynthesizePropertyInsightsUrl,
+  synthesizePropertyInsightsCached,
 } from '@/api/synthesizePropertyInsights'
 import {
   defaultPropertyInsightActionDeps,
@@ -2998,15 +2999,22 @@ export function AdminOverviewDashboard() {
       setInsightCards([])
       return
     }
+    const landlordId = getActiveLandlordId()
+    const saved = readCachedPropertyInsightCards(landlordId, portfolioInsightFindings)
+    if (saved) {
+      setInsightCards(saved)
+      return
+    }
     // Plain aggregates immediately; synthesis enriches in one refresh call.
     setInsightCards(applyInsightSynthesis(portfolioInsightFindings, null, { failed: true }))
     let cancelled = false
     const url = resolveSynthesizePropertyInsightsUrl()
     const secret = getAdminEdgeSecret()
     if (!url || !secret) return
-    void postSynthesizePropertyInsights({
+    void synthesizePropertyInsightsCached({
       url,
       secret,
+      landlordId,
       findings: portfolioInsightFindings,
     })
       .then((result) => {

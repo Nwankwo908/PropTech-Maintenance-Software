@@ -18,6 +18,7 @@ import {
   planTryDemoAttentionGuideAdvance,
   readTryDemoAttentionGuideActiveStep,
   readTryDemoAttentionGuideVariant,
+  resumeTryDemoAttentionGuideStepOnLoad,
   startTryDemoAttentionGuideIfPending,
   TRY_DEMO_ATTENTION_GUIDE_EVENT,
   TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
@@ -198,7 +199,7 @@ export function TryDemoAttentionGuideHost() {
   locationRef.current = location
   const { setDocked: setAskUloDocked, closeAskUlo } = useAskUlo()
   const [step, setStep] = useState<TryDemoAttentionGuideStep | null>(() =>
-    readTryDemoAttentionGuideActiveStep(),
+    resumeTryDemoAttentionGuideStepOnLoad(window.location.pathname),
   )
   /** False while settling — Tooltip holds prior cutout until destination ready. */
   const [cutoutArmed, setCutoutArmed] = useState(true)

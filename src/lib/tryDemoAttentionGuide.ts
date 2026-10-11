@@ -568,6 +568,22 @@ export function tryDemoAttentionGuideRouteForStep(
  * `/admin` is exact-only — it must not match `/admin/residents` etc. (that bug
  * stranded steps 8/9/11 on the wrong page while tip copy advanced).
  */
+/**
+ * Step to show after a full page load. Tour advances stay in-app (or hard-load
+ * the step's own page), so landing anywhere else means the landlord left the
+ * tour — e.g. a sidebar link. End it instead of routing them back.
+ */
+export function resumeTryDemoAttentionGuideStepOnLoad(
+  pathname: string,
+): TryDemoAttentionGuideStep | null {
+  const step = readTryDemoAttentionGuideActiveStep()
+  if (step == null) return null
+  const route = tryDemoAttentionGuideRouteForStep(step) ?? '/admin'
+  if (tipRouteMatchesLocation(pathname, route)) return step
+  dismissTryDemoAttentionGuide()
+  return null
+}
+
 export function tipRouteMatchesLocation(
   pathname: string,
   expectedRoute: string | null | undefined,
@@ -580,6 +596,9 @@ export function tipRouteMatchesLocation(
   if (want === '/admin') return false
   return here.startsWith(`${want}/`)
 }
+
+/** One loaded table row (~52px) is enough; the ready attr already rules out the loading row. */
+const TIP_TABLE_ROWS_MIN_HEIGHT = 40
 
 /** tbody / cluster tip hosts often report 0×0 — measure child rows instead. */
 export function tipHostClusterHeight(el: HTMLElement): number {
@@ -624,13 +643,14 @@ export function isTryDemoTipHostReady(hostId: string | null | undefined): boolea
   }
   if (hostId === TRY_DEMO_SPOTLIGHT_RESIDENTS_ROWS_ID) {
     return (
-      tipHostClusterHeight(el) >= 80 &&
+      tipHostClusterHeight(el) >= TIP_TABLE_ROWS_MIN_HEIGHT &&
       el.getAttribute('data-try-demo-residents-ready') === '1'
     )
   }
   if (hostId === TRY_DEMO_SPOTLIGHT_VENDORS_ROWS_ID) {
     return (
-      tipHostClusterHeight(el) >= 80 && el.getAttribute('data-try-demo-vendors-ready') === '1'
+      tipHostClusterHeight(el) >= TIP_TABLE_ROWS_MIN_HEIGHT &&
+      el.getAttribute('data-try-demo-vendors-ready') === '1'
     )
   }
   if (hostId === TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID) {

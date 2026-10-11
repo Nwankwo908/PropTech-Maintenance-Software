@@ -65,8 +65,6 @@ const FEATURES: FeatureItem[] = [
 ]
 
 const EMPHASIZED_PREVIEW_WIDTH = 'w-full lg:mx-0 lg:w-[70.55%]'
-const AI_ORGANIZES_PREVIEW_WIDTH = 'w-full lg:mx-0 lg:w-[83.2%]'
-
 const FEATURE_PREVIEWS: Record<
   FeatureId,
   {
@@ -92,11 +90,8 @@ const FEATURE_PREVIEWS: Record<
   'ai-organizes': {
     src: featuresAiOrganizes,
     alt: 'AI intake and workflow progress: work order stages from classification through vendor assignment on the property dashboard',
-    width: 1452,
-    height: 1095,
-    displayWidthClass: AI_ORGANIZES_PREVIEW_WIDTH,
-    cropClass: 'w-full max-w-full lg:-mt-[30px] lg:-ml-[25%] lg:w-[125%] lg:max-w-none',
-    offsetClass: 'lg:-mt-[40px]',
+    width: 879,
+    height: 961,
   },
   'ulo-coordinates': {
     src: featuresWorkspace,

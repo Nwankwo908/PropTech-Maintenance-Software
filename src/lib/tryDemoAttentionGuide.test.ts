@@ -17,6 +17,7 @@ import {
   markTryDemoAttentionGuideSeen,
   readTryDemoAttentionGuideActiveStep,
   readTryDemoAttentionGuideVariant,
+  resumeTryDemoAttentionGuideStepOnLoad,
   startTryDemoAttentionGuideIfPending,
   tryDemoAttentionGuideDisplayPageLabel,
   tryDemoAttentionGuideStartStep,
@@ -400,6 +401,21 @@ describe('tryDemoAttentionGuide', () => {
     expect(isTryDemoAttentionGuideSeen()).toBe(true)
     dismissTryDemoAttentionGuide()
     expect(readTryDemoAttentionGuideActiveStep()).toBe(null)
+  })
+
+  it('resumes a step after reload on its page and ends the tour elsewhere', () => {
+    writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_VENDORS)
+    expect(resumeTryDemoAttentionGuideStepOnLoad('/admin/vendors')).toBe(
+      TRY_DEMO_ATTENTION_GUIDE_STEP_VENDORS,
+    )
+    expect(resumeTryDemoAttentionGuideStepOnLoad('/admin/communication')).toBe(null)
+    expect(readTryDemoAttentionGuideActiveStep()).toBe(null)
+
+    writeTryDemoAttentionGuideActiveStep(TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION)
+    expect(resumeTryDemoAttentionGuideStepOnLoad('/admin')).toBe(
+      TRY_DEMO_ATTENTION_GUIDE_STEP_ATTENTION,
+    )
+    expect(resumeTryDemoAttentionGuideStepOnLoad('/admin/users')).toBe(null)
   })
 
   it('only tip steps 4–5 allow Ask Ulo setDocked shell sync', () => {
