@@ -1231,6 +1231,8 @@ export function AdminResidentsDashboard() {
     others: ResidentRow[]
     expanded: boolean
     isOccupant: boolean
+    /** Co-tenant rows alternate shades, starting tinted under the primary resident. */
+    striped: boolean
     animationIndex: number
   }
 
@@ -1249,6 +1251,7 @@ export function AdminResidentsDashboard() {
           others,
           expanded,
           isOccupant: rowIndex > 0,
+          striped: rowIndex % 2 === 1,
           animationIndex: householdIndex + rowIndex,
         })
       })
@@ -1454,7 +1457,7 @@ export function AdminResidentsDashboard() {
     residentsBanner?.kind === 'error' && !showOnboardingStartedBanner
 
   function renderResidentTableRow(row: VisibleResidentTableRow) {
-    const { resident, householdKey, others, expanded, isOccupant, animationIndex } = row
+    const { resident, householdKey, others, expanded, isOccupant, striped, animationIndex } = row
     const contacts = residentContacts(resident)
     return (
       <tr
@@ -1462,7 +1465,11 @@ export function AdminResidentsDashboard() {
         style={{ animationDelay: `${Math.min(animationIndex, 12) * 30}ms` }}
         className={[
           'sa-enter group/row border-b border-[#f3f4f6] last:border-b-0',
-          isOccupant ? 'bg-[#f9fafb] hover:bg-[#f3f4f6]' : 'hover:bg-[#fafafa]',
+          !isOccupant
+            ? 'hover:bg-[#fafafa]'
+            : striped
+              ? 'bg-[#f3f4f6] hover:bg-[#e5e7eb]'
+              : 'bg-white hover:bg-[#f3f4f6]',
         ].join(' ')}
       >
         <td className="w-12 px-4 py-4">
@@ -1511,9 +1518,7 @@ export function AdminResidentsDashboard() {
                 !expandedHouseholdKeys.has(householdKey) ? (
                   <span className="inline-flex w-fit items-center gap-1 text-[12px] font-medium leading-4 text-[#6a7282]">
                     <OccupantsExpandIcon expanded />
-                    {others.length === 1
-                      ? '1 other occupant'
-                      : `${others.length} other occupants`}
+                    Co-tenants
                   </span>
                 ) : (
                   <button
@@ -1523,30 +1528,21 @@ export function AdminResidentsDashboard() {
                     className="admin-quiet-text-action sa-link inline-flex w-fit items-center gap-1 text-[12px]"
                   >
                     <OccupantsExpandIcon expanded={expanded} />
-                    {expanded
-                      ? others.length === 1
-                        ? 'Hide other occupant'
-                        : 'Hide other occupants'
-                      : others.length === 1
-                        ? 'Show 1 other occupant'
-                        : `Show ${others.length} other occupants`}
+                    {expanded ? 'Hide co-tenants' : 'Show co-tenants'}
                   </button>
                 )
-              ) : null}
-              {isOccupant ? (
-                <span className="text-[11px] font-medium leading-4 text-[#9ca3af]">
-                  Other occupant
-                </span>
               ) : null}
             </div>
           </div>
         </td>
-        <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
+        <td className="px-6 py-4 text-[14px] text-[#6a7282]">
+          {isOccupant ? null : resident.unitLabel}
+        </td>
         <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
-          {resident.rentLabel}
+          {isOccupant ? null : resident.rentLabel}
         </td>
         <td className="px-6 py-4">
-          <PaymentStatusChip status={resident.paymentStatus} />
+          {isOccupant ? null : <PaymentStatusChip status={resident.paymentStatus} />}
         </td>
         <td className="px-6 py-4">
           <div className="flex flex-col gap-0.5">
