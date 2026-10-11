@@ -4,7 +4,7 @@ import welcomeTextsIcon from '@/assets/invitation.png'
 import verifyVendorsIcon from '@/assets/verify-vendors.png'
 import propertyAccessIcon from '@/assets/noun_propertykey_8436012.svg'
 import propertyIntelligenceIcon from '@/assets/property-details.png'
-import propertyInsuranceIcon from '@/assets/property-insurance.png'
+import propertyInsuranceIcon from '@/assets/noun_insurance_6623754.svg'
 import maintenancePrefsIcon from '@/assets/settings.png'
 import testRequestIcon from '@/assets/test-tube.png'
 import checkIcon from '@/assets/setup-success/check.svg'
@@ -26,11 +26,6 @@ const ITEM_ICONS: Record<SetupSuccessItemId, string> = {
   maintenance_prefs: maintenancePrefsIcon,
   test_request: testRequestIcon,
 }
-
-const MUTED_ITEM_ICONS = new Set<SetupSuccessItemId>([
-  'property_access',
-  'property_insurance',
-])
 
 type GetSetUpForSuccessCardProps = {
   progress: SetupSuccessProgress
@@ -77,12 +72,8 @@ function SetupChecklist({
                   alt=""
                   width={16}
                   height={16}
-                  className={`size-4 max-w-none object-contain ${
-                    item.done
-                      ? 'opacity-40 grayscale'
-                      : MUTED_ITEM_ICONS.has(item.id)
-                        ? 'opacity-70 grayscale'
-                        : ''
+                  className={`size-4 max-w-none object-contain grayscale ${
+                    item.done ? 'opacity-40' : 'opacity-70'
                   }`}
                 />
               </span>
@@ -216,7 +207,14 @@ export function GetSetUpForSuccessCard({
       >
         <CloseIcon />
       </button>
-      <div className="-mx-3 -mt-3 bg-[#DCBBDC] px-3 pb-3 pt-3">
+      <div
+        className="-mx-3 -mt-3 px-3 pb-3 pt-3"
+        style={{
+          backgroundColor: '#ffffff',
+          backgroundImage:
+            'conic-gradient(from 45deg at 50% 50%, #ffffff, #f0fdf4, #ffffff, #f0fdf4, #ffffff)',
+        }}
+      >
         <SetupCopy titleId={titleId} firstName={firstName} />
         <div className="mt-2.5">
           <SetupProgressBar progress={progress} />
