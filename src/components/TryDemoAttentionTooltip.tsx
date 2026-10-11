@@ -33,8 +33,6 @@ const CONTENT_FADE_MS = 240
 const ESTIMATED_TOOLTIP_HEIGHT = 220
 /** Min gutter width before a left tip falls back to inside placement. */
 const LEFT_TIP_MIN_GUTTER = 160
-/** Tip still not on screen after this long → treat the step as stuck; any click ends the tour. */
-const STUCK_TIP_DISMISS_AFTER_MS = 3000
 
 type HoleRect = { top: number; left: number; width: number; height: number }
 
@@ -1265,20 +1263,14 @@ export function TryDemoAttentionTooltip({
   ])
 
   const primaryHole = holes[0] ?? null
-  const tipShown = active && holes.length > 0 && tooltip != null
-
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
-  const tipShownRef = useRef(tipShown)
-  tipShownRef.current = tipShown
   // No close icon: any press outside the tip card ends the tour. Scrolling still works.
-  // A step whose tip never appears (target missing) must not trap the landlord:
-  // the host would keep routing every nav click back to the step's page.
+  // Register while active, not only when shown — an invisible tip (target never
+  // rendered) must not trap clicks, or the host keeps routing back to its step.
   useEffect(() => {
     if (!active) return
-    const mountedAt = Date.now()
     const onPointerDown = (event: PointerEvent) => {
-      if (!tipShownRef.current && Date.now() - mountedAt < STUCK_TIP_DISMISS_AFTER_MS) return
       const card = cardRef.current
       if (card && event.target instanceof Node && card.contains(event.target)) return
       onCloseRef.current?.()

@@ -10,6 +10,7 @@ import webSectionIcon from '@/assets/noun-web-section.png'
 import { AskUloConversationSidebar } from '@/components/AskUloConversationSidebar'
 import { useAskUlo, withAskUloSearch } from '@/components/AskUloContext'
 import {
+  dismissTryDemoAttentionGuide,
   isTryDemoAskUloShellSyncStep,
   readTryDemoAttentionGuideActiveStep,
 } from '@/lib/tryDemoAttentionGuide'
@@ -144,6 +145,11 @@ const ADMIN_NAV_ICONS: Record<AdminNavId, ReactNode> = {
   settings_notifications: <img src={settingIcon} alt="" className="size-5" />,
 }
 
+/** A sidebar click is the user leaving the tour — end it so the host does not route them back. */
+function endTryDemoTourForUserNavigation(): void {
+  if (readTryDemoAttentionGuideActiveStep() != null) dismissTryDemoAttentionGuide()
+}
+
 export function AdminSidebarContent({
   onNavigate,
   forRail,
@@ -274,6 +280,7 @@ export function AdminSidebarContent({
               aria-label={isCollapsedRail ? item.label : undefined}
               onClick={(event) => {
                 event.preventDefault()
+                endTryDemoTourForUserNavigation()
                 item.onClick?.()
                 assignAdminPath(
                   askUloOpen
@@ -310,6 +317,7 @@ export function AdminSidebarContent({
                   title={isCollapsedRail ? `Profile setup · ${setupNavHint.percent}%` : undefined}
                   aria-label={`Profile setup, ${setupNavHint.percent}% complete`}
                   onClick={() => {
+                    endTryDemoTourForUserNavigation()
                     setupNavHint.expandCard()
                     item.onClick?.()
                   }}
