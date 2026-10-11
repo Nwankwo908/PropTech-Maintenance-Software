@@ -298,6 +298,39 @@ export function buildMoveOutReminderSms(input: {
   ].join("\n")
 }
 
+function inspectionNoticeLabel(inspectionType?: string | null): string {
+  switch ((inspectionType ?? "").trim().toLowerCase()) {
+    case "annual":
+      return "annual inspection"
+    case "periodic":
+      return "routine inspection"
+    case "move_in":
+      return "move-in inspection"
+    case "move_out":
+      return "move-out inspection"
+    default:
+      return "inspection"
+  }
+}
+
+/** Morning/afternoon windows match SendInspectionNoticeModal (9:00 AM – 12:00 PM, 12:00 PM – 5:00 PM). */
+function inspectionNoticeWhen(scheduledAt?: string | null): string | null {
+  const raw = scheduledAt?.trim()
+  if (!raw) return null
+  const day = raw.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null
+  const date = new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  })
+  const hour = raw.slice(11, 13)
+  if (hour === "09") return `${date}, in the morning (9:00 AM – 12:00 PM)`
+  if (hour === "12") return `${date}, in the afternoon (12:00 PM – 5:00 PM)`
+  return date
+}
+
 export function buildInspectionNoticeSms(input: {
   residentName: string
   companyName?: string | null
@@ -305,23 +338,12 @@ export function buildInspectionNoticeSms(input: {
   inspectionType?: string | null
 }): string {
   const name = input.residentName.trim() || "there"
-  const typeLabel = (input.inspectionType ?? "inspection").replace(/_/g, " ")
-  let when = "soon"
-  if (input.scheduledAt?.trim()) {
-    when = new Date(input.scheduledAt).toLocaleString("en-US", {
-      month: "long",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    })
-  }
-  return [
-    `Hi ${name},`,
-    "",
-    teamLine(input.companyName),
-    "",
-    `We're scheduling a ${typeLabel} for ${when}. Please make sure we can access the unit, or reply here to reschedule.`,
-  ].join("\n")
+  const label = inspectionNoticeLabel(input.inspectionType)
+  const when = inspectionNoticeWhen(input.scheduledAt)
+  const ask = when
+    ? `Your ${label} is scheduled for ${when}. Please make sure we can get into the unit that day, or reply here if you need a different time.`
+    : `It's time for your ${label}. Reply with a few days and times that work for you, and we'll confirm.`
+  return [`Hi ${name},`, "", teamLine(input.companyName), "", ask].join("\n")
 }
 
 export function buildInspectionReminderSms(input: {

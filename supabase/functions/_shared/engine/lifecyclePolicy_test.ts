@@ -177,5 +177,36 @@ Deno.test("welcome / reminder SMS follow communication standard", () => {
     scheduledAt: "2026-08-15T14:00:00.000Z",
   })
   assertStringIncludes(notice, "Harbor Properties")
-  assertStringIncludes(notice, "move out")
+  assertStringIncludes(notice, "move-out inspection")
+})
+
+Deno.test("inspection notice names the type and the morning window without shifting the day", () => {
+  const notice = buildInspectionNoticeSms({
+    residentName: "Alex",
+    companyName: "Harbor Properties",
+    inspectionType: "annual",
+    scheduledAt: "2026-10-14T09:00:00",
+  })
+  assertStringIncludes(
+    notice,
+    "Your annual inspection is scheduled for Wednesday, October 14, in the morning",
+  )
+})
+
+Deno.test("inspection notice without a date asks for times instead of saying soon", () => {
+  const notice = buildInspectionNoticeSms({
+    residentName: "Alex",
+    inspectionType: "annual",
+  })
+  assertStringIncludes(notice, "It's time for your annual inspection")
+  assertEquals(notice.includes("soon"), false)
+})
+
+Deno.test("inspection notice falls back to a plain inspection for an unknown type", () => {
+  const notice = buildInspectionNoticeSms({
+    residentName: "Alex",
+    inspectionType: "walkthrough",
+  })
+  assertStringIncludes(notice, "your inspection")
+  assertEquals(notice.includes("a annual"), false)
 })
