@@ -19,6 +19,7 @@ import {
   ONBOARDING_PROPERTY_TYPE_OPTIONS,
   resolveOnboardingPropertyType,
 } from './onboardingFieldStyles'
+import { isSingleFamilyPropertyType } from '@/lib/onboarding/propertyType'
 import {
   OnboardingContinueButton,
   OnboardingStepNav,
@@ -59,13 +60,77 @@ function createEmptyExtractedProperty(): OnboardingExtractedProperty {
   }
 }
 
-function AddRowButton({ label, onClick }: { label: string; onClick: () => void }) {
+function buildingLabelForProperty(property: OnboardingExtractedProperty): string {
+  return property.name.trim() || property.address.trim()
+}
+
+function propertyOptionLabel(property: OnboardingExtractedProperty, index: number): string {
+  return buildingLabelForProperty(property) || `Property ${index + 1}`
+}
+
+function createEmptyExtractedResident(link?: {
+  linkedPropertyId: string
+  building: string
+}): OnboardingExtractedResident {
+  return {
+    id: `resident-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    fullName: '',
+    unit: '',
+    building: link?.building ?? '',
+    phone: '',
+    email: '',
+    leaseStart: '',
+    leaseEnd: '',
+    monthlyRent: '',
+    rentDueDay: '',
+    occupancyStatus: 'active',
+    maintenanceResponsibilitiesClause: '',
+    sourceDocumentName: 'Manual entry',
+    confidence: 1,
+    selected: false,
+    needsReview: false,
+    sendOnboardingOnComplete: false,
+    linkedPropertyId: link?.linkedPropertyId,
+  }
+}
+
+function syncLinkedResidents(
+  properties: OnboardingExtractedProperty[],
+  residents: OnboardingExtractedResident[],
+): OnboardingExtractedResident[] {
+  return residents.map((resident) => {
+    if (!resident.linkedPropertyId) return resident
+    const property = properties.find((row) => row.id === resident.linkedPropertyId)
+    if (!property) {
+      return { ...resident, linkedPropertyId: undefined, building: '' }
+    }
+    const building = buildingLabelForProperty(property)
+    const unit = isSingleFamilyPropertyType(resolveOnboardingPropertyType(property.propertyType))
+      ? ''
+      : resident.unit
+    if (resident.building === building && resident.unit === unit && resident.linkedPropertyId === property.id) {
+      return resident
+    }
+    return { ...resident, building, unit }
+  })
+}
+
+function AddRowButton({
+  label,
+  onClick,
+  disabled = false,
+}: {
+  label: string
+  onClick: () => void
+  disabled?: boolean
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
-      className="sa-press inline-flex size-8 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20"
+      className="sa-press inline-flex size-8 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20 disabled:cursor-not-allowed disabled:opacity-40"
     >
       <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden>
         <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" />
@@ -389,9 +454,11 @@ export function OnboardingAiReviewStep({
   }
 
   function patchProperty(id: string, patch: Partial<OnboardingExtractedProperty>) {
+    const properties = review.properties.map((row) => (row.id === id ? { ...row, ...patch } : row))
     onReviewChange({
       ...review,
-      properties: review.properties.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+      properties,
+      residents: syncLinkedResidents(properties, review.residents),
     })
   }
 
@@ -424,9 +491,42 @@ export function OnboardingAiReviewStep({
   }
 
   function removePropertyForm(id: string) {
+    const properties = review.properties.filter((row) => row.id !== id)
     onReviewChange({
       ...review,
-      properties: review.properties.filter((row) => row.id !== id),
+      properties,
+      residents: syncLinkedResidents(properties, review.residents),
+    })
+  }
+
+  function addTenantForm() {
+    const property =
+      review.properties.find((row) => buildingLabelForProperty(row)) ?? review.properties[0]
+    if (!property) return
+    onReviewChange({
+      ...review,
+      residents: [
+        ...review.residents,
+        createEmptyExtractedResident({
+          linkedPropertyId: property.id,
+          building: buildingLabelForProperty(property),
+        }),
+      ],
+    })
+  }
+
+  function removeTenantForm(id: string) {
+    onReviewChange({
+      ...review,
+      residents: review.residents.filter((row) => row.id !== id),
+    })
+  }
+
+  function patchTenant(item: OnboardingExtractedResident, patch: Partial<OnboardingExtractedResident>) {
+    const next = { ...item, ...patch }
+    patchResident(item.id, {
+      ...patch,
+      selected: Boolean(next.fullName.trim() || next.phone.trim() || next.email.trim()),
     })
   }
 
@@ -768,7 +868,9 @@ export function OnboardingAiReviewStep({
                     </div>
                   </div>
 
-                  {(() => {
+                  {manualAdd
+                    ? null
+                    : (() => {
                     const propertyResidents: OnboardingExtractedResident[] = []
                     const seenResidentIds = new Set<string>()
                     for (const unit of propertyUnits) {
@@ -892,7 +994,7 @@ export function OnboardingAiReviewStep({
             </ul>
           </li>
         ) : null}
-        {orphanResidents.length > 0 ? (
+        {(manualAdd || orphanResidents.length === 0) ? null : (
           <li className="list-none rounded-[8px] border border-[#eef0f3] px-3 py-3">
             <p className="text-[12px] font-medium text-[#364153]">Residents without a matched property</p>
             <ul className="mt-2 list-none space-y-2 pl-0">
@@ -917,8 +1019,212 @@ export function OnboardingAiReviewStep({
               ))}
             </ul>
           </li>
-        ) : null}
+        )}
       </ul>
+    )
+  }
+
+  function renderManualTenants() {
+    const tenants = review.residents.filter(
+      (resident) => resident.sourceDocumentName === 'Manual entry' || Boolean(resident.linkedPropertyId),
+    )
+    if (tenants.length === 0) {
+      return (
+        <p className="mt-2 text-[13px] text-[#6a7282]">
+          {review.properties.length === 0
+            ? 'Add a property above, then add the tenant who lives there.'
+            : 'Add the tenant for a property you entered above.'}
+        </p>
+      )
+    }
+
+    return (
+      <div className="mt-3 flex flex-col gap-3">
+        {tenants.map((item, index) => {
+          const property = review.properties.find((row) => row.id === item.linkedPropertyId)
+          const showUnit = property
+            ? !isSingleFamilyPropertyType(resolveOnboardingPropertyType(property.propertyType))
+            : true
+          return (
+            <div key={item.id} className="rounded-[10px] border border-[#e5e7eb] bg-[#fafafa] p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-[13px] font-semibold text-[#101828]">Tenant {index + 1}</p>
+                <div className="flex items-center gap-3">
+                  <OnboardingSendSwitch
+                    enabled={Boolean(item.sendOnboardingOnComplete)}
+                    disabled={!item.phone.trim()}
+                    onChange={(sendOnboardingOnComplete) =>
+                      patchTenant(item, { sendOnboardingOnComplete })
+                    }
+                    aria-label={
+                      item.phone.trim()
+                        ? `Send onboarding message to tenant ${index + 1} when setup completes`
+                        : `Add a phone number to send onboarding to tenant ${index + 1}`
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-[8px] px-2 py-1 text-[13px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
+                    onClick={() => removeTenantForm(item.id)}
+                    aria-label={`Remove tenant ${index + 1}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block sm:col-span-2">
+                  <span className={fieldLabelClass}>Property</span>
+                  <div className="relative">
+                    <select
+                      className={selectClass}
+                      value={item.linkedPropertyId ?? ''}
+                      onChange={(e) => {
+                        const next = review.properties.find((row) => row.id === e.target.value)
+                        patchTenant(item, {
+                          linkedPropertyId: next?.id,
+                          building: next ? buildingLabelForProperty(next) : '',
+                          unit:
+                            next &&
+                            isSingleFamilyPropertyType(resolveOnboardingPropertyType(next.propertyType))
+                              ? ''
+                              : item.unit,
+                        })
+                      }}
+                      aria-label={`Property for tenant ${index + 1}`}
+                    >
+                      <option value="">Select property</option>
+                      {review.properties.map((row, propertyIndex) => (
+                        <option key={row.id} value={row.id}>
+                          {propertyOptionLabel(row, propertyIndex)}
+                        </option>
+                      ))}
+                    </select>
+                    <span
+                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]"
+                      aria-hidden
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                        <path
+                          d="M6 9l6 6 6-6"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </span>
+                  </div>
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className={fieldLabelClass}>Full name</span>
+                  <input
+                    className={inputClass}
+                    value={item.fullName}
+                    onChange={(e) => patchTenant(item, { fullName: e.target.value })}
+                    placeholder="Full name"
+                    aria-label={`Tenant ${index + 1} full name`}
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Email</span>
+                  <input
+                    className={inputClass}
+                    type="email"
+                    value={item.email}
+                    onChange={(e) => patchTenant(item, { email: e.target.value })}
+                    placeholder="Email"
+                    aria-label={`Tenant ${index + 1} email`}
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Phone</span>
+                  <input
+                    className={inputClass}
+                    type="tel"
+                    value={item.phone}
+                    onChange={(e) => patchTenant(item, { phone: e.target.value })}
+                    placeholder="Phone"
+                    aria-label={`Tenant ${index + 1} phone`}
+                  />
+                </label>
+                {showUnit ? (
+                  <label className="block min-w-0">
+                    <span className={fieldLabelClass}>Unit</span>
+                    <input
+                      className={inputClass}
+                      value={item.unit}
+                      onChange={(e) => patchTenant(item, { unit: e.target.value })}
+                      placeholder="4B"
+                      aria-label={`Tenant ${index + 1} unit`}
+                    />
+                  </label>
+                ) : null}
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Occupancy status</span>
+                  <ResidentOccupancySelect
+                    className={selectClass}
+                    value={normalizeOnboardingOccupancyStatus(item.occupancyStatus)}
+                    onChange={(occupancyStatus) => patchTenant(item, { occupancyStatus })}
+                    aria-label={`Occupancy status for tenant ${index + 1}`}
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Monthly rent</span>
+                  <input
+                    className={inputClass}
+                    value={item.monthlyRent}
+                    onChange={(e) => patchTenant(item, { monthlyRent: e.target.value })}
+                    placeholder="$2,850"
+                    aria-label={`Tenant ${index + 1} monthly rent`}
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Rent due day (1–31)</span>
+                  <input
+                    className={inputClass}
+                    value={item.rentDueDay}
+                    onChange={(e) => patchTenant(item, { rentDueDay: e.target.value })}
+                    placeholder="1"
+                    aria-label={`Tenant ${index + 1} rent due day`}
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Lease starts</span>
+                  <input
+                    className={inputClass}
+                    type="date"
+                    value={item.leaseStart}
+                    onChange={(e) => patchTenant(item, { leaseStart: e.target.value })}
+                    aria-label={`Tenant ${index + 1} lease starts`}
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className={fieldLabelClass}>Lease ends</span>
+                  <input
+                    className={inputClass}
+                    type="date"
+                    value={item.leaseEnd}
+                    onChange={(e) => patchTenant(item, { leaseEnd: e.target.value })}
+                    aria-label={`Tenant ${index + 1} lease ends`}
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className={fieldLabelClass}>Maintenance responsibilities clause</span>
+                  <textarea
+                    className={`${inputClass} min-h-[72px] resize-y py-2`}
+                    value={item.maintenanceResponsibilitiesClause}
+                    onChange={(e) =>
+                      patchTenant(item, { maintenanceResponsibilitiesClause: e.target.value })
+                    }
+                    placeholder="Optional. Who handles what from the lease."
+                    aria-label={`Tenant ${index + 1} maintenance responsibilities clause`}
+                  />
+                </label>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     )
   }
 
@@ -1261,6 +1567,20 @@ export function OnboardingAiReviewStep({
                 </button>
               )}
             </ReviewSection>
+            {manualAdd ? (
+              <ReviewSection
+                title="Add tenant"
+                headerActions={
+                  <AddRowButton
+                    label="Add tenant"
+                    onClick={addTenantForm}
+                    disabled={review.properties.length === 0}
+                  />
+                }
+              >
+                {renderManualTenants()}
+              </ReviewSection>
+            ) : null}
             {manualAdd ? null : (
             <ReviewSection title="Lease Information Found" count={review.leases.length}>
               {null}

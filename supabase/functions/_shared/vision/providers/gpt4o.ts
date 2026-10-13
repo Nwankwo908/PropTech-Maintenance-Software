@@ -9,6 +9,7 @@ import {
   normalizeInspectionReportExtract,
 } from "../normalize.ts"
 import { parseModelJsonContent } from "../parseModelJson.ts"
+import { geminiGenerateJsonText } from "../../documentExtract/geminiGenerateJson.ts"
 import {
   chatCompletionFailureDetail,
   extractChatCompletionText,
@@ -282,28 +283,35 @@ export async function analyzeInspectionReportWithGpt4o(
     pageCursor = pageEnd + 1
     const textLayer = formatInspectionPageTextsForPrompt(pageTexts ?? [], { pageStart, pageEnd })
     try {
-      const json = await callGpt4oVision({
+      const content = await geminiGenerateJsonText({
         apiKey,
         system: INSPECTION_DOCUMENT_SYSTEM_PROMPT,
-        userText: inspectionReportExtractUserText({
-          totalPages: images.length,
-          pageStart,
-          pageEnd,
-          textLayer,
-        }),
-        images: chunk,
-        jsonObject: true,
-        maxTokens: 8192,
-        detail: "auto",
+        parts: [
+          {
+            text: inspectionReportExtractUserText({
+              totalPages: images.length,
+              pageStart,
+              pageEnd,
+              textLayer,
+            }),
+          },
+          ...chunk.map((image) => ({
+            inlineData: {
+              mimeType: image.mediaType || "image/jpeg",
+              data: stripVisionDataUrl(image.base64),
+            },
+          })),
+        ],
+        maxOutputTokens: 8192,
       })
-      const parsed = parsedFromCompletion(json, "GPT-4o document extract")
+      const parsed = parseModelJsonContent(content, "Gemini document extract")
       parts.push(normalizeInspectionReportExtract(parsed))
     } catch (err) {
       console.error("[analyzeInspectionReportWithGpt4o] page extract failed", pageStart, pageEnd, err)
     }
   }
   if (parts.length === 0) {
-    throw new Error("GPT-4o document extract returned empty content (all pages failed)")
+    throw new Error("Document extract returned empty content (all pages failed)")
   }
   return mergeInspectionReportExtracts(parts)
 }

@@ -20,7 +20,7 @@ import {
 } from "./inbound_db.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./tenantActivationAdminAlert.ts"
-import { AWAITING_LANDLORD_VENDOR_CHOICE } from "../vendorLandlordChoice.ts"
+import { AWAITING_LANDLORD_VENDOR_CHOICE } from "./awaitingLandlordVendorChoice.ts"
 
 export function isUrgentLandlordPick(text: string): boolean {
   return resolveUrgencyPolicy({ text }).band === "emergency"

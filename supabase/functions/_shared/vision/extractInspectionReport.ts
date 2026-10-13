@@ -10,8 +10,8 @@ export async function extractInspectionReport(input: {
   pageImages?: InspectionPageImage[]
   pageTexts?: string[]
 }): Promise<InspectionReportExtract> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY")?.trim() ?? ""
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY for GPT-4o vision")
+  const apiKey = Deno.env.get("GEMINI_API_KEY")?.trim() ?? ""
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY for document extraction")
   return await analyzeInspectionReportWithGpt4o(
     apiKey,
     input.imageBase64,

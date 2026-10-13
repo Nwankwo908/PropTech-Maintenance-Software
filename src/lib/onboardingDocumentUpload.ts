@@ -191,6 +191,8 @@ export type OnboardingExtractedResident = {
   needsReview: boolean
   /** When true, send tenant welcome SMS on Complete setup. */
   sendOnboardingOnComplete?: boolean
+  /** Manual Add tenant row linked to an Add properties row. */
+  linkedPropertyId?: string
 }
 
 export type OnboardingExtractedVendor = {

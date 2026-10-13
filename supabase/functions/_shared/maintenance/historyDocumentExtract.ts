@@ -1,7 +1,11 @@
 /**
  * Extract structured maintenance history jobs from invoices / receipts / work orders.
- * Prefer PDF text; fall back to GPT-4o PDF file / vision. Never invent sample jobs.
+ * Prefer PDF text; fall back to Gemini 3.8 Flash on the PDF or photo. Never invent sample jobs.
  */
+import {
+  geminiGenerateJsonText,
+  geminiPartsFromOpenAiUserContent,
+} from "../documentExtract/geminiGenerateJson.ts"
 import {
   isPdfFile,
   MIN_PDF_TEXT_CHARS,
@@ -132,28 +136,6 @@ function parseJobsPayload(
   return { records, warnings, method }
 }
 
-function throwExtractHttpError(status: number, text: string): never {
-  const lower = text.toLowerCase()
-  if (
-    status === 401 ||
-    status === 403 ||
-    lower.includes("incorrect api key") ||
-    lower.includes("invalid_api_key")
-  ) {
-    throw new Error(
-      "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets.",
-    )
-  }
-  if (status === 429 || lower.includes("rate limit")) {
-    throw new Error(
-      "Document scanning is busy right now. Please wait a moment and try again.",
-    )
-  }
-  throw new Error(
-    `Maintenance history extract failed (${status}): ${text.slice(0, 300)}`,
-  )
-}
-
 const SYSTEM_PROMPT =
   `You extract historical maintenance / repair invoice data for a property landlord.
 Return JSON only: { "records": [ ... ], "warnings": [string] }.
@@ -170,29 +152,11 @@ async function extractWithChatCompletions(
   userContent: Array<Record<string, unknown>>,
   method: MaintenanceHistoryExtractResult["method"],
 ): Promise<MaintenanceHistoryExtractResult> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userContent },
-      ],
-    }),
+  const content = await geminiGenerateJsonText({
+    apiKey,
+    system: SYSTEM_PROMPT,
+    parts: geminiPartsFromOpenAiUserContent(userContent),
   })
-  if (!response.ok) {
-    throwExtractHttpError(response.status, await response.text().catch(() => ""))
-  }
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  const content = json.choices?.[0]?.message?.content ?? ""
   try {
     return parseJobsPayload(content, method)
   } catch {
@@ -200,62 +164,24 @@ async function extractWithChatCompletions(
   }
 }
 
-function readResponsesOutputText(json: unknown): string {
-  if (!json || typeof json !== "object") return ""
-  const root = json as Record<string, unknown>
-  if (typeof root.output_text === "string" && root.output_text.trim()) {
-    return root.output_text
-  }
-  const output = Array.isArray(root.output) ? root.output : []
-  const chunks: string[] = []
-  for (const item of output) {
-    if (!item || typeof item !== "object") continue
-    const content = (item as { content?: unknown }).content
-    if (!Array.isArray(content)) continue
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue
-      const text = (part as { text?: unknown }).text
-      if (typeof text === "string" && text.trim()) chunks.push(text)
-    }
-  }
-  return chunks.join("\n")
-}
-
 async function extractWithResponsesPdf(input: {
   apiKey: string
-  fileName: string
   introText: string
   bytes: Uint8Array
 }): Promise<MaintenanceHistoryExtractResult> {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      temperature: 0.1,
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: `${SYSTEM_PROMPT}\n\n${input.introText}` },
-            {
-              type: "input_file",
-              filename: input.fileName,
-              file_data: `data:application/pdf;base64,${bytesToBase64(input.bytes)}`,
-            },
-          ],
+  const content = await geminiGenerateJsonText({
+    apiKey: input.apiKey,
+    system: SYSTEM_PROMPT,
+    parts: [
+      { text: input.introText },
+      {
+        inlineData: {
+          mimeType: "application/pdf",
+          data: bytesToBase64(input.bytes),
         },
-      ],
-      text: { format: { type: "json_object" } },
-    }),
+      },
+    ],
   })
-  if (!response.ok) {
-    throwExtractHttpError(response.status, await response.text().catch(() => ""))
-  }
-  const content = readResponsesOutputText(await response.json())
   try {
     return parseJobsPayload(content, "pdf_file")
   } catch {
@@ -306,7 +232,6 @@ export async function extractMaintenanceHistoryFromDocument(input: {
     }
     return await extractWithResponsesPdf({
       apiKey: input.apiKey,
-      fileName: input.fileName,
       introText: intro,
       bytes: input.bytes,
     })

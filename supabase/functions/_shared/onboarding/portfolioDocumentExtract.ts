@@ -1,7 +1,12 @@
 /**
- * GPT-4o portfolio extraction for onboarding fast-track uploads.
+ * Portfolio extraction for onboarding uploads (Gemini 3.8 Flash).
  * Extract only fields visibly present in the document — never invent demo data.
  */
+import {
+  DOCUMENT_EXTRACT_MODEL,
+  geminiGenerateJsonText,
+  geminiPartsFromOpenAiUserContent,
+} from "../documentExtract/geminiGenerateJson.ts"
 import * as XLSX from "npm:xlsx@0.18.5"
 import {
   isPdfFile,
@@ -838,7 +843,7 @@ export function classifyOpenAiExtractError(
 export function openAiExtractErrorMessage(status: number, text: string): string {
   const kind = classifyOpenAiExtractError(status, text)
   if (kind === "auth") {
-    return "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets."
+    return "Document scanning is not configured. Set a valid GEMINI_API_KEY on Supabase Edge secrets."
   }
   if (kind === "quota") {
     return "Document scanning is temporarily unavailable. Try again in a few minutes."
@@ -849,69 +854,6 @@ export function openAiExtractErrorMessage(status: number, text: string): string 
       : "Document scanning is busy right now. Please wait a moment and try again."
   }
   return `Document extract failed (${status}): ${text.slice(0, 300)}`
-}
-
-function retryAfterMs(response: Response): number | null {
-  const raw = response.headers.get("retry-after")
-  if (!raw) return null
-  const seconds = Number(raw)
-  if (!Number.isFinite(seconds) || seconds < 0) return null
-  return Math.min(seconds * 1000, 20_000)
-}
-
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function fetchOpenAiExtract(
-  url: string,
-  apiKey: string,
-  body: unknown,
-  options?: { maxAttempts?: number },
-): Promise<Response> {
-  const maxAttempts = options?.maxAttempts ?? 4
-  let lastStatus = 0
-  let lastText = ""
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    })
-    if (response.ok) return response
-    lastStatus = response.status
-    lastText = await response.text().catch(() => "")
-    console.error("[onboarding-extract] openai", lastStatus, lastText.slice(0, 400))
-    const retryable =
-      classifyOpenAiExtractError(lastStatus, lastText) === "busy" && attempt < maxAttempts - 1
-    if (!retryable) break
-    await sleepMs(retryAfterMs(response) ?? 1000 * 2 ** attempt)
-  }
-  throw new Error(openAiExtractErrorMessage(lastStatus, lastText))
-}
-
-function readResponsesOutputText(json: unknown): string {
-  if (!json || typeof json !== "object") return ""
-  const root = json as Record<string, unknown>
-  if (typeof root.output_text === "string" && root.output_text.trim()) {
-    return root.output_text
-  }
-  const output = Array.isArray(root.output) ? root.output : []
-  const chunks: string[] = []
-  for (const item of output) {
-    if (!item || typeof item !== "object") continue
-    const content = (item as { content?: unknown }).content
-    if (!Array.isArray(content)) continue
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue
-      const text = (part as { text?: unknown }).text
-      if (typeof text === "string" && text.trim()) chunks.push(text)
-    }
-  }
-  return chunks.join("\n")
 }
 
 function parseExtractedJson(
@@ -952,32 +894,16 @@ function systemPromptForKind(kind: TypedOrGenericExtractKind): string {
   return EXTRACT_SYSTEM_PROMPT
 }
 
-const EXTRACT_TEXT_MODEL = "gpt-4o-mini"
-
 async function extractWithChatCompletions(
   apiKey: string,
   userContent: Array<Record<string, unknown>>,
   kind: TypedOrGenericExtractKind = "generic",
 ): Promise<PortfolioDocumentExtractPayload> {
-  const response = await fetchOpenAiExtract(
-    "https://api.openai.com/v1/chat/completions",
+  const content = await geminiGenerateJsonText({
     apiKey,
-    {
-      // Word, spreadsheets, and photo pages use the same model as scanned PDFs.
-      // gpt-4o quota failures were shown as "Document scanning is temporarily unavailable."
-      model: EXTRACT_TEXT_MODEL,
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPromptForKind(kind) },
-        { role: "user", content: userContent },
-      ],
-    },
-  )
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  const content = json.choices?.[0]?.message?.content ?? ""
+    system: systemPromptForKind(kind),
+    parts: geminiPartsFromOpenAiUserContent(userContent),
+  })
   try {
     return parseExtractedJson(content, kind)
   } catch {
@@ -1036,54 +962,13 @@ async function extractPdfViaPageImages(input: {
   return extracted
 }
 
-const EXTRACT_PDF_MODEL = "gpt-4o-mini"
-
-async function uploadOpenAiUserFile(
-  apiKey: string,
-  fileName: string,
-  bytes: Uint8Array,
-): Promise<string> {
-  const form = new FormData()
-  form.append("purpose", "user_data")
-  form.append(
-    "file",
-    new Blob([bytes], { type: "application/pdf" }),
-    fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`,
-  )
-  const response = await fetch("https://api.openai.com/v1/files", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
-  })
-  if (!response.ok) {
-    throw new Error(
-      openAiExtractErrorMessage(response.status, await response.text().catch(() => "")),
-    )
-  }
-  const json = (await response.json()) as { id?: string }
-  const id = json.id?.trim()
-  if (!id) throw new Error("Document extract failed: missing file id")
-  return id
-}
-
-async function deleteOpenAiFile(apiKey: string, fileId: string): Promise<void> {
-  try {
-    await fetch(`https://api.openai.com/v1/files/${fileId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
-  } catch {
-    /* best-effort */
-  }
-}
-
 function unreadPdfScanError(_byteLength: number): Error {
   return new Error(
     "We couldn’t read this PDF automatically. Export it as a JPG or a text-based PDF and try again.",
   )
 }
 
-/** Chat Completions ignores PDF `file` parts; Responses API actually reads the PDF. */
+/** Gemini reads the PDF bytes directly. Shrink and retry when the file is too large. */
 async function extractWithResponsesPdf(input: {
   apiKey: string
   fileName: string
@@ -1111,63 +996,23 @@ async function extractWithResponsesPdf(input: {
     lastSentBytes = shrunk.bytes.length
     console.log(
       "[onboarding-extract] pdf",
-      `pages=${shrunk.pageCount} using=${shrunk.usedPages} bytes=${shrunk.bytes.length} model=${EXTRACT_PDF_MODEL}`,
+      `pages=${shrunk.pageCount} using=${shrunk.usedPages} bytes=${shrunk.bytes.length} model=${DOCUMENT_EXTRACT_MODEL}`,
     )
-    let fileId: string | null = null
     try {
-      let response: Response
-      try {
-        fileId = await uploadOpenAiUserFile(input.apiKey, input.fileName, shrunk.bytes)
-        response = await fetchOpenAiExtract(
-          "https://api.openai.com/v1/responses",
-          input.apiKey,
+      const content = await geminiGenerateJsonText({
+        apiKey: input.apiKey,
+        system: prompt,
+        parts: [
+          { text: input.introText },
           {
-            model: EXTRACT_PDF_MODEL,
-            text: { format: { type: "json_object" } },
-            input: [
-              { role: "system", content: prompt },
-              {
-                role: "user",
-                content: [
-                  { type: "input_file", file_id: fileId },
-                  { type: "input_text", text: input.introText },
-                ],
-              },
-            ],
+            inlineData: {
+              mimeType: "application/pdf",
+              data: bytesToBase64(shrunk.bytes),
+            },
           },
-          { maxAttempts: 2 },
-        )
-      } catch (uploadOrCallError) {
-        if (fileId) {
-          throw uploadOrCallError
-        }
-        response = await fetchOpenAiExtract(
-          "https://api.openai.com/v1/responses",
-          input.apiKey,
-          {
-            model: EXTRACT_PDF_MODEL,
-            text: { format: { type: "json_object" } },
-            input: [
-              { role: "system", content: prompt },
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "input_file",
-                    filename: input.fileName.toLowerCase().endsWith(".pdf")
-                      ? input.fileName
-                      : `${input.fileName}.pdf`,
-                    file_data: `data:application/pdf;base64,${bytesToBase64(shrunk.bytes)}`,
-                  },
-                  { type: "input_text", text: input.introText },
-                ],
-              },
-            ],
-          },
-          { maxAttempts: 2 },
-        )
-      }
-      const content = readResponsesOutputText(await response.json())
+        ],
+        maxAttempts: 2,
+      })
       let extracted: PortfolioDocumentExtractPayload
       try {
         extracted = parseExtractedJson(content, input.kind)
@@ -1188,9 +1033,9 @@ async function extractWithResponsesPdf(input: {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error("Document extract failed")
       const message = lastError.message.toLowerCase()
-      if (!message.includes("busy") && !message.includes("too large")) throw lastError
-    } finally {
-      if (fileId) await deleteOpenAiFile(input.apiKey, fileId)
+      if (!message.includes("busy") && !message.includes("too large") && !message.includes("jpg")) {
+        throw lastError
+      }
     }
   }
 
@@ -1579,25 +1424,14 @@ async function classifyUnknownDocumentType(
   const sample = snippet.trim().slice(0, 2500)
   if (!sample) return "unknown"
   try {
-    const response = await fetchOpenAiExtract(
-      "https://api.openai.com/v1/chat/completions",
+    const content = await geminiGenerateJsonText({
       apiKey,
-      {
-        model: "gpt-4o-mini",
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: CLASSIFY_SYSTEM_PROMPT },
-          { role: "user", content: sample },
-        ],
-      },
-      { maxAttempts: 2 },
-    )
-    const json = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = json.choices?.[0]?.message?.content ?? "{}"
-    return parseClassifierResponse(JSON.parse(stripJsonFence(content)))
+      system: CLASSIFY_SYSTEM_PROMPT,
+      parts: [{ text: sample }],
+      maxOutputTokens: 1024,
+      maxAttempts: 2,
+    })
+    return parseClassifierResponse(JSON.parse(content))
   } catch {
     return "unknown"
   }
@@ -1626,26 +1460,15 @@ async function classifyInsuranceSubtype(
     })
   }
   try {
-    const response = await fetchOpenAiExtract(
-      "https://api.openai.com/v1/chat/completions",
+    const content = await geminiGenerateJsonText({
       apiKey,
-      {
-        model: "gpt-4o-mini",
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: CLASSIFY_INSURANCE_SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-      },
-      { maxAttempts: 2 },
-    )
-    const json = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = json.choices?.[0]?.message?.content ?? "{}"
+      system: CLASSIFY_INSURANCE_SYSTEM_PROMPT,
+      parts: geminiPartsFromOpenAiUserContent(userContent),
+      maxOutputTokens: 1024,
+      maxAttempts: 2,
+    })
     return insuranceDocumentTypeToKind(
-      parseInsuranceTypeClassifierResponse(JSON.parse(stripJsonFence(content))),
+      parseInsuranceTypeClassifierResponse(JSON.parse(content)),
     )
   } catch {
     return "insurance"

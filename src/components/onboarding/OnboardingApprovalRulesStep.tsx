@@ -1,10 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
-import {
-  buildCommunicationStylePreview,
-  COMMUNICATION_STYLE_OPTIONS,
-  type CommunicationStyle,
-} from '@/lib/communicationStyle'
 import {
   AFTER_HOURS_RULE_OPTIONS,
   EMERGENCY_TYPE_OPTIONS,
@@ -83,11 +78,6 @@ export function OnboardingApprovalRulesStep({
     normalizeOnboardingApprovalRules(initialRules),
   )
   const [error, setError] = useState<string | null>(null)
-  const [previewTab, setPreviewTab] = useState<'sms' | 'email'>('sms')
-  const stylePreview = useMemo(
-    () => buildCommunicationStylePreview(rules.communicationStyle),
-    [rules.communicationStyle],
-  )
 
   function patch(next: Partial<OnboardingApprovalRules>) {
     setRules((prev) => ({ ...prev, ...next }))
@@ -198,107 +188,6 @@ export function OnboardingApprovalRulesStep({
             </div>
           </div>
         ) : null}
-
-        <div>
-          <h3 className="text-[15px] font-semibold text-[#111827]">Communication Style</h3>
-          <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
-            Choose how Ulo should communicate with residents, vendors, and your property team. This
-            affects the tone of automated text messages and emails, but not the meaning or required
-            legal language.
-          </p>
-          <div className="mt-3 space-y-2">
-            {COMMUNICATION_STYLE_OPTIONS.map((option) => {
-              const selected = rules.communicationStyle === option.id
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() =>
-                    patch({ communicationStyle: option.id as CommunicationStyle })
-                  }
-                  className={[
-                    'sa-press sa-surface w-full rounded-[12px] border px-4 py-3.5 text-left',
-                    selected
-                      ? 'border-[#186179] bg-[#f0f7fa] ring-1 ring-[#186179]/30'
-                      : 'border-[#e5e7eb] bg-white hover:border-[#cfd4dc] hover:bg-[#f9fafb]',
-                  ].join(' ')}
-                  aria-pressed={selected}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-[14px] font-semibold text-[#111827]">{option.label}</p>
-                    {option.recommended ? (
-                      <span className="rounded-full bg-[#C4E5C9] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#187930]">
-                        Recommended
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">{option.description}</p>
-                  <div className="mt-3 space-y-1.5 rounded-[8px] bg-[#f8fafc] px-3 py-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#64748b]">
-                      SMS example
-                    </p>
-                    <p className="text-[12px] leading-5 text-[#364153]">{option.smsExample}</p>
-                    <p className="pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#64748b]">
-                      Email subject
-                    </p>
-                    <p className="text-[12px] leading-5 text-[#364153]">
-                      {option.emailSubjectExample}
-                    </p>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="mt-4 overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white">
-            <div className="flex border-b border-[#e5e7eb]">
-              {(
-                [
-                  { id: 'sms' as const, label: 'SMS Preview' },
-                  { id: 'email' as const, label: 'Email Preview' },
-                ] as const
-              ).map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setPreviewTab(tab.id)}
-                  className={[
-                    'sa-press flex-1 px-3 py-2.5 text-[13px] font-semibold',
-                    previewTab === tab.id
-                      ? 'border-b-2 border-[#186179] text-[#186179]'
-                      : 'text-[#6a7282] hover:text-[#101828]',
-                  ].join(' ')}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <div className="bg-[#f8fafc] px-4 py-4">
-              {previewTab === 'sms' ? (
-                <div className="mx-auto max-w-[320px] rounded-[18px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-sm">
-                  <p className="text-[11px] font-medium text-[#9ca3af]">Text message</p>
-                  <p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-[#101828]">
-                    {stylePreview.sms}
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-sm">
-                  <p className="text-[11px] font-medium text-[#9ca3af]">Subject</p>
-                  <p className="mt-1 text-[14px] font-semibold text-[#101828]">
-                    {stylePreview.emailSubject}
-                  </p>
-                  <p className="mt-3 text-[11px] font-medium text-[#9ca3af]">Body</p>
-                  <p className="mt-1 whitespace-pre-wrap text-[13px] leading-5 text-[#364153]">
-                    {stylePreview.emailBody}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-          <p className="mt-2 text-[12px] leading-4 text-[#6a7282]">
-            You can change this later in Settings.
-          </p>
-        </div>
 
         {showNotificationPreferences ? (
           <>

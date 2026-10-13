@@ -15,6 +15,10 @@ import {
   resolveHqsLetterMediaRoute,
 } from "../../../../shared/maintenance/hqsLetterMediaExtract.ts"
 import { pdfBytesToPlainText } from "../onboarding/pdfDocumentText.ts"
+import {
+  DOCUMENT_EXTRACT_MODEL,
+  geminiGenerateJsonText,
+} from "../documentExtract/geminiGenerateJson.ts"
 import type {
   InboundSmsHandlerContext,
   InboundSmsHandlerResult,
@@ -334,8 +338,8 @@ async function ocrImageBytes(input: {
   bytes: Uint8Array
   contentType?: string | null
 }): Promise<string> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY")?.trim() ?? ""
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY for HQS letter OCR")
+  const apiKey = Deno.env.get("GEMINI_API_KEY")?.trim() ?? ""
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY for HQS letter OCR")
   const mediaType = (input.contentType || "image/jpeg").split(";")[0]?.trim() ||
     "image/jpeg"
   let binary = ""
@@ -343,49 +347,18 @@ async function ocrImageBytes(input: {
     binary += String.fromCharCode(input.bytes[i]!)
   }
   const b64 = btoa(binary)
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      temperature: 0,
-      max_tokens: 4000,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You OCR housing-authority inspection / HQS fail letters. Return only the plain text of the letter, preserving labels, section headers, and line breaks. No commentary.",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Transcribe this inspection letter exactly.",
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mediaType};base64,${b64}`,
-                detail: "high",
-              },
-            },
-          ],
-        },
-      ],
-    }),
+  console.log("[hqs-letter] ocr", DOCUMENT_EXTRACT_MODEL)
+  return await geminiGenerateJsonText({
+    apiKey,
+    system:
+      "You OCR housing-authority inspection / HQS fail letters. Return only the plain text of the letter, preserving labels, section headers, and line breaks. No commentary.",
+    parts: [
+      { text: "Transcribe this inspection letter exactly." },
+      { inlineData: { mimeType: mediaType, data: b64 } },
+    ],
+    maxOutputTokens: 8192,
+    json: false,
   })
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "")
-    throw new Error(`HQS OCR failed (${res.status}): ${errText.slice(0, 200)}`)
-  }
-  const json = await res.json() as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  return String(json.choices?.[0]?.message?.content ?? "").trim()
 }
 
 async function extractHqsFromMediaRef(

@@ -43,9 +43,9 @@ serve(async (req) => {
   const auth = requireAdminReassignAuth(req, "[extract-maintenance-history]", corsHeaders)
   if (!auth.ok) return auth.response
 
-  const openAiKey = Deno.env.get("OPENAI_API_KEY")?.trim()
-  if (!openAiKey) {
-    return jsonResponse({ error: "OPENAI_API_KEY is not configured" }, 500)
+  const geminiKey = Deno.env.get("GEMINI_API_KEY")?.trim()
+  if (!geminiKey) {
+    return jsonResponse({ error: "GEMINI_API_KEY is not configured" }, 500)
   }
 
   let body: Record<string, unknown>
@@ -78,7 +78,7 @@ serve(async (req) => {
 
   try {
     const result = await extractMaintenanceHistoryFromDocument({
-      apiKey: openAiKey,
+      apiKey: geminiKey,
       fileName,
       contentType,
       bytes,

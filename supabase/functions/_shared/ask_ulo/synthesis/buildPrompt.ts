@@ -74,7 +74,7 @@ export type AskUloBuiltPrompt = {
   model: string
 }
 
-export const ASK_ULO_ANSWER_MODEL = "gpt-4o"
+export const ASK_ULO_ANSWER_MODEL = "gpt-6-sol"
 
 /** System-prompt style + domain guides (voice lives in formatAnswer ANSWER_STYLE_GUIDE). */
 const FORMATTING_GUIDE =

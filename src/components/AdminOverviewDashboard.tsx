@@ -39,11 +39,7 @@ import {
   TRY_DEMO_SPOTLIGHT_PORTFOLIO_ID,
   TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID,
 } from '@/lib/tryDemoAttentionGuide'
-import {
-  clearSetupSuccessCardDismissed,
-  setProfileSetupNavPointed,
-  SETUP_SUCCESS_ITEMS,
-} from '@/lib/setupSuccessChecklist'
+import { SETUP_SUCCESS_ITEMS } from '@/lib/setupSuccessChecklist'
 import { setupCheckboxGuideLinkState, markSetupSuccessCheckboxGuidePending } from '@/lib/setupSuccessGuide'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
@@ -108,8 +104,8 @@ import {
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
 import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
+import { PropertyHealthUnavailableNote } from '@/components/PropertyHealthUnavailableNote'
 import { PropertyHealthScoreInfoTip } from '@/components/PropertyHealthScoreInfoTip'
-import { ProfileSetupPointingArrow } from '@/components/ProfileSetupPointingArrow'
 import { buildEscalatedWorkflowReview } from '@/lib/escalatedWorkflowReview'
 import {
   applyLateRentAccountAction,
@@ -583,71 +579,12 @@ function TrendingDownIcon() {
   )
 }
 
-function PropertyHealthUnavailableAside({
-  onOpenProfileSetup,
-}: {
-  onOpenProfileSetup: () => void
-}) {
-  const [pointing, setPointing] = useState(false)
-
-  const stopPointing = () => {
-    setPointing(false)
-    setProfileSetupNavPointed(false)
-  }
-
-  const startPointing = () => {
-    setPointing(true)
-    setProfileSetupNavPointed(true)
-  }
-
-  useEffect(() => {
-    return () => setProfileSetupNavPointed(false)
-  }, [])
-
-  return (
-    <>
-      <div
-        className={[
-          'sa-surface min-w-0 rounded-[8px] p-1 -m-1 outline-none focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
-          pointing ? 'bg-[#E0F2EF]/70' : 'bg-transparent',
-        ].join(' ')}
-        tabIndex={0}
-        onMouseEnter={startPointing}
-        onMouseLeave={stopPointing}
-        onFocus={startPointing}
-        onBlur={(event) => {
-          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
-          stopPointing()
-        }}
-      >
-        <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-          Not Available
-        </p>
-        <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
-          Complete your profile set up to unlock this metric
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            stopPointing()
-            onOpenProfileSetup()
-          }}
-          className="sa-link mt-2 text-[12px] font-semibold leading-4 text-[#186179]"
-        >
-          Profile setup →
-        </button>
-      </div>
-      <ProfileSetupPointingArrow active={pointing} />
-    </>
-  )
-}
-
 function KpiCard({
   label,
   labelIcon,
   value,
   chart,
-  chartAside,
+  valueNote,
   delta,
   deltaSuffix = '',
   deltaFormatter,
@@ -661,8 +598,8 @@ function KpiCard({
   labelIcon?: string
   value: string
   chart?: ReactNode
-  /** Content to the right of the chart (e.g. Property Health unavailable copy). */
-  chartAside?: ReactNode
+  /** Replaces the large value when there is no score to chart. */
+  valueNote?: ReactNode
   delta: number | null
   /** Appended to the delta, e.g. '%' for rate cards. */
   deltaSuffix?: string
@@ -722,29 +659,22 @@ function KpiCard({
     <div
       className={[
         'relative flex min-h-20 min-w-0 flex-1 gap-3',
-        chart
-          ? chartAside
-            ? 'items-center'
-            : 'items-center justify-end'
-          : 'items-end justify-start',
+        chart ? 'items-center justify-end' : 'items-end justify-start',
       ].join(' ')}
     >
       {chart ? (
         <div
-          className={
-            chartAside
-              ? 'shrink-0'
-              : 'pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3'
-          }
+          className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3"
         >
           {chart}
         </div>
+      ) : valueNote ? (
+        <div className="min-w-0 w-full self-center text-left">{valueNote}</div>
       ) : value ? (
-        <p className="min-w-0 break-words text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+        <p className="min-w-0 whitespace-nowrap text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
           {value}
         </p>
       ) : null}
-      {chartAside ? <div className="min-w-0 flex-1 text-left">{chartAside}</div> : null}
     </div>
   )
 
@@ -3563,7 +3493,7 @@ export function AdminOverviewDashboard() {
           stagger={2}
           label="Property Health"
           labelIcon={propertyHealthIcon}
-          value={healthKpiValue === '—' ? '' : healthKpiValue}
+          value={loading || propertyHealthPercent === 0 ? (loading ? '—' : '') : healthKpiValue}
           chart={
             propertyHealthPercent > 0 ? (
               <PropertyHealthDonut
@@ -3573,15 +3503,7 @@ export function AdminOverviewDashboard() {
               />
             ) : undefined
           }
-          chartAside={
-            !loading && !healthScoreReady ? (
-              <PropertyHealthUnavailableAside
-                onOpenProfileSetup={() => {
-                  clearSetupSuccessCardDismissed()
-                }}
-              />
-            ) : null
-          }
+          valueNote={!loading && propertyHealthPercent === 0 ? <PropertyHealthUnavailableNote /> : null}
           delta={
             loading || !healthScoreReady
               ? null

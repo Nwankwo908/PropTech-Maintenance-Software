@@ -58,6 +58,9 @@ export async function processInspectionUpload(input: {
   /** Browser-rasterized PDF pages. Required for document PDFs (Deno has no canvas). */
   pageImages?: InspectionPageImage[]
   pageTexts?: string[]
+  /** Close-up of the serial label, paired with the equipment photo. */
+  nameplateBase64?: string | null
+  nameplateContentType?: string | null
 }): Promise<InspectionUploadResult> {
   const extractStarted = Date.now()
   const documentExtract = input.mode === "document"
@@ -177,6 +180,12 @@ export async function processInspectionUpload(input: {
     input.hintCategory,
     input.mode,
     storagePath,
+    input.nameplateBase64
+      ? {
+        base64: input.nameplateBase64,
+        mediaType: input.nameplateContentType || "image/jpeg",
+      }
+      : null,
   )
   return {
     photo: analyzed,

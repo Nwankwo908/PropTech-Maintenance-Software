@@ -14,7 +14,9 @@ export const ADMIN_DEMO_ALLOWED_EMAILS = [
 /** Production landlord portal accounts (client admin login only). */
 export const ADMIN_PRODUCTION_ALLOWED_EMAILS = [
   'ceorentalsnj@gmail.com',
-  'braimahm@gmail.com',
+  'shaquillegurley@yahoo.com',
+  'adeogunfowora@gmail.com',
+  'o.k.okafor@gmail.com',
 ] as const
 
 export const ADMIN_LOGIN_EMAIL_DOMAIN = 'property-admin.auth.local'

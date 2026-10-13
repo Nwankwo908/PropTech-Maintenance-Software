@@ -26,6 +26,13 @@ import {
   replyMentionsLandlordAskLocation,
 } from "./sms/landlordAskSms.ts"
 import type { VendorAssignmentOption } from "./vendor_assignment.ts"
+import {
+  isUrgentLandlordPick,
+  routeNonUrgentTicketIntoPickBatch,
+} from "./sms/landlordPickBatch.ts"
+import { AWAITING_LANDLORD_VENDOR_CHOICE } from "./sms/awaitingLandlordVendorChoice.ts"
+
+export { AWAITING_LANDLORD_VENDOR_CHOICE }
 
 export type DurableLandlordChoiceTrigger =
   | { ok: true; messageId: string; providerMessageSid: string | null }
@@ -91,8 +98,6 @@ async function recordVendorChoiceSelected(
     },
   })
 }
-
-export const AWAITING_LANDLORD_VENDOR_CHOICE = "Awaiting landlord vendor choice"
 
 export function ticketIsAwaitingLandlordVendorChoice(
   vendorNotifyError?: string | null,
@@ -1015,9 +1020,6 @@ export async function notifyLandlordVendorChoice(
   let displayId: number | null = null
   if (!isVisit) {
     try {
-      const { isUrgentLandlordPick, routeNonUrgentTicketIntoPickBatch } = await import(
-        "./sms/landlordPickBatch.ts"
-      )
       const { data: idRow } = await supabase
         .from("maintenance_requests")
         .select("display_id, description, issue_headline")

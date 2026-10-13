@@ -1,9 +1,13 @@
 /**
- * Extract license / COI fields from an uploaded file via OpenAI.
+ * Extract license / COI fields from an uploaded file via Gemini 3.8 Flash.
  * Never invent numbers that are not on the document.
  * Avoid unpdf/PDF.js here — vendor-verification must boot without that native stack
  * so invite links can resolve.
  */
+import {
+  geminiGenerateJsonText,
+  geminiPartsFromOpenAiUserContent,
+} from "../documentExtract/geminiGenerateJson.ts"
 
 export type ExtractedLicenseFields = {
   licenseNumber: string | null
@@ -28,12 +32,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
   }
   return btoa(binary)
-}
-
-function stripJsonFence(content: string): string {
-  const trimmed = content.trim()
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/i)
-  return (fenced?.[1] ?? trimmed).trim()
 }
 
 function asString(value: unknown): string | null {
@@ -103,26 +101,8 @@ function asTruthyFlag(value: unknown): boolean {
   return false
 }
 
-function throwExtractHttpError(status: number, text: string): never {
-  const lower = text.toLowerCase()
-  if (
-    status === 401 ||
-    status === 403 ||
-    lower.includes("incorrect api key") ||
-    lower.includes("invalid_api_key")
-  ) {
-    throw new Error("We couldn't read that document right now. Please try again in a moment.")
-  }
-  if (status === 429 || lower.includes("rate limit")) {
-    throw new Error(
-      "Document scanning is busy right now. Please wait a moment and try again.",
-    )
-  }
-  throw new Error("We couldn't read that document. Try a clearer photo or PDF.")
-}
-
-function openaiKey(): string {
-  const key = Deno.env.get("OPENAI_API_KEY")?.trim()
+function geminiKey(): string {
+  const key = Deno.env.get("GEMINI_API_KEY")?.trim()
   if (!key) {
     throw new Error("We couldn't read that document right now. Please try again in a moment.")
   }
@@ -131,73 +111,55 @@ function openaiKey(): string {
 
 async function completeJson(input: {
   system: string
-  userContent: unknown[]
+  userContent: Array<Record<string, unknown>>
 }): Promise<unknown> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${openaiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: input.system },
-        { role: "user", content: input.userContent },
-      ],
-    }),
-  })
-  if (!response.ok) {
-    throwExtractHttpError(response.status, await response.text().catch(() => ""))
+  try {
+    const content = await geminiGenerateJsonText({
+      apiKey: geminiKey(),
+      system: input.system,
+      parts: geminiPartsFromOpenAiUserContent(input.userContent),
+    })
+    return JSON.parse(content) as unknown
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ""
+    if (/not configured|GEMINI_API_KEY|api key/i.test(message)) {
+      throw new Error("We couldn't read that document right now. Please try again in a moment.")
+    }
+    if (/busy/i.test(message)) {
+      throw new Error("Document scanning is busy right now. Please wait a moment and try again.")
+    }
+    throw new Error("We couldn't read that document. Try a clearer photo or PDF.")
   }
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  const content = json.choices?.[0]?.message?.content ?? ""
-  return JSON.parse(stripJsonFence(content)) as unknown
 }
 
 async function completeJsonFromPdf(input: {
   system: string
-  fileName: string
   bytes: Uint8Array
 }): Promise<unknown> {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${openaiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      temperature: 0.1,
-      input: [
+  try {
+    const content = await geminiGenerateJsonText({
+      apiKey: geminiKey(),
+      system: input.system,
+      parts: [
         {
-          role: "user",
-          content: [
-            { type: "input_text", text: input.system },
-            {
-              type: "input_file",
-              filename: input.fileName,
-              file_data: `data:application/pdf;base64,${bytesToBase64(input.bytes)}`,
-            },
-          ],
+          inlineData: {
+            mimeType: "application/pdf",
+            data: bytesToBase64(input.bytes),
+          },
         },
       ],
-      text: { format: { type: "json_object" } },
-    }),
-  })
-  if (!response.ok) {
-    throwExtractHttpError(response.status, await response.text().catch(() => ""))
+    })
+    return JSON.parse(content) as unknown
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ""
+    if (/not configured|GEMINI_API_KEY|api key/i.test(message)) {
+      throw new Error("We couldn't read that document right now. Please try again in a moment.")
+    }
+    if (/busy/i.test(message)) {
+      throw new Error("Document scanning is busy right now. Please wait a moment and try again.")
+    }
+    throw new Error("We couldn't read that document. Try a clearer photo or PDF.")
   }
-  const json = (await response.json()) as Record<string, unknown>
-  const text = outputTextFromResponses(json)
-  if (text) {
-    return JSON.parse(stripJsonFence(text)) as unknown
-  }
-  throw new Error("We couldn't read that document. Try a clearer photo or PDF.")
 }
 
 /** OpenAI Responses API: top-level output_text, or nested output[].content[].text */
@@ -239,7 +201,6 @@ async function extractWithDocument(input: {
   if (isPdfFile(input.fileName, input.contentType)) {
     return await completeJsonFromPdf({
       system: `${input.system}\n\n${intro}`,
-      fileName: input.fileName,
       bytes: input.bytes,
     })
   }

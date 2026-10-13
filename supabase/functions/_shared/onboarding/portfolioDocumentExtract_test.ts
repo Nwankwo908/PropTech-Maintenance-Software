@@ -247,6 +247,6 @@ Deno.test("OpenAI extract errors distinguish quota from retryable busy", () => {
   assertEquals(classifyOpenAiExtractError(529, "The engine is currently overloaded"), "busy")
   assertEquals(
     openAiExtractErrorMessage(401, "Incorrect API key provided"),
-    "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets.",
+    "Document scanning is not configured. Set a valid GEMINI_API_KEY on Supabase Edge secrets.",
   )
 })

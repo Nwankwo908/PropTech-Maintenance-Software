@@ -287,6 +287,8 @@ serve(async (req) => {
           existingStoragePath: storagePath,
           pageImages: parseInspectionPageImages(body.pageImages),
           pageTexts: parseInspectionPageTexts(body.pageTexts),
+          nameplateBase64: asString(body.nameplateBase64) || null,
+          nameplateContentType: asString(body.nameplateContentType) || null,
         })
         return jsonResponse({
           photo: mapPhotoRow(ingested.photo),
@@ -354,6 +356,8 @@ serve(async (req) => {
         autoConfirm: body.autoConfirm === true,
         pageImages: parseInspectionPageImages(body.pageImages),
         pageTexts: parseInspectionPageTexts(body.pageTexts),
+        nameplateBase64: asString(body.nameplateBase64) || null,
+        nameplateContentType: asString(body.nameplateContentType) || null,
       })
       return jsonResponse({
         photo: mapPhotoRow(ingested.photo),

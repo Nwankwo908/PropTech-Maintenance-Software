@@ -27,7 +27,10 @@ export async function synthesizeWithOpenAI(
     },
     body: JSON.stringify({
       model: prompt.model,
-      temperature: prompt.temperature,
+      // Keep the answer in message.content. Sol spends the token budget on
+      // reasoning unless effort is none.
+      reasoning_effort: "none",
+      max_completion_tokens: 4096,
       messages: prompt.messages,
     }),
   })

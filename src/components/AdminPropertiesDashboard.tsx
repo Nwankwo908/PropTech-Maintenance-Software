@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
+import { PropertyHealthUnavailableNote } from '@/components/PropertyHealthUnavailableNote'
 import { PropertyHealthScoreInfoTip } from '@/components/PropertyHealthScoreInfoTip'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
@@ -209,6 +210,7 @@ function KpiCard({
   label,
   value,
   chart,
+  valueNote,
   delta,
   deltaSuffix = '',
   deltaFormatter,
@@ -219,6 +221,8 @@ function KpiCard({
   label: string
   value: string
   chart?: ReactNode
+  /** Replaces the large value when there is no score to chart. */
+  valueNote?: ReactNode
   delta: number | null
   deltaSuffix?: string
   deltaFormatter?: (delta: number) => string
@@ -242,8 +246,10 @@ function KpiCard({
           <div className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3">
             {chart}
           </div>
+        ) : valueNote ? (
+          <div className="min-w-0 w-full self-center text-left">{valueNote}</div>
         ) : value ? (
-          <p className="text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
+          <p className="whitespace-nowrap text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
             {value}
           </p>
         ) : null}
@@ -839,7 +845,7 @@ export function AdminPropertiesDashboard() {
         />
         <KpiCard
           label="Property Health"
-          value={healthKpiValue === '—' ? '' : healthKpiValue}
+          value={loading || propertyHealthPercent === 0 ? (loading ? '—' : '') : healthKpiValue}
           chart={
             propertyHealthPercent > 0 ? (
               <PropertyHealthDonut
@@ -849,6 +855,7 @@ export function AdminPropertiesDashboard() {
               />
             ) : undefined
           }
+          valueNote={!loading && propertyHealthPercent === 0 ? <PropertyHealthUnavailableNote /> : null}
           delta={
             loading || !healthScoreReady
               ? null

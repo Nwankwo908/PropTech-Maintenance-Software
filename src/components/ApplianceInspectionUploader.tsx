@@ -97,6 +97,7 @@ type LocalJob = {
   previewUrl: string
   hintCategory: VisionHintCategory | null
   mode: 'photo' | 'document'
+  nameplateFile?: File
 }
 
 type ApplianceInspectionUploaderProps = {
@@ -245,6 +246,9 @@ export function ApplianceInspectionUploader({
             ),
           )
           const compressed = await prepareInspectionDocumentUpload(job.file)
+          const nameplate = job.nameplateFile
+            ? await prepareInspectionDocumentUpload(job.nameplateFile)
+            : null
           const uploaded = await uploadAndAnalyzeInspectionPhoto({
             assessmentId: sessionId,
             blob: compressed.blob,
@@ -256,6 +260,8 @@ export function ApplianceInspectionUploader({
             previewUrl: job.previewUrl,
             pageImages: compressed.pageImages,
             pageTexts: compressed.pageTexts,
+            nameplateBase64: nameplate?.base64 || undefined,
+            nameplateContentType: nameplate?.contentType,
           })
           if (
             removedIdsRef.current.has(optimisticId) ||
@@ -391,7 +397,16 @@ export function ApplianceInspectionUploader({
       })
     }
     if (jobs.length === 0) return
-    await processQueue(jobs, assessmentId)
+    const paired: LocalJob[] = []
+    const photos = jobs.filter((job) => job.mode === 'photo')
+    const documents = jobs.filter((job) => job.mode === 'document')
+    for (let i = 0; i < photos.length; i += 2) {
+      const equipment = photos[i]!
+      const label = photos[i + 1]
+      if (label) equipment.nameplateFile = label.file
+      paired.push(equipment)
+    }
+    await processQueue([...paired, ...documents], assessmentId)
     if (inputRef.current) inputRef.current.value = ''
     if (cameraInputRef.current) cameraInputRef.current.value = ''
   }
@@ -691,6 +706,9 @@ export function ApplianceInspectionUploader({
             Take or upload photos and let AI identify appliances and home systems.
           </p>
           <p className="text-[12px] text-[#64748b]">
+            For the serial number, add a second photo: a close-up of the label.
+          </p>
+          <p className="text-[12px] text-[#64748b]">
             Appliances · HVAC · Water heater · Roof
           </p>
           <input
@@ -756,6 +774,21 @@ export function ApplianceInspectionUploader({
       ) : null}
         </div>
       </div>
+
+      {photos.some((photo) => photo.aiResult?.serialReview?.retakePrompt) ? (
+        <ul className="space-y-2">
+          {photos
+            .filter((photo) => photo.aiResult?.serialReview?.retakePrompt)
+            .map((photo) => (
+              <li
+                key={`retake-${photo.id}`}
+                className="rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]"
+              >
+                {photo.aiResult?.serialReview?.retakePrompt}
+              </li>
+            ))}
+        </ul>
+      ) : null}
 
       {hasFollowUp ? (
       <div className="min-w-0 w-full">

@@ -12,6 +12,8 @@ import { getVisionProvider, getVisionProviderName } from "./getProvider.ts"
 import { mergeHintCategory, preclassifyWithRoboflow } from "./roboflowPreclassify.ts"
 import { extractInspectionReport } from "./extractInspectionReport.ts"
 import { persistInspectionDocumentAnalysis } from "./persistInspectionDocument.ts"
+import { readEquipmentSerial } from "./serialOcr.ts"
+import { recordActivityLog } from "../graph/recordActivityLog.ts"
 
 /** Run vision on an existing property_inspection_photos row. Does not mint unit_assets. */
 export async function analyzeInspectionPhotoRow(
@@ -22,6 +24,7 @@ export async function analyzeInspectionPhotoRow(
   hintCategory: string | null,
   mode: "photo" | "document",
   storagePath: string | null = null,
+  nameplate?: { base64: string; mediaType: string } | null,
 ): Promise<Record<string, unknown>> {
   const started = Date.now()
   await supabase
@@ -67,6 +70,19 @@ export async function analyzeInspectionPhotoRow(
       dibPass?.identification ?? null,
       result,
     )
+    const serialReview = await readEquipmentSerial({
+      images: [
+        { base64: imageBase64.replace(/^data:[^;]+;base64,/, ""), mediaType: contentType || "image/jpeg" },
+        ...(nameplate?.base64
+          ? [{ base64: nameplate.base64.replace(/^data:[^;]+;base64,/, ""), mediaType: nameplate.mediaType || "image/jpeg" }]
+          : []),
+      ],
+      brand: merged.identifiedItem.brand,
+      paired: Boolean(nameplate?.base64),
+    })
+    if (serialReview?.serial) {
+      merged.identifiedItem.serialNumber = serialReview.serial
+    }
     const enriched = {
       ...merged,
       rawConfidenceNotes: [merged.rawConfidenceNotes, roboflow?.note]
@@ -100,6 +116,7 @@ export async function analyzeInspectionPhotoRow(
           },
         }
         : {}),
+      ...(serialReview ? { serialReview } : {}),
     }
     const latencyMs = Date.now() - started
     const providerLabel = dibPass
@@ -114,12 +131,30 @@ export async function analyzeInspectionPhotoRow(
         provider: providerLabel,
         latency_ms: latencyMs,
         estimated_cost_usd: dibPass ? 0.012 : 0.008,
+        serial_review: serialReview,
         updated_at: new Date().toISOString(),
       })
       .eq("id", photoId)
       .select("*")
       .single()
     if (error) throw new Error(error.message)
+    const landlordId = data?.landlord_id != null ? String(data.landlord_id) : ""
+    if (landlordId && serialReview) {
+      await recordActivityLog(supabase, {
+        landlordId,
+        eventType: serialReview.retake
+          ? "inspection.serial_retake_needed"
+          : "inspection.serial_read",
+        source: "edge_function",
+        actorType: "system",
+        metadata: {
+          message: serialReview.retakePrompt ??
+            `Serial number read${serialReview.serial ? `: ${serialReview.serial}` : ""}.`,
+          provider: serialReview.provider,
+          paired: serialReview.paired,
+        },
+      }).catch(() => undefined)
+    }
     return data as Record<string, unknown>
   } catch (err) {
     const message = err instanceof Error ? err.message : "Vision analysis failed"

@@ -11,7 +11,7 @@ import {
 } from "../tools/_shared/registry.ts"
 import type { RankVendorsMetric } from "../tools/vendors/rankVendors.ts"
 
-const SELECT_MODEL = "gpt-4o-mini"
+const SELECT_MODEL = "gpt-6-sol"
 const MAX_TOOLS = 3
 
 export type PlannedDomainToolCall = {
@@ -401,7 +401,8 @@ export async function selectDomainToolsWithOpenAI(input: {
       },
       body: JSON.stringify({
         model: SELECT_MODEL,
-        temperature: 0,
+        // Sol only runs Chat Completions tool calls when reasoning is off.
+        reasoning_effort: "none",
         messages: [
           {
             role: "system",

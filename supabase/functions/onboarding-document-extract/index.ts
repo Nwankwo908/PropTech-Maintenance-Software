@@ -159,13 +159,13 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY")?.trim()
-  const openAiKey = Deno.env.get("OPENAI_API_KEY")?.trim()
+  const geminiKey = Deno.env.get("GEMINI_API_KEY")?.trim()
 
   if (!supabaseUrl || !serviceKey || !anonKey) {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
-  if (!openAiKey) {
-    return jsonResponse({ error: "OPENAI_API_KEY is not configured" }, 500)
+  if (!geminiKey) {
+    return jsonResponse({ error: "GEMINI_API_KEY is not configured" }, 500)
   }
 
   const auth = await authorizeStaff(req, supabaseUrl, anonKey, serviceKey)
@@ -234,7 +234,7 @@ serve(async (req) => {
 
   try {
     const extracted: PortfolioDocumentExtractPayload = await extractPortfolioDocument({
-      apiKey: openAiKey,
+      apiKey: geminiKey,
       fileName,
       documentCategory: propertyInsuranceExtract ? "property_insurance" : documentCategory,
       contentType,

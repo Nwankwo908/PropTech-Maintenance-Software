@@ -76,6 +76,18 @@ export type ApplianceVisionResult = {
   rawConfidenceNotes?: string
   /** Overall identification confidence, 0–100. */
   overallConfidence?: number
+  /** Nameplate serial read: uncertain characters, format check, and retake prompt. */
+  serialReview?: {
+    serial: string | null
+    readable: boolean
+    formatOk: boolean
+    formatReason: string | null
+    uncertainCharacters: Array<{ index: number; char: string; alternatives: string[] }>
+    retake: boolean
+    retakePrompt: string | null
+    provider: 'gemini-3.8-flash' | 'claude-sonnet-5-5' | null
+    paired: boolean
+  }
 }
 
 export type InspectionPhotoRow = {
