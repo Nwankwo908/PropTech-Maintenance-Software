@@ -6,6 +6,8 @@ import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
+  formatExtractedUnitPlacement,
+  type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
   type OnboardingExtractedProperty,
   type OnboardingExtractedResident,
@@ -551,6 +553,36 @@ export function OnboardingAiReviewStep({
     })
   }
 
+  function setLeaseSectionSelected(selected: boolean) {
+    onReviewChange({
+      ...review,
+      leases: review.leases.map((row) => ({ ...row, selected })),
+    })
+  }
+
+  function sectionSelectActions(onSelect: () => void, onDeselect: () => void) {
+    return (
+      <>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onSelect}
+          className="text-[12px] font-medium text-[#186179] hover:text-[#0f4d61] disabled:opacity-50"
+        >
+          Select
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onDeselect}
+          className="text-[12px] font-medium text-[#6a7282] hover:text-[#101828] disabled:opacity-50"
+        >
+          Deselect
+        </button>
+      </>
+    )
+  }
+
   function startEdit(id: string, value: string) {
     setEditingId(id)
     setEditDraft(value)
@@ -569,6 +601,51 @@ export function OnboardingAiReviewStep({
     } as OnboardingExtractionReview)
     setEditingId(null)
     setEditDraft('')
+  }
+
+  function renderSimpleRows<
+    T extends {
+      id: string
+      selected: boolean
+      sourceDocumentName: string
+    },
+  >(
+    items: T[],
+    section: keyof OnboardingExtractionReview,
+    labelFor: (item: T) => string,
+    valueFor: (item: T) => string,
+    editField: string,
+    getEditValue: (item: T) => string,
+    emptyLabel: string,
+  ) {
+    if (items.length === 0) return <p className="mt-2 text-[13px] text-[#6a7282]">{emptyLabel}</p>
+    return (
+      <ul className="mt-3 space-y-2">
+        {items.map((item) => (
+          <ReviewItemRow
+            key={item.id}
+            checked={item.selected}
+            onToggle={() =>
+              onReviewChange({
+                ...review,
+                [section]: items.map((row) =>
+                  row.id === item.id ? { ...row, selected: !row.selected } : row,
+                ),
+              } as OnboardingExtractionReview)
+            }
+            label={labelFor(item)}
+            value={valueFor(item)}
+            sourceDocumentName={item.sourceDocumentName}
+            editing={editingId === item.id}
+            editValue={editDraft}
+            onEdit={() => startEdit(item.id, getEditValue(item))}
+            onSaveEdit={() => saveEdit(section, editField, items)}
+            onCancelEdit={() => setEditingId(null)}
+            onEditChange={setEditDraft}
+          />
+        ))}
+      </ul>
+    )
   }
 
   function renderResidentEditFields(
@@ -1582,8 +1659,35 @@ export function OnboardingAiReviewStep({
               </ReviewSection>
             ) : null}
             {manualAdd ? null : (
-            <ReviewSection title="Lease Information Found" count={review.leases.length}>
-              {null}
+            <ReviewSection
+              title="Lease Information Found"
+              count={review.leases.length}
+              headerActions={
+                review.leases.length > 0
+                  ? sectionSelectActions(
+                      () => setLeaseSectionSelected(true),
+                      () => setLeaseSectionSelected(false),
+                    )
+                  : undefined
+              }
+            >
+              {renderSimpleRows<ExtractedLeaseInfo>(
+                review.leases,
+                'leases',
+                (item) => item.residentName,
+                (item) =>
+                  [
+                    formatExtractedUnitPlacement(item.building, item.unit),
+                    `${item.leaseStart} – ${item.leaseEnd}`,
+                    `Rent ${item.rentAmount}`,
+                    `Deposit ${item.securityDeposit}`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
+                'rentAmount',
+                (item) => item.rentAmount,
+                'No lease information detected.',
+              )}
             </ReviewSection>
             )}
             <ReviewSection
