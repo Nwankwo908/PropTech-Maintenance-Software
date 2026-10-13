@@ -505,6 +505,8 @@ export function buildLandlordVendorChoiceSms(input: {
   issueHeadline?: string | null
   locationLabel?: string | null
   propertyType?: string | null
+  /** Landlord-facing #101. WO-XXXX stays on the Ref line. */
+  displayId?: number | null
 }): string {
   const available = input.reason === "availability"
   const rematch = rematchReasonLine(input.reason)
@@ -512,13 +514,16 @@ export function buildLandlordVendorChoiceSms(input: {
     input.landlordFirstName,
     vendorChoiceAskReason(input.reason, input.options.length),
   )
-  const summary = landlordAskSummaryLine({
+  let summary = landlordAskSummaryLine({
     locationLabel: input.locationLabel,
     unit: input.unit,
     propertyType: input.propertyType,
     issueHeadline: input.issueHeadline,
     tradeLabel: input.tradeLabel,
   })
+  if (input.displayId != null && Number.isInteger(input.displayId)) {
+    summary = summary ? `#${input.displayId} ${summary}` : `#${input.displayId}`
+  }
   const lines: string[] = [opening]
   if (summary) {
     lines.push("", summary)
@@ -1007,6 +1012,43 @@ export async function notifyLandlordVendorChoice(
     Array.isArray(params.visitItems) &&
     params.visitItems.length > 0
 
+  let displayId: number | null = null
+  if (!isVisit) {
+    try {
+      const { isUrgentLandlordPick, routeNonUrgentTicketIntoPickBatch } = await import(
+        "./sms/landlordPickBatch.ts"
+      )
+      const { data: idRow } = await supabase
+        .from("maintenance_requests")
+        .select("display_id, description, issue_headline")
+        .eq("id", params.ticketId)
+        .maybeSingle()
+      displayId = typeof idRow?.display_id === "number" ? idRow.display_id : null
+      const urgentText = [idRow?.issue_headline, idRow?.description, issueHeadline]
+        .filter(Boolean)
+        .join("\n")
+      if (!isUrgentLandlordPick(urgentText)) {
+        const routed = await routeNonUrgentTicketIntoPickBatch(supabase, {
+          landlordId: params.landlordId,
+          ticketId: params.ticketId,
+          unit: params.unit,
+          issue: issueHeadline,
+          options: choiceOptions.map((option) => ({
+            id: option.id,
+            name: option.name,
+            windowLabel: option.windowLabel,
+            estimateNote: option.estimateNote,
+          })),
+        })
+        if (routed === "batched" || routed === "queued") {
+          return { sent: routed === "batched" ? 1 : 0 }
+        }
+      }
+    } catch (error) {
+      console.error("[vendor-choice] pick batch", error)
+    }
+  }
+
   let smsBody: string
   if (isVisit) {
     const { buildLandlordInspectionVisitChoiceSms } = await import(
@@ -1035,6 +1077,7 @@ export async function notifyLandlordVendorChoice(
       reason: params.reason ?? "assign",
       issueHeadline,
       locationLabel,
+      displayId,
     })
   }
 

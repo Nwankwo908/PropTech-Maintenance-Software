@@ -1,6 +1,6 @@
 /**
  * Text sanitizer — normalize resident wording without inventing facts.
- * Prefer deterministic cleanup; optional LLM polish when OPENAI_API_KEY is set.
+ * Prefer deterministic cleanup; optional Haiku 5.5 polish, then GPT-6 Luna.
  */
 
 const ABBREVIATIONS: Array<[RegExp, string]> = [
@@ -70,9 +70,75 @@ export function sanitizeDescriptionDeterministic(raw: string): string {
 }
 
 async function polishWithLlm(normalized: string, raw: string): Promise<string | null> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY")?.trim()
-  if (!apiKey || !normalized) return null
+  const anthropicKey = envKey("ANTHROPIC_API_KEY")
+  const openaiKey = envKey("OPENAI_API_KEY")
+  if ((!anthropicKey && !openaiKey) || !normalized) return null
 
+  const system =
+    "Rewrite the resident maintenance description into clear, standard English. " +
+    "Fix typos and expand obvious abbreviations. Preserve meaning exactly. " +
+    "Do not invent rooms, fixtures, or facts not present. Return only the rewritten sentence(s)."
+  const user = `Raw: ${raw}\nDraft: ${normalized}`
+
+  if (anthropicKey) {
+    const polished = await polishWithHaiku(anthropicKey, system, user)
+    if (polished) return polished
+  }
+  if (openaiKey) return polishWithLuna(openaiKey, system, user)
+  return null
+}
+
+function envKey(name: string): string {
+  try {
+    return Deno.env.get(name)?.trim() ?? ""
+  } catch {
+    return ""
+  }
+}
+
+function cleanPolish(content: string | undefined): string | null {
+  const text = content?.trim().replace(/^["']|["']$/g, "").trim() ?? ""
+  if (text.length < 3) return null
+  return text
+}
+
+async function polishWithHaiku(
+  apiKey: string,
+  system: string,
+  user: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-5-5",
+        max_tokens: 400,
+        output_config: { effort: "low" },
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: user }],
+      }),
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      content?: Array<{ type?: string; text?: string }>
+    }
+    const block = data.content?.find((part) => part.type === "text")
+    return cleanPolish(block?.text)
+  } catch {
+    return null
+  }
+}
+
+async function polishWithLuna(
+  apiKey: string,
+  system: string,
+  user: string,
+): Promise<string | null> {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -81,20 +147,12 @@ async function polishWithLlm(normalized: string, raw: string): Promise<string | 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0.1,
+        model: "gpt-6-luna",
+        reasoning_effort: "none",
+        max_completion_tokens: 400,
         messages: [
-          {
-            role: "system",
-            content:
-              "Rewrite the resident maintenance description into clear, standard English. " +
-              "Fix typos and expand obvious abbreviations. Preserve meaning exactly. " +
-              "Do not invent rooms, fixtures, or facts not present. Return only the rewritten sentence(s).",
-          },
-          {
-            role: "user",
-            content: `Raw: ${raw}\nDraft: ${normalized}`,
-          },
+          { role: "system", content: system },
+          { role: "user", content: user },
         ],
       }),
     })
@@ -102,9 +160,7 @@ async function polishWithLlm(normalized: string, raw: string): Promise<string | 
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>
     }
-    const content = data.choices?.[0]?.message?.content?.trim()
-    if (!content || content.length < 3) return null
-    return content.replace(/^["']|["']$/g, "").trim()
+    return cleanPolish(data.choices?.[0]?.message?.content)
   } catch {
     return null
   }

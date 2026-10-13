@@ -32,6 +32,13 @@ export function PropertyHealthDonut({
   sizeClassName = 'size-24',
 }: PropertyHealthDonutProps) {
   const clamped = propertyHealthDonutPercent(percent, true)
+  if (clamped <= 0) {
+    return centerText ? (
+      <p className="min-w-0 break-words text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+        {centerText}
+      </p>
+    ) : null
+  }
   const circumference = 2 * Math.PI * RADIUS
   const dash = (clamped / 100) * circumference
   const cx = VIEW / 2

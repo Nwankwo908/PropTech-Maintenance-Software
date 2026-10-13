@@ -17,6 +17,7 @@ const REGISTRY_SOURCE_URL = new URL(
 /** try*Handler adapters defined in inboundHandlerRegistry.ts */
 const ADAPTER_ID_FROM_FN: Record<string, string> = {
   tryComplianceStopHelpHandler: "compliance_stop_help",
+  tryLandlordPickBatchHandler: "landlord_pick_batch",
   tryScheduleConfirmHandler: "schedule_confirm",
   tryEstimateDecisionHandler: "estimate_decision",
   tryLandlordVendorChoiceHandler: "landlord_vendor_choice",

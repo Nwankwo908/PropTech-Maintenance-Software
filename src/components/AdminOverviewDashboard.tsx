@@ -739,11 +739,11 @@ function KpiCard({
         >
           {chart}
         </div>
-      ) : (
+      ) : value ? (
         <p className="min-w-0 break-words text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
           {value}
         </p>
-      )}
+      ) : null}
       {chartAside ? <div className="min-w-0 flex-1 text-left">{chartAside}</div> : null}
     </div>
   )
@@ -3245,6 +3245,10 @@ export function AdminOverviewDashboard() {
         healthReport.portfolio?.score,
         'percent',
       )
+  const propertyHealthPercent = propertyHealthDonutPercent(
+    kpis.propertyHealth,
+    !loading && healthScoreReady,
+  )
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
   const stackedVendorRails = isDesktopAdmin && escalatedRailOpen && findExternalVendorOpen
@@ -3559,18 +3563,15 @@ export function AdminOverviewDashboard() {
           stagger={2}
           label="Property Health"
           labelIcon={propertyHealthIcon}
-          value={healthKpiValue}
+          value={healthKpiValue === '—' ? '' : healthKpiValue}
           chart={
-            <PropertyHealthDonut
-              percent={propertyHealthDonutPercent(
-                kpis.propertyHealth,
-                !loading && healthScoreReady,
-              )}
-              label={`Property health ${healthKpiValue}`}
-              centerText={
-                !loading && !healthScoreReady ? '—' : healthKpiValue
-              }
-            />
+            propertyHealthPercent > 0 ? (
+              <PropertyHealthDonut
+                percent={propertyHealthPercent}
+                label={`Property health ${healthKpiValue}`}
+                centerText={healthKpiValue}
+              />
+            ) : undefined
           }
           chartAside={
             !loading && !healthScoreReady ? (

@@ -26,13 +26,6 @@ export const STAFF_SWITCHER_LANDLORD_IDS = [
 /** Seeded portal login email → fixed landlord id. */
 export const EMAIL_TO_LANDLORD_ID: Readonly<Record<string, string>> = {
   'ceorentalsnj@gmail.com': LIMITED_ALPHA_1_LANDLORD_ID,
-  'iokafor0@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'moreceo@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'nyshaunbrown@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'otbpictures12@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'nwankwo908@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'bfamiloni@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
-  'adesanmi.ogunfowora@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   'braimahm@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,

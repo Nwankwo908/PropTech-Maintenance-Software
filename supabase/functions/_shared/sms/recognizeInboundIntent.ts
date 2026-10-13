@@ -11,7 +11,7 @@
  *  3. Other non-repair intents: rent, lease or move-out, human, complaint, status
  *  4. Repair via the shared deterministic rules (the intake classifier's source)
  *  5. Semantic match against the classifier phrase library (cached embeddings)
- *  6. Fresh threads only: one small LLM call (4s, JSON)
+ *  6. Fresh threads only: Claude Haiku 5.5, then GPT-6 Luna (4s, JSON)
  *  7. Default: any problem signal starts intake and confirms the reading out
  *     loud; the menu is only for messages with no signal at all
  */
@@ -24,6 +24,7 @@ import { generateIssueSummary } from "../../../../shared/maintenance/generateIss
 import { resolveAmbiguousMaintenance } from "../../../../shared/maintenance/ambiguityResolution.ts"
 import type { EmergencyType } from "../../../../shared/maintenance/classificationTypes.ts"
 import { semanticMatchDescription } from "../maintenance_classification/semanticMap.ts"
+import { fetchLlmClassificationJson } from "../maintenance_classification/llmClassifyProvider.ts"
 import { classifyAssistantOtherMessage } from "./tenantAssistantReply.ts"
 import { isConversationCloseAck } from "./conversationCloseAck.ts"
 import { classifyRentSmsIntent } from "./rentIntent.ts"
@@ -83,6 +84,7 @@ export type RecognizeInboundIntentContext = {
   skipSemantic?: boolean
   skipLlm?: boolean
   openaiKey?: string | null
+  anthropicKey?: string | null
   fetchImpl?: typeof fetch
 }
 
@@ -90,6 +92,14 @@ export type RecognizeInboundIntentContext = {
 const RULE_REPAIR_WEIGHT = 0.55
 const SEMANTIC_ACCEPT_SCORE = 0.5
 const LLM_TIMEOUT_MS = 4000
+
+function envKey(name: string): string {
+  try {
+    return Deno.env.get(name)?.trim() ?? ""
+  } catch {
+    return ""
+  }
+}
 
 export function isRepairRecognition(
   recognition: InboundIntentRecognition,
@@ -271,41 +281,26 @@ function asIntent(raw: unknown): InboundIntent | null {
     : null
 }
 
-/** Layer 6. One small JSON call, 4s budget. Failure falls through to layer 7. */
+/** Layer 6. Haiku 5.5, then GPT-6 Luna. 4s budget. Failure falls through to layer 7. */
 async function llmLayer(
   body: string,
   ctx: RecognizeInboundIntentContext,
 ): Promise<InboundIntentRecognition | null> {
-  const apiKey = (ctx.openaiKey ?? Deno.env.get("OPENAI_API_KEY") ?? "").trim()
-  if (!apiKey) return null
-  const fetchImpl = ctx.fetchImpl ?? fetch
+  const openaiKey = (ctx.openaiKey ?? envKey("OPENAI_API_KEY")).trim()
+  const anthropicKey = (ctx.anthropicKey ?? envKey("ANTHROPIC_API_KEY")).trim()
+  if (!openaiKey && !anthropicKey) return null
 
   try {
-    const res = await fetchImpl("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0,
-        max_tokens: 120,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: LLM_SYSTEM_PROMPT },
-          { role: "user", content: body.slice(0, 600) },
-        ],
-      }),
+    const fetched = await fetchLlmClassificationJson({
+      systemPrompt: LLM_SYSTEM_PROMPT,
+      userPrompt: body.slice(0, 600),
+      openaiKey,
+      anthropicKey,
+      fetchImpl: ctx.fetchImpl,
+      timeoutMs: LLM_TIMEOUT_MS,
     })
-    if (!res.ok) return null
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = data.choices?.[0]?.message?.content?.trim()
-    if (!content) return null
-    const parsed = JSON.parse(content.replace(/```json|```/g, "").trim()) as {
+    if (!fetched?.content) return null
+    const parsed = JSON.parse(fetched.content) as {
       intent?: unknown
       confidence?: unknown
       issue_summary?: unknown

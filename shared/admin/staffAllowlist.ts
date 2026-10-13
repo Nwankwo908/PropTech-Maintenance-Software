@@ -14,13 +14,6 @@ export const ADMIN_DEMO_ALLOWED_EMAILS = [
 /** Production landlord portal accounts (client admin login only). */
 export const ADMIN_PRODUCTION_ALLOWED_EMAILS = [
   'ceorentalsnj@gmail.com',
-  'iokafor0@gmail.com',
-  'moreceo@gmail.com',
-  'nyshaunbrown@gmail.com',
-  'otbpictures12@gmail.com',
-  'nwankwo908@gmail.com',
-  'bfamiloni@gmail.com',
-  'adesanmi.ogunfowora@gmail.com',
   'braimahm@gmail.com',
 ] as const
 

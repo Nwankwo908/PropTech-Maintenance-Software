@@ -25,6 +25,11 @@ function priority(id: string): number {
   return INBOUND_SMS_HANDLERS.find((h) => h.id === id)!.priority
 }
 
+Deno.test("landlord pick batch runs after STOP and before single-ticket vendor choice", () => {
+  assertEquals(priority("compliance_stop_help") < priority("landlord_pick_batch"), true)
+  assertEquals(priority("landlord_pick_batch") < priority("landlord_vendor_choice"), true)
+})
+
 Deno.test("START/HELP/STOP compliance runs before conversations and activation reply", () => {
   assertEquals(priority("compliance_stop_help") < priority("schedule_confirm"), true)
   assertEquals(priority("compliance_stop_help") < priority("estimate_decision"), true)

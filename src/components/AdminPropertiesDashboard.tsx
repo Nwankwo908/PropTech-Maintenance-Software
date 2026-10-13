@@ -242,11 +242,11 @@ function KpiCard({
           <div className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3">
             {chart}
           </div>
-        ) : (
+        ) : value ? (
           <p className="text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
             {value}
           </p>
-        )}
+        ) : null}
         {delta != null ? (
           <span
             className={[
@@ -645,6 +645,10 @@ export function AdminPropertiesDashboard() {
         healthReport.portfolio?.score,
         'percent',
       )
+  const propertyHealthPercent = propertyHealthDonutPercent(
+    kpis.propertyHealth,
+    !loading && healthScoreReady,
+  )
 
   const visibleBuildings = healthReport.buildings
   const allVisibleBuildingsSelected =
@@ -835,16 +839,15 @@ export function AdminPropertiesDashboard() {
         />
         <KpiCard
           label="Property Health"
-          value={healthKpiValue}
+          value={healthKpiValue === '—' ? '' : healthKpiValue}
           chart={
-            <PropertyHealthDonut
-              percent={propertyHealthDonutPercent(
-                kpis.propertyHealth,
-                !loading && healthScoreReady,
-              )}
-              label={`Property health ${healthKpiValue}`}
-              centerText={healthKpiValue}
-            />
+            propertyHealthPercent > 0 ? (
+              <PropertyHealthDonut
+                percent={propertyHealthPercent}
+                label={`Property health ${healthKpiValue}`}
+                centerText={healthKpiValue}
+              />
+            ) : undefined
           }
           delta={
             loading || !healthScoreReady

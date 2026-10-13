@@ -187,6 +187,7 @@ Deno.test("the LLM layer only runs on fresh, still-undecided threads", async () 
     freshThread: true,
     skipSemantic: true,
     openaiKey: "test-key",
+    anthropicKey: "",
     fetchImpl,
   })
   assertEquals(undecided.intent, "repair")
@@ -198,6 +199,7 @@ Deno.test("the LLM layer only runs on fresh, still-undecided threads", async () 
     freshThread: true,
     skipSemantic: true,
     openaiKey: "test-key",
+    anthropicKey: "",
     fetchImpl,
   })
   assertEquals(decided.layer, "emergency_net")
@@ -208,6 +210,7 @@ Deno.test("the LLM layer only runs on fresh, still-undecided threads", async () 
     activeIntake: true,
     skipSemantic: true,
     openaiKey: "test-key",
+    anthropicKey: "",
     fetchImpl,
   })
   assertEquals(ongoing.layer, "menu")
@@ -222,6 +225,7 @@ Deno.test("an LLM failure falls through to the problem-signal default", async ()
     freshThread: true,
     skipSemantic: true,
     openaiKey: "test-key",
+    anthropicKey: "",
     fetchImpl,
   })
   assertEquals(recognized.intent, "repair")

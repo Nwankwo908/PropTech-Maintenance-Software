@@ -46,6 +46,7 @@ import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
 import {
   tryHandleLandlordVendorChoiceInbound,
 } from "../vendorLandlordChoice.ts"
+import { tryHandleLandlordPickBatchInbound } from "../landlordDecisionExecute.ts"
 import {
   canHandleVendorAvailabilityProbe,
   tryHandleVendorAvailabilityProbeInbound,
@@ -192,6 +193,41 @@ async function tryEstimateDecisionHandler(
     reply: {
       body: result.replyBody,
       source: `estimate_decision_${result.action}`,
+    },
+  }
+}
+
+async function tryLandlordPickBatchHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleLandlordPickBatchInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    fromPhone: ctx.inbound.from,
+    messageId: ctx.messageId,
+    providerMessageSid: ctx.inbound.providerMessageSid,
+  })
+  if (!result.handled) return { handled: false }
+  if (!result.replyBody) {
+    return {
+      handled: true,
+      workflowRoute: "landlord_pick_batch",
+      reply: {
+        source: "landlord_pick_batch",
+        alreadySent: true,
+        skipGenericFallback: true,
+      },
+    }
+  }
+  return {
+    handled: true,
+    workflowRoute: "landlord_pick_batch",
+    reply: {
+      body: result.replyBody,
+      source: "landlord_pick_batch",
+      skipGenericFallback: true,
     },
   }
 }
@@ -758,6 +794,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
 > = {
   compliance_stop_help:
     "Global STOP/START/HELP keyword (sole exception to pending-context rule)",
+  landlord_pick_batch:
+    "Open landlord_pick_batches row for this sender (reply #display_id decisions). No open batch falls through to single-ticket vendor choice.",
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
@@ -808,6 +846,7 @@ export const INBOUND_SMS_HANDLERS_UNUSED: Readonly<
 
 export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
+  { id: "landlord_pick_batch", priority: 6, try: tryLandlordPickBatchHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
   { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },

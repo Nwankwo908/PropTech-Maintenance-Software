@@ -5,13 +5,6 @@
  *  - limitedalpha1@ulohome.io  → Limited Alpha 1
  *  - limitedalpha2@ulohome.io  → Limited Alpha 2 (empty new-user onboarding)
  *  - ceorentalsnj@gmail.com    → Limited Alpha 1
- *  - iokafor0@gmail.com        → Limited Alpha 2
- *  - moreceo@gmail.com         → Limited Alpha 2
- *  - nyshaunbrown@gmail.com    → Limited Alpha 2
- *  - otbpictures12@gmail.com   → Limited Alpha 2
- *  - nwankwo908@gmail.com      → Limited Alpha 2
- *  - bfamiloni@gmail.com       → Limited Alpha 2
- *  - adesanmi.ogunfowora@gmail.com → Limited Alpha 2
  *  - braimahm@gmail.com        → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
  *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2

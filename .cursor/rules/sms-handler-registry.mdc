@@ -30,6 +30,7 @@ Return `{ handled: true }` only when a **stored pending ask** exists (or global 
 | Handler | Pending gate |
 |---|---|
 | `compliance_stop_help` | **Global** STOP/START/HELP (sole exception) |
+| `landlord_pick_batch` | Open `landlord_pick_batches` row for this sender (`#display_id` yes/snooze/skip). No open batch falls through |
 | `schedule_confirm` | `intake_state.awaiting_schedule_confirmation` |
 | `estimate_decision` | `awaiting_estimate_decision` or pending estimate on thread WO |
 | `landlord_vendor_choice` | `intake_state.awaiting_vendor_choice` (YES, or 1 / 2 / 3…) — pending ask wins even if ops phone is mislabeled `resident` (see `landlord-pending-ask-not-resident-autofix.mdc`); on resolve clear ticket `vendor_notify_error` too (`stale-awaiting-flag-autofix.mdc`) |
