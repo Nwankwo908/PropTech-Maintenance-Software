@@ -18,6 +18,7 @@ export const ADMIN_PRODUCTION_ALLOWED_EMAILS = [
   'adeogunfowora@gmail.com',
   'o.k.okafor@gmail.com',
   'drake@gtwgroupnwa.com',
+  'bashiraaliya@gmail.com',
 ] as const
 
 export const ADMIN_LOGIN_EMAIL_DOMAIN = 'property-admin.auth.local'
