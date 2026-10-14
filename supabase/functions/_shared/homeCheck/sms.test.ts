@@ -1,9 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
-import { prepareHomeCheckSms, resolveHomeCheckLandlord, runHomeCheckReminder } from './sms.ts'
-import { sendHomeCheckSms } from './service.ts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  actHomeCheckSms,
+  prepareHomeCheckSms,
+  resolveHomeCheckLandlord,
+  runHomeCheckReminder,
+} from './sms.ts'
+import { createHomeCheck, sendHomeCheckSms } from './service.ts'
+import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
 
 vi.mock('../sms/inbound_db.ts', () => ({ normalizeSmsPhone: (phone: string) => phone }))
+vi.mock(
+  '../sms/landlordAccountPhone.ts',
+  () => ({ isLandlordAccountOrOpsPhone: vi.fn(async () => true) }),
+)
 vi.mock('./service.ts', () => ({
   requireData: ({ data, error }: { data: unknown; error: unknown }) => {
     if (error) throw error
@@ -13,6 +23,11 @@ vi.mock('./service.ts', () => ({
     `${check.property_label} / ${check.unit_label}`,
   checked: (value: PromiseLike<unknown>) => Promise.resolve(value),
   sendHomeCheckSms: vi.fn(async () => {}),
+  createHomeCheck: vi.fn(async () => ({
+    check: { ...pending, role: 'landlord', workflow_run_id: 'run' },
+    link: 'https://app.ulohome.io/c/check#fixture',
+    deliveryError: null,
+  })),
 }))
 function query(data: unknown) {
   const filters: Array<[string, unknown[]]> = []
@@ -57,14 +72,74 @@ function context(
   } as unknown as InboundSmsHandlerContext
 }
 describe('Home Check SMS dispatch', () => {
-  it('reserves CHECK initiation for landlord identities', async () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(true)
+  })
+  it('reserves CHECK initiation for registered landlord and property-team identities', async () => {
     const db = query([])
-    expect(await prepareHomeCheckSms(context(db, 'CHECK 12A'))).toBeNull()
+    expect(await prepareHomeCheckSms(context(db, 'CHECK 12A'))).toMatchObject({ kind: 'clarify' })
     expect(await prepareHomeCheckSms(context(db, 'CHECK 12A', [], true))).toMatchObject({
       kind: 'start',
       command: { role: 'tenant', target: '12A' },
     })
     expect(db.from).not.toHaveBeenCalled()
+    expect(isLandlordAccountOrOpsPhone).toHaveBeenCalledWith(db, {
+      fromNumber: '+15551112222',
+      landlordId: 'landlord',
+    })
+  })
+  it('rejects stale landlord identities whose phone is no longer authorized', async () => {
+    vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(false)
+    expect(await prepareHomeCheckSms(context(query([]), 'INSPECT Birch / 12A', [], true)))
+      .toMatchObject({ kind: 'clarify', reply: expect.stringContaining('registered phone number') })
+    expect(createHomeCheck).not.toHaveBeenCalled()
+  })
+  it('starts an inspection for an authorized team member with that member as self-capture recipient', async () => {
+    const db = query([])
+    db.from.mockImplementation((table: string) =>
+      query(
+        table === 'properties'
+          ? [{ id: 'birch', name: 'Birch', street_address: '1 Main St' }]
+          : [{ id: 'birch-12a', property_id: 'birch', unit_label: '12A' }],
+      ).from(table)
+    )
+    const action = await prepareHomeCheckSms(context(db, 'INSPECT Birch / 12A', [], true))
+    expect(action).toMatchObject({ kind: 'start', initiatorPhone: '+15551112222' })
+    await actHomeCheckSms(db as never, 'landlord', action!)
+    expect(createHomeCheck).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        landlordId: 'landlord',
+        propertyId: 'birch',
+        unitId: 'birch-12a',
+        role: 'landlord',
+        selfCapturePhone: '+15551112222',
+        authorizedBy: 'sms:message',
+      }),
+    )
+  })
+  it('asks for an exact property/unit before starting when scope is absent or duplicated', async () => {
+    const db = query([])
+    db.from.mockImplementation((table: string) =>
+      query(
+        table === 'properties'
+          ? [{ id: 'birch', name: 'Birch' }, { id: 'oak', name: 'Oak' }]
+          : [{ id: 'birch-12a', property_id: 'birch', unit_label: '12A' }, {
+            id: 'oak-12a',
+            property_id: 'oak',
+            unit_label: '12A',
+          }],
+      ).from(table)
+    )
+    for (const body of ['INSPECT', 'INSPECT 12A']) {
+      const action = await prepareHomeCheckSms(context(db, body, [], true))
+      const result = await actHomeCheckSms(db as never, 'landlord', action!)
+      expect(result.reply).toContain('INSPECT Property / Unit')
+      expect(result.reply).toContain('Birch / 12A')
+      expect(result.reply).toContain('Oak / 12A')
+    }
+    expect(createHomeCheck).not.toHaveBeenCalled()
   })
   it('leaves compliance and unrelated messages outside the Home Check workflow', async () => {
     const db = query([pending])

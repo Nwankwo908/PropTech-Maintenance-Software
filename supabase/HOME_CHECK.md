@@ -19,6 +19,9 @@ Both asset records remain unverified until the landlord confirms in Property Int
 
 ## SMS
 
+- Landlords and authorized property managers/team members can initiate from their registered account/team phone number. Existing phone authorization uses the landlord account phone, onboarding account/backup/team contacts, and canonical `properties.manager_phone` records. Unregistered, revoked, tenant and vendor senders cannot initiate inspections.
+- `INSPECT Property / Unit`: send the self-capture link to the person who initiated the inspection, including an authorized manager/team member. `INSPECTION`, `HOME CHECK`, and `START AN INSPECTION FOR Property / Unit` also work. `INSPECT` on its own returns scoped property/unit and recipient instructions without creating a check.
+- `INSPECT TENANT Property / Unit`: explicitly ask the tenant. `INSPECT CONTRACTOR Property / Unit | <ISO job-window-end>` selects the closest located active contractor. An ambiguous unit label asks for the property; no check or invitation is created until the target is exact. `INSPECT SELF Property / Unit` explicitly selects self-capture.
 - `CHECK 12A`: landlord-authorized tenant request. Duplicate unit labels require `CHECK Property / Unit` or `CHECK Street address / Unit`.
 - `CHECK SELF Property / Unit`: landlord capture link.
 - `CHECK CONTRACTOR Property / Unit | <ISO job-window-end>`: select the closest active contractor with known exact coordinates. The window must end within seven days. The dashboard also supports manually choosing a contractor or texting the landlord a link to forward.

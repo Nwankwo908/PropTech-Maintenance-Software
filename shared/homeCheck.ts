@@ -1,4 +1,4 @@
-import type { LabelReadability, EquipmentExtractionTrace } from './vision/equipmentLabel.ts'
+import type { EquipmentExtractionTrace, LabelReadability } from './vision/equipmentLabel.ts'
 /** Home Check contract shared by the dashboard, capture page and SMS workflow. */
 export const HOME_CHECK_PHOTOS = [
   {
@@ -72,15 +72,20 @@ export function homeCheckComplete(slots: readonly string[]): boolean {
 export function parseHomeCheckCommand(
   body: string,
 ): { role: HomeCheckRole; target: string } | null {
-  const match = body.trim().match(/^CHECK(?:\s+(TENANT|CONTRACTOR|SELF))?\s+(.+)$/i)
+  const match = body.trim().match(
+    /^(CHECK|INSPECT|INSPECTION|HOME\s+CHECK|START\s+(?:AN?\s+)?INSPECTION)(?:\s+(TENANT|CONTRACTOR|SELF))?(?:\s+(.+))?$/i,
+  )
   if (!match) return null
+  const target = (match[3] || '').trim()
   return {
-    role: match[1]?.toUpperCase() === 'CONTRACTOR'
+    role: match[2]?.toUpperCase() === 'CONTRACTOR'
       ? 'contractor'
-      : match[1]?.toUpperCase() === 'SELF'
+      : match[2]?.toUpperCase() === 'SELF'
       ? 'landlord'
-      : 'tenant',
-    target: match[2].trim(),
+      : match[2]?.toUpperCase() === 'TENANT' || match[1].toUpperCase() === 'CHECK'
+      ? 'tenant'
+      : 'landlord',
+    target: match[1].toUpperCase() === 'CHECK' ? target : target.replace(/^for\s+/i, ''),
   }
 }
 
@@ -184,12 +189,16 @@ export function homeCheckAsset(input: {
       model: field(
         label?.identifiedItem.modelNumber || null,
         input.labelPhotoId,
-        label?.labelReadability ? (label.labelReadability.modelConfidence >= 85 ? 'high' : 'low') : identificationConfidence,
+        label?.labelReadability
+          ? (label.labelReadability.modelConfidence >= 85 ? 'high' : 'low')
+          : identificationConfidence,
       ),
       serial: field(
         label?.identifiedItem.serialNumber || null,
         input.labelPhotoId,
-        label?.labelReadability ? (label.labelReadability.serialConfidence >= 85 ? 'high' : 'low') : identificationConfidence,
+        label?.labelReadability
+          ? (label.labelReadability.serialConfidence >= 85 ? 'high' : 'low')
+          : identificationConfidence,
       ),
       approximateAge: {
         ...field(
