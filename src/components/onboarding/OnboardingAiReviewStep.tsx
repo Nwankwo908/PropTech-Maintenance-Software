@@ -430,15 +430,15 @@ export function OnboardingAiReviewStep({
   ])
 
   useEffect(() => {
-    if (manualAdd) return
     if (review.vendors.length > 0) return
     onReviewChange({
       ...review,
       vendors: [createEmptyExtractedVendor()],
     })
-    // Seed one blank row for manual entry when extraction found none.
+    // Seed one blank row when extraction found none, including Skip on Limited Alpha 2.
+    // A display-only card is not in review state, so typing never sticks.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the list is empty
-  }, [review.vendors.length, manualAdd])
+  }, [review.vendors.length])
 
   function requestContinue() {
     if (!hasSelectedVendors) {
@@ -543,7 +543,7 @@ export function OnboardingAiReviewStep({
     if (review.vendors.length <= 1) {
       onReviewChange({
         ...review,
-        vendors: manualAdd ? [] : [createEmptyExtractedVendor()],
+        vendors: [createEmptyExtractedVendor()],
       })
       return
     }
@@ -1306,8 +1306,7 @@ export function OnboardingAiReviewStep({
   }
 
   function renderVendorForms() {
-    const vendors =
-      review.vendors.length > 0 ? review.vendors : [createEmptyExtractedVendor()]
+    const vendors = review.vendors
 
     return (
       <div className="mt-3 flex flex-col gap-3">
