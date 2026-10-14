@@ -6,8 +6,7 @@
  *  - limitedalpha2@ulohome.io  → Limited Alpha 2 (empty new-user onboarding)
  *  - ceorentalsnj@gmail.com    → Limited Alpha 1
  *  - shaquillegurley@yahoo.com, adeogunfowora@gmail.com,
- *    o.k.okafor@gmail.com, drake@gtwgroupnwa.com,
- *    bashiraaliya@gmail.com → Limited Alpha 2
+ *    o.k.okafor@gmail.com, kwsellstx@gmail.com → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
  *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
  *
