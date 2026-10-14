@@ -7,7 +7,7 @@ import {
   attachAiClassificationLogToTicket,
   MAINTENANCE_CLASSIFICATION_EVENTS,
 } from "../maintenance_classification/mod.ts"
-import type { ClassificationResult } from "../maintenance_classification/types.ts"
+import type { ClassificationResult, ClassifyMaintenanceSmsContext } from "../maintenance_classification/types.ts"
 import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
@@ -257,6 +257,7 @@ async function initializeIntake(
   mediaCount: number,
   clarificationAnswers: string[] = [],
   outdoorTempF: number | null = null,
+  smsContext?: ClassifyMaintenanceSmsContext,
 ): Promise<{ state: SmsIntakeState; classification: ClassificationResult }> {
   let initial = body.trim()
   if (mediaCount > 0) {
@@ -270,6 +271,7 @@ async function initializeIntake(
   const classification = await classifyMaintenanceRequest({
     rawDescription: initial,
     clarificationAnswers,
+    smsContext,
     // Use embeddings in production when OpenAI is configured; Jaccard still runs offline/tests.
     skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
     durationHours: parseDurationHours(
@@ -670,12 +672,14 @@ async function prependEmergencySafetyIfNeeded(
 
 async function refreshClassificationFromFollowUp(
   state: SmsIntakeState,
+  smsContext?: ClassifyMaintenanceSmsContext,
 ): Promise<SmsIntakeState> {
   const raw = (state.description ?? state.initial_message ?? "").trim()
   if (!raw) return state
   try {
     const classification = await classifyMaintenanceRequest({
       rawDescription: raw,
+      smsContext,
       skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
       durationHours: parseDurationHours(raw),
       outdoorTempF: state.outdoor_temp_f ?? null,
@@ -960,6 +964,7 @@ export async function processResidentMaintenanceIntake(
       ctx.inbound.mediaUrls.length,
       [],
       outdoorTempF,
+      ctx.interpretation?.smsContext,
     )
     state = started.state
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
@@ -1041,7 +1046,7 @@ export async function processResidentMaintenanceIntake(
         unitId: ctx.identity.unit_id,
         description: seed,
       })
-    const clarified = await initializeIntake(seed, 0, answers, outdoorTempF)
+    const clarified = await initializeIntake(seed, 0, answers, outdoorTempF, ctx.interpretation?.smsContext)
     state = clarified.state
     if (priorDraft) state = { ...state, draft_ticket_id: priorDraft }
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
@@ -1126,6 +1131,7 @@ export async function processResidentMaintenanceIntake(
             unitId: ctx.identity.unit_id,
             description: state.initial_message || state.description || body,
           }),
+        ctx.interpretation?.smsContext,
       )
       state = declined.state
       state = captureInboundMedia(
@@ -1371,7 +1377,7 @@ export async function processResidentMaintenanceIntake(
 
   state = result.state
   if (step === "diagnostic") {
-    state = await refreshClassificationFromFollowUp(state)
+    state = await refreshClassificationFromFollowUp(state, ctx.interpretation?.smsContext)
     state = applyQuestionPlan(state)
   }
   state = sanitizeIntakeState(state)

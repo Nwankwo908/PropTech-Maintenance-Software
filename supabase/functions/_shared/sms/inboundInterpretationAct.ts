@@ -88,6 +88,7 @@ import {
 import {
   shouldSuppressTicketAppendAsk,
 } from "./tenantDistress.ts"
+import { loadResidentSmsContext } from "./residentSmsContext.ts"
 
 const TICKET_LOOKUP_STATUSES = [
   "unassigned",
@@ -2454,9 +2455,22 @@ export async function tryHandleInterpretedInbound(
 
   const intake = await loadIntakeRow(ctx.supabase, ctx.conversationId)
   const pending = pendingContextFromIntake(intake)
+  const smsContext = await loadResidentSmsContext(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    residentId: ctx.identity.resident_id,
+    unitId: ctx.identity.unit_id || null,
+    externalPhone: ctx.inbound.from,
+    uloPhone: ctx.inbound.to,
+    ticketId: intake.pending_ticket_update_id ?? intake.pending_ticket_cancel_id ??
+      intake.pending_related_ticket_id ?? intake.draft_ticket_id ?? ctx.maintenanceRequestId,
+  })
+  smsContext.pendingQuestion = pending.activeIntake ? pendingIntakeQuestion(intake) : null
   const interpretation = await interpretInboundSms({
     body: ctx.inbound.body,
     pending,
+    smsContext,
     hasMedia: (ctx.inbound.mediaUrls?.length ?? 0) > 0,
     skipLlm: pending.awaitingTicketUpdateConfirm ||
       pending.awaitingTicketCancelConfirm ||

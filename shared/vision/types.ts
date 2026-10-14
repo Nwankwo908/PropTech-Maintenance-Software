@@ -1,3 +1,4 @@
+import type { LabelReadability, EquipmentExtractionTrace } from './equipmentLabel.ts'
 export type VisionCategory =
   | "appliance"
   | "hvac"
@@ -19,6 +20,8 @@ export type DeficiencySeverity =
 export type RecommendationUrgency = "routine" | "near_term" | "immediate"
 
 export type ApplianceVisionResult = {
+  labelReadability?: LabelReadability
+  extractionTrace?: EquipmentExtractionTrace
   category: VisionCategory
   identifiedItem: {
     type: string

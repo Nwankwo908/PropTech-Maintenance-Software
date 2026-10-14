@@ -1,30 +1,42 @@
-import type { VisionProvider, VisionProviderName } from "./types.ts"
-import { createClaudeVisionProvider } from "./providers/claude.ts"
-import { createGeminiVisionProvider } from "./providers/gemini.ts"
-import { createGpt4oVisionProvider } from "./providers/gpt4o.ts"
+import type { VisionProvider, VisionProviderName } from './types.ts'
+import { createClaudeVisionProvider } from './providers/claude.ts'
+import { createGeminiVisionProvider } from './providers/gemini.ts'
+import { withEquipmentBackup } from './providers/equipmentFallback.ts'
+import type { ManufacturerSerialRule } from '../../../../shared/vision/equipmentLabel.ts'
 
-function resolveName(raw: string | undefined): VisionProviderName {
-  const v = (raw ?? "gpt4o").trim().toLowerCase()
-  if (v === "gemini" || v === "claude" || v === "gpt4o") return v
-  return "gpt4o"
+export function equipmentSerialFormatRules(): ManufacturerSerialRule[] {
+  const value = Deno.env.get('EQUIPMENT_SERIAL_FORMAT_RULES')?.trim()
+  if (!value) return []
+  const rules = JSON.parse(value)
+  if (
+    !Array.isArray(rules) ||
+    rules.some((rule) =>
+      typeof rule.manufacturer !== 'string' || typeof rule.pattern !== 'string' ||
+      typeof rule.source !== 'string' || typeof rule.description !== 'string'
+    )
+  ) throw new Error('Invalid EQUIPMENT_SERIAL_FORMAT_RULES configuration.')
+  return rules
 }
 
-/** Resolve the active vision provider from VISION_PROVIDER env. */
+/** Equipment photos use Gemini Flash with a Claude Sonnet backup. The existing
+ * OpenAI report/document extractor is a separate workflow. */
 export function getVisionProvider(): VisionProvider {
-  const name = resolveName(Deno.env.get("VISION_PROVIDER"))
-  if (name === "gemini") {
-    return createGeminiVisionProvider(Deno.env.get("GEMINI_API_KEY")?.trim() ?? "")
-  }
-  if (name === "claude") {
-    return createClaudeVisionProvider(Deno.env.get("ANTHROPIC_API_KEY")?.trim() ?? "")
-  }
-  const openaiKey = Deno.env.get("OPENAI_API_KEY")?.trim() ?? ""
-  if (!openaiKey) {
-    throw new Error("Missing OPENAI_API_KEY for GPT-4o vision")
-  }
-  return createGpt4oVisionProvider(openaiKey)
+  const options = { serialRules: equipmentSerialFormatRules() }
+  const claude = createClaudeVisionProvider(Deno.env.get('ANTHROPIC_API_KEY')?.trim() || '', {
+    ...options,
+    model: Deno.env.get('CLAUDE_VISION_MODEL')?.trim(),
+  })
+  if (getVisionProviderName() === 'claude') return claude
+  const gemini = createGeminiVisionProvider(Deno.env.get('GEMINI_API_KEY')?.trim() || '', {
+    ...options,
+    model: Deno.env.get('GEMINI_VISION_MODEL')?.trim(),
+  })
+  return withEquipmentBackup(gemini, claude, {
+    primaryModel: Deno.env.get('GEMINI_VISION_MODEL')?.trim(),
+    backupModel: Deno.env.get('CLAUDE_VISION_MODEL')?.trim(),
+  })
 }
 
 export function getVisionProviderName(): VisionProviderName {
-  return resolveName(Deno.env.get("VISION_PROVIDER"))
+  return Deno.env.get('VISION_PROVIDER')?.trim().toLowerCase() === 'claude' ? 'claude' : 'gemini'
 }

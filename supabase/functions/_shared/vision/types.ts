@@ -1,3 +1,4 @@
+import type { LabelReadability, EquipmentExtractionTrace, EquipmentPhotoContext } from '../../../../shared/vision/equipmentLabel.ts'
 export type VisionCategory =
   | "appliance"
   | "hvac"
@@ -30,6 +31,8 @@ export type RecommendationUrgency = "routine" | "near_term" | "immediate"
 export type VisionProviderName = "gemini" | "gpt4o" | "claude"
 
 export type ApplianceVisionResult = {
+  labelReadability?: LabelReadability
+  extractionTrace?: EquipmentExtractionTrace
   category: VisionCategory
   identifiedItem: {
     type: string
@@ -65,12 +68,15 @@ export type ApplianceVisionResult = {
   overallConfidence?: number
 }
 
+export type { EquipmentPhotoContext }
+
 export interface VisionProvider {
   name: VisionProviderName
   analyzeImage(
     imageBase64: string,
     hintCategory?: string,
     mediaType?: string,
+    context?: EquipmentPhotoContext,
   ): Promise<ApplianceVisionResult>
   analyzeDocument?(
     imageBase64: string,
@@ -88,8 +94,23 @@ export const APPLIANCE_VISION_JSON_SCHEMA = {
     "condition",
     "deficiencies",
     "maintenanceRecommendations",
+    "labelReadability",
   ],
   properties: {
+    labelReadability: {
+      type: 'object', additionalProperties: false,
+      required: ['status', 'modelConfidence', 'serialConfidence', 'uncertainCharacters', 'retakeRequested', 'formatWarnings'],
+      properties: {
+        status: { type: 'string', enum: ['readable', 'uncertain', 'unreadable', 'not_visible'] },
+        modelConfidence: { type: 'number', minimum: 0, maximum: 100 },
+        serialConfidence: { type: 'number', minimum: 0, maximum: 100 },
+        uncertainCharacters: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['field', 'index', 'alternatives'], properties: {
+          field: { type: 'string', enum: ['modelNumber', 'serialNumber'] }, index: { type: 'integer', minimum: 0, maximum: 79 }, alternatives: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 4 },
+        } } },
+        readings: { type: 'object', additionalProperties: false, properties: { modelNumber: { type: 'string' }, serialNumber: { type: 'string' } } },
+        retakeRequested: { type: 'boolean' }, retakeMessage: { type: 'string' }, formatWarnings: { type: 'array', items: { type: 'string' } },
+      },
+    },
     category: {
       type: "string",
       enum: ["appliance", "hvac", "water_heater", "boiler", "roof", "electrical_panel", "plumbing", "other", "unknown"],

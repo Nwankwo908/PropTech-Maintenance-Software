@@ -9,6 +9,7 @@ import type {
 } from '@/lib/vision/types'
 
 type ApiPhoto = {
+  homeCheckId?: string | null
   id: string
   assessmentId: string
   storagePath: string | null
@@ -27,6 +28,7 @@ type ApiPhoto = {
 
 function mapPhoto(p: ApiPhoto, previewUrl?: string | null): InspectionPhotoRow {
   return {
+    homeCheckId: p.homeCheckId ?? null,
     id: p.id,
     assessmentId: p.assessmentId,
     storagePath: p.storagePath,
@@ -47,6 +49,7 @@ function mapPhoto(p: ApiPhoto, previewUrl?: string | null): InspectionPhotoRow {
 
 function mapDbPhoto(row: Record<string, unknown>): InspectionPhotoRow {
   return mapPhoto({
+    homeCheckId: row.home_check_id != null ? String(row.home_check_id) : null,
     id: String(row.id),
     assessmentId: String(row.assessment_id),
     storagePath: row.storage_path != null ? String(row.storage_path) : null,

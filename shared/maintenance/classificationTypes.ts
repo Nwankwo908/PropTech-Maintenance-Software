@@ -108,6 +108,10 @@ export type ClassifyMaintenanceSmsContext = {
   pendingStep?: string | null
   pendingQuestion?: string | null
   recentTurns?: string | null
+  /** Latest nonfailed Ulo text with delivery status, separate from the transcript. */
+  lastOutboundMessage?: string | null
+  /** Server-validated account, participant, location and ticket context. */
+  scopeContext?: string | null
 }
 
 export type ClassifyMaintenanceInput = {

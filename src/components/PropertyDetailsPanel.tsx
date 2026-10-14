@@ -1107,6 +1107,7 @@ function InsuranceExpandedPanel({
 }
 
 type HomeInspectionExpandedPanelProps = {
+  propertyId?: string | null
   building: string
   docs: InspectionDoc[]
   hasPersistedInspection: boolean
@@ -1121,6 +1122,7 @@ function isHqsInspectionDoc(doc: InspectionDoc): boolean {
 
 /** Expanded Smart Inspection Report — Figma node 1144:20784. */
 function HomeInspectionExpandedPanel({
+  propertyId,
   building,
   docs,
   hasPersistedInspection,
@@ -1371,6 +1373,7 @@ function HomeInspectionExpandedPanel({
 
   return (
     <ApplianceInspectionUploader
+      propertyId={propertyId}
       building={building}
       leading={uploadCard}
       trailing={trailing}
@@ -1696,11 +1699,11 @@ export function PropertyDetailsPanel({
             className="size-[32px] object-contain"
           />
         }
-        title="Smart Inspection Report"
+        title="Home Check and inspection documents"
         description={
           inspectionEmpty
-            ? 'Upload an inspection report for property condition'
-            : 'Upload a report to help Ulo understand property condition'
+            ? 'Start with the water heater and heating system'
+            : 'Capture equipment details or add an inspection report'
         }
         empty={inspectionEmpty}
         expanded={expanded === 'inspection'}
@@ -1708,6 +1711,7 @@ export function PropertyDetailsPanel({
         collapsible={false}
       >
         <HomeInspectionExpandedPanel
+          propertyId={propertyId}
           building={building}
           docs={inspectionDocs}
           hasPersistedInspection={inspectionHasPersistedWork}

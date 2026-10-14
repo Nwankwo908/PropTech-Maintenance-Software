@@ -27,6 +27,7 @@ const ENTITY_TYPES = new Set<WorkflowEntityType>([
 ])
 
 const TRIGGER_TYPES = new Set<WorkflowTriggerType>([
+  "home_check",
   "sms_inbound",
   "cron",
   "dashboard",

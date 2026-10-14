@@ -6,6 +6,7 @@
  * widened only when the text is still ambiguous — not a second model call.
  */
 import { classifyMaintenanceRequest } from "../maintenance_classification/mod.ts"
+import type { ClassifyMaintenanceSmsContext } from "../maintenance_classification/types.ts"
 import type { LlmClassificationDraft } from "../maintenance_classification/llmClassify.ts"
 import { isLeaseRenewalInquirySms } from "./leaseRenewalInquiry.ts"
 import {
@@ -73,6 +74,8 @@ export type InboundInterpretation = {
   source: "heuristic" | "llm" | "fast_path_skip"
   /** Which recognizer layer decided, and how sure it was. Logged per inbound. */
   recognition?: InboundIntentRecognition
+  /** Request-local context reused by intake classification, never model-side memory. */
+  smsContext?: ClassifyMaintenanceSmsContext
 }
 
 export type InterpretationPendingContext = {
@@ -800,16 +803,27 @@ export async function interpretInboundSms(params: {
   hasMedia?: boolean
   skipLlm?: boolean
   recentTurns?: string | null
+  smsContext?: ClassifyMaintenanceSmsContext
 }): Promise<InboundInterpretation> {
   const pending: InterpretationPendingContext = {
     ...(params.pending ?? { activeIntake: false }),
     hasMedia: params.hasMedia === true || params.pending?.hasMedia === true,
   }
-  const heuristic = heuristicInterpretInbound(
+  const smsContext: ClassifyMaintenanceSmsContext = {
+    ...params.smsContext,
+    pendingStep: pending.awaitingTicketUpdateConfirm
+      ? "awaiting_ticket_update_confirm"
+      : pending.intakeStep ?? null,
+    pendingQuestion: params.smsContext?.pendingQuestion ?? (pending.activeIntake
+      ? `Resident is in maintenance intake step ${pending.intakeStep ?? "unknown"}`
+      : null),
+    recentTurns: params.smsContext?.recentTurns ?? params.recentTurns ?? null,
+  }
+  const heuristic = { ...heuristicInterpretInbound(
     params.body,
     pending,
-    params.recentTurns ?? null,
-  )
+    smsContext.recentTurns,
+  ), smsContext }
 
   if (heuristic.source === "fast_path_skip") return heuristic
   if (!heuristic.needsClarification) return heuristic
@@ -829,15 +843,7 @@ export async function interpretInboundSms(params: {
   const classification = await classifyMaintenanceRequest({
     rawDescription: params.body,
     skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
-    smsContext: {
-      pendingStep: pending.awaitingTicketUpdateConfirm
-        ? "awaiting_ticket_update_confirm"
-        : pending.intakeStep ?? null,
-      pendingQuestion: pending.activeIntake
-        ? `Resident is in maintenance intake step ${pending.intakeStep ?? "unknown"}`
-        : null,
-      recentTurns: params.recentTurns ?? null,
-    },
+    smsContext,
   })
 
   const llmDraft = classification.audit?.llm as LlmClassificationDraft | undefined
@@ -857,5 +863,6 @@ export async function interpretInboundSms(params: {
     needsClarification: fromLlm.needsClarification ?? false,
     source: "llm",
     recognition: heuristic.recognition,
+    smsContext,
   }
 }

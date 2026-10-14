@@ -4,6 +4,7 @@ import type { IdentityResolutionSource, SelfHealingPhase } from "./resolveIdenti
 import type { InboundInterpretation } from "./inboundInterpretation.ts"
 
 export type SmsWorkflowRoute =
+  | "home_check"
   | "resident_maintenance_intake"
   | "lease_renewal"
   | "rent_collection"

@@ -29,6 +29,7 @@ export function InspectionCaptureChooser({
             Close
           </button>
         </div>
+        <p className="mt-3 text-sm text-[#64748b]">Take two photos per appliance: the whole appliance and a close-up of its data plate. Keep the label in focus and turn flash off to avoid glare.</p>
         <div className="mt-4 grid gap-3">
           <button
             type="button"

@@ -45,7 +45,12 @@ export async function logWorkflowStage(
         params.identity.vendor_id ??
         null)
       : null,
-    unit_id: params.identity?.unit_id ?? params.ctx.activeRun?.unit_id ?? null,
+    property_id: params.ctx.homeCheck && "check" in params.ctx.homeCheck
+      ? params.ctx.homeCheck.check.property_id
+      : params.ctx.activeRun?.property_id ?? null,
+    unit_id: params.ctx.homeCheck && "check" in params.ctx.homeCheck
+      ? params.ctx.homeCheck.check.unit_id
+      : params.identity?.unit_id ?? params.ctx.activeRun?.unit_id ?? null,
     resident_id:
       params.identity?.resident_id ?? params.ctx.activeRun?.resident_id ?? null,
     vendor_id: params.identity?.vendor_id ?? null,
@@ -147,6 +152,8 @@ export function workflowRouteForTemplate(
       return "inspection"
     case "identity_onboarding":
       return "unknown_sender_onboarding"
+    case "home_check":
+      return "home_check"
     case "landlord_command":
       return "landlord_command"
   }

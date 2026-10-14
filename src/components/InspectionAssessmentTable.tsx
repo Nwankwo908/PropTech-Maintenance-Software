@@ -1,3 +1,4 @@
+import { EquipmentLabelNotice } from './EquipmentLabelNotice'
 import type { ApplianceVisionResult, ConditionRating, VisionCategory } from '@/lib/vision/types'
 import { InspectionPhotoExtractProgress } from '@/components/InspectionPhotoExtractProgress'
 import {
@@ -377,6 +378,7 @@ export function InspectionAssessmentTable({
               </div>
                 </>
               ) : null}
+              {result?.labelReadability && <div className="col-span-7"><EquipmentLabelNotice quality={result.labelReadability} /></div>}
             </div>
           )
         })}

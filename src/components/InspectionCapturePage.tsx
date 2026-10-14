@@ -173,7 +173,7 @@ export function InspectionCapturePage() {
 
       <main className="mx-auto max-w-md px-4 py-5">
         <p className="text-[14px] text-[#334155]">
-          Take photos of appliances and home systems. They’ll appear automatically on your computer.
+          Take two photos per appliance: one of the whole appliance and one close-up of the data plate. Keep the label in focus and avoid flash or glare. They’ll appear on your computer.
         </p>
 
         {error && stage !== 'error' ? (

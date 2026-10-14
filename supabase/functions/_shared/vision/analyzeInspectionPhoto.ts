@@ -1,3 +1,5 @@
+import { guardEquipmentLabel } from '../../../../shared/vision/equipmentLabel.ts'
+import type { EquipmentPhotoContext } from './types.ts'
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   createInspectionUploadSignedUrl,
@@ -25,6 +27,7 @@ export async function analyzeInspectionPhotoRow(
   mode: "photo" | "document",
   storagePath: string | null = null,
   nameplate?: { base64: string; mediaType: string } | null,
+  photoContext?: EquipmentPhotoContext,
 ): Promise<Record<string, unknown>> {
   const started = Date.now()
   await supabase
@@ -33,8 +36,6 @@ export async function analyzeInspectionPhotoRow(
     .eq("id", photoId)
 
   try {
-    const provider = getVisionProvider()
-    const providerName = provider.name
 
     let roboflow: Awaited<ReturnType<typeof preclassifyWithRoboflow>> = null
     if (mode === "photo") {
@@ -48,10 +49,12 @@ export async function analyzeInspectionPhotoRow(
         supabase,
         photoId,
         extract,
-        provider: providerName,
+        provider: "gpt4o",
         latencyMs: Date.now() - started,
       })
     }
+
+    const provider = getVisionProvider()
 
     let dibPass: Awaited<ReturnType<typeof identifyWithDibSmartAdd>> = null
     if (mode === "photo" && storagePath && isDibSmartAddEnabled()) {
@@ -65,11 +68,12 @@ export async function analyzeInspectionPhotoRow(
       imageBase64,
       effectiveHint ?? undefined,
       contentType,
+      photoContext,
     )
-    const merged = mergeDibIdentificationWithVisionAssessment(
+    const merged = guardEquipmentLabel(mergeDibIdentificationWithVisionAssessment(
       dibPass?.identification ?? null,
       result,
-    )
+    ))
     const serialReview = await readEquipmentSerial({
       images: [
         { base64: imageBase64.replace(/^data:[^;]+;base64,/, ""), mediaType: contentType || "image/jpeg" },
@@ -119,6 +123,7 @@ export async function analyzeInspectionPhotoRow(
       ...(serialReview ? { serialReview } : {}),
     }
     const latencyMs = Date.now() - started
+    const providerName = result.extractionTrace?.selectedProvider || provider.name
     const providerLabel = dibPass
       ? buildHybridVisionProviderLabel(providerName)
       : providerName

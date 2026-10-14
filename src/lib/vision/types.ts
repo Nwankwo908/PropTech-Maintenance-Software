@@ -1,3 +1,4 @@
+import type { LabelReadability, EquipmentExtractionTrace } from '@shared/vision/equipmentLabel'
 /** Shared client types for AI appliance / systems inspection assessment. */
 
 export type VisionCategory =
@@ -43,6 +44,8 @@ export type InspectionPhotoStatus =
 export type VisionProviderName = 'gemini' | 'gpt4o' | 'claude'
 
 export type ApplianceVisionResult = {
+  labelReadability?: LabelReadability
+  extractionTrace?: EquipmentExtractionTrace
   category: VisionCategory
   identifiedItem: {
     type: string
@@ -91,6 +94,7 @@ export type ApplianceVisionResult = {
 }
 
 export type InspectionPhotoRow = {
+  homeCheckId?: string | null
   id: string
   assessmentId: string
   storagePath: string | null

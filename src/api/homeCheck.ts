@@ -1,0 +1,70 @@
+import type { LabelReadability } from '@shared/vision/equipmentLabel'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { supabase } from '@/lib/supabase'
+import type {
+  HomeCheckAsset,
+  HomeCheckMetricRow,
+  homeCheckMetrics,
+  HomeCheckRole,
+  HomeCheckTarget,
+} from '@shared/homeCheck'
+
+export type HomeCheckPublic = {
+  feedback?: Array<
+    {
+      slot: string
+      state: string
+      retakeMessage: string | null
+      uncertainCharacters: LabelReadability['uncertainCharacters']
+      formatWarnings: string[]
+    }
+  >
+  id: string
+  reference: string
+  role: HomeCheckRole
+  location: string
+  expiresAt: string
+  slots: string[]
+  status: string
+}
+export type HomeCheckSummaryRow = HomeCheckMetricRow & {
+  id: string
+  reference: string
+  property_label: string
+  unit_label: string | null
+  status: string
+  expires_at: string
+  assets: Array<HomeCheckAsset & { id: string }>
+  photos: Array<{ slot: string; previewUrl: string | null; state?: string }>
+}
+export type HomeCheckVendor = { id: string; name: string; distanceKm: number | null }
+export type HomeCheckOptions = {
+  targets: HomeCheckTarget[]
+  vendors: HomeCheckVendor[]
+  closest: string | null
+}
+export type HomeCheckList = {
+  checks: HomeCheckSummaryRow[]
+  metrics: ReturnType<typeof homeCheckMetrics>
+}
+
+export async function homeCheckRequest<T>(
+  body: Record<string, unknown>,
+  publicCapture = false,
+): Promise<T> {
+  if (!supabase) throw new Error('Connect Supabase to use Home Check.')
+  const { data, error } = await supabase.functions.invoke('home-check', {
+    body: publicCapture ? body : { ...body, landlordId: getActiveLandlordId() },
+  })
+  if (error) {
+    let message = error.message
+    if ('context' in error && error.context instanceof Response) {
+      try {
+        message = (await error.context.json()).error || message
+      } catch { /* keep original error */ }
+    }
+    throw new Error(message)
+  }
+  if (data?.error) throw new Error(String(data.error))
+  return data as T
+}

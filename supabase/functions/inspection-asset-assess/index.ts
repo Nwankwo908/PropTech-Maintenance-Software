@@ -77,6 +77,7 @@ function decodeBase64(raw: string): Uint8Array | null {
 function mapPhotoRow(row: Record<string, unknown>) {
   return {
     id: String(row.id),
+    homeCheckId: row.home_check_id != null ? String(row.home_check_id) : null,
     assessmentId: String(row.assessment_id),
     storagePath: row.storage_path != null ? String(row.storage_path) : null,
     hintCategory: row.hint_category != null ? String(row.hint_category) : null,
@@ -379,6 +380,10 @@ serve(async (req) => {
         .eq("landlord_id", landlordId)
         .maybeSingle()
       if (error || !photo) return jsonResponse({ error: "Photo not found" }, 404)
+
+      if (photo.home_check_id) {
+        return jsonResponse({ error: "Confirm the complete Home Check in Property Intelligence after all four photos arrive." }, 409)
+      }
       if (!photo.storage_path) {
         return jsonResponse({ error: "Photo has no stored file to retry" }, 400)
       }
@@ -571,6 +576,9 @@ serve(async (req) => {
         .maybeSingle()
       if (error || !photo) return jsonResponse({ error: "Photo not found" }, 404)
 
+      if (photo.home_check_id) {
+        return jsonResponse({ error: "Confirm the complete Home Check in Property Intelligence after all four photos arrive." }, 409)
+      }
       const joined = photo.property_inspection_assessments as
         | { id: string; building: string }
         | { id: string; building: string }[]

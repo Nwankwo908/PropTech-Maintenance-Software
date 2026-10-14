@@ -11,6 +11,7 @@ import {
   uploadAndAnalyzeInspectionPhoto,
   type InspectionAssetSummary,
 } from '@/api/inspectionAssetAssess'
+import { HomeCheckPanel } from '@/components/HomeCheckPanel'
 import { ApplianceAssessmentReviewCard } from '@/components/ApplianceAssessmentReviewCard'
 import { InspectionAssessmentTable } from '@/components/InspectionAssessmentTable'
 import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
@@ -102,6 +103,7 @@ type LocalJob = {
 
 type ApplianceInspectionUploaderProps = {
   building: string
+  propertyId?: string | null
   leading?: ReactNode
   trailing?: ReactNode
 }
@@ -109,6 +111,7 @@ type ApplianceInspectionUploaderProps = {
 /** Multi-photo AI appliance / systems assessment for Smart Inspection Report. */
 export function ApplianceInspectionUploader({
   building,
+  propertyId,
   leading,
   trailing,
 }: ApplianceInspectionUploaderProps) {
@@ -138,7 +141,7 @@ export function ApplianceInspectionUploader({
   const refreshAssets = useCallback(async () => {
     if (!building) return
     try {
-      const rows = await listInspectionAssets(building)
+      const rows = (await listInspectionAssets(building)).filter((asset) => !asset.metadata?.homeCheck)
       setAssets(rows)
       const paths = rows
         .map((row) => {
@@ -172,7 +175,7 @@ export function ApplianceInspectionUploader({
         const session = await loadBuildingInspectionSession(building)
         if (cancelled) return
         setAssessmentId(session.id)
-        setPhotos(inspectionPhotosForDisplay(building, session.photos, isHiddenInspectionPhoto))
+        setPhotos(inspectionPhotosForDisplay(building, session.photos.filter((photo) => !photo.homeCheckId), isHiddenInspectionPhoto))
         await refreshAssets()
       } catch (err) {
         if (!cancelled) {
@@ -194,7 +197,7 @@ export function ApplianceInspectionUploader({
       void loadBuildingInspectionSession(building)
         .then((session) => {
           setAssessmentId(session.id)
-          setPhotos(inspectionPhotosForDisplay(building, session.photos, isHiddenInspectionPhoto))
+          setPhotos(inspectionPhotosForDisplay(building, session.photos.filter((photo) => !photo.homeCheckId), isHiddenInspectionPhoto))
         })
         .catch(() => {
           /* keep current session */
@@ -333,7 +336,7 @@ export function ApplianceInspectionUploader({
           (p) => p.id.startsWith('local-') && (p.status === 'queued' || p.status === 'analyzing' || p.status === 'error'),
         )
         return [
-          ...inspectionPhotosForDisplay(building, session.photos, isHiddenInspectionPhoto),
+          ...inspectionPhotosForDisplay(building, session.photos.filter((photo) => !photo.homeCheckId), isHiddenInspectionPhoto),
           ...localOnly,
         ]
       })
@@ -437,7 +440,7 @@ export function ApplianceInspectionUploader({
           }
         }
         const localOnly = prev.filter((p) => p.id.startsWith('local-'))
-        const merged = session.photos
+        const merged = session.photos.filter((photo) => !photo.homeCheckId)
           .filter((p) => !removedIdsRef.current.has(p.id))
           .map((p) => ({
             ...p,
@@ -656,6 +659,7 @@ export function ApplianceInspectionUploader({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
+      <HomeCheckPanel key={propertyId || building} building={building} propertyId={propertyId} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch [&>*]:min-w-0">
         {leading}
         <div className="flex h-full min-h-[220px] min-w-0 flex-col">
@@ -700,16 +704,13 @@ export function ApplianceInspectionUploader({
           {success ? <p className="text-[12px] text-[#059669]">{success}</p> : null}
           <ScanEquipmentIcon />
           <p className="text-[14px] font-semibold text-[#0d0f11]">
-            Scan property equipment ✨
+            Other equipment and inspection uploads
           </p>
           <p className="text-[12px] text-[#64748b]">
-            Take or upload photos and let AI identify appliances and home systems.
+            For each appliance, upload a whole-equipment photo and a close-up of the data plate. Keep the label in focus and avoid flash.
           </p>
           <p className="text-[12px] text-[#64748b]">
-            For the serial number, add a second photo: a close-up of the label.
-          </p>
-          <p className="text-[12px] text-[#64748b]">
-            Appliances · HVAC · Water heater · Roof
+            Additional equipment · Inspection reports
           </p>
           <input
             ref={inputRef}

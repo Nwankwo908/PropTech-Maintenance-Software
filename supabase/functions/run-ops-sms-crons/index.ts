@@ -13,6 +13,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { listLandlordIdsForCron } from "../_shared/cronLandlords.ts"
+import { runWorkflowEngine } from "../_shared/engine/runner.ts"
 import { checkRentCollection } from "../_shared/engine/checkRentCollection.ts"
 import { reportMissingRequiredCronJobs } from "../_shared/missingRequiredCrons.ts"
 import { processTenantActivationRetries } from "../_shared/sms/tenantActivation.ts"
@@ -115,6 +116,7 @@ serve(async (req) => {
           edge_function: j.edgeFunction,
         })),
         would_process: {
+          home_checks: true,
           tenant_activation: true,
           rent_collection_landlords: landlordIds,
         },
@@ -188,6 +190,16 @@ serve(async (req) => {
       }
     }
 
+    const homeChecks = []
+    for (const landlordId of landlordIds) {
+      try {
+        const result = await runWorkflowEngine(supabase, { trigger: "cron", landlordId }, {
+          classified: { templateId: "home_check", confidence: "high", reason: "home_check_reminder_sweep" },
+        })
+        homeChecks.push({ landlord_id: landlordId, ...result.metadata })
+      } catch (error) { homeChecks.push({ landlord_id: landlordId, error: error instanceof Error ? error.message : "failed" }) }
+    }
+
     let needsAdminDigest: Record<string, unknown> = {}
     try {
       needsAdminDigest = await sendNeedsAdminVendorDigest(supabase)
@@ -205,6 +217,7 @@ serve(async (req) => {
         jobname: j.jobname,
         edge_function: j.edgeFunction,
       })),
+      home_checks: homeChecks,
       tenant_activation: activation,
       tenant_rent_report_confirm_ttl: rentReportTtl,
       rent_billing_inquiry_ttl: rentBillingInquiryTtl,

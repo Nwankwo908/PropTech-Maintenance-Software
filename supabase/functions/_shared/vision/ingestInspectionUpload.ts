@@ -53,6 +53,8 @@ export async function processInspectionUpload(input: {
   hintCategory: VisionHintCategory | null
   mode: "photo" | "document"
   autoConfirm: boolean
+  /** Home Check stores each view, then reads the explicitly scoped pair once. */
+  deferPhotoAnalysis?: boolean
   /** When set, file is already in storage — skip upload and attach this path. */
   existingStoragePath?: string | null
   /** Browser-rasterized PDF pages. Required for document PDFs (Deno has no canvas). */
@@ -172,6 +174,9 @@ export async function processInspectionUpload(input: {
     }
   }
 
+  if (input.deferPhotoAnalysis && input.mode === 'photo') {
+    return { photo: { ...photoRow, storage_path: storagePath }, unitAssetId: null, taskIds: [] }
+  }
   const analyzed = await analyzeInspectionPhotoRow(
     input.supabase,
     photoId,

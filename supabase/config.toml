@@ -541,3 +541,9 @@ entrypoint = "./functions/inspection-capture/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/onboarding-document-extract/index.ts"
+
+[functions.home-check]
+enabled = true
+verify_jwt = false
+import_map = "./functions/home-check/deno.json"
+entrypoint = "./functions/home-check/index.ts"

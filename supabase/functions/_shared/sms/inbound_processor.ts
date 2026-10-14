@@ -38,6 +38,8 @@ import {
   inboundMediaWasRehosted,
   rehostInboundSmsMedia,
 } from "./rehostInboundMedia.ts"
+import { prepareHomeCheckSms, resolveHomeCheckLandlord } from "../homeCheck/sms.ts"
+import { runWorkflowEngine } from "../engine/runner.ts"
 import { tryStartHqsLetterIntakeFromInbound } from "./hqsInspectionLetterInbound.ts"
 import { tryLandlordCantProcessInbound } from "./landlordInboundCantProcess.ts"
 import { isLimitedAlphaTwilioSmsNumber } from "../../../../shared/landlordCapabilities.ts"
@@ -275,7 +277,7 @@ export async function processInboundSms(
 
   let landlordId = smsNumber.landlord_id
   if (isLimitedAlphaTwilioSmsNumber(inbound.to)) {
-    const resolvedLandlordId = await resolveLandlordIdForSharedTwilioInbound(
+    const resolvedLandlordId = await resolveHomeCheckLandlord(supabase, inbound) ?? await resolveLandlordIdForSharedTwilioInbound(
       supabase,
       inbound.from,
       smsNumber.landlord_id,
@@ -447,7 +449,8 @@ export async function processInboundSms(
     }
   }
 
-  const debounce = await decideInboundDebounce(supabase, {
+  const explicitHomeCheck = /^(CHECK\s|HC-[A-F0-9]{12}\b|OK(?:\s+HC-[A-F0-9]{12})?$)/i.test(inbound.body.trim())
+  const debounce = explicitHomeCheck ? { action: "process" as const } : await decideInboundDebounce(supabase, {
     conversationId,
     messageId,
   })
@@ -524,6 +527,32 @@ export async function processInboundSms(
         workflowRoute: "admin_takeover",
       })
     }
+  }
+
+  const homeCheck = await prepareHomeCheckSms(handlerContext)
+  if (homeCheck) {
+    // Consent stays global; Home Check photos must not become HQS documents,
+    // repair intake or replies to another vendor job on this same thread.
+    const compliance = INBOUND_SMS_HANDLERS.find((handler) => handler.id === "compliance_stop_help")
+    const consent = compliance ? await compliance.try(handlerContext) : null
+    if (consent?.handled) return finishHandledInbound(handlerContext, consent)
+    const result = await runWorkflowEngine(supabase, {
+      trigger: "sms_inbound", landlordId, homeCheck,
+      sms: {
+        inbound, landlordId, identity, conversationId, messageId,
+        maintenanceRequestId: "check" in homeCheck ? homeCheck.check.ticket_id : null,
+        selfHealed, continueIntake: resolution.continueIntake,
+        resolutionSource: resolution.source, selfHealingPhase: resolution.selfHealingPhase,
+        suggestedUnit: resolution.suggestedUnit,
+      },
+    }, {
+      classified: { templateId: "home_check", confidence: "high", reason: "explicit_scoped_home_check" },
+    })
+    return finishHandledInbound(handlerContext, {
+      handled: true, workflowRoute: "home_check",
+      workflowMetadata: { ...result.metadata, workflow_template_id: "home_check", workflow_run_id: result.runId },
+      reply: { body: result.replyHint, source: "home_check", skipGenericFallback: true },
+    })
   }
 
   const handlerResult = await tryInboundSmsHandlers(handlerContext)

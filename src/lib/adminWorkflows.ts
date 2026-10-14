@@ -241,7 +241,7 @@ export const WORKFLOW_GROUP_TITLES: Record<WorkflowTemplateGroupId, string> = {
   inspection: 'Inspections',
 }
 
-const MAINTENANCE_TEMPLATE_IDS = new Set(['maintenance_request', 'maintenance_intake'])
+const MAINTENANCE_TEMPLATE_IDS = new Set(['maintenance_request', 'maintenance_intake', 'home_check'])
 
 /** Ticket id on a maintenance run: entity id, or intake metadata when the run is still conversation-keyed. */
 export function maintenanceTicketIdFromWorkflowRun(run: {
@@ -420,6 +420,7 @@ const TEMPLATE_LABELS: Record<string, string> = {
   inspection: 'Inspection',
   vendor_job_response: 'Vendor job response',
   identity_onboarding: 'Identity onboarding',
+  home_check: 'Home Check',
   landlord_command: 'Landlord command',
 }
 

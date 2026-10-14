@@ -6,6 +6,7 @@ import { AnalyticsRoot } from './components/AnalyticsRoot'
 import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
 import { StayOnDevOrigin } from './components/StayOnDevOrigin'
 import { LandingPage } from './components/landing/LandingPage'
+import { HomeCheckCapturePage } from './components/HomeCheckCapturePage'
 import { DemoPageRedirect } from './components/DemoPageRedirect'
 import { hasWaitlistOAuthIntent } from './lib/landingWaitlist'
 import { hasAdminGoogleOAuthIntent, isOAuthReturnUrl } from './lib/googleIdentitySignIn'
@@ -171,6 +172,7 @@ export default function App() {
           <Route path="/upload/:token" element={<WorkOrderUploadPage />} />
           <Route path="/invoice/:token" element={<WorkOrderInvoicePage />} />
           <Route path="/pay/rent" element={<RentPaymentPage />} />
+          <Route path="/c/:checkId" element={<HomeCheckCapturePage />} />
           <Route path="/inspection/capture/:sessionId" element={<InspectionCapturePage />} />
 
           <Route

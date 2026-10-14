@@ -13,7 +13,10 @@ import {
   landlordCommandTemplate,
 } from "./templates/onboarding.ts"
 
+import { homeCheckTemplate } from "./homeCheck.ts"
+
 const TEMPLATES: Record<WorkflowTemplateId, WorkflowTemplate> = {
+  home_check: homeCheckTemplate,
   maintenance_intake: maintenanceIntakeTemplate,
   lease_renewal: leaseRenewalTemplate,
   rent_collection: rentCollectionTemplate,

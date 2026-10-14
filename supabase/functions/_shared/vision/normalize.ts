@@ -1,3 +1,4 @@
+import { normalizeLabelReadability } from '../../../../shared/vision/equipmentLabel.ts'
 import type {
   AgeConfidence,
   ApplianceVisionResult,
@@ -186,6 +187,7 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
   const overallConfidence = asOverallConfidence(o.overallConfidence ?? o.overall_confidence, ageConfidence)
 
   return {
+    ...(normalizeLabelReadability(o.labelReadability) ? { labelReadability: normalizeLabelReadability(o.labelReadability) } : {}),
     category,
     identifiedItem: {
       type:

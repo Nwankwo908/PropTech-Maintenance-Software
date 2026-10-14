@@ -17,6 +17,7 @@ export type WorkflowTriggerType =
   | "webhook"
   | "vendor_portal"
   | "automation"
+  | "home_check"
 
 export type WorkflowTemplateId =
   | "maintenance_intake"
@@ -30,6 +31,7 @@ export type WorkflowTemplateId =
   | "move_out"
   | "inspection"
   | "maintenance_request"
+  | "home_check"
 
 export type WorkflowRunStatus = "active" | "completed" | "escalated" | "cancelled"
 
@@ -100,6 +102,7 @@ export type WorkflowRunRow = {
 }
 
 export type WorkflowExecutionContext = {
+  homeCheck?: import("../homeCheck/sms.ts").HomeCheckSmsAction
   trigger: WorkflowTriggerType
   landlordId: string
   runId?: string | null
