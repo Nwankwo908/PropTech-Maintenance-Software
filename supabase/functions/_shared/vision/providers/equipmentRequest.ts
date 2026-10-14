@@ -7,7 +7,7 @@ import {
 } from '../../../../../shared/vision/equipmentLabel.ts'
 
 export const GEMINI_EQUIPMENT_MODEL = 'gemini-3.8-flash'
-export const CLAUDE_EQUIPMENT_MODEL = 'claude-sonnet-5-5'
+export const OPENAI_EQUIPMENT_MODEL = 'gpt-4o-mini'
 export type EquipmentProviderOptions = {
   model?: string
   fetchImpl?: typeof fetch

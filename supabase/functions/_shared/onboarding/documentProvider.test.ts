@@ -14,15 +14,20 @@ describe('document model transport', () => {
     expect(result.outputTokens).toBe(250)
     expect(result.raw).toEqual({ rent: 1500 })
   })
-  it('uses Claude forced structured extraction for difficult native PDFs', async () => {
-    const fetchImpl = vi.fn(async () => json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'extract_document', input: { rent: 1500 } }], usage: { input_tokens: 1000, output_tokens: 250 } }))
-    const result = await requestDocumentJson({ provider: 'claude', apiKey: 'fixture-key', system: 'Read', parts: [{ bytes: new Uint8Array([1]), mimeType: 'application/pdf' }], fetchImpl })
-    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+  it('uses gpt-4o-mini structured extraction for difficult native PDFs', async () => {
+    const fetchImpl = vi.fn(async () => json({ choices: [{ finish_reason: 'stop', message: { content: '{"rent":1500}' } }], usage: { prompt_tokens: 1000, completion_tokens: 250 } }))
+    const result = await requestDocumentJson({ provider: 'openai', apiKey: 'fixture-key', system: 'Read', parts: [{ bytes: new Uint8Array([1]), mimeType: 'application/pdf' }], schema: { type: 'object', properties: { confidence: { type: 'number', minimum: 0, maximum: 100 } } }, fetchImpl })
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
     const body = JSON.parse(String(init.body))
-    expect(body.model).toBe('claude-sonnet-5-5')
-    expect(body.messages[0].content[0].type).toBe('document')
-    expect(body.tool_choice.name).toBe('extract_document')
+    expect(url).toBe('https://api.openai.com/v1/chat/completions')
+    expect(body.model).toBe('gpt-4o-mini')
+    expect(body.messages[1].content[0].type).toBe('file')
+    expect(body.messages[1].content[0].file.file_data).toContain('data:application/pdf;base64,')
+    expect(body.response_format.json_schema.strict).toBe(true)
+    expect(body.response_format.json_schema.schema.properties.confidence.minimum).toBeUndefined()
     expect(result.inputTokens).toBe(1000)
+    expect(result.provider).toBe('openai')
+    expect(result.raw).toEqual({ rent: 1500 })
   })
   it('uploads large PDFs and deletes the temporary provider file after extraction', async () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

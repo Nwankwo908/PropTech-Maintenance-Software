@@ -1,20 +1,16 @@
 # Equipment photo reading
 
-Equipment photographs use **Gemini 3.8 Flash** (`gemini-3.8-flash`) first, with **Claude Sonnet 5.5** (`claude-sonnet-5-5`) for hard-to-read labels or a failed primary request. A confident, complete label does not call the backup. An absent label asks for a close-up rather than a second reading of the same distant view. Both providers use structured output. Separate inspection-document extraction and SMS maintenance triage retain their existing providers.
+Equipment photographs use **Gemini 3.8 Flash** (`gemini-3.8-flash`) first, with **`gpt-4o-mini`** for hard-to-read labels or a failed primary request. A confident, complete label does not call the backup. An absent label asks for a close-up rather than a second reading of the same distant view. Both providers use structured output. SMS maintenance triage keeps its own models.
 
 ## Edge configuration
 
-Set `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` securely in Supabase Edge secrets. Never expose them through `VITE_` variables. Equipment defaults to Gemini even if an older environment still specifies `VISION_PROVIDER=gpt4o`. Optional settings:
+Set `GEMINI_API_KEY` and `OPENAI_API_KEY` securely in Supabase Edge secrets. Never expose them through `VITE_` variables. Equipment defaults to Gemini. Optional settings:
 
 ```text
-VISION_PROVIDER=gemini
 GEMINI_VISION_MODEL=gemini-3.8-flash
-CLAUDE_VISION_MODEL=claude-sonnet-5-5
 ```
 
-The Gemini adapter calls `generativelanguage.googleapis.com`; the Claude adapter calls `api.anthropic.com`. Apply both Home Check migrations before deploying the affected functions and frontend, as described in [HOME_CHECK.md](HOME_CHECK.md). These deployment steps and live provider calls have not been run in this environment.
-
-The model identifiers are published in Google's [Gemini CLI model configuration](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/config/models.ts) and Anthropic's [SDK model definitions](https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts).
+The Gemini adapter calls `generativelanguage.googleapis.com`; the backup calls `api.openai.com` with `gpt-4o-mini`. Apply both Home Check migrations before deploying the affected functions and frontend, as described in [HOME_CHECK.md](HOME_CHECK.md). These deployment steps and live provider calls have not been run in this environment.
 
 ## Capture and review
 

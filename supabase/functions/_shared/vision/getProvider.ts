@@ -1,6 +1,6 @@
 import type { VisionProvider, VisionProviderName } from './types.ts'
-import { createClaudeVisionProvider } from './providers/claude.ts'
 import { createGeminiVisionProvider } from './providers/gemini.ts'
+import { createOpenAiVisionProvider } from './providers/openai.ts'
 import { withEquipmentBackup } from './providers/equipmentFallback.ts'
 import type { ManufacturerSerialRule } from '../../../../shared/vision/equipmentLabel.ts'
 
@@ -18,25 +18,19 @@ export function equipmentSerialFormatRules(): ManufacturerSerialRule[] {
   return rules
 }
 
-/** Equipment photos use Gemini Flash with a Claude Sonnet backup. The existing
- * OpenAI report/document extractor is a separate workflow. */
+/** Equipment photos use Gemini Flash, then the OpenAI equipment backup. */
 export function getVisionProvider(): VisionProvider {
   const options = { serialRules: equipmentSerialFormatRules() }
-  const claude = createClaudeVisionProvider(Deno.env.get('ANTHROPIC_API_KEY')?.trim() || '', {
-    ...options,
-    model: Deno.env.get('CLAUDE_VISION_MODEL')?.trim(),
-  })
-  if (getVisionProviderName() === 'claude') return claude
+  const openai = createOpenAiVisionProvider(Deno.env.get('OPENAI_API_KEY')?.trim() || '', options)
   const gemini = createGeminiVisionProvider(Deno.env.get('GEMINI_API_KEY')?.trim() || '', {
     ...options,
     model: Deno.env.get('GEMINI_VISION_MODEL')?.trim(),
   })
-  return withEquipmentBackup(gemini, claude, {
+  return withEquipmentBackup(gemini, openai, {
     primaryModel: Deno.env.get('GEMINI_VISION_MODEL')?.trim(),
-    backupModel: Deno.env.get('CLAUDE_VISION_MODEL')?.trim(),
   })
 }
 
 export function getVisionProviderName(): VisionProviderName {
-  return Deno.env.get('VISION_PROVIDER')?.trim().toLowerCase() === 'claude' ? 'claude' : 'gemini'
+  return 'gemini'
 }

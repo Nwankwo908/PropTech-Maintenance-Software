@@ -1,12 +1,27 @@
 export const GEMINI_DOCUMENT_MODEL = 'gemini-3.8-flash'
-export const CLAUDE_DOCUMENT_MODEL = 'claude-sonnet-5-5'
+export const OPENAI_LEASE_BACKUP_MODEL = 'gpt-4o-mini'
 export type DocumentPart = { text: string } | { bytes: Uint8Array; mimeType: string; page?: number }
-export type DocumentJsonResult = { raw: unknown; provider: 'gemini' | 'claude'; model: string; inputTokens: number; outputTokens: number }
-export type DocumentProviderInput = { provider?: 'gemini' | 'claude'; apiKey: string; system: string; parts: DocumentPart[]; schema?: Record<string, unknown>; fetchImpl?: typeof fetch; signal?: AbortSignal }
+export type DocumentJsonResult = { raw: unknown; provider: 'gemini' | 'openai'; model: string; inputTokens: number; outputTokens: number }
+export type DocumentProviderInput = { provider?: 'gemini' | 'openai'; apiKey: string; system: string; parts: DocumentPart[]; schema?: Record<string, unknown>; fetchImpl?: typeof fetch; signal?: AbortSignal }
 export function documentBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i=0;i<bytes.length;i+=32768) binary += String.fromCharCode(...bytes.subarray(i,i+32768))
   return btoa(binary)
+}
+function openAiStrictSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const copy = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>
+  const strip = (node: unknown) => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { node.forEach(strip); return }
+    const record = node as Record<string, unknown>
+    delete record.minimum
+    delete record.maximum
+    delete record.minItems
+    delete record.maxItems
+    Object.values(record).forEach(strip)
+  }
+  strip(copy)
+  return copy
 }
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve,ms))
 async function request(fetcher: typeof fetch, url: string, init: RequestInit, signal?: AbortSignal) {
@@ -15,17 +30,18 @@ async function request(fetcher: typeof fetch, url: string, init: RequestInit, si
   return response
 }
 export async function requestDocumentJson(input: DocumentProviderInput): Promise<DocumentJsonResult> {
-  if (!input.apiKey.trim()) throw new Error(`Configure ${input.provider === 'claude' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY'} for document scanning.`)
+  if (!input.apiKey.trim()) throw new Error(`Configure ${input.provider === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY'} for document scanning.`)
   const fetcher = input.fetchImpl || fetch
   const provider = input.provider || 'gemini'
-  const model = provider === 'gemini' ? GEMINI_DOCUMENT_MODEL : CLAUDE_DOCUMENT_MODEL
-  if (provider === 'claude') {
-    const content = input.parts.map(part => 'text' in part ? { type:'text', text:part.text } : { type:part.mimeType === 'application/pdf' ? 'document' : 'image', source:{type:'base64',media_type:part.mimeType,data:documentBase64(part.bytes)} })
-    const response = await request(fetcher,'https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':input.apiKey,'anthropic-version':'2023-06-01'},body:JSON.stringify({model,temperature:0,max_tokens:8192,system:input.system,messages:[{role:'user',content}],tools:[{name:'extract_document',description:'Return document fields with evidence and missing-information status.',input_schema:input.schema || {type:'object',additionalProperties:true}}],tool_choice:{type:'tool',name:'extract_document'}})},input.signal)
+  const model = provider === 'gemini' ? GEMINI_DOCUMENT_MODEL : OPENAI_LEASE_BACKUP_MODEL
+  if (provider === 'openai') {
+    const content = input.parts.map(part => 'text' in part ? { type:'text', text:part.text } : part.mimeType === 'application/pdf' ? { type:'file', file:{ filename:'lease.pdf', file_data:`data:application/pdf;base64,${documentBase64(part.bytes)}` } } : { type:'image_url', image_url:{ url:`data:${part.mimeType};base64,${documentBase64(part.bytes)}` } })
+    const response = await request(fetcher,'https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${input.apiKey}`},body:JSON.stringify({model,temperature:0,max_tokens:16384,messages:[{role:'system',content:input.system},{role:'user',content}],response_format:{type:'json_schema',json_schema:{name:'lease_scan',strict:true,schema:openAiStrictSchema(input.schema || {type:'object',additionalProperties:true,properties:{}})}}})},input.signal)
     const payload = await response.json()
-    const tool = payload.content?.find((block: {type?:string;name?:string})=>block.type==='tool_use'&&block.name==='extract_document')
-    if (payload.stop_reason !== 'tool_use' || !tool?.input) throw new Error('Document backup returned an incomplete result.')
-    return { raw:tool.input,provider,model,inputTokens:payload.usage?.input_tokens || 0,outputTokens:payload.usage?.output_tokens || 0 }
+    const choice = payload.choices?.[0]
+    const text = typeof choice?.message?.content === 'string' ? choice.message.content : ''
+    if (!text || choice?.finish_reason === 'length') throw new Error('Document backup returned an incomplete result.')
+    return { raw:JSON.parse(text), provider, model, inputTokens:payload.usage?.prompt_tokens || 0, outputTokens:payload.usage?.completion_tokens || 0 }
   }
   const uploaded: string[] = []
   try {

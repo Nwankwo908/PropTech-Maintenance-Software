@@ -17,7 +17,7 @@ export type SerialReview = {
   uncertainCharacters: SerialCharacterFlag[]
   retake: boolean
   retakePrompt: string | null
-  provider: "gemini-3.8-flash" | "claude-sonnet-5-5" | null
+  provider: "gemini-3.8-flash" | "gpt-4o-mini" | null
   paired: boolean
 }
 

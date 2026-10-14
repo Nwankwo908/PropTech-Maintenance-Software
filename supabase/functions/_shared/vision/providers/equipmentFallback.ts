@@ -5,6 +5,7 @@ import {
   needsLabelBackup,
 } from '../../../../../shared/vision/equipmentLabel.ts'
 import type { ApplianceVisionResult, VisionProvider } from '../types.ts'
+import { OPENAI_EQUIPMENT_MODEL } from './equipmentRequest.ts'
 
 /** One primary call and at most one backup. Backup failure preserves the primary
  * evidence/retake; conflicting confident readings never become a guessed ID. */
@@ -86,8 +87,8 @@ export function withEquipmentBackup(
         return {
           ...guardEquipmentLabel(second),
           extractionTrace: {
-            selectedProvider: second.extractionTrace?.selectedProvider || 'claude',
-            selectedModel: second.extractionTrace?.selectedModel || 'claude-sonnet-5-5',
+            selectedProvider: second.extractionTrace?.selectedProvider || 'openai',
+            selectedModel: second.extractionTrace?.selectedModel || OPENAI_EQUIPMENT_MODEL,
             attempts,
             fallbackReason: reason,
           },
@@ -95,12 +96,12 @@ export function withEquipmentBackup(
       } catch {
         if (!first) {
           throw new Error(
-            'Equipment photo reading is unavailable. Check the Gemini and Claude provider configuration, then retry.',
+            'Equipment photo reading is unavailable. Check the Gemini and OpenAI provider configuration, then retry.',
           )
         }
         attempts.push({
-          provider: 'claude',
-          model: models.backupModel || 'claude-sonnet-5-5',
+          provider: 'openai',
+          model: models.backupModel || OPENAI_EQUIPMENT_MODEL,
           outcome: 'request_failed',
         })
         return {

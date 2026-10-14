@@ -56,56 +56,51 @@ Deno.test("parseLlmClassificationDraft maps vendor_trade, not landlord STRUCTURA
   assertEqual(landlordShaped?.vendorTrade, null, "envelope trade is ignored")
 })
 
-Deno.test("llmClassifyMaintenance returns null without either model key", async () => {
+Deno.test("llmClassifyMaintenance returns null without an OpenAI key", async () => {
   const draft = await llmClassifyMaintenance("Leaky faucet", "{}", null, {
     openaiKey: "",
-    anthropicKey: "",
   })
   assertEqual(draft, null, "no keys → skip")
 })
 
-Deno.test("Claude Haiku 5.5 success is interpretation-only", async () => {
-  const draft = await llmClassifyMaintenance("Leaky faucet", "{}", null, {
-    openaiKey: "",
-    anthropicKey: "sk-ant-test",
-    fetchImpl: async () =>
-      jsonResponse({
-        content: [{ type: "text", text: DRAFT_JSON }],
-      }),
-  })
-  assertEqual(draft?.vendorTrade, "plumbing", "draft trade")
-  assertEqual(draft?.provider, "claude-haiku-5-5", "provider")
-})
-
-Deno.test("invalid Haiku JSON retries then falls back to GPT-6 Luna", async () => {
-  let haikuCalls = 0
+Deno.test("GPT-6 Luna success is interpretation-only and does not call Anthropic", async () => {
+  let model = ""
   const draft = await llmClassifyMaintenance("Leaky faucet", "{}", null, {
     openaiKey: "sk-test",
-    anthropicKey: "sk-ant-test",
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       const href = String(url)
-      if (href.includes("anthropic.com")) {
-        haikuCalls += 1
-        return jsonResponse({
-          content: [{ type: "text", text: "not-json" }],
-        })
-      }
+      if (href.includes("anthropic.com")) throw new Error("anthropic called")
+      model = JSON.parse(String(init?.body)).model
       return jsonResponse({
         choices: [{ message: { content: DRAFT_JSON } }],
       })
     },
   })
-  assertEqual(haikuCalls, 2, "retried Haiku")
-  assertEqual(draft?.provider, "gpt-6-luna", "fallback")
-  assertEqual(draft?.vendorTrade, "plumbing", "parsed fallback")
+  assertEqual(model, "gpt-6-luna", "model")
+  assertEqual(draft?.vendorTrade, "plumbing", "draft trade")
+  assertEqual(draft?.provider, "gpt-6-luna", "provider")
 })
 
-Deno.test("Haiku failure without OpenAI returns null so rules still run", async () => {
+Deno.test("invalid Luna JSON retries twice then returns null so rules still run", async () => {
+  let calls = 0
+  const draft = await llmClassifyMaintenance("Leaky faucet", "{}", null, {
+    openaiKey: "sk-test",
+    fetchImpl: async () => {
+      calls += 1
+      return jsonResponse({
+        choices: [{ message: { content: "not-json" } }],
+      })
+    },
+  })
+  assertEqual(calls, 2, "retried Luna")
+  assertEqual(draft, null, "rules still run")
+})
+
+Deno.test("Luna HTTP failure returns null so rules still run", async () => {
   const raw = await fetchLlmClassificationJson({
     systemPrompt: "sys",
     userPrompt: "user",
-    openaiKey: "",
-    anthropicKey: "sk-ant-test",
+    openaiKey: "sk-test",
     fetchImpl: async () => jsonResponse({ error: "down" }, 500),
   })
   assertEqual(raw, null, "null draft")

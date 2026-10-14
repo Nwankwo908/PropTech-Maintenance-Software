@@ -240,12 +240,10 @@ export async function llmClassifyMaintenance(
   opts?: {
     fetchImpl?: LlmClassifyFetch
     openaiKey?: string | null
-    anthropicKey?: string | null
   },
 ): Promise<LlmClassificationDraft | null> {
   const openaiKey = (opts?.openaiKey ?? envTrim("OPENAI_API_KEY")).trim()
-  const anthropicKey = (opts?.anthropicKey ?? envTrim("ANTHROPIC_API_KEY")).trim()
-  if ((!openaiKey && !anthropicKey) || !sanitized.trim()) return null
+  if (!openaiKey || !sanitized.trim()) return null
 
   const userPrompt =
     `Description: """${sanitized.slice(0, 4000)}"""\n` +
@@ -259,7 +257,6 @@ export async function llmClassifyMaintenance(
       userPrompt,
       fetchImpl: opts?.fetchImpl,
       openaiKey,
-      anthropicKey,
     })
     if (!fetched) return null
     const draft = parseLlmClassificationDraft(fetched.content, smsContext)

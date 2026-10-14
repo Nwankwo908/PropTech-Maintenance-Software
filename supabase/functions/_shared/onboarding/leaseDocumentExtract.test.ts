@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('./leaseDocumentSource.ts', () => ({ leaseDocumentParts: vi.fn() }))
 import { extractLeaseDocument } from './leaseDocumentExtract'
 import { leaseFixture } from '../../../../shared/onboarding/leaseScan.fixtures'
-import { CLAUDE_DOCUMENT_MODEL, GEMINI_DOCUMENT_MODEL, type DocumentProviderInput } from './documentProvider'
+import { GEMINI_DOCUMENT_MODEL, OPENAI_LEASE_BACKUP_MODEL, type DocumentProviderInput } from './documentProvider'
 
 const buildParts = vi.fn(async (_input: unknown, pages: number[]) => [{ text: `Original pages ${pages.join(',')}` }])
-const response = (raw: unknown, provider: 'gemini' | 'claude' = 'gemini') => ({ raw, provider, model: provider === 'gemini' ? GEMINI_DOCUMENT_MODEL : CLAUDE_DOCUMENT_MODEL, inputTokens: 2000, outputTokens: 300 })
-const input = () => ({ apiKey: 'fixture', anthropicApiKey: 'backup-fixture', bytes: new Uint8Array([1]), mimeType: 'application/pdf', pageTexts: Array.from({ length: 12 }, () => ''), buildParts })
+const response = (raw: unknown, provider: 'gemini' | 'openai' = 'gemini') => ({ raw, provider, model: provider === 'gemini' ? GEMINI_DOCUMENT_MODEL : OPENAI_LEASE_BACKUP_MODEL, inputTokens: 2000, outputTokens: 300 })
+const input = () => ({ apiKey: 'fixture', openaiApiKey: 'backup-fixture', bytes: new Uint8Array([1]), mimeType: 'application/pdf', pageTexts: Array.from({ length: 12 }, () => ''), buildParts })
 describe('single-upload lease recovery', () => {
   it('reads every page and avoids extra calls when complete', async () => {
     const request = vi.fn(async () => response(leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1))))
@@ -31,13 +31,14 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.fields.monthly_rent.pages).toEqual([12])
     expect(result.leaseReview.needsReview).toBe(false)
   })
-  it('uses Claude only after primary recovery leaves unclear fields', async () => {
+  it('uses gpt-4o-mini only after primary recovery leaves unclear fields', async () => {
     const raw = leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1))
     raw.fields.monthly_rent.status = 'unreadable'
-    const request = vi.fn(async (call: DocumentProviderInput) => response(call.provider === 'claude' ? leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1)) : raw, call.provider))
+    const request = vi.fn(async (call: DocumentProviderInput) => response(call.provider === 'openai' ? leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1)) : raw, call.provider))
     const result = await extractLeaseDocument({ ...input(), request })
     expect(result.leaseReview.attempts.map(a => a.phase)).toEqual(['initial', 'recovery', 'backup'])
-    expect(result.leaseReview.attempts[2].model).toBe('claude-sonnet-5-5')
+    expect(result.leaseReview.attempts[2].provider).toBe('openai')
+    expect(result.leaseReview.attempts[2].model).toBe('gpt-4o-mini')
   })
   it('retains partial evidence and requests review when subsequent calls fail', async () => {
     const raw = leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1))
@@ -50,7 +51,7 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.fields.monthly_rent.status).toBe('unreadable')
   })
   it('uses backup when the initial Gemini call fails', async () => {
-    const request = vi.fn(async (call: DocumentProviderInput) => { if (call.provider === 'gemini') throw new Error('fixture'); return response(leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1)), 'claude') })
+    const request = vi.fn(async (call: DocumentProviderInput) => { if (call.provider === 'gemini') throw new Error('fixture'); return response(leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1)), 'openai') })
     const result = await extractLeaseDocument({ ...input(), request })
     expect(result.leaseReview.attempts.map(a => a.phase)).toEqual(['initial', 'backup'])
     expect(result.leaseReview.needsReview).toBe(false)

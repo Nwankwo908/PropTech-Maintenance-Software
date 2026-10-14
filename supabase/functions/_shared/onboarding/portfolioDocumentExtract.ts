@@ -1437,7 +1437,7 @@ export async function extractPortfolioDocument(input: {
   bytes: Uint8Array
   pageImages?: string[]
   insuranceIntent?: "property_policy" | "auto"
-  anthropicApiKey?: string
+  openaiApiKey?: string
   signal?: AbortSignal
   onLeaseUpdate?: (result: LeaseDocumentResult | null, stage: LeaseScanStage) => void
 }): Promise<PortfolioDocumentExtractPayload> {
@@ -1546,7 +1546,7 @@ export async function extractPortfolioDocument(input: {
 
   if (kind === "lease") {
     const pageTexts = hasPdfBytes ? pdfPageTexts : wordText?.trim() ? [wordText] : Array.from({length: Math.max(1,pageImages.length)}, () => "")
-    return await extractLeaseDocument({apiKey: input.apiKey, anthropicApiKey: input.anthropicApiKey, bytes:input.bytes, mimeType:hasPdfBytes ? "application/pdf" : wordText?.trim() ? "text/plain" : input.contentType, pageTexts, pageImages, signal:input.signal, onUpdate:input.onLeaseUpdate})
+    return await extractLeaseDocument({apiKey: input.apiKey, openaiApiKey: input.openaiApiKey, bytes:input.bytes, mimeType:hasPdfBytes ? "application/pdf" : wordText?.trim() ? "text/plain" : input.contentType, pageTexts, pageImages, signal:input.signal, onUpdate:input.onLeaseUpdate})
   }
 
   // Preview images from the browser are a short crop (first pages only).

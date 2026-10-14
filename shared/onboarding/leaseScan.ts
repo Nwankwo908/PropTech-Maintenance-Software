@@ -26,7 +26,7 @@ export type LeaseScanReview = {
   coverageComplete: boolean
   complete: boolean
   needsReview: boolean
-  attempts: Array<{ provider: 'gemini' | 'claude'; model: string; phase: 'initial' | 'recovery' | 'backup'; pages: number[]; inputTokens: number; outputTokens: number; outcome: string }>
+  attempts: Array<{ provider: 'gemini' | 'openai'; model: string; phase: 'initial' | 'recovery' | 'backup'; pages: number[]; inputTokens: number; outputTokens: number; outcome: string }>
 }
 export type LeaseScanStage = 'reading' | 'checking' | 'recovering' | 'backup' | 'complete'
 export const LEASE_FIELD_NAMES = Object.keys(LEASE_FIELD_LABELS) as LeaseFieldName[]

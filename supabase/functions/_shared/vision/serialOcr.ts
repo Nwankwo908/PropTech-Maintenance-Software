@@ -1,16 +1,15 @@
 /**
  * Equipment serial OCR.
- * Gemini 3.8 Flash reads the label. Claude Sonnet 5.5 runs only if Gemini cannot.
+ * Gemini 3.8 Flash reads the label. The OpenAI equipment backup runs only if Gemini cannot.
  */
 import { geminiGenerateJsonText } from "../documentExtract/geminiGenerateJson.ts"
+import { OPENAI_EQUIPMENT_MODEL } from "./providers/equipmentRequest.ts"
 import {
   buildSerialReview,
   normalizeSerial,
   uncertainCharactersFromModel,
   type SerialReview,
 } from "./serialFormat.ts"
-
-const SONNET_MODEL = "claude-sonnet-5-5"
 
 const SERIAL_PROMPT =
   "Read the appliance serial number from the nameplate photo. " +
@@ -45,44 +44,39 @@ async function readWithGemini(apiKey: string, images: SerialImage[]): Promise<st
   })
 }
 
-async function readWithSonnet(apiKey: string, images: SerialImage[]): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+async function readWithOpenAi(apiKey: string, images: SerialImage[]): Promise<string> {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      Authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: SONNET_MODEL,
+      model: OPENAI_EQUIPMENT_MODEL,
       max_tokens: 1024,
-      output_config: { effort: "low" },
-      system: SERIAL_PROMPT,
+      temperature: 0,
       messages: [
+        { role: "system", content: SERIAL_PROMPT },
         {
           role: "user",
           content: [
             ...images.map((image) => ({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: image.mediaType || "image/jpeg",
-                data: image.base64,
+              type: "image_url",
+              image_url: {
+                url: `data:${image.mediaType || "image/jpeg"};base64,${image.base64}`,
               },
             })),
             { type: "text", text: "Transcribe the serial number." },
           ],
         },
       ],
+      response_format: { type: "json_object" },
     }),
   })
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "")
-    throw new Error(`sonnet_http_${res.status} ${errText.slice(0, 180)}`)
-  }
-  const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> }
-  const text = data.content?.find((part) => part.type === "text")?.text?.trim() ?? ""
-  if (!text) throw new Error("sonnet_empty")
+  if (!res.ok) throw new Error(`openai_http_${res.status}`)
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const text = data.choices?.[0]?.message?.content?.trim() ?? ""
+  if (!text) throw new Error("openai_empty")
   return text.replace(/```json|```/g, "").trim()
 }
 
@@ -94,8 +88,8 @@ export async function readEquipmentSerial(input: {
   const images = input.images.filter((image) => image.base64.trim().length > 0)
   if (images.length === 0) return null
   const geminiKey = Deno.env.get("GEMINI_API_KEY")?.trim() ?? ""
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY")?.trim() ?? ""
-  if (!geminiKey && !anthropicKey) return null
+  const openaiKey = Deno.env.get("OPENAI_API_KEY")?.trim() ?? ""
+  if (!geminiKey && !openaiKey) return null
 
   let provider: SerialReview["provider"] = null
   let payload: { serial: string | null; readable: boolean; characters: unknown } | null = null
@@ -111,13 +105,13 @@ export async function readEquipmentSerial(input: {
       )
     }
   }
-  if ((!payload || !payload.readable) && anthropicKey) {
+  if ((!payload || !payload.readable) && openaiKey) {
     try {
-      payload = parseSerialPayload(await readWithSonnet(anthropicKey, images))
-      provider = "claude-sonnet-5-5"
+      payload = parseSerialPayload(await readWithOpenAi(openaiKey, images))
+      provider = OPENAI_EQUIPMENT_MODEL
     } catch (error) {
       console.error(
-        "[serial-ocr] sonnet",
+        "[serial-ocr] openai",
         error instanceof Error ? error.message : error,
       )
     }
@@ -128,7 +122,7 @@ export async function readEquipmentSerial(input: {
       serial: null,
       readable: false,
       uncertainCharacters: [],
-      provider: geminiKey ? "gemini-3.8-flash" : "claude-sonnet-5-5",
+      provider: geminiKey ? "gemini-3.8-flash" : OPENAI_EQUIPMENT_MODEL,
       paired: input.paired,
     })
   }

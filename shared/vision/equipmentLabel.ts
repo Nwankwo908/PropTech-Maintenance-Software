@@ -14,9 +14,9 @@ export type LabelReadability = {
   formatWarnings: string[]
 }
 export type EquipmentExtractionTrace = {
-  selectedProvider: 'gemini' | 'claude'
+  selectedProvider: 'gemini' | 'openai'
   selectedModel: string
-  attempts: Array<{ provider: 'gemini' | 'claude'; model: string; outcome: string }>
+  attempts: Array<{ provider: 'gemini' | 'openai'; model: string; outcome: string }>
   fallbackReason?: string
 }
 export type EquipmentPhotoContext = {

@@ -11,7 +11,7 @@
  *  3. Other non-repair intents: rent, lease or move-out, human, complaint, status
  *  4. Repair via the shared deterministic rules (the intake classifier's source)
  *  5. Semantic match against the classifier phrase library (cached embeddings)
- *  6. Fresh threads only: Claude Haiku 5.5, then GPT-6 Luna (4s, JSON)
+ *  6. Fresh threads only: GPT-6 Luna (4s, JSON)
  *  7. Default: any problem signal starts intake and confirms the reading out
  *     loud; the menu is only for messages with no signal at all
  */
@@ -84,7 +84,6 @@ export type RecognizeInboundIntentContext = {
   skipSemantic?: boolean
   skipLlm?: boolean
   openaiKey?: string | null
-  anthropicKey?: string | null
   fetchImpl?: typeof fetch
 }
 
@@ -281,21 +280,19 @@ function asIntent(raw: unknown): InboundIntent | null {
     : null
 }
 
-/** Layer 6. Haiku 5.5, then GPT-6 Luna. 4s budget. Failure falls through to layer 7. */
+/** Layer 6. GPT-6 Luna. 4s budget. Failure falls through to layer 7. */
 async function llmLayer(
   body: string,
   ctx: RecognizeInboundIntentContext,
 ): Promise<InboundIntentRecognition | null> {
   const openaiKey = (ctx.openaiKey ?? envKey("OPENAI_API_KEY")).trim()
-  const anthropicKey = (ctx.anthropicKey ?? envKey("ANTHROPIC_API_KEY")).trim()
-  if (!openaiKey && !anthropicKey) return null
+  if (!openaiKey) return null
 
   try {
     const fetched = await fetchLlmClassificationJson({
       systemPrompt: LLM_SYSTEM_PROMPT,
       userPrompt: body.slice(0, 600),
       openaiKey,
-      anthropicKey,
       fetchImpl: ctx.fetchImpl,
       timeoutMs: LLM_TIMEOUT_MS,
     })

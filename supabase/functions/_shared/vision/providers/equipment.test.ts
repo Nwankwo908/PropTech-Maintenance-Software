@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createGeminiVisionProvider } from './gemini.ts'
-import { createClaudeVisionProvider } from './claude.ts'
+import { createOpenAiVisionProvider } from './openai.ts'
 import { withEquipmentBackup } from './equipmentFallback.ts'
 import { equipmentResult } from './equipmentRequest.ts'
 
@@ -41,14 +41,13 @@ const geminiResponse = (value: unknown = raw) =>
       }],
     }),
   )
-const claudeResponse = (value: unknown = raw) =>
+const openaiResponse = (value: unknown = raw) =>
   new Response(
     JSON.stringify({
-      stop_reason: 'tool_use',
-      content: [{ type: 'tool_use', name: 'record_equipment', input: value }],
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }],
     }),
   )
-describe('Gemini and Claude equipment adapters', () => {
+describe('Gemini and gpt-4o-mini equipment adapters', () => {
   it('uses Gemini 3.8 Flash with two labeled image inputs and strict evidence schema', async () => {
     const fetchImpl = vi.fn(async () => geminiResponse())
     const result = await createGeminiVisionProvider('fixture-key', { fetchImpl }).analyzeImage(
@@ -66,45 +65,47 @@ describe('Gemini and Claude equipment adapters', () => {
     expect(body.generationConfig.responseJsonSchema.required).toContain('labelReadability')
     expect(result.extractionTrace?.selectedModel).toBe('gemini-3.8-flash')
   })
-  it('uses Sonnet 5.5 and a structured tool result, not arbitrary prose', async () => {
-    const fetchImpl = vi.fn(async () => claudeResponse())
-    const result = await createClaudeVisionProvider('fixture-key', { fetchImpl }).analyzeImage(
+  it('uses gpt-4o-mini and structured JSON, not arbitrary prose', async () => {
+    const fetchImpl = vi.fn(async () => openaiResponse())
+    const result = await createOpenAiVisionProvider('fixture-key', { fetchImpl }).analyzeImage(
       'AQ==',
       'water_heater',
       'image/jpeg',
       images,
     )
-    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
     const body = JSON.parse(init.body as string)
-    expect(body.model).toBe('claude-sonnet-5-5')
-    expect(body.messages[0].content.filter((part: { type: string }) => part.type === 'image'))
+    expect(url).toBe('https://api.openai.com/v1/chat/completions')
+    expect(body.model).toBe('gpt-4o-mini')
+    expect(body.messages[1].content.filter((part: { type: string }) => part.type === 'image_url'))
       .toHaveLength(2)
-    expect(body.tool_choice.name).toBe('record_equipment')
+    expect(body.response_format.json_schema.name).toBe('equipment_reading')
     expect(result.identifiedItem.serialNumber).toBe('AB012345')
+    expect(result.extractionTrace?.selectedProvider).toBe('openai')
   })
-  it('readable Gemini labels do not call Claude', async () => {
-    const secondary = vi.fn(async () => claudeResponse())
+  it('readable Gemini labels do not call the backup', async () => {
+    const secondary = vi.fn(async () => openaiResponse())
     const result = await withEquipmentBackup(
       createGeminiVisionProvider('fixture', { fetchImpl: vi.fn(async () => geminiResponse()) }),
-      createClaudeVisionProvider('fixture', { fetchImpl: secondary }),
+      createOpenAiVisionProvider('fixture', { fetchImpl: secondary }),
     ).analyzeImage('AQ==', undefined, 'image/jpeg', images)
     expect(secondary).not.toHaveBeenCalled()
     expect(result.extractionTrace?.selectedProvider).toBe('gemini')
   })
-  it('unreadable Gemini labels get one Sonnet pass with both images', async () => {
+  it('unreadable Gemini labels get one gpt-4o-mini pass with both images', async () => {
     const unreadable = {
       ...raw,
       labelReadability: { ...raw.labelReadability, status: 'unreadable' },
     }
     const primary = vi.fn(async () => geminiResponse(unreadable))
-    const secondary = vi.fn(async () => claudeResponse())
+    const secondary = vi.fn(async () => openaiResponse())
     const result = await withEquipmentBackup(
       createGeminiVisionProvider('fixture', { fetchImpl: primary }),
-      createClaudeVisionProvider('fixture', { fetchImpl: secondary }),
+      createOpenAiVisionProvider('fixture', { fetchImpl: secondary }),
     ).analyzeImage('AQ==', undefined, 'image/jpeg', images)
     expect(primary).toHaveBeenCalledTimes(1)
     expect(secondary).toHaveBeenCalledTimes(1)
-    expect(result.extractionTrace?.selectedModel).toBe('claude-sonnet-5-5')
+    expect(result.extractionTrace?.selectedModel).toBe('gpt-4o-mini')
     expect(result.extractionTrace?.attempts).toHaveLength(2)
     expect(result.labelReadability?.retakeRequested).toBe(false)
   })
@@ -114,8 +115,8 @@ describe('Gemini and Claude equipment adapters', () => {
       createGeminiVisionProvider('fixture', {
         fetchImpl: vi.fn(async () => geminiResponse(value)),
       }),
-      createClaudeVisionProvider('fixture', {
-        fetchImpl: vi.fn(async () => claudeResponse(value)),
+      createOpenAiVisionProvider('fixture', {
+        fetchImpl: vi.fn(async () => openaiResponse(value)),
       }),
     ).analyzeImage('AQ==', undefined, 'image/jpeg', images)
     expect(result.identifiedItem.modelNumber).toBeUndefined()
@@ -129,7 +130,7 @@ describe('Gemini and Claude equipment adapters', () => {
       createGeminiVisionProvider('fixture', {
         fetchImpl: vi.fn(async () => geminiResponse(value)),
       }),
-      createClaudeVisionProvider('', { fetchImpl: vi.fn() }),
+      createOpenAiVisionProvider('', { fetchImpl: vi.fn() }),
     ).analyzeImage('AQ==')
     expect(result.labelReadability?.retakeRequested).toBe(true)
     const failure = createGeminiVisionProvider('secret-fixture', {
@@ -159,8 +160,8 @@ describe('Gemini and Claude equipment adapters', () => {
       createGeminiVisionProvider('fixture', {
         fetchImpl: vi.fn(async () => geminiResponse(first)),
       }),
-      createClaudeVisionProvider('fixture', {
-        fetchImpl: vi.fn(async () => claudeResponse(second)),
+      createOpenAiVisionProvider('fixture', {
+        fetchImpl: vi.fn(async () => openaiResponse(second)),
       }),
     ).analyzeImage('AQ==')
     expect(result.identifiedItem.modelNumber).toBeUndefined()

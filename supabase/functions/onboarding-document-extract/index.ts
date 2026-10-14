@@ -1,5 +1,5 @@
 /**
- * Document extraction with Gemini and lease recovery with Claude.
+ * Document extraction with Gemini and the OpenAI lease backup.
  *
  * POST {
  *   landlordId,
@@ -240,7 +240,7 @@ Deno.serve(async (req) => {
       async start(controller) {
         const emit = (event: string, data: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
         try {
-          const extracted = await extractPortfolioDocument({apiKey:geminiKey,anthropicApiKey:Deno.env.get('ANTHROPIC_API_KEY')?.trim(),fileName,documentCategory:propertyInsuranceExtract?'property_insurance':documentCategory,contentType,bytes:bytes || new Uint8Array(),pageImages,insuranceIntent,signal:AbortSignal.any([req.signal,abort.signal]),onLeaseUpdate:(result,stage)=>emit('progress',{stage,extracted:result})})
+          const extracted = await extractPortfolioDocument({apiKey:geminiKey,openaiApiKey:Deno.env.get('OPENAI_API_KEY')?.trim(),fileName,documentCategory:propertyInsuranceExtract?'property_insurance':documentCategory,contentType,bytes:bytes || new Uint8Array(),pageImages,insuranceIntent,signal:AbortSignal.any([req.signal,abort.signal]),onLeaseUpdate:(result,stage)=>emit('progress',{stage,extracted:result})})
           emit('result',{extracted,hasData:portfolioExtractHasData(extracted),needsAttention:!portfolioExtractHasData(extracted)||extracted.leaseReview?.needsReview===true||extracted.warnings.some(w=>/not supported|not parsed|upload pdf|upload csv/i.test(w))})
           controller.close()
         } catch (error) {
@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
   try {
     const extracted: PortfolioDocumentExtractPayload = await extractPortfolioDocument({
       apiKey: geminiKey,
-      anthropicApiKey: Deno.env.get("ANTHROPIC_API_KEY")?.trim(),
+      openaiApiKey: Deno.env.get("OPENAI_API_KEY")?.trim(),
       signal: req.signal,
       fileName,
       documentCategory: propertyInsuranceExtract ? "property_insurance" : documentCategory,
