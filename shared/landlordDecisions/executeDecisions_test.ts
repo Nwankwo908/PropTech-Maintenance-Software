@@ -58,7 +58,10 @@ Deno.test("three-ticket batch reply books one, snoozes one, and confirms once", 
   ]
   const batchSms = buildLandlordPickBatchSms(items, 0)
   assertStringIncludes(batchSms, "Ulo: 3 requests need your decision")
-  assertStringIncludes(batchSms, "#101 12A Kitchen sink leak - ABC Plumbing Tue AM - est $150-250")
+  assertStringIncludes(
+    batchSms,
+    "#101 Kitchen sink leak — Unit 12A (kitchen) - ABC Plumbing · Tue AM - est $150-250",
+  )
   assertEquals(batchSms.includes("STOP"), false)
 
   const candidates = [
@@ -73,10 +76,7 @@ Deno.test("three-ticket batch reply books one, snoozes one, and confirms once", 
     tz,
   )
   const plan = executeDecisionPlan({ candidates, parsed })
-  const confirmation = buildDecisionConfirmation(
-    plan.lines.map((line) => line.text),
-    plan.question,
-  )
+  const confirmation = buildDecisionConfirmation(plan.lines, plan.question)
 
   assertEquals(plan.mutations.filter((row) => row.kind === "book").length, 1)
   assertEquals(plan.mutations.filter((row) => row.kind === "snooze").length, 1)
@@ -86,10 +86,10 @@ Deno.test("three-ticket batch reply books one, snoozes one, and confirms once", 
     displayId: 103,
     until: "2026-10-16",
   })
-  assertStringIncludes(confirmation, "#101 booked Tue AM with ABC Plumbing.")
-  assertStringIncludes(confirmation, "#103 snoozed to Fri 10/16.")
-  assertStringIncludes(confirmation, "#999 isn't in your list.")
-  assertEquals(confirmation.split("\n").length, 1)
+  assertStringIncludes(confirmation, "Done: #101 approved. #103 snoozed to Fri 10/16.")
+  assertStringIncludes(confirmation, "I couldn't find #999. Your open requests are #101, #103, #104.")
+  assertEquals(confirmation.includes("Done: #101 approved. #103 snoozed to Fri 10/16. I couldn't find"), false)
+  assertEquals(confirmation.split("\n").length, 2)
 })
 
 Deno.test("YES ALL within 10 minutes of a replacement batch asks before booking", () => {
@@ -102,6 +102,58 @@ Deno.test("YES ALL within 10 minutes of a replacement batch asks before booking"
   assertEquals(plan.mutations, [])
   assertEquals(plan.executed, false)
   assertStringIncludes(plan.question ?? "", "Reply YES ALL again")
+})
+
+Deno.test("a wrong id with one open request suggests that request and does not book", () => {
+  const open = {
+    ...candidate(102, "reactive"),
+    issue: "Bedroom sink leak",
+    unitLabel: "2",
+  }
+  const parsed = parseDecisionReply("101", [{ displayId: 102, ticketClass: "reactive" }], now, tz)
+  const plan = executeDecisionPlan({ candidates: [open], parsed })
+  const confirmation = buildDecisionConfirmation(plan.lines, plan.question)
+  assertEquals(plan.mutations, [])
+  assertEquals(confirmation.includes("Done"), false)
+  assertStringIncludes(confirmation, "I couldn't find #101. Did you mean the Bedroom sink leak in Unit 2?")
+})
+
+Deno.test("a bare matching number asks for an action and does not book", () => {
+  const open = { ...candidate(102, "reactive"), issue: "Bedroom sink leak" }
+  const parsed = parseDecisionReply("102", [{ displayId: 102, ticketClass: "reactive" }], now, tz)
+  const plan = executeDecisionPlan({ candidates: [open], parsed })
+  const confirmation = buildDecisionConfirmation(plan.lines, plan.question)
+  assertEquals(plan.mutations, [])
+  assertEquals(confirmation.includes("Done"), false)
+  assertStringIncludes(
+    confirmation,
+    "What should I do with #102 (Bedroom sink leak)? Reply YES, SNOOZE FRI, or SKIP.",
+  )
+})
+
+Deno.test("YES with one open item approves it", () => {
+  const open = candidate(102, "reactive")
+  const parsed = parseDecisionReply("YES", [{ displayId: 102, ticketClass: "reactive" }], now, tz)
+  const plan = executeDecisionPlan({ candidates: [open], parsed })
+  const confirmation = buildDecisionConfirmation(plan.lines, plan.question)
+  assertEquals(plan.mutations, [{ kind: "book", ticketId: "ticket-102", displayId: 102 }])
+  assertEquals(confirmation, "Done: #102 approved.")
+})
+
+Deno.test("mixed known yes and unknown skip keeps Done off the unknown id", () => {
+  const open = candidate(102, "reactive")
+  const parsed = parseDecisionReply(
+    "102 yes, 999 skip",
+    [{ displayId: 102, ticketClass: "reactive" }],
+    now,
+    tz,
+  )
+  const plan = executeDecisionPlan({ candidates: [open], parsed })
+  const confirmation = buildDecisionConfirmation(plan.lines, plan.question)
+  assertEquals(plan.mutations.map((row) => row.kind), ["book"])
+  assertStringIncludes(confirmation, "Done: #102 approved.")
+  assertStringIncludes(confirmation, "I couldn't find #999.")
+  assertEquals(/^Done:.*999/m.test(confirmation), false)
 })
 
 Deno.test("skip on a tenant request does not change the ticket", () => {

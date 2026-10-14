@@ -14,11 +14,16 @@ export type BatchCandidate = {
   windowLabel: string
   vendorAvailable: boolean
   windowAvailable: boolean
+  issue?: string | null
+  unitLabel?: string | null
 }
+
+export type DecisionLineKind = "applied" | "unknown" | "unclear"
 
 export type DecisionStatusLine = {
   displayId: number | null
   text: string
+  kind: DecisionLineKind
 }
 
 export type DecisionMutation =
@@ -74,12 +79,9 @@ function lineFor(intent: DecisionIntent, candidate: BatchCandidate): {
         text: `#${candidate.displayId} isn't available as offered. Reply ${candidate.displayId} options.`,
       }
     }
-    const window = candidate.windowLabel.trim()
-    const vendor = candidate.vendorName.trim() || "the vendor"
-    const when = window ? `${window} with ${vendor}` : vendor
     return {
       mutation: { kind: "book", ticketId: candidate.ticketId, displayId: candidate.displayId },
-      text: `#${candidate.displayId} booked ${when}.`,
+      text: `#${candidate.displayId} approved.`,
     }
   }
   if (intent.action === "snooze") {
@@ -112,11 +114,46 @@ function lineFor(intent: DecisionIntent, candidate: BatchCandidate): {
   }
 }
 
-export function buildDecisionConfirmation(lines: string[], question: string | null): string {
-  const done = lines.filter(Boolean)
-  const body = done.length > 0 ? `Done: ${done.join(" ")}` : "Done."
-  if (!question) return body
-  return done.length > 0 ? `${body} ${question}` : question
+export function buildDecisionConfirmation(
+  lines: DecisionStatusLine[],
+  question: string | null,
+): string {
+  const applied = lines.filter((line) => line.kind === "applied" && line.text.trim())
+  const other = lines.filter((line) => line.kind !== "applied" && line.text.trim())
+  const parts: string[] = []
+  if (applied.length > 0) {
+    parts.push(`Done: ${applied.map((line) => line.text.trim()).join(" ")}`)
+  }
+  for (const line of other) parts.push(line.text.trim())
+  if (question?.trim()) parts.push(question.trim())
+  return parts.join("\n")
+}
+
+function openCandidates(candidates: BatchCandidate[]): BatchCandidate[] {
+  return candidates.filter((row) => row.awaitingPick)
+}
+
+function unknownIdRecovery(displayId: number, candidates: BatchCandidate[]): string {
+  const open = openCandidates(candidates)
+  if (open.length === 1) {
+    const one = open[0]!
+    const issue = one.issue?.trim() || "request"
+    const unit = one.unitLabel?.trim()
+    const where = unit
+      ? (/^unit\b/i.test(unit) ? unit : `Unit ${unit}`)
+      : "that unit"
+    return `I couldn't find #${displayId}. Did you mean the ${issue} in ${where}? Reply YES to approve or SNOOZE FRI.`
+  }
+  const ids = open.map((row) => `#${row.displayId}`).join(", ")
+  if (!ids) return `I couldn't find #${displayId}.`
+  return `I couldn't find #${displayId}. Your open requests are ${ids}.`
+}
+
+function bareDisplayId(segment: string): number | null {
+  const match = segment.trim().match(/^(?:#)?(\d+)$/)
+  if (!match) return null
+  const id = Number(match[1])
+  return Number.isInteger(id) ? id : null
 }
 
 /**
@@ -142,6 +179,11 @@ export function executeDecisionPlan(input: {
 
   const byId = new Map(input.candidates.map((row) => [row.displayId, row]))
   const known = new Set(byId.keys())
+  const bareIds = new Set<number>()
+  for (const segment of input.parsed.unclear) {
+    const id = bareDisplayId(segment)
+    if (id != null) bareIds.add(id)
+  }
   const intents = new Map<number, DecisionIntent>()
 
   if (input.parsed.yesAll) {
@@ -152,6 +194,7 @@ export function executeDecisionPlan(input: {
   }
   for (const intent of input.parsed.intents) intents.set(intent.displayId, intent)
   for (const intent of input.llmIntents ?? []) {
+    if (bareIds.has(intent.displayId)) continue
     if (!intents.has(intent.displayId)) intents.set(intent.displayId, intent)
   }
 
@@ -165,42 +208,41 @@ export function executeDecisionPlan(input: {
     if (!candidate) {
       lines.push({
         displayId: intent.displayId,
-        text: `#${intent.displayId} isn't in your list.`,
+        kind: "unknown",
+        text: unknownIdRecovery(intent.displayId, input.candidates),
       })
       continue
     }
     const applied = lineFor(intent, candidate)
     if (applied.mutation) mutations.push(applied.mutation)
-    lines.push({ displayId: candidate.displayId, text: applied.text })
+    lines.push({
+      displayId: candidate.displayId,
+      text: applied.text,
+      kind: applied.mutation ? "applied" : "unclear",
+    })
   }
 
   const mentionedUnknown = new Set<number>()
+  let question: string | null = null
   for (const segment of input.parsed.unclear) {
+    const bare = bareDisplayId(segment)
+    if (bare != null && byId.has(bare)) {
+      const candidate = byId.get(bare)!
+      if (!covered.has(candidate.displayId) && !question) {
+        const issue = candidate.issue?.trim() || "that request"
+        question =
+          `What should I do with #${candidate.displayId} (${issue})? Reply YES, SNOOZE FRI, or SKIP.`
+      }
+      continue
+    }
     const id = unknownIdFromSegment(segment, known)
     if (id == null || mentionedUnknown.has(id)) continue
     mentionedUnknown.add(id)
-    lines.push({ displayId: id, text: `#${id} isn't in your list.` })
-  }
-
-  let question: string | null = null
-  const unresolved = input.parsed.unclear.filter((segment) => {
-    const id = unknownIdFromSegment(segment, known)
-    return id == null
-  })
-  const firstUnclear = unresolved[0]
-  if (firstUnclear) {
-    const idMatch = firstUnclear.match(/(?:#)?(\d+)/)
-    const id = idMatch ? Number(idMatch[1]) : null
-    const candidate = id != null ? byId.get(id) : undefined
-    if (candidate && !covered.has(candidate.displayId)) {
-      const choices = candidate.ticketClass === "proactive"
-        ? "yes, options, self, snooze, or skip"
-        : "yes, options, self, or snooze"
-      question =
-        `#${candidate.displayId} still needs a decision — reply ${candidate.displayId} ${choices}.`
-    } else if (!candidate) {
-      question = `I didn't catch "${firstUnclear}". Reply with the request number and yes, options, self, or snooze.`
-    }
+    lines.push({
+      displayId: id,
+      kind: "unknown",
+      text: unknownIdRecovery(id, input.candidates),
+    })
   }
 
   return {

@@ -3,6 +3,7 @@
  * Urgent tickets stay on the single-ticket ask.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { landlordPickRecipientAllowed } from "../../../../shared/landlordDecisions/batchAccess.ts"
 import {
   buildLandlordPickBatchSms,
   LANDLORD_PICK_BATCH_COOLDOWN_MS,
@@ -10,6 +11,7 @@ import {
   landlordPickBatchShouldQueue,
   type LandlordPickBatchItem,
 } from "../../../../shared/landlordDecisions/batchMessage.ts"
+import { pickBatchVendorProposal } from "../../../../shared/landlordDecisions/batchVendorFit.ts"
 import { resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
@@ -59,7 +61,7 @@ export async function routeNonUrgentTicketIntoPickBatch(
 
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
-    .select("id, display_id, description, issue_headline, unit, resident_id, created_at, snoozed_until")
+    .select("id, display_id, description, issue_headline, unit, resident_id, created_at, snoozed_until, issue_category, property_id")
     .eq("id", params.ticketId)
     .eq("landlord_id", params.landlordId)
     .maybeSingle()
@@ -70,7 +72,7 @@ export async function routeNonUrgentTicketIntoPickBatch(
 
   const { data: waiting, error: waitingError } = await supabase
     .from("maintenance_requests")
-    .select("id, display_id, description, issue_headline, unit, resident_id, created_at, snoozed_until")
+    .select("id, display_id, description, issue_headline, unit, resident_id, created_at, snoozed_until, issue_category, property_id")
     .eq("landlord_id", params.landlordId)
     .eq("vendor_notify_error", AWAITING_LANDLORD_VENDOR_CHOICE)
     .order("created_at", { ascending: true })
@@ -90,28 +92,90 @@ export async function routeNonUrgentTicketIntoPickBatch(
   }
   rows.sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")))
 
+  const { count: propertyCountRaw } = await supabase
+    .from("properties")
+    .select("id", { count: "exact", head: true })
+    .eq("landlord_id", params.landlordId)
+  const propertyCount = typeof propertyCountRaw === "number" ? propertyCountRaw : 1
+  const propertyIds = [
+    ...new Set(
+      rows
+        .map((row) => (typeof row.property_id === "string" ? row.property_id : ""))
+        .filter(Boolean),
+    ),
+  ]
+  const { data: propertyRows } = propertyIds.length
+    ? await supabase
+      .from("properties")
+      .select("id, street_address, property_type")
+      .in("id", propertyIds)
+    : { data: [] as { id: string; street_address: string | null; property_type: string | null }[] }
+  const propertyById = new Map((propertyRows ?? []).map((row) => [String(row.id), row]))
+
+  let vendorCategory: string | null = null
+  if (primary.id) {
+    const { data: vendor } = await supabase
+      .from("vendors")
+      .select("category")
+      .eq("id", primary.id)
+      .maybeSingle()
+    vendorCategory = typeof vendor?.category === "string" ? vendor.category : null
+  }
+
   const items: BatchItemDraft[] = rows.slice(0, LANDLORD_PICK_BATCH_LIMIT).map((row) => {
     const own = row.id === params.ticketId
     const costs = estimateBounds(own ? primary.estimateNote : null)
+    const issue = (typeof row.issue_headline === "string" && row.issue_headline.trim()) ||
+      (own ? params.issue?.trim() : "") ||
+      "Repair"
+    const issueCategory = typeof row.issue_category === "string" ? row.issue_category : null
+    const proposal = own
+      ? pickBatchVendorProposal({
+        vendorId: primary.id,
+        vendorName: primary.name,
+        vendorCategory,
+        issueCategory,
+        windowLabel: primary.windowLabel,
+      })
+      : {
+        matched: true,
+        vendorName: "your vendor",
+        windowLabel: null as string | null,
+        vendorId: null as string | null,
+      }
+    if (own && !proposal.matched) {
+      console.warn("[landlord-pick] vendor trade does not match ticket", {
+        ticketId: row.id,
+        vendorId: primary.id,
+        vendorCategory,
+        issueCategory,
+      })
+    }
+    const propertyId = typeof row.property_id === "string" ? row.property_id : ""
+    const property = propertyById.get(propertyId)
     return {
       displayId: Number(row.display_id),
       unitLabel: typeof row.unit === "string" ? row.unit : params.unit,
-      issue: (typeof row.issue_headline === "string" && row.issue_headline.trim()) ||
-        (own ? params.issue?.trim() : "") ||
-        "Repair",
-      vendorName: own ? primary.name : "your vendor",
-      windowLabel: own ? primary.windowLabel : null,
+      issue,
+      vendorName: proposal.vendorName,
+      windowLabel: proposal.windowLabel,
       costLow: costs.low,
       costHigh: costs.high,
       ticketId: row.id,
-      vendorId: own ? primary.id : null,
+      vendorId: proposal.vendorId,
       ticketClass: ticketClassForLandlordPick(
         typeof row.resident_id === "string" ? row.resident_id : null,
       ),
+      propertyAddress: typeof property?.street_address === "string"
+        ? property.street_address
+        : null,
+      propertyType: typeof property?.property_type === "string"
+        ? property.property_type
+        : null,
     }
   })
   const overflow = Math.max(0, rows.length - LANDLORD_PICK_BATCH_LIMIT)
-  const body = buildLandlordPickBatchSms(items, overflow)
+  const body = buildLandlordPickBatchSms(items, overflow, { propertyCount })
 
   const { phones } = await resolveLandlordOpsPhones(supabase, params.landlordId)
   if (phones.length === 0) return "fallback"
@@ -121,6 +185,7 @@ export async function routeNonUrgentTicketIntoPickBatch(
     const outcome = await sendOrQueueBatch(supabase, {
       landlordId: params.landlordId,
       phone,
+      opsPhones: phones,
       body,
       items,
       now,
@@ -155,12 +220,17 @@ async function sendOrQueueBatch(
   params: {
     landlordId: string
     phone: string
+    opsPhones: string[]
     body: string
     items: BatchItemDraft[]
     now: Date
   },
 ): Promise<"sent" | "queued" | "fallback"> {
   const phone = normalizeSmsPhone(params.phone)
+  if (!landlordPickRecipientAllowed(phone, params.opsPhones)) {
+    console.warn("[landlord-pick] refused send to a non-ops number")
+    return "fallback"
+  }
   const { data: recent } = await supabase
     .from("landlord_pick_batches")
     .select("id, created_at, status")
@@ -206,6 +276,8 @@ async function sendOrQueueBatch(
       cost_low: item.costLow ?? null,
       cost_high: item.costHigh ?? null,
       ticket_class: item.ticketClass,
+      issue: item.issue,
+      unit_label: item.unitLabel ?? null,
     },
   }))
   if (itemRows.length === 0) return "fallback"

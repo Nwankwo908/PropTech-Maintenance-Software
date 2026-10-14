@@ -40,6 +40,28 @@ Deno.test("bare yes applies only when there is one candidate", () => {
   assertEquals(many.unclear, ["approve"])
 })
 
+Deno.test("a bare number is unclear and is not an intent", () => {
+  const parsed = parseDecisionReply("101", three, now, tz)
+  assertEquals(parsed.intents, [])
+  assertEquals(parsed.unclear, ["101"])
+  const hash = parseDecisionReply("#102", [{ displayId: 102, ticketClass: "reactive" }], now, tz)
+  assertEquals(hash.intents, [])
+  assertEquals(hash.unclear, ["#102"])
+})
+
+Deno.test("bare SNOOZE FRI and SKIP apply only when one request is open", () => {
+  const one = [{ displayId: 102, ticketClass: "reactive" as const }]
+  const snooze = parseDecisionReply("SNOOZE FRI", one, now, tz)
+  assertEquals(snooze.intents, [
+    { displayId: 102, action: "snooze", snoozeUntil: "2026-10-16" },
+  ])
+  const skip = parseDecisionReply("SKIP", [{ displayId: 104, ticketClass: "proactive" }], now, tz)
+  assertEquals(skip.intents, [{ displayId: 104, action: "skip" }])
+  const many = parseDecisionReply("SNOOZE FRI", three, now, tz)
+  assertEquals(many.intents, [])
+  assertEquals(many.unclear, ["SNOOZE FRI"])
+})
+
 Deno.test("a unit number that is not a candidate stays unclear", () => {
   const parsed = parseDecisionReply("unit 12 is fine", three, now, tz)
   assertEquals(parsed.intents, [])

@@ -1,4 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { inboxInboundSenderName } from '@/lib/communicationInboxKind'
 import { pickPrimaryWorkOrderConversationId, pickVendorWorkOrderConversationId } from '@/lib/workOrderConversationPreference'
 import { isAdminDirectedConversationType } from '@/lib/propertyConversations'
 import {
@@ -801,10 +802,23 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
     if (inbound) {
       if (ctx.conversationType === 'vendor_alert') {
         sender = 'vendor'
-        senderName = ctx.vendorName || 'Vendor'
+        senderName = inboxInboundSenderName({
+          conversationType: ctx.conversationType,
+          vendorName: ctx.vendorName,
+        })
+      } else if (ctx.conversationType === 'landlord_update') {
+        sender = 'tenant'
+        senderName = inboxInboundSenderName({
+          conversationType: ctx.conversationType,
+          residentName: ctx.residentName,
+        })
       } else {
         sender = 'tenant'
-        senderName = ctx.residentName || 'Tenant'
+        senderName = inboxInboundSenderName({
+          conversationType: ctx.conversationType,
+          residentName: ctx.residentName,
+          vendorName: ctx.vendorName,
+        })
       }
     } else {
       sender = 'ulo'

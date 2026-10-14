@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { inboxParticipantKind, inboxPhoneDigits } from '@/lib/communicationInboxKind'
+import {
+  inboxInboundSenderName,
+  inboxParticipantKind,
+  inboxPhoneDigits,
+} from '@/lib/communicationInboxKind'
 
 describe('inboxPhoneDigits', () => {
   it('matches E.164 to local 10-digit numbers', () => {
@@ -49,5 +53,16 @@ describe('inboxParticipantKind', () => {
 
   it('labels landlord_update as landlord', () => {
     expect(inboxParticipantKind({ conversationType: 'landlord_update' })).toBe('landlord')
+  })
+})
+
+describe('inboxInboundSenderName', () => {
+  it('labels a landlord decision thread as Landlord', () => {
+    expect(
+      inboxInboundSenderName({
+        conversationType: 'landlord_update',
+        residentName: 'Ganice',
+      }),
+    ).toBe('Landlord')
   })
 })

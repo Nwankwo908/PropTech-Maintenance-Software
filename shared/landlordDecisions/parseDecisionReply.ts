@@ -210,6 +210,49 @@ export function parseDecisionReply(
       continue
     }
 
+    if (/^(skip|pass)$/i.test(segment)) {
+      if (candidates.length === 1) {
+        intents.set(candidates[0]!.displayId, {
+          displayId: candidates[0]!.displayId,
+          action: "skip",
+        })
+      } else {
+        unclear.push(segment)
+      }
+      continue
+    }
+
+    const bareSnooze = segment.match(/^(snooze|later)(?:\s+(.+))?$/i)
+    if (bareSnooze) {
+      if (candidates.length !== 1) {
+        unclear.push(segment)
+        continue
+      }
+      const only = candidates[0]!
+      const resolved = resolveSnoozeDate({
+        args: bareSnooze[2] ?? "",
+        ticketClass: only.ticketClass,
+        now,
+        landlordTz,
+      })
+      if ("unclear" in resolved) {
+        unclear.push(segment)
+        continue
+      }
+      intents.set(only.displayId, {
+        displayId: only.displayId,
+        action: "snooze",
+        snoozeUntil: resolved.until,
+      })
+      continue
+    }
+
+    // A number with no action is never an approval.
+    if (/^(?:#)?\d+$/.test(segment)) {
+      unclear.push(segment)
+      continue
+    }
+
     const idFirst = segment.match(
       /^(?:#)?(\d+)\s+([a-z]+)(?:\s+(.+))?$/i,
     )

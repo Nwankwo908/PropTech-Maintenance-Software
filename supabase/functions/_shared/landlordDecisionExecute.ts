@@ -14,7 +14,9 @@ import {
   type DecisionCandidate,
   type DecisionIntent,
 } from "../../../shared/landlordDecisions/parseDecisionReply.ts"
+import { landlordPickReplyMayExecute } from "../../../shared/landlordDecisions/batchAccess.ts"
 import { yesAllNeedsConfirm } from "../../../shared/landlordDecisions/batchMessage.ts"
+import { upsertSmsIdentityForPhone } from "./sms/inbound_db.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import {
   AWAITING_LANDLORD_VENDOR_CHOICE,
@@ -28,6 +30,8 @@ export type PickSnapshot = {
   cost_low?: number | null
   cost_high?: number | null
   ticket_class?: "reactive" | "proactive" | null
+  issue?: string | null
+  unit_label?: string | null
 }
 
 type BatchItemRow = {
@@ -113,7 +117,6 @@ export async function tryHandleLandlordPickBatchInbound(
     providerMessageSid?: string | null
   },
 ): Promise<{ handled: false } | { handled: true; replyBody: string | null }> {
-  if (params.identityType === "vendor") return { handled: false }
   const phone = (params.fromPhone ?? "").replace(/\D/g, "")
   if (!phone) return { handled: false }
 
@@ -127,9 +130,25 @@ export async function tryHandleLandlordPickBatchInbound(
     .limit(8)
 
   const batch = (batches ?? []).find((row) =>
-    String(row.recipient_phone ?? "").replace(/\D/g, "") === phone
+    landlordPickReplyMayExecute({
+      identityType: params.identityType,
+      fromPhone: params.fromPhone,
+      recipientPhone: String(row.recipient_phone ?? ""),
+    })
   )
   if (!batch?.id) return { handled: false }
+
+  if (params.identityType === "resident") {
+    try {
+      await upsertSmsIdentityForPhone(supabase, {
+        landlordId: params.landlordId,
+        phone,
+        identityType: "landlord",
+      })
+    } catch (error) {
+      console.error("[landlord-pick] repair landlord identity", error)
+    }
+  }
 
   const sid = params.providerMessageSid?.trim() || params.messageId?.trim() || ""
   if (sid) {
@@ -190,6 +209,8 @@ export async function tryHandleLandlordPickBatchInbound(
       awaitingPick: awaiting,
       vendorName: row.snapshot?.vendor_name?.trim() || "the vendor",
       windowLabel: row.snapshot?.window?.trim() || "",
+      issue: row.snapshot?.issue?.trim() || "",
+      unitLabel: row.snapshot?.unit_label?.trim() || "",
       vendorAvailable: available,
       windowAvailable: available && Boolean(row.snapshot?.window?.trim() || available),
     })
@@ -259,8 +280,8 @@ export async function tryHandleLandlordPickBatchInbound(
       if (!applied) {
         const index = lines.findIndex((line) => line.displayId === mutation.displayId)
         const text = `#${mutation.displayId} already decided.`
-        if (index >= 0) lines[index] = { displayId: mutation.displayId, text }
-        else lines.push({ displayId: mutation.displayId, text })
+        if (index >= 0) lines[index] = { displayId: mutation.displayId, text, kind: "unclear" }
+        else lines.push({ displayId: mutation.displayId, text, kind: "unclear" })
       }
     }
     const stillOpen = candidates.some((row) =>
@@ -276,10 +297,7 @@ export async function tryHandleLandlordPickBatchInbound(
 
   return {
     handled: true,
-    replyBody: buildDecisionConfirmation(
-      lines.map((line) => line.text),
-      plan.question,
-    ),
+    replyBody: buildDecisionConfirmation(lines, plan.question),
   }
 }
 

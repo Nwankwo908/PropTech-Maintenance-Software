@@ -1,7 +1,11 @@
 /** Landlord-facing batch SMS. No opt-out keywords in the body. */
 
+import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
+
 export const LANDLORD_PICK_BATCH_LIMIT = 5
 export const LANDLORD_PICK_BATCH_COOLDOWN_MS = 10 * 60 * 1000
+
+export type LandlordPickTicketClass = "reactive" | "proactive"
 
 export type LandlordPickBatchItem = {
   displayId: number
@@ -11,7 +15,19 @@ export type LandlordPickBatchItem = {
   windowLabel?: string | null
   costLow?: number | null
   costHigh?: number | null
+  room?: string | null
+  propertyAddress?: string | null
+  propertyType?: string | null
+  ticketClass?: LandlordPickTicketClass | null
 }
+
+export type LandlordPickBatchSmsOptions = {
+  /** When the landlord has more than one property, each line includes the address. */
+  propertyCount?: number
+}
+
+const ROOM_PREFIX =
+  /^(bedroom|bathroom|kitchen|basement|laundry|living room)\b/i
 
 function money(amount: number): string {
   return `$${Math.round(amount)}`
@@ -30,34 +46,99 @@ export function formatEstimateRange(
   return `est ${money(low ?? high!)}`
 }
 
-export function formatLandlordPickBatchLine(item: LandlordPickBatchItem): string {
-  const place = [item.unitLabel?.trim(), item.issue.trim()].filter(Boolean).join(" ")
-  const head = `#${item.displayId} ${place}`.trim()
-  const vendorWindow = [item.vendorName.trim(), item.windowLabel?.trim()].filter(Boolean).join(" ")
+function roomFromItem(item: LandlordPickBatchItem): string {
+  const explicit = item.room?.trim()
+  if (explicit) return explicit.toLowerCase()
+  const match = item.issue.trim().match(ROOM_PREFIX)
+  return match?.[1]?.toLowerCase() ?? ""
+}
+
+/** "{issue} — Unit {unit} ({room})". Single-family homes omit the unit. */
+export function formatLandlordPickPlace(
+  item: LandlordPickBatchItem,
+  includeAddress = false,
+): string {
+  const issue = item.issue.trim() || "Repair"
+  const unit = formatUnitReference(item.unitLabel, item.propertyType)
+  const room = roomFromItem(item)
+  let place = issue
+  if (unit && room) place = `${issue} — ${unit} (${room})`
+  else if (unit) place = `${issue} — ${unit}`
+  else if (room) place = `${issue} (${room})`
+  const address = includeAddress ? item.propertyAddress?.trim() ?? "" : ""
+  if (address) place = `${place} at ${address}`
+  return place
+}
+
+export function formatLandlordPickBatchLine(
+  item: LandlordPickBatchItem,
+  includeAddress = false,
+): string {
+  const head = `#${item.displayId} ${formatLandlordPickPlace(item, includeAddress)}`.trim()
+  const vendorWindow = [item.vendorName.trim(), item.windowLabel?.trim()]
+    .filter(Boolean)
+    .join(" · ")
   const estimate = formatEstimateRange(item.costLow, item.costHigh)
   return [head, vendorWindow, estimate].filter(Boolean).join(" - ")
+}
+
+function singleAskReply(ticketClass: LandlordPickTicketClass | null | undefined): string {
+  if (ticketClass === "proactive") {
+    return "Reply YES to approve, SNOOZE FRI to reschedule, or SKIP."
+  }
+  return "Reply YES to approve, or SNOOZE FRI to reschedule."
+}
+
+function singleAskSms(item: LandlordPickBatchItem, includeAddress: boolean): string {
+  const issue = item.issue.trim() || "Repair"
+  const unit = formatUnitReference(item.unitLabel, item.propertyType)
+  const address = includeAddress ? item.propertyAddress?.trim() ?? "" : ""
+  let where = ""
+  if (address && unit) where = ` at ${address}, ${unit}`
+  else if (address) where = ` at ${address}`
+  else if (unit) where = `, ${unit}`
+  const vendorLine = [
+    item.vendorName.trim(),
+    item.windowLabel?.trim(),
+    formatEstimateRange(item.costLow, item.costHigh),
+  ].filter(Boolean).join(" · ")
+  return [
+    `Ulo: Approval needed: ${issue}${where}.`,
+    vendorLine,
+    singleAskReply(item.ticketClass),
+  ].filter(Boolean).join("\n")
+}
+
+function exampleFromShown(shown: LandlordPickBatchItem[]): string {
+  const first = shown[0]?.displayId
+  const second = shown[1]?.displayId
+  if (first == null || second == null) return ""
+  return `Reply like: ${first} yes, ${second} snooze fri. Or YES ALL.`
 }
 
 export function buildLandlordPickBatchSms(
   items: LandlordPickBatchItem[],
   overflowCount = 0,
+  options?: LandlordPickBatchSmsOptions,
 ): string {
   const shown = items.slice(0, LANDLORD_PICK_BATCH_LIMIT)
+  const includeAddress = (options?.propertyCount ?? 1) > 1
+  if (shown.length === 1) {
+    return singleAskSms(shown[0]!, includeAddress)
+  }
   const count = shown.length
   const noun = count === 1 ? "request needs" : "requests need"
   const lines = [
     `Ulo: ${count} ${noun} your decision`,
     "",
-    ...shown.map(formatLandlordPickBatchLine),
+    ...shown.map((item) => formatLandlordPickBatchLine(item, includeAddress)),
   ]
   const extra = overflowCount > 0 ? overflowCount : Math.max(0, items.length - shown.length)
   if (extra > 0) {
     lines.push("", `+${extra} more after these`)
   }
-  lines.push(
-    "",
-    "Reply like: 101 yes, 103 snooze fri, 104 skip. Or YES ALL.",
-  )
+  const example = exampleFromShown(shown)
+  if (example) lines.push("", example)
   return lines.join("\n")
 }
 

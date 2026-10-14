@@ -1,5 +1,19 @@
 export type InboxParticipantKind = 'tenant' | 'vendor' | 'ai' | 'landlord'
 
+/** Inbound transcript name. Landlord threads stay Landlord even when a resident name is on the row. */
+export function inboxInboundSenderName(input: {
+  conversationType: string
+  residentName?: string | null
+  vendorName?: string | null
+}): string {
+  const conversationType = input.conversationType.trim()
+  if (conversationType === 'landlord_update') return 'Landlord'
+  if (conversationType === 'vendor_alert' || conversationType === 'vendor_tenant_proxy') {
+    return input.vendorName?.trim() || 'Vendor'
+  }
+  return input.residentName?.trim() || 'Tenant'
+}
+
 /** Last 10 digits so +1 and local formats match. */
 export function inboxPhoneDigits(phone: string | null | undefined): string {
   const digits = (phone ?? '').replace(/\D/g, '')

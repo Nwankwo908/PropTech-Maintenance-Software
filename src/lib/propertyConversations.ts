@@ -152,7 +152,7 @@ function participantLabel(kind: ParticipantKind): string {
     case 'vendor':
       return 'Vendor'
     case 'landlord':
-      return 'Owner'
+      return 'Landlord'
     default:
       return 'Tenant'
   }
