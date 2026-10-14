@@ -1,5 +1,6 @@
 import { isPlatformLoginEmail } from '@/lib/landlordSupportEmail'
 import { supabase } from '@/lib/supabase'
+import { EMAIL_TO_LANDLORD_ID } from '@shared/admin/landlordAccess'
 import { normalizeAdminEmail } from '@shared/admin/staffAllowlist'
 
 function normalizePortalEmail(raw: string): string | null {
@@ -26,7 +27,14 @@ export async function landlordIdForPortalMemberEmail(
   return typeof data === 'string' && data.trim() ? data.trim() : null
 }
 
-/** Upsert or clear the single team-member login for a landlord account. */
+/** Emails granted on this account that account setup must not revoke. */
+function grantedPortalEmails(landlordId: string): string[] {
+  return Object.entries(EMAIL_TO_LANDLORD_ID)
+    .filter(([, id]) => id === landlordId)
+    .map(([email]) => email)
+}
+
+/** Update the backup-contact login without revoking separately granted portal logins. */
 export async function syncLandlordPortalTeamMember(
   landlordId: string,
   member: { email: string; name: string; phone: string },
@@ -35,11 +43,17 @@ export async function syncLandlordPortalTeamMember(
   const id = landlordId.trim()
   if (!id) return { ok: false, error: 'Missing landlord.' }
 
-  const { error: clearError } = await supabase
+  const keep = grantedPortalEmails(id)
+  let clear = supabase
     .from('landlord_portal_members')
     .delete()
     .eq('landlord_id', id)
     .eq('role', 'team_member')
+  if (keep.length) {
+    const list = keep.map((email) => `"${email.replace(/"/g, '')}"`).join(',')
+    clear = clear.not('email', 'in', `(${list})`)
+  }
+  const { error: clearError } = await clear
   if (clearError) {
     if (/does not exist|schema cache/i.test(clearError.message)) {
       console.warn('[portal-members] table missing; skip team login sync')
