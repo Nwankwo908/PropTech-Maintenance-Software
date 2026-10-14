@@ -4,6 +4,10 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['shared/homeCheck.test.ts', 'supabase/functions/_shared/homeCheck/sms.test.ts'],
+    include: [
+      'shared/homeCheck.test.ts',
+      'supabase/functions/_shared/homeCheck/sms.test.ts',
+      'supabase/functions/_shared/homeCheck/service.test.ts',
+    ],
   },
 })

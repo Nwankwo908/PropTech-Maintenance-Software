@@ -60,6 +60,33 @@ describe('Home Check scope and completion', () => {
     expect(parseHomeCheckCommand('CHECK CONTRACTOR Oak / 12A | window')?.role).toBe('contractor')
     expect(parseHomeCheckCommand('Can you check 12A?')).toBeNull()
   })
+  it('supports inspection initiation, explicit recipients and a scope-help request', () => {
+    for (
+      const text of [
+        'INSPECT Birch / 12A',
+        'inspection Birch / 12A',
+        'HOME CHECK Birch / 12A',
+        'start an inspection for Birch / 12A',
+      ]
+    ) {
+      expect(parseHomeCheckCommand(text)).toEqual({ role: 'landlord', target: 'Birch / 12A' })
+    }
+    expect(parseHomeCheckCommand('INSPECT TENANT Birch / 12A')).toEqual({
+      role: 'tenant',
+      target: 'Birch / 12A',
+    })
+    expect(parseHomeCheckCommand('INSPECT CONTRACTOR Birch / 12A | window')).toEqual({
+      role: 'contractor',
+      target: 'Birch / 12A | window',
+    })
+    expect(parseHomeCheckCommand('INSPECT')).toEqual({ role: 'landlord', target: '' })
+    expect(parseHomeCheckCommand('CHECK')).toEqual({ role: 'tenant', target: '' })
+    expect(parseHomeCheckCommand('inspection results for my heater')).toEqual({
+      role: 'landlord',
+      target: 'results for my heater',
+    })
+    expect(parseHomeCheckCommand('Can you inspect my apartment?')).toBeNull()
+  })
   it('requires an exact check and slot for MMS; short replies and trailing scope guesses are rejected', () => {
     expect(parseHomeCheckPhotoReply('hc-aabbccddeeff 3')).toEqual({
       reference: 'HC-AABBCCDDEEFF',

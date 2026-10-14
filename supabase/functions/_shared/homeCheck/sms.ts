@@ -1,6 +1,7 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
 import { normalizeSmsPhone } from '../sms/inbound_db.ts'
+import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import {
   type HomeCheckAnswers,
   type HomeCheckTarget,
@@ -26,6 +27,7 @@ export type HomeCheckSmsAction =
     kind: 'start'
     command: NonNullable<ReturnType<typeof parseHomeCheckCommand>>
     messageId: string
+    initiatorPhone: string
   }
   | {
     kind: 'photo'
@@ -124,8 +126,27 @@ export async function prepareHomeCheckSms(
 ): Promise<HomeCheckSmsAction | null> {
   const landlord = ctx.identity.identity_type === 'landlord'
   const body = ctx.inbound.body.trim()
-  const command = landlord ? parseHomeCheckCommand(body) : null
-  if (command) return { kind: 'start', command, messageId: ctx.messageId }
+  const command = parseHomeCheckCommand(body)
+  if (command) {
+    if (
+      !landlord || !await isLandlordAccountOrOpsPhone(ctx.supabase, {
+        fromNumber: ctx.inbound.from,
+        landlordId: ctx.landlordId,
+      })
+    ) {
+      return {
+        kind: 'clarify',
+        reply:
+          'Only the landlord or an authorized property manager or team member can start a Home Check. Ask your property team to initiate it from their registered phone number.',
+      }
+    }
+    return {
+      kind: 'start',
+      command,
+      messageId: ctx.messageId,
+      initiatorPhone: normalizeSmsPhone(ctx.inbound.from),
+    }
+  }
   if (
     !ctx.inbound.mediaUrls.length && !/^OK(?:\s+HC-[A-F0-9]{12})?$/i.test(body) &&
     !/^HC-[A-F0-9]{12}/i.test(body)
@@ -202,10 +223,12 @@ export async function actHomeCheckSms(
     if (!target) {
       return {
         reply:
-          `Please name one exact property or unit. Use CHECK Property / Unit; duplicate unit labels require the property. Available: ${
-            targets.map((row) => `${row.propertyName}${row.unitLabel ? ` / ${row.unitLabel}` : ''}`)
+          `Start your inspection with INSPECT Property / Unit. To ask the tenant, send INSPECT TENANT Property / Unit (or CHECK Property / Unit). For a contractor, send INSPECT CONTRACTOR Property / Unit | job-window-end. Duplicate unit labels require the property. Available: ${
+            targets.slice(0, 8).map((row) =>
+              `${row.propertyName}${row.unitLabel ? ` / ${row.unitLabel}` : ''}`
+            )
               .join('; ')
-          }`,
+          }${targets.length > 8 ? '; see Property Intelligence for the full list' : ''}`,
       }
     }
     let vendorId: string | null = null
@@ -236,6 +259,7 @@ export async function actHomeCheckSms(
         vendorId,
         jobWindowEnd: windowEnd,
         sendSms: true,
+        selfCapturePhone: action.command.role === 'landlord' ? action.initiatorPhone : undefined,
       })
       if (result.deliveryError) {
         return {
@@ -289,8 +313,22 @@ export async function actHomeCheckSms(
     contentType: blob.type,
     source: 'photo_text',
   })
-  const retake = progress.feedback.filter((feedback) => feedback.retakeMessage && feedback.slot.startsWith(action.slot.startsWith('water_heater') ? 'water_heater' : 'heating'))
-  if (retake.length) return { runId: action.check.workflow_run_id, reply: `Saved the photo for ${checkLocation(action.check)}. ${retake[0].retakeMessage} Retake photo ${action.slot.startsWith('water_heater') ? '1 (water heater label)' : '3 (furnace or boiler label)'} with ${action.check.reference}. Uncertain numbers remain unknown.` }
+  const retake = progress.feedback.filter((feedback) =>
+    feedback.retakeMessage &&
+    feedback.slot.startsWith(action.slot.startsWith('water_heater') ? 'water_heater' : 'heating')
+  )
+  if (retake.length) {
+    return {
+      runId: action.check.workflow_run_id,
+      reply: `Saved the photo for ${checkLocation(action.check)}. ${
+        retake[0].retakeMessage
+      } Retake photo ${
+        action.slot.startsWith('water_heater')
+          ? '1 (water heater label)'
+          : '3 (furnace or boiler label)'
+      } with ${action.check.reference}. Uncertain numbers remain unknown.`,
+    }
+  }
   return {
     runId: action.check.workflow_run_id,
     reply: `Saved the photo to ${

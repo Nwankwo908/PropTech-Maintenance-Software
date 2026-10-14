@@ -39,6 +39,7 @@ import {
   rehostInboundSmsMedia,
 } from "./rehostInboundMedia.ts"
 import { prepareHomeCheckSms, resolveHomeCheckLandlord } from "../homeCheck/sms.ts"
+import { parseHomeCheckCommand } from "../../../../shared/homeCheck.ts"
 import { runWorkflowEngine } from "../engine/runner.ts"
 import { tryStartHqsLetterIntakeFromInbound } from "./hqsInspectionLetterInbound.ts"
 import { tryLandlordCantProcessInbound } from "./landlordInboundCantProcess.ts"
@@ -449,7 +450,7 @@ export async function processInboundSms(
     }
   }
 
-  const explicitHomeCheck = /^(CHECK\s|HC-[A-F0-9]{12}\b|OK(?:\s+HC-[A-F0-9]{12})?$)/i.test(inbound.body.trim())
+  const explicitHomeCheck = Boolean(parseHomeCheckCommand(inbound.body)) || /^(HC-[A-F0-9]{12}\b|OK(?:\s+HC-[A-F0-9]{12})?$)/i.test(inbound.body.trim())
   const debounce = explicitHomeCheck ? { action: "process" as const } : await decideInboundDebounce(supabase, {
     conversationId,
     messageId,

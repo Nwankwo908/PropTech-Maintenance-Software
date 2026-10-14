@@ -133,6 +133,16 @@ export function HomeCheckPanel(
       <ul className='space-y-1 text-xs text-[#64748b]'>
         {EQUIPMENT_PHOTO_TIPS.map((tip) => <li key={tip}>{tip}</li>)}
       </ul>
+      <p className='text-xs text-[#64748b]'>
+        You or an authorized property manager or team member can also text{' '}
+        <code>
+          INSPECT {building}
+          {unitId
+            ? ` / ${targets.find((target) => target.unitId === unitId)?.unitLabel || ''}`
+            : ''}
+        </code>{' '}
+        to Ulo to get your capture link. Text INSPECT on its own for instructions.
+      </p>
       <ol className='grid gap-2 text-sm sm:grid-cols-2'>
         {HOME_CHECK_PHOTOS.map((photo, index) => (
           <li key={photo.slot}>{index + 1}. {photo.title}</li>
@@ -193,10 +203,8 @@ export function HomeCheckPanel(
       {role === 'tenant' && (
         <p className='text-sm text-[#64748b]'>
           Your request authorizes Ulo to text the selected unit’s tenant. Give them a heads-up
-          first. One reminder after 48 hours, then stop. You can also text CHECK{' '}
-          {unitId
-            ? targets.find((target) => target.unitId === unitId)?.unitLabel
-            : 'Property / Unit'} to Ulo.
+          first. One reminder after 48 hours, then stop. You can also text CHECK {building} /{' '}
+          {unitId ? targets.find((target) => target.unitId === unitId)?.unitLabel : 'Unit'} to Ulo.
         </p>
       )}
       {role === 'contractor' && (

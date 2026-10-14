@@ -26,6 +26,7 @@ import { uloAppOrigin } from '../uloAppUrl.ts'
 import { findOrCreateConversation, normalizeSmsPhone } from '../sms/inbound_db.ts'
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
 import { resolveOutboundLandlordSmsLine } from '../sms/landlordSmsOnboarding.ts'
+import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 
 export type HomeCheckRow = {
   id: string
@@ -212,6 +213,8 @@ export async function createHomeCheck(db: SupabaseClient, input: {
   vendorId?: string | null
   jobWindowEnd?: string | null
   sendSms?: boolean
+  /** Internal SMS-only recipient override; authenticated HTTP inputs never set this. */
+  selfCapturePhone?: string
 }) {
   const property = requireData<PropertyRow>(
     await db.from('properties').select('id, name, street_address, city, state').eq(
@@ -235,6 +238,12 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     await db.from('landlords').select('name, phone').eq('id', input.landlordId).single(),
   )
   let recipientPhone: string | null = input.role === 'landlord' ? landlord.phone : null
+  if (input.role === 'landlord' && input.selfCapturePhone) {
+    if (!await isLandlordAccountOrOpsPhone(db, { fromNumber: input.selfCapturePhone, landlordId: input.landlordId })) {
+      throw new Error('Start the inspection from the landlord’s or an authorized property team member’s registered phone number.')
+    }
+    recipientPhone = normalizeSmsPhone(input.selfCapturePhone)
+  }
   let residentId: string | null = null
   if (input.role === 'tenant') {
     const occupancy = requireData(
@@ -331,7 +340,7 @@ export async function createHomeCheck(db: SupabaseClient, input: {
   await logPipelineStageEvent(db, {
     runId: check.workflow_run_id,
     stage: 'trigger',
-    message: 'Landlord authorized an observation-only Home Check.',
+    message: 'Authorized an observation-only Home Check.',
     metadata: {
       trigger_type: 'home_check',
       property_id: check.property_id,
