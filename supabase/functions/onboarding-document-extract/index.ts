@@ -1,5 +1,5 @@
 /**
- * Onboarding fast-track document extraction (GPT-4o).
+ * Document extraction with Gemini and lease recovery with Claude.
  *
  * POST {
  *   landlordId,
@@ -11,7 +11,6 @@
  *   fileBase64?
  * }
  */
-import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isOnboardingLandlordId } from "../../../shared/landlordCapabilities.ts"
 import { isPortalAdminEmailAllowed } from "../../../shared/admin/staffAllowlist.ts"
@@ -148,7 +147,7 @@ async function authorizeStaff(
   return { ok: false as const, response: jsonResponse({ error: "Unauthorized" }, 403) }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
   }
@@ -191,7 +190,7 @@ serve(async (req) => {
   const pageImages = Array.isArray(body.pageImages)
     ? body.pageImages
         .filter((item): item is string => typeof item === "string" && item.trim().startsWith("data:image/"))
-        .slice(0, propertyInsuranceExtract ? 5 : 3)
+        .slice(0, 200)
     : []
 
   if (!landlordId || !uuidRe.test(landlordId)) {
@@ -231,10 +230,33 @@ serve(async (req) => {
   if (bytes && bytes.length > 20 * 1024 * 1024) {
     return jsonResponse({ error: "Document exceeds 20MB limit" }, 400)
   }
+  if ((/\.pdf$/i.test(fileName) || contentType === 'application/pdf') && !bytes?.length) {
+    return jsonResponse({error:'Upload the complete PDF so every page can be checked.'},400)
+  }
+
+  if (req.headers.get('accept')?.includes('text/event-stream')) {
+    const abort = new AbortController()
+    const stream = new ReadableStream({
+      async start(controller) {
+        const emit = (event: string, data: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+        try {
+          const extracted = await extractPortfolioDocument({apiKey:geminiKey,anthropicApiKey:Deno.env.get('ANTHROPIC_API_KEY')?.trim(),fileName,documentCategory:propertyInsuranceExtract?'property_insurance':documentCategory,contentType,bytes:bytes || new Uint8Array(),pageImages,insuranceIntent,signal:AbortSignal.any([req.signal,abort.signal]),onLeaseUpdate:(result,stage)=>emit('progress',{stage,extracted:result})})
+          emit('result',{extracted,hasData:portfolioExtractHasData(extracted),needsAttention:!portfolioExtractHasData(extracted)||extracted.leaseReview?.needsReview===true||extracted.warnings.some(w=>/not supported|not parsed|upload pdf|upload csv/i.test(w))})
+          controller.close()
+        } catch (error) {
+          if (!abort.signal.aborted) {emit('error',{error:error instanceof Error?error.message:'Document scanning failed.'});controller.close()}
+        }
+      },
+      cancel() {abort.abort()},
+    })
+    return new Response(stream,{headers:{...corsHeaders,'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache'}})
+  }
 
   try {
     const extracted: PortfolioDocumentExtractPayload = await extractPortfolioDocument({
       apiKey: geminiKey,
+      anthropicApiKey: Deno.env.get("ANTHROPIC_API_KEY")?.trim(),
+      signal: req.signal,
       fileName,
       documentCategory: propertyInsuranceExtract ? "property_insurance" : documentCategory,
       contentType,
@@ -246,6 +268,7 @@ serve(async (req) => {
     const hasData = portfolioExtractHasData(extracted)
     const needsAttention =
       !hasData ||
+      extracted.leaseReview?.needsReview === true ||
       extracted.warnings.some((w) => /not supported|not parsed|upload pdf|upload csv/i.test(w))
 
     return jsonResponse({

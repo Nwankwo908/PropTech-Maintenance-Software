@@ -65,7 +65,7 @@ async function proposeUnclearDecisions(input: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         temperature: 0,
         messages: [
           { role: "system", content: "Reply with a JSON array and nothing else." },

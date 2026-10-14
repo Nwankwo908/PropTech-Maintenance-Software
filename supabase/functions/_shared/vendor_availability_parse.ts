@@ -55,7 +55,7 @@ export type AvailabilityResolveResult =
   | { status: "needs_clarification"; softPrompt: string }
 
 const DEFAULT_TZ = "America/New_York"
-const PARSE_MODEL = "gpt-4o-mini"
+const PARSE_MODEL = "gpt-4o"
 
 export function scheduleTimeZone(): string {
   const raw = Deno.env.get("VENDOR_SCHEDULE_TZ")?.trim()

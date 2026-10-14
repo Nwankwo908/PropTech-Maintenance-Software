@@ -25,7 +25,7 @@ Admin override of assignment uses the same notify pipeline with a new `vendor_ac
 | `SUPABASE_SERVICE_ROLE_KEY` | Auto | Service role for DB access |
 | `VENDOR_PORTAL_BASE_URL` | Recommended on assign notify | e.g. `https://yourapp.com/vendor` — appended to email/SMS as `?t=<ticketId>&k=<token>` |
 | `ADMIN_REASSIGN_SECRET` | For `admin-reassign-vendor` and `recommend-vendor-alternatives` | Long random string; admin UI sends `x-admin-reassign-secret: <same value>` plus anon `Authorization`/`apikey` when `VITE_SUPABASE_ANON_KEY` is set (treat as sensitive). |
-| `OPENAI_API_KEY` | Optional on `recommend-vendor-alternatives` | When set, ranks category-matched vendors with GPT-4o-mini; otherwise the function returns the first N matches alphabetically (`mode: "fallback"`). |
+| `OPENAI_API_KEY` | Optional on `recommend-vendor-alternatives` | When set, ranks category-matched vendors with GPT-4o; otherwise the function returns the first N matches alphabetically (`mode: "fallback"`). |
 
 ## Functions
 

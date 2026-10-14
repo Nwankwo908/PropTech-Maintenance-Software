@@ -1,9 +1,12 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
+import type { LeaseScanReview } from '@shared/onboarding/leaseScan'
+import { readDocumentScanStream, type DocumentScanEvent } from '@/lib/documentScanStream'
 
-/** Per-document GPT extraction payload (matches edge function output). */
+/** Per-document extraction payload (matches edge function output). */
 export type PortfolioDocumentExtractPayload = {
+  leaseReview?: LeaseScanReview
   account?: {
     companyName?: string
     contactName?: string
@@ -130,6 +133,8 @@ export type PortfolioDocumentExtractPayload = {
 }
 
 export type ExtractOnboardingDocumentInput = {
+  onProgress?: (event: DocumentScanEvent<PortfolioDocumentExtractPayload>) => void
+  signal?: AbortSignal
   landlordId?: string
   docId: string
   fileName: string
@@ -188,7 +193,9 @@ export async function extractOnboardingDocument(
   try {
     response = await fetch(functionsUrl, {
       method: 'POST',
+      signal: input.signal,
       headers: {
+        Accept: input.onProgress ? 'text/event-stream' : 'application/json',
         'Content-Type': 'application/json',
         apikey: anonKey,
         Authorization: `Bearer ${session.access_token}`,
@@ -217,6 +224,9 @@ export async function extractOnboardingDocument(
   }
 
   let data: unknown = null
+  if (response.ok && response.headers.get('content-type')?.includes('text/event-stream')) {
+    return await readDocumentScanStream<PortfolioDocumentExtractPayload, ExtractOnboardingDocumentResult>(response,input.onProgress)
+  }
   try {
     data = await response.json()
   } catch {

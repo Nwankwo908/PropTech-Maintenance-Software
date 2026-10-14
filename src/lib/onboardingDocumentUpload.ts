@@ -2,7 +2,6 @@ import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from 
 import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
 import {
   findRelevantInsurancePages,
-  INSURANCE_SELECTED_PAGES_MAX,
   isInsuranceUploadHint,
 } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -21,7 +20,7 @@ import {
   shouldAutoSelectMaintenanceIssue,
 } from '@shared/onboarding/maintenanceIssueGuard'
 /**
- * Onboarding fast-track — document upload, GPT-4o extraction, and review import.
+ * Onboarding fast-track — document upload, extraction, and review import.
  * File bytes are stored in the landlord-onboarding-documents bucket for preview.
  */
 import type { OnboardingAccountSetup, OnboardingOccupancyStatus } from '@/lib/onboarding'
@@ -96,7 +95,7 @@ export type OnboardingUploadedDocument = {
   storageBucket?: string | null
   storagePath?: string | null
   contentType?: string | null
-  /** GPT extraction from onboarding-document-extract (per file). */
+  /** Document extraction and lease evidence (per file). */
   extractedPayload?: PortfolioDocumentExtractPayload | null
 }
 
@@ -408,21 +407,9 @@ const CATEGORY_GROUP_MAP: Record<OnboardingDocumentCategory, DocumentCategoryGro
   unknown: 'property',
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
 function fileExtension(fileName: string): string {
   const index = fileName.lastIndexOf('.')
   return index >= 0 ? fileName.slice(index).toLowerCase() : ''
-}
-
-function isImageExtension(ext: string): boolean {
-  return ['.jpg', '.jpeg', '.png', '.heic', '.webp', '.tif', '.tiff'].includes(ext)
-}
-
-function isScannedDocument(ext: string): boolean {
-  return ['.tif', '.tiff', '.pdf'].includes(ext)
 }
 
 export function isAcceptedUploadFile(file: File): { ok: true } | { ok: false; error: string } {
@@ -614,7 +601,7 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary)
 }
 
-/** Run async work one-at-a-time so GPT extract calls do not stampede into 429s. */
+/** Run extraction one file at a time to avoid provider rate limits. */
 export function createSerialAsyncQueue() {
   let tail: Promise<void> = Promise.resolve()
   return function enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -635,7 +622,7 @@ export function clampDocumentUploadProgress(progress: number): number {
   return Math.min(100, Math.max(0, Math.round(progress)))
 }
 
-/** Real document pipeline — upload progress UI, then GPT-4o extract via edge function. */
+/** Document processing streams readable lease fields while recovery continues. */
 export async function runDocumentProcessing(
   doc: OnboardingUploadedDocument,
   file: File | null,
@@ -650,74 +637,7 @@ export async function runDocumentProcessing(
   }
   onUpdate(current)
 
-  // Upload phase only — leave headroom for digitize / scan / extract.
-  for (const progress of [14, 20, 28]) {
-    if (signal?.aborted) return current
-    current = { ...current, uploadProgress: progress }
-    onUpdate(current)
-    await sleep(80)
-  }
-
-  const stages: Array<{
-    status: UploadFileStatus
-    label: string
-    ms: number
-    progress: number
-  }> = [
-    {
-      status: 'digitizing',
-      label: UPLOAD_STATUS_LABELS.digitizing,
-      ms: 400,
-      progress: 42,
-    },
-    {
-      status: 'scanning',
-      label: UPLOAD_STATUS_LABELS.scanning,
-      ms: 500,
-      progress: 58,
-    },
-    {
-      status: 'extracting',
-      label: UPLOAD_STATUS_LABELS.extracting,
-      ms: 300,
-      progress: 72,
-    },
-  ]
-
-  for (const stage of stages) {
-    if (signal?.aborted) return current
-    current = {
-      ...current,
-      uploadStatus: stage.status,
-      extractionStatus: stage.status,
-      processingLabel: stage.label,
-      uploadProgress: stage.progress,
-    }
-    onUpdate(current)
-    await sleep(stage.ms)
-  }
-
-  if (doc.hasHandwriting) {
-    if (signal?.aborted) return current
-  current = {
-    ...current,
-      uploadStatus: 'handwriting',
-      extractionStatus: 'handwriting',
-      processingLabel: UPLOAD_STATUS_LABELS.handwriting,
-      uploadProgress: 80,
-    }
-    onUpdate(current)
-    await sleep(400)
-  }
-
-  // Hold under 100% while the extract edge call runs (often the longest wait).
-  current = {
-    ...current,
-    uploadStatus: 'extracting',
-    extractionStatus: 'extracting',
-    processingLabel: UPLOAD_STATUS_LABELS.extracting,
-    uploadProgress: 88,
-  }
+  current = { ...current, uploadStatus: 'digitizing', extractionStatus: 'digitizing', processingLabel: 'Preparing document', uploadProgress: 32 }
   onUpdate(current)
 
   try {
@@ -726,7 +646,7 @@ export async function runDocumentProcessing(
         ? await fileToBase64(file)
         : undefined
     let pageImages: string[] = []
-    if (file) {
+    if (file && classifyOnboardingDocumentExtractRole(doc) !== 'lease_agreement') {
       try {
         const insuranceHint = isInsuranceUploadHint(file.name, doc.documentCategory)
         let pageNumbers: number[] | undefined
@@ -747,8 +667,18 @@ export async function runDocumentProcessing(
       }
     }
 
+    current = { ...current, uploadStatus: 'extracting', extractionStatus: 'extracting', processingLabel: 'Reading document', uploadProgress: 45 }
+    onUpdate(current)
     const result = await enqueueOnboardingExtract(() =>
       extractOnboardingDocument({
+        signal,
+        onProgress: (event) => {
+          if (signal?.aborted) return
+          const labels: Record<string, string> = { reading: 'Reading all lease pages', checking: 'Checking lease details', recovering: 'Rereading unclear sections', backup: 'Reviewing difficult sections', complete: 'Lease details checked' }
+          const progress: Record<string, number> = { reading: 52, checking: 74, recovering: 82, backup: 90, complete: 98 }
+          current = { ...current, uploadStatus: 'extracting', extractionStatus: 'extracting', processingLabel: labels[event.stage] || 'Reading document', uploadProgress: progress[event.stage] || 52, ...(event.extracted ? { extractedPayload: event.extracted } : {}) }
+          onUpdate(current)
+        },
         docId: doc.id,
         fileName: doc.fileName,
         documentCategory: doc.documentCategory,
@@ -764,7 +694,7 @@ export async function runDocumentProcessing(
       result.extracted.warnings
         .map((item) => cleanOnboardingExtractText(item))
         .find(Boolean) ?? null
-    const needsAttention = !result.hasData
+    const needsAttention = !result.hasData || result.needsAttention
 
     current = {
       ...current,
@@ -778,7 +708,7 @@ export async function runDocumentProcessing(
         UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
     uploadProgress: 100,
       errorMessage: needsAttention
-        ? warning ||
+        ? (result.hasData && result.extracted.leaseReview ? 'Some lease details need review. Readable fields are shown below.' : warning) ||
           'We couldn’t find property, tenant, vendor, or lease details in this file.'
         : null,
     }
@@ -849,10 +779,6 @@ function preferFullerPersonName(primary: string, secondary: string): string {
   if (rightWords > leftWords) return right
   if (leftWords > rightWords) return left
   return right.length > left.length ? right : left
-}
-
-function residentMatchKey(unit: string, building: string): string {
-  return `${building.trim().toLowerCase()}|${unit.trim().toLowerCase()}`
 }
 
 function extractedUnitMatchKey(unit: string, building: string): string {

@@ -4,7 +4,7 @@
 import JSZip from "npm:jszip@3.10.1"
 
 export const WORD_TEXT_LIMIT = 120_000
-const WORD_IMAGE_LIMIT = 3
+const WORD_IMAGE_LIMIT = Number.MAX_SAFE_INTEGER
 
 export type WordBinaryKind = "docx" | "doc" | "rtf" | "pdf" | "unknown"
 
@@ -37,7 +37,7 @@ export function detectWordBinaryKind(bytes: Uint8Array): WordBinaryKind {
 }
 
 function truncateText(text: string): string {
-  return text.replace(/\r\n/g, "\n").trim().slice(0, WORD_TEXT_LIMIT)
+  return text.replace(/\r\n/g, "\n").trim()
 }
 
 function decodeXmlEntities(value: string): string {

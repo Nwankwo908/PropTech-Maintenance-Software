@@ -74,7 +74,7 @@ function trim(value: string | null | undefined): string {
   return (value ?? '').trim()
 }
 
-function compactStateToken(value: string): string {
+function compactStateToken(value: string | null | undefined): string {
   return trim(value).replace(/[.]/g, '').replace(/,/g, ' ').replace(/\s+/g, ' ').trim()
 }
 

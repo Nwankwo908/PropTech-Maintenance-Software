@@ -92,11 +92,11 @@ describe('aiClassificationLogRow', () => {
       landlordId: 'll-1',
       rawMessage: 'x'.repeat(9000),
       result: baseResult({
-        audit: { llm_provider: 'gpt-4o-mini', llm: { vendorTrade: 'plumbing' } },
+        audit: { llm_provider: 'gpt-4o', llm: { vendorTrade: 'plumbing' } },
       }),
     })
     expect(row.raw_message.length).toBe(8000)
-    expect(row.llm_provider).toBe('gpt-4o-mini')
+    expect(row.llm_provider).toBe('gpt-4o')
     expect(row.maintenance_request_id).toBeNull()
   })
 })

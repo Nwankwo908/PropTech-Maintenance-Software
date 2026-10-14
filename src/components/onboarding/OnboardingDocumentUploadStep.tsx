@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
+import { LeaseScanSummary } from './LeaseScanSummary'
 import {
   ACCEPTED_UPLOAD_MIME,
   canRetryOnboardingDocumentExtract,
@@ -130,6 +131,7 @@ function FileRow({
       {doc.errorMessage ? (
         <p className="mt-2 text-[12px] text-[#b91c1c]">{doc.errorMessage}</p>
       ) : null}
+      {doc.extractedPayload?.leaseReview ? <LeaseScanSummary review={doc.extractedPayload.leaseReview} processing={isProcessing} /> : null}
     </li>
   )
 }

@@ -1,0 +1,10 @@
+---
+description: Model selection for document scanning and text integrations.
+alwaysApply: true
+---
+
+The user prohibits GPT-4o-mini in the product. Do not select that model, dated versions of it, or use it as a fallback.
+
+Document extraction uses Gemini 3.8 Flash (`gemini-3.8-flash`), with Claude Sonnet 5.5 (`claude-sonnet-5-5`) for difficult lease sections. Existing OpenAI text integrations use `gpt-4o`. Keep model IDs and provider audit metadata aligned with the actual request.
+
+Read the complete uploaded lease. Do not silently cap extraction to a first-page preview. Preserve page evidence and distinguish absent terms from unreadable or conflicting fields. Only supported, confident fields may populate imported records; preserve existing rent-roll precedence.

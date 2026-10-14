@@ -1,19 +1,13 @@
-/**
- * Portfolio extraction for onboarding uploads (Gemini 3.8 Flash).
- * Extract only fields visibly present in the document — never invent demo data.
- */
-import {
-  DOCUMENT_EXTRACT_MODEL,
-  geminiGenerateJsonText,
-  geminiPartsFromOpenAiUserContent,
-} from "../documentExtract/geminiGenerateJson.ts"
+import { requestDocumentJson, type DocumentPart } from "./documentProvider.ts"
+import { extractLeaseDocument, type LeaseDocumentResult } from "./leaseDocumentExtract.ts"
+import type { LeaseScanReview, LeaseScanStage } from "../../../../shared/onboarding/leaseScan.ts"
 import * as XLSX from "npm:xlsx@0.18.5"
 import {
   isPdfFile,
   MIN_PDF_TEXT_CHARS,
   pdfBytesToPageTexts,
 } from "./pdfDocumentText.ts"
-import { shrinkPdfForExtract } from "./pdfShrink.ts"
+import { shrinkPdfForExtract, MAX_RESPONSES_PDF_PAGES } from "./pdfShrink.ts"
 import { pdfPagesToJpegDataUrls } from "./pdfPageImages.ts"
 import {
   detectWordBinaryKind,
@@ -29,9 +23,9 @@ import {
 } from "../../../../shared/onboarding/typedDocumentExtract/classify.ts"
 import {
   CLASSIFY_INSURANCE_SYSTEM_PROMPT,
+  findRelevantInsurancePages,
   INSURANCE_PAGE_FALLBACK_MAX,
   INSURANCE_SELECTED_PAGES_MAX,
-  findRelevantInsurancePages,
   parseInsuranceTypeClassifierResponse,
   refineInsuranceExtractKind,
   slicePageTexts,
@@ -202,6 +196,7 @@ export type PortfolioExtractDwellingPolicy = {
 }
 
 export type PortfolioDocumentExtractPayload = {
+  leaseReview?: LeaseScanReview
   account: PortfolioExtractAccount
   properties: PortfolioExtractProperty[]
   units: PortfolioExtractUnit[]
@@ -894,21 +889,30 @@ function systemPromptForKind(kind: TypedOrGenericExtractKind): string {
   return EXTRACT_SYSTEM_PROMPT
 }
 
+function documentPartsFromChat(userContent: Array<Record<string, unknown>>): DocumentPart[] {
+  return userContent.map((part) => {
+    if (part.type === "text") return { text: String(part.text || "") }
+    const image = part.image_url as { url?: string } | undefined
+    const match = image?.url?.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/)
+    if (!match) throw new Error("Use JPEG, PNG or WebP document images.")
+    return {
+      bytes: Uint8Array.from(atob(match[2]), (character) => character.charCodeAt(0)),
+      mimeType: match[1],
+    }
+  })
+}
+
 async function extractWithChatCompletions(
   apiKey: string,
   userContent: Array<Record<string, unknown>>,
   kind: TypedOrGenericExtractKind = "generic",
 ): Promise<PortfolioDocumentExtractPayload> {
-  const content = await geminiGenerateJsonText({
+  const result = await requestDocumentJson({
     apiKey,
     system: systemPromptForKind(kind),
-    parts: geminiPartsFromOpenAiUserContent(userContent),
+    parts: documentPartsFromChat(userContent),
   })
-  try {
-    return parseExtractedJson(content, kind)
-  } catch {
-    throw new Error("Document extract returned non-JSON content")
-  }
+  return parseExtractedJson(JSON.stringify(result.raw), kind)
 }
 
 async function extractPdfViaPageImages(input: {
@@ -940,36 +944,28 @@ async function extractPdfViaPageImages(input: {
     return null
   }
   if (urls.length === 0) return null
-
-  const pageUrls = urls
-  const userContent: Array<Record<string, unknown>> = [
-    {
-      type: "text",
-      text: `${input.introText}\nThe following images are pages from the uploaded PDF.`,
-    },
-    ...pageUrls.map((url) => ({
-      type: "image_url",
-      image_url: { url },
-    })),
-  ]
-  const extracted = await extractWithChatCompletions(input.apiKey, userContent, input.kind)
-  if (!insurancePages && urls.length > pageUrls.length) {
-    extracted.warnings = [
-      `Scanned the first ${pageUrls.length} of ${urls.length}+ pages. Upload a JPG or shorter PDF if details are missing.`,
-      ...extracted.warnings,
-    ]
-  }
+  const extracted = await extractWithChatCompletions(
+    input.apiKey,
+    [
+      {
+        type: "text",
+        text: `${input.introText}\nThe following images are pages from the uploaded PDF.`,
+      },
+      ...urls.map((url) => ({
+        type: "image_url",
+        image_url: { url },
+      })),
+    ],
+    input.kind,
+  )
   return extracted
 }
 
-function unreadPdfScanError(_byteLength: number): Error {
-  return new Error(
-    "We couldn’t read this PDF automatically. Export it as a JPG or a text-based PDF and try again.",
-  )
-}
-
-/** Gemini reads the PDF bytes directly. Shrink and retry when the file is too large. */
-async function extractWithResponsesPdf(input: {
+/**
+ * Read the PDF itself. Insurance uses the selected declarations pages.
+ * Every other document is sent in full, including scanned pages.
+ */
+async function extractNativePdf(input: {
   apiKey: string
   fileName: string
   introText: string
@@ -977,71 +973,32 @@ async function extractWithResponsesPdf(input: {
   kind: TypedOrGenericExtractKind
   pageNumbers?: number[]
 }): Promise<PortfolioDocumentExtractPayload> {
-  const prompt = systemPromptForKind(input.kind)
-  const pageCap = input.pageNumbers && input.pageNumbers.length > 0
-    ? Math.min(input.pageNumbers.length, INSURANCE_SELECTED_PAGES_MAX)
-    : MAX_RESPONSES_PDF_PAGES
-  const attempts = input.pageNumbers && input.pageNumbers.length > 0
-    ? [{ maxPages: pageCap, maxBytes: 900_000, pageNumbers: input.pageNumbers }]
-    : [
-        { maxPages: pageCap, maxBytes: 900_000, pageNumbers: input.pageNumbers },
-        { maxPages: Math.min(2, pageCap), maxBytes: 450_000, pageNumbers: input.pageNumbers },
-      ]
-  let lastSentBytes = -1
-  let lastError: Error | null = null
-
-  for (const attempt of attempts) {
-    const shrunk = await shrinkPdfForExtract(input.bytes, attempt)
-    if (shrunk.bytes.length === lastSentBytes) continue
-    lastSentBytes = shrunk.bytes.length
-    console.log(
-      "[onboarding-extract] pdf",
-      `pages=${shrunk.pageCount} using=${shrunk.usedPages} bytes=${shrunk.bytes.length} model=${DOCUMENT_EXTRACT_MODEL}`,
-    )
-    try {
-      const content = await geminiGenerateJsonText({
-        apiKey: input.apiKey,
-        system: prompt,
-        parts: [
-          { text: input.introText },
-          {
-            inlineData: {
-              mimeType: "application/pdf",
-              data: bytesToBase64(shrunk.bytes),
-            },
-          },
-        ],
-        maxAttempts: 2,
-      })
-      let extracted: PortfolioDocumentExtractPayload
-      try {
-        extracted = parseExtractedJson(content, input.kind)
-      } catch {
-        throw new Error("Document extract returned non-JSON content")
-      }
-      if (shrunk.usedPages < shrunk.pageCount) {
-        const range =
-          shrunk.pageNumbers.length > 0
-            ? `pages ${shrunk.pageNumbers[0]}–${shrunk.pageNumbers[shrunk.pageNumbers.length - 1]}`
-            : `the first ${shrunk.usedPages} pages`
-        extracted.warnings = [
-          `Scanned ${range} of ${shrunk.pageCount} pages. Upload a shorter PDF if details are missing.`,
-          ...extracted.warnings,
-        ]
-      }
-      return extracted
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error("Document extract failed")
-      const message = lastError.message.toLowerCase()
-      if (!message.includes("busy") && !message.includes("too large") && !message.includes("jpg")) {
-        throw lastError
-      }
-    }
+  let bytes = input.bytes
+  if (input.pageNumbers && input.pageNumbers.length > 0) {
+    const shrunk = await shrinkPdfForExtract(input.bytes, {
+      maxPages: Math.min(input.pageNumbers.length, INSURANCE_SELECTED_PAGES_MAX),
+      maxBytes: 900_000,
+      pageNumbers: input.pageNumbers,
+    })
+    bytes = shrunk.bytes
   }
-
-  throw lastError && input.bytes.length > 5 * 1024 * 1024
-    ? lastError
-    : unreadPdfScanError(input.bytes.length)
+  try {
+    const result = await requestDocumentJson({
+      apiKey: input.apiKey,
+      system: systemPromptForKind(input.kind),
+      parts: [
+        {
+          text: `${input.introText}\nRead EVERY supplied page of this PDF, including scanned pages.`,
+        },
+        { bytes, mimeType: "application/pdf" },
+      ],
+    })
+    return parseExtractedJson(JSON.stringify(result.raw), input.kind)
+  } catch (error) {
+    const raster = await extractPdfViaPageImages(input)
+    if (raster) return raster
+    throw error instanceof Error ? error : new Error("Document extract failed")
+  }
 }
 
 const TABULAR_TEXT_LIMIT = WORD_TEXT_LIMIT
@@ -1417,59 +1374,37 @@ export function buildUserContent(
   ]
 }
 
-async function classifyUnknownDocumentType(
-  apiKey: string,
-  snippet: string,
-): Promise<TypedOrGenericExtractKind> {
-  const sample = snippet.trim().slice(0, 2500)
-  if (!sample) return "unknown"
+async function classifyUnknownDocumentType(apiKey: string, snippet: string, bytes?: Uint8Array, mimeType?: string): Promise<TypedOrGenericExtractKind> {
+  const parts: DocumentPart[] = [{text: snippet.trim().slice(0,12000) || "Classify the uploaded document."}]
+  if (bytes?.length && (mimeType === "application/pdf" || mimeType?.startsWith("image/"))) parts.push({bytes,mimeType})
   try {
-    const content = await geminiGenerateJsonText({
+    const result = await requestDocumentJson({
       apiKey,
       system: CLASSIFY_SYSTEM_PROMPT,
-      parts: [{ text: sample }],
-      maxOutputTokens: 1024,
-      maxAttempts: 2,
+      parts,
+      schema: {
+        type: "object",
+        properties: { type: { type: "string", enum: ["rent_roll", "lease", "insurance", "unknown"] } },
+        required: ["type"],
+      },
     })
-    return parseClassifierResponse(JSON.parse(content))
+    return parseClassifierResponse(result.raw)
   } catch {
     return "unknown"
   }
 }
-
-async function classifyInsuranceSubtype(
-  apiKey: string,
-  snippet: string,
-  fileName: string,
-  pageImages: string[] = [],
-): Promise<TypedOrGenericExtractKind> {
-  const fromRules = refineInsuranceExtractKind("insurance", snippet, fileName)
+async function classifyInsuranceSubtype(apiKey:string,snippet:string,fileName:string,pageImages:string[]=[], native?:DocumentPart): Promise<TypedOrGenericExtractKind> {
+  const fromRules = refineInsuranceExtractKind("insurance",snippet,fileName)
   if (fromRules !== "insurance") return fromRules
-  const sample = snippet.trim().slice(0, 4000)
-  const userContent: Array<Record<string, unknown>> = sample
-    ? [{ type: "text", text: `File: ${fileName}\n${sample}` }]
-    : pageImages.slice(0, 2).map((url) => ({
-        type: "image_url",
-        image_url: { url, detail: "low" },
-      }))
-  if (userContent.length === 0) return "insurance"
-  if (!sample && pageImages.length > 0) {
-    userContent.unshift({
-      type: "text",
-      text: `File: ${fileName}\nClassify this insurance document. Do not assume it is a COI.`,
-    })
-  }
+  const userContent: Array<Record<string,unknown>> = [{type:"text",text:`File: ${fileName}\n${snippet.slice(0,12000)}`}]
+  if (!snippet.trim()) for (const url of pageImages) userContent.push({type:"image_url",image_url:{url}})
   try {
-    const content = await geminiGenerateJsonText({
+    const result = await requestDocumentJson({
       apiKey,
       system: CLASSIFY_INSURANCE_SYSTEM_PROMPT,
-      parts: geminiPartsFromOpenAiUserContent(userContent),
-      maxOutputTokens: 1024,
-      maxAttempts: 2,
+      parts: [...documentPartsFromChat(userContent), ...(native ? [native] : [])],
     })
-    return insuranceDocumentTypeToKind(
-      parseInsuranceTypeClassifierResponse(JSON.parse(content)),
-    )
+    return insuranceDocumentTypeToKind(parseInsuranceTypeClassifierResponse(result.raw))
   } catch {
     return "insurance"
   }
@@ -1502,6 +1437,9 @@ export async function extractPortfolioDocument(input: {
   bytes: Uint8Array
   pageImages?: string[]
   insuranceIntent?: "property_policy" | "auto"
+  anthropicApiKey?: string
+  signal?: AbortSignal
+  onLeaseUpdate?: (result: LeaseDocumentResult | null, stage: LeaseScanStage) => void
 }): Promise<PortfolioDocumentExtractPayload> {
   let kind = resolveTypedExtractKind(input.fileName, input.documentCategory)
   const rawPageImages = (input.pageImages ?? [])
@@ -1518,6 +1456,16 @@ export async function extractPortfolioDocument(input: {
     pdfPageTexts = await pdfBytesToPageTexts(input.bytes)
   }
 
+  let spreadsheetText: string | undefined
+  if (isExcelFile(input.fileName, input.contentType)) {
+    spreadsheetText = excelBytesToTabularText(input.bytes)
+    if (!spreadsheetText.trim()) {
+      return emptyExtractPayload([
+        "Could not read rows from this spreadsheet. Try saving as CSV or check that the file is not empty or password-protected.",
+      ])
+    }
+  }
+
   const insuranceFlow =
     kind === "insurance" ||
     kind === "insurance_certificate" ||
@@ -1529,7 +1477,7 @@ export async function extractPortfolioDocument(input: {
 
   let pageImages = rawPageImages.slice(
     0,
-    insuranceFlow ? INSURANCE_SELECTED_PAGES_MAX : 3,
+    rawPageImages.length,
   )
 
   let wordText: string | undefined
@@ -1543,7 +1491,6 @@ export async function extractPortfolioDocument(input: {
       const wordImages = await wordBytesToImageDataUrls(input.bytes)
       if (wordImages.length > 0) {
         pageImages = [...pageImages, ...wordImages.filter((url) => !pageImages.includes(url))]
-          .slice(0, insuranceFlow ? INSURANCE_SELECTED_PAGES_MAX : 3)
       } else {
         return emptyExtractPayload([
           "Could not read text from this Word document. Check that the file is not empty or password-protected.",
@@ -1552,8 +1499,13 @@ export async function extractPortfolioDocument(input: {
     }
   }
 
+  if (kind === "unknown") {
+    kind = await classifyUnknownDocumentType(input.apiKey, [spreadsheetText, wordText, ...pdfPageTexts].filter(Boolean).join("\n"), input.bytes, hasPdfBytes ? "application/pdf" : input.contentType)
+    if (kind === "unknown") kind = "generic"
+  }
+
   let insurancePageNumbers: number[] | undefined
-  if (insuranceFlow) {
+  if (insuranceFlow || kind === "insurance") {
     const snippet = pdfPageTexts.join("\n")
     if (snippet.trim()) {
       kind = refineInsuranceExtractKind(
@@ -1570,6 +1522,7 @@ export async function extractPortfolioDocument(input: {
         snippet,
         input.fileName,
         pageImages,
+        hasPdfBytes ? {bytes:input.bytes,mimeType:"application/pdf"} : undefined,
       )
     }
     const propertyPolicy =
@@ -1591,6 +1544,11 @@ export async function extractPortfolioDocument(input: {
     }
   }
 
+  if (kind === "lease") {
+    const pageTexts = hasPdfBytes ? pdfPageTexts : wordText?.trim() ? [wordText] : Array.from({length: Math.max(1,pageImages.length)}, () => "")
+    return await extractLeaseDocument({apiKey: input.apiKey, anthropicApiKey: input.anthropicApiKey, bytes:input.bytes, mimeType:hasPdfBytes ? "application/pdf" : wordText?.trim() ? "text/plain" : input.contentType, pageTexts, pageImages, signal:input.signal, onUpdate:input.onLeaseUpdate})
+  }
+
   // Preview images from the browser are a short crop (first pages only).
   // When the upload is a PDF, read the file itself — including scanned leases
   // with no text layer — instead of stopping on that crop.
@@ -1599,12 +1557,6 @@ export async function extractPortfolioDocument(input: {
     !wordText?.trim() &&
     !hasPdfBytes
   ) {
-    if (kind === "unknown") {
-      kind = "generic"
-    }
-    if (kind === "insurance") {
-      kind = "dwelling_policy_declarations"
-    }
     const intro = isTypedExtractKind(kind)
       ? typedExtractIntro(kind, input.fileName)
       : `File: ${input.fileName}\nDocument category hint: ${input.documentCategory || "unknown"}.\nThe following images are pages from the uploaded document. Extract portfolio data from them.`
@@ -1621,15 +1573,6 @@ export async function extractPortfolioDocument(input: {
     )
   }
 
-  let spreadsheetText: string | undefined
-  if (isExcelFile(input.fileName, input.contentType)) {
-    spreadsheetText = excelBytesToTabularText(input.bytes)
-    if (!spreadsheetText.trim()) {
-      return emptyExtractPayload([
-        "Could not read rows from this spreadsheet. Try saving as CSV or check that the file is not empty or password-protected.",
-      ])
-    }
-  }
 
   let pdfText: string | undefined
   if (hasPdfBytes) {
@@ -1637,7 +1580,7 @@ export async function extractPortfolioDocument(input: {
       insurancePageNumbers && insurancePageNumbers.length > 0
         ? slicePageTexts(pdfPageTexts, insurancePageNumbers)
         : pdfPageTexts.join("\n\n")
-    if (pdfText) pdfText = pdfText.slice(0, 120_000)
+    // Keep every page of embedded lease text; native PDF also contains scanned pages.
   }
 
   if (
@@ -1647,20 +1590,6 @@ export async function extractPortfolioDocument(input: {
     throw new Error(
       "We couldn’t read this image automatically. Try a smaller JPG or a text-based PDF.",
     )
-  }
-
-  if (kind === "unknown") {
-    const snippet = [spreadsheetText, wordText, pdfText].filter(Boolean).join("\n")
-    kind = await classifyUnknownDocumentType(input.apiKey, snippet)
-    if (kind === "unknown") kind = "generic"
-    if (kind === "insurance") {
-      kind = await classifyInsuranceSubtype(input.apiKey, snippet, input.fileName, pageImages)
-      if (kind === "insurance") {
-        return emptyExtractPayload([
-          "Could not determine this insurance document type. Upload the declarations page or a Certificate of Liability Insurance.",
-        ])
-      }
-    }
   }
 
   const userContent = buildUserContent(
@@ -1676,30 +1605,8 @@ export async function extractPortfolioDocument(input: {
     .map((part) => String(part.text ?? ""))
     .join("\n")
 
-  if (isPdfFile(input.fileName, input.contentType) && pdfNeedsNativeFileRead(pdfText)) {
-    const fromImages = await extractPdfViaPageImages({
-      apiKey: input.apiKey,
-      introText,
-      bytes: input.bytes,
-      kind,
-      pageNumbers: insurancePageNumbers,
-    })
-    if (fromImages) return fromImages
-    try {
-      return await extractWithResponsesPdf({
-        apiKey: input.apiKey,
-        fileName: input.fileName,
-        introText,
-        bytes: input.bytes,
-        kind,
-        pageNumbers: insurancePageNumbers,
-      })
-    } catch (err) {
-      if ((pdfText ?? "").trim().length >= 40) {
-        return await extractWithChatCompletions(input.apiKey, userContent, kind)
-      }
-      throw err
-    }
+  if (hasPdfBytes && (pdfNeedsNativeFileRead(pdfText) || pdfPageTexts.some(page => page.trim().length < MIN_PDF_TEXT_CHARS))) {
+    return await extractNativePdf({apiKey:input.apiKey,fileName:input.fileName,introText,bytes:input.bytes,kind,pageNumbers:insurancePageNumbers})
   }
 
   const extracted = await extractWithChatCompletions(input.apiKey, userContent, kind)
@@ -1707,7 +1614,7 @@ export async function extractPortfolioDocument(input: {
     isPdfFile(input.fileName, input.contentType) &&
     extractLooksUnread(extracted)
   ) {
-    return await extractWithResponsesPdf({
+    return await extractNativePdf({
       apiKey: input.apiKey,
       fileName: input.fileName,
       introText,

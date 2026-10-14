@@ -66,7 +66,7 @@ export function parseClassifierResponse(raw: unknown): TypedOrGenericExtractKind
 export function classifyInsuranceFromSnippet(snippet: string, fileName: string): TypedExtractKind | 'insurance' {
   const documentType = classifyInsuranceDocumentType(snippet, fileName)
   const kind = insuranceDocumentTypeToKind(documentType)
-  return kind === 'insurance' ? 'insurance' : kind
+  return kind === 'unknown' || kind === 'generic' ? 'insurance' : kind
 }
 
 export const CLASSIFY_SYSTEM_PROMPT = `You classify a property-management document.
