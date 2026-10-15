@@ -1,4 +1,5 @@
 import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
+import { documentAttention, leaseAttentionMessage } from '@shared/onboarding/documentAttention'
 import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
 import {
   findRelevantInsurancePages,
@@ -674,9 +675,9 @@ export async function runDocumentProcessing(
         signal,
         onProgress: (event) => {
           if (signal?.aborted) return
-          const labels: Record<string, string> = { reading: 'Reading all lease pages', checking: 'Checking lease details', recovering: 'Rereading unclear sections', backup: 'Reviewing difficult sections', complete: 'Lease details checked' }
-          const progress: Record<string, number> = { reading: 52, checking: 74, recovering: 82, backup: 90, complete: 98 }
-          current = { ...current, uploadStatus: 'extracting', extractionStatus: 'extracting', processingLabel: labels[event.stage] || 'Reading document', uploadProgress: progress[event.stage] || 52, ...(event.extracted ? { extractedPayload: event.extracted } : {}) }
+          const labels: Record<string, string> = { reading: 'Reading all lease pages', checking: 'Checking lease details', recovering: 'Rereading unclear sections', verifying_pages: 'Verifying remaining document pages', backup: 'Reviewing difficult sections', complete: 'Lease details checked' }
+          const progress: Record<string, number> = { reading: 52, checking: 74, recovering: 82, verifying_pages: 86, backup: 90, complete: 98 }
+          current = { ...current, uploadStatus: 'extracting', extractionStatus: 'extracting', processingLabel: labels[event.stage] || 'Reading document', uploadProgress: Math.max(current.uploadProgress, progress[event.stage] || 52), ...(event.extracted ? { extractedPayload: event.extracted } : {}) }
           onUpdate(current)
         },
         docId: doc.id,
@@ -694,7 +695,9 @@ export async function runDocumentProcessing(
       result.extracted.warnings
         .map((item) => cleanOnboardingExtractText(item))
         .find(Boolean) ?? null
-    const needsAttention = !result.hasData || result.needsAttention
+    const review = result.extracted.leaseReview
+    const attention = review ? documentAttention(result) : null
+    const needsAttention = attention ? attention.needsAttention : !result.hasData || result.needsAttention
 
     current = {
       ...current,
@@ -708,7 +711,7 @@ export async function runDocumentProcessing(
         UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
     uploadProgress: 100,
       errorMessage: needsAttention
-        ? (result.hasData && result.extracted.leaseReview ? 'Some lease details need review. Readable fields are shown below.' : warning) ||
+        ? (review ? leaseAttentionMessage(review) || attention?.attentionReasons[0] : warning) ||
           'We couldn’t find property, tenant, vendor, or lease details in this file.'
         : null,
     }

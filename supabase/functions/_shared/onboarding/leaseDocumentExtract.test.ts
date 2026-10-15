@@ -59,4 +59,49 @@ describe('single-upload lease recovery', () => {
   it('does not claim coverage for a PDF with unknown pages', async () => {
     await expect(extractLeaseDocument({ ...input(), pageTexts: [] })).rejects.toThrow('Could not verify')
   })
+  it('verifies only missing pages when all lease fields already pass at 100% confidence', async () => {
+    const first = leaseFixture([1])
+    for (const field of Object.values(first.fields)) field.confidence = 100
+    const request = vi.fn(async (call: DocumentProviderInput) => {
+      if (request.mock.calls.length === 1) return response(first)
+      expect(call.schema?.required).toContain('page_checks')
+      expect(call.parts[0]).toMatchObject({ text: expect.stringContaining('Supplied original pages: 2') })
+      expect(call.provider).toBe('gemini')
+      const next = leaseFixture([2])
+      next.fields.monthly_rent.value = 9999
+      return response({ ...next, page_checks: { '2': { status: 'read', summary: 'Signature page' } } })
+    })
+    const result = await extractLeaseDocument({ ...input(), pageTexts: ['', ''], request })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(result.leaseReview.coverageComplete).toBe(true)
+    expect(result.leaseReview.needsReview).toBe(false)
+    expect(result.leaseReview.fields.monthly_rent.value).toBe(1500)
+    expect(result.leaseReview.attempts[1].purpose).toBe('coverage')
+    expect(result.leaseReview.attempts[1].model).toBe(GEMINI_DOCUMENT_MODEL)
+    expect(result.leaseReview.pageChecks?.['2'].status).toBe('read')
+  })
+  it('uses gpt-4o-mini to verify a blank page the Gemini coverage pass could not confirm', async () => {
+    const first = leaseFixture([1])
+    const request = vi.fn(async (call: DocumentProviderInput) => {
+      if (request.mock.calls.length === 1) return response(first)
+      const next = leaseFixture([2])
+      return response({ ...next, page_checks: { '2': { status: call.provider === 'openai' ? 'blank' : 'unreadable', summary: call.provider === 'openai' ? 'Blank page' : 'Unable to read page' } } }, call.provider)
+    })
+    const result = await extractLeaseDocument({ ...input(), pageTexts: ['', ''], request })
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(result.leaseReview.attempts.map(attempt => attempt.provider)).toEqual(['gemini', 'gemini', 'openai'])
+    expect(result.leaseReview.attempts[2].model).toBe('gpt-4o-mini')
+    expect(result.leaseReview.complete).toBe(true)
+    expect(result.leaseReview.pageChecks?.['2'].status).toBe('blank')
+  })
+  it('does not call coverage complete when a page remains unreadable at 100% field confidence', async () => {
+    const first = leaseFixture([1])
+    for (const field of Object.values(first.fields)) field.confidence = 100
+    const request = vi.fn(async () => request.mock.calls.length === 1 ? response(first) : response({ ...leaseFixture([2]), page_checks: { '2': { status: 'unreadable', summary: 'Page cannot be read' } } }))
+    const result = await extractLeaseDocument({ ...input(), pageTexts: ['', ''], request })
+    expect(result.leaseReview.coverageComplete).toBe(false)
+    expect(result.leaseReview.needsReview).toBe(true)
+    expect(result.leaseReview.pagesReviewed).toEqual([1])
+    expect(Object.values(result.leaseReview.fields).every(field => field.confidence === 100 && !field.needsReview)).toBe(true)
+  })
 })

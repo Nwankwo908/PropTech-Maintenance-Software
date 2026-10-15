@@ -151,6 +151,7 @@ export type ExtractOnboardingDocumentResult = {
   extracted: PortfolioDocumentExtractPayload
   hasData: boolean
   needsAttention: boolean
+  attentionReasons?: string[]
 }
 
 function readInvokeErrorBody(data: unknown): string | null {
@@ -247,11 +248,13 @@ export async function extractOnboardingDocument(
     extracted: PortfolioDocumentExtractPayload
     hasData?: boolean
     needsAttention?: boolean
+    attentionReasons?: string[]
   }
 
   return {
     extracted: payload.extracted,
     hasData: Boolean(payload.hasData),
     needsAttention: Boolean(payload.needsAttention),
+    attentionReasons: payload.attentionReasons,
   }
 }

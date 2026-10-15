@@ -12,8 +12,26 @@ it('shows readable details, original page references and confidence while recove
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing />)
   expect(html).toContain('Morgan Tenant')
   expect(html).toContain('$1,500.00')
-  expect(html).toContain('96% confidence · p. 3')
+  expect(html).toContain('96% extraction confidence · p. 3')
   expect(html).toContain('checking remaining fields')
   expect(html).toContain('Not stated in document')
   expect(html.match(/Needs review/g)).toHaveLength(1)
+})
+it('distinguishes an unverified 100% reading from a validated field and shows its reason', () => {
+  const raw = leaseFixture()
+  raw.fields.monthly_rent.confidence = 100
+  raw.fields.monthly_rent.quote = ''
+  const { review } = normalizeLeaseScan(raw, [''])
+  const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
+  expect(html).toContain('Unverified reading · reported confidence 100%')
+  expect(html).toContain('The source page or supporting text is missing.')
+})
+it('lists unreviewed pages while leaving validated 100% field rows unflagged', () => {
+  const raw = leaseFixture()
+  for (const field of Object.values(raw.fields)) field.confidence = 100
+  const { review } = normalizeLeaseScan(raw, ['', ''])
+  const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
+  expect(html).toContain('Page coverage needs review: page 2 was not confirmed as read.')
+  expect(html).not.toContain('Unverified reading')
+  expect(html).not.toContain('Needs review')
 })

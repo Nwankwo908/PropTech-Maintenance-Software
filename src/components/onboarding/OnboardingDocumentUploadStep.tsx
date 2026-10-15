@@ -129,7 +129,7 @@ function FileRow({
       ) : null}
 
       {doc.errorMessage ? (
-        <p className="mt-2 text-[12px] text-[#b91c1c]">{doc.errorMessage}</p>
+        <p className={`mt-2 text-[12px] ${doc.uploadStatus === 'needs_attention' ? 'text-[#b54708]' : 'text-[#b91c1c]'}`}>{doc.errorMessage}</p>
       ) : null}
       {doc.extractedPayload?.leaseReview ? <LeaseScanSummary review={doc.extractedPayload.leaseReview} processing={isProcessing} /> : null}
     </li>

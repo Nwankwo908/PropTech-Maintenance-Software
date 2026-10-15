@@ -34,6 +34,15 @@ describe('lease evidence and completeness', () => {
     const matching = normalizeLeaseScan(leaseFixture(), ['Lease terms '.repeat(20)])
     expect(matching.review.fields.monthly_rent.source).toBe('embedded_text')
   })
+  it('accepts equivalent PDF typography without weakening numeric source checks', () => {
+    const raw = leaseFixture()
+    for (const field of Object.values(raw.fields)) field.quote = '\u201cTenant\u2019s office\u201d - rent $1,500.00'
+    const text = `${'\u201cTenant\u2019s of\uFB01ce\u201d \u2014 rent $1,500.00 '}`.repeat(10)
+    const { review } = normalizeLeaseScan(raw, [text])
+    expect(review.fields.monthly_rent.status).toBe('found')
+    for (const field of Object.values(raw.fields)) field.quote = '\u201cTenant\u2019s office\u201d - rent $15.00'
+    expect(normalizeLeaseScan(raw, [text]).review.fields.monthly_rent.status).toBe('uncertain')
+  })
   it('rejects impossible dates, negative rent and invalid due days', () => {
     const raw = leaseFixture()
     raw.fields.lease_start.value = '2026-02-30'

@@ -15,6 +15,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isOnboardingLandlordId } from "../../../shared/landlordCapabilities.ts"
 import { isPortalAdminEmailAllowed } from "../../../shared/admin/staffAllowlist.ts"
 import { emailFromAuthUser } from "../../../shared/authUserEmail.ts"
+import { documentAttention } from "../../../shared/onboarding/documentAttention.ts"
 import {
   extractPortfolioDocument,
   portfolioExtractHasData,
@@ -241,7 +242,8 @@ Deno.serve(async (req) => {
         const emit = (event: string, data: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
         try {
           const extracted = await extractPortfolioDocument({apiKey:geminiKey,openaiApiKey:Deno.env.get('OPENAI_API_KEY')?.trim(),fileName,documentCategory:propertyInsuranceExtract?'property_insurance':documentCategory,contentType,bytes:bytes || new Uint8Array(),pageImages,insuranceIntent,signal:AbortSignal.any([req.signal,abort.signal]),onLeaseUpdate:(result,stage)=>emit('progress',{stage,extracted:result})})
-          emit('result',{extracted,hasData:portfolioExtractHasData(extracted),needsAttention:!portfolioExtractHasData(extracted)||extracted.leaseReview?.needsReview===true||extracted.warnings.some(w=>/not supported|not parsed|upload pdf|upload csv/i.test(w))})
+          const hasData = portfolioExtractHasData(extracted)
+          emit('result',{extracted,hasData,...documentAttention({extracted,hasData})})
           controller.close()
         } catch (error) {
           if (!abort.signal.aborted) {emit('error',{error:error instanceof Error?error.message:'Document scanning failed.'});controller.close()}
@@ -266,17 +268,14 @@ Deno.serve(async (req) => {
     })
 
     const hasData = portfolioExtractHasData(extracted)
-    const needsAttention =
-      !hasData ||
-      extracted.leaseReview?.needsReview === true ||
-      extracted.warnings.some((w) => /not supported|not parsed|upload pdf|upload csv/i.test(w))
+    const attention = documentAttention({ extracted, hasData })
 
     return jsonResponse({
       ok: true,
       docId,
       extracted,
       hasData,
-      needsAttention,
+      ...attention,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Document extract failed"

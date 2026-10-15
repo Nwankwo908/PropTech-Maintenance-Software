@@ -6,6 +6,7 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve('src'), '@shared': path.resolve('shared') } },
   test: { environment: 'node', include: [
     'shared/onboarding/leaseScan.test.ts',
+    'shared/onboarding/documentAttention.test.ts',
     'supabase/functions/_shared/onboarding/{leaseDocumentExtract,documentProvider}.test.ts',
     'src/lib/documentScanStream.test.ts',
     'src/components/onboarding/LeaseScanSummary.test.tsx',

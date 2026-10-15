@@ -16,8 +16,11 @@ export type LeaseFieldEvidence = {
   quote: string
   source: 'embedded_text' | 'document_image'
   needsReview: boolean
+  reviewReasons?: string[]
 }
+export type LeasePageCheck = { status: 'read' | 'blank' | 'unreadable'; summary: string }
 export type LeaseScanReview = {
+  pageChecks?: Record<string, LeasePageCheck>
   referenceKind?: 'page' | 'text_section'
   fields: Record<LeaseFieldName, LeaseFieldEvidence>
   pageCount: number
@@ -26,18 +29,20 @@ export type LeaseScanReview = {
   coverageComplete: boolean
   complete: boolean
   needsReview: boolean
-  attempts: Array<{ provider: 'gemini' | 'openai'; model: string; phase: 'initial' | 'recovery' | 'backup'; pages: number[]; inputTokens: number; outputTokens: number; outcome: string }>
+  attempts: Array<{ provider: 'gemini' | 'openai'; model: string; phase: 'initial' | 'recovery' | 'backup'; pages: number[]; inputTokens: number; outputTokens: number; outcome: string; purpose?: 'fields' | 'coverage' }>
 }
-export type LeaseScanStage = 'reading' | 'checking' | 'recovering' | 'backup' | 'complete'
+export type LeaseScanStage = 'reading' | 'checking' | 'recovering' | 'verifying_pages' | 'backup' | 'complete'
 export const LEASE_FIELD_NAMES = Object.keys(LEASE_FIELD_LABELS) as LeaseFieldName[]
 const record = (raw: unknown): Record<string, unknown> => raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
 const percent = (raw: unknown) => typeof raw === 'number' && Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0
-const norm = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim()
+// Normalize PDF typography without changing digits, amounts, or punctuation that distinguishes values.
+const norm = (value: string) => value.normalize('NFKC').toLowerCase().replace(/\u00ad/g, '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[\u2010-\u2014\u2212]/g, '-').replace(/\s+/g, ' ').trim()
 const comparable = (value: LeaseFieldEvidence['value']) => Array.isArray(value) ? JSON.stringify(value.map(norm).sort()) : typeof value === 'string' ? norm(value) : value
 function flagDateConflict(fields: LeaseScanReview['fields']) {
   if (fields.lease_start.status === 'found' && fields.lease_end.status === 'found' && typeof fields.lease_start.value === 'string' && typeof fields.lease_end.value === 'string' && fields.lease_start.value > fields.lease_end.value) {
-    fields.lease_start = { ...fields.lease_start, status: 'conflict', needsReview: true }
-    fields.lease_end = { ...fields.lease_end, status: 'conflict', needsReview: true }
+    const reviewReasons = ['The lease end date is earlier than its start date.']
+    fields.lease_start = { ...fields.lease_start, status: 'conflict', needsReview: true, reviewReasons }
+    fields.lease_end = { ...fields.lease_end, status: 'conflict', needsReview: true, reviewReasons }
   }
 }
 export function validLeaseDate(value: unknown): string | null {
@@ -61,15 +66,19 @@ export function normalizeLeaseScan(raw: unknown, pageTexts: string[], pageNumber
     const pages = [...new Set((Array.isArray(input.pages) ? input.pages : []).filter((page): page is number => Number.isInteger(page) && allowed.has(page)))].sort((a,b) => a-b)
     const quote = typeof input.quote === 'string' ? input.quote.trim().slice(0, 1000) : ''
     let status: LeaseFieldStatus = ['found','not_stated','unreadable','uncertain','conflict'].includes(String(input.status)) ? input.status as LeaseFieldStatus : 'unreadable'
+    const reviewReasons: string[] = []
     const confidence = percent(input.confidence)
-    if (status === 'found' && (!hasValue || !pages.length || !quote)) status = 'unreadable'
-    if (status === 'found' && confidence < 85) status = 'uncertain'
+    if (status === 'found' && !hasValue) { status = 'unreadable'; reviewReasons.push('The extracted value is missing or invalid.') }
+    if (status === 'found' && (!pages.length || !quote)) { status = 'unreadable'; reviewReasons.push('The source page or supporting text is missing.') }
+    if (status === 'found' && confidence < 85) { status = 'uncertain'; reviewReasons.push('The reading confidence is below 85%.') }
     const matchingText = pages.some(page => pageTexts[page-1]?.trim() && norm(pageTexts[page-1]).includes(norm(quote)))
     const citedTextPages = pages.filter(page => (pageTexts[page-1] || '').trim().length >= 100)
-    if (status === 'found' && citedTextPages.length === pages.length && !matchingText) status = 'uncertain'
+    if (status === 'found' && citedTextPages.length === pages.length && !matchingText) { status = 'uncertain'; reviewReasons.push('The supporting text could not be matched to the cited page. Check the source text below.') }
     if (status === 'not_stated') value = null
-    if (status === 'not_stated' && provided.some(page => !pagesReviewed.includes(page))) status = 'unreadable'
-    fields[name] = { value, status, confidence, pages, quote, source: matchingText ? 'embedded_text' : 'document_image', needsReview: !['found','not_stated'].includes(status) || (status === 'not_stated' && ['tenant_names','property_address','lease_start','monthly_rent'].includes(name)) }
+    if (status === 'not_stated' && provided.some(page => !pagesReviewed.includes(page))) { status = 'unreadable'; reviewReasons.push('Not all document pages were confirmed as read, so this detail may still be present.') }
+    const needsReview = !['found','not_stated'].includes(status) || (status === 'not_stated' && ['tenant_names','property_address','lease_start','monthly_rent'].includes(name))
+    if (needsReview && !reviewReasons.length) reviewReasons.push(status === 'not_stated' ? 'The document does not state this required detail.' : status === 'conflict' ? 'The document contains conflicting readings for this detail.' : status === 'uncertain' ? 'The reading is uncertain; check the supporting source text.' : 'This detail could not be read reliably.')
+    fields[name] = { value, status, confidence, pages, quote, source: matchingText ? 'embedded_text' : 'document_image', needsReview, ...(reviewReasons.length ? { reviewReasons } : {}) }
   }
   flagDateConflict(fields)
   const accepted = (name: LeaseFieldName) => fields[name].status === 'found' ? fields[name].value : null
@@ -95,14 +104,14 @@ export function mergeLeaseScans(first: LeaseScanReview, next: LeaseScanReview, n
   for (const name of names) {
     const previous = fields[name], candidate = next.fields[name]
     if (previous.status === 'found' && candidate.status === 'found' && comparable(previous.value) !== comparable(candidate.value)) {
-      fields[name] = { ...previous, status: 'conflict', needsReview: true, confidence: Math.min(previous.confidence, candidate.confidence), pages: [...new Set([...previous.pages,...candidate.pages])], quote: `${previous.quote}\nConflicting reading: ${candidate.quote}`.slice(0,1000) }
+      fields[name] = { ...previous, status: 'conflict', needsReview: true, reviewReasons: ['Different readings disagree on this value. Check the source text below.'], confidence: Math.min(previous.confidence, candidate.confidence), pages: [...new Set([...previous.pages,...candidate.pages])], quote: `${previous.quote}\nConflicting reading: ${candidate.quote}`.slice(0,1000) }
     } else if (previous.status !== 'found' && previous.status !== 'conflict' && ['found','not_stated'].includes(candidate.status) && (candidate.status !== 'not_stated' || first.pagesProvided.every(page=>next.pagesProvided.includes(page)))) fields[name] = candidate
   }
   flagDateConflict(fields)
   const pagesReviewed = [...new Set([...first.pagesReviewed, ...next.pagesReviewed])].sort((a,b)=>a-b)
   const coverageComplete = first.pagesProvided.every(page => pagesReviewed.includes(page))
   const complete = coverageComplete && LEASE_FIELD_NAMES.every(name => ['found','not_stated'].includes(fields[name].status))
-  return { ...first, fields, pagesReviewed, coverageComplete, complete, needsReview: !complete || LEASE_FIELD_NAMES.some(name=>fields[name].needsReview), attempts: next.attempts }
+  return { ...first, fields, pagesReviewed, pageChecks: { ...first.pageChecks, ...next.pageChecks }, coverageComplete, complete, needsReview: !complete || LEASE_FIELD_NAMES.some(name=>fields[name].needsReview), attempts: next.attempts }
 }
 export function leaseScanToExtract(review: LeaseScanReview, parties: LeaseExtract): LeaseExtract {
   const accepted = (name: LeaseFieldName) => review.fields[name].status === 'found' ? review.fields[name].value : null
