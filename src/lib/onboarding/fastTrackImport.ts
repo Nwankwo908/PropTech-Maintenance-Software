@@ -13,7 +13,7 @@ import {
   validateReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
 import { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
-import { resolveOnboardingPropertyType } from '@/lib/onboarding/propertyType'
+import { leaseDraftRequiredBlankMessage, confirmDisplayedLeaseDraft } from '@/lib/onboarding/leaseReviewDraft'
 import { supabase } from '@/lib/supabase'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import { importMockExtraction } from './importPortfolio'
@@ -86,7 +86,16 @@ export async function commitFastTrackImport(
     }
   }
 
-  const normalized = normalizeExtractionReview(input.review, accountSeed)
+  const requiredBlank = leaseDraftRequiredBlankMessage(input.review)
+  if (requiredBlank) {
+    input.onError(requiredBlank)
+    return false
+  }
+
+  const normalized = normalizeExtractionReview(
+    confirmDisplayedLeaseDraft(input.review),
+    accountSeed,
+  )
   normalized.account = preserveReviewContactName(
     normalized.account,
     mergeReviewManualAccount(accountSeed, input.review.account),

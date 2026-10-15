@@ -15,6 +15,12 @@ import {
   type OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
 import {
+  editLeaseReviewDraft,
+  leaseDraftRequiredBlankMessage,
+  reviewFieldStateLabel,
+  type ReviewFieldAttention,
+} from '@/lib/onboarding/leaseReviewDraft'
+import {
   onboardingNestedCardClass,
   onboardingSectionStackClass,
   onboardingSurfaceSectionClass,
@@ -205,6 +211,28 @@ function residentForUnit(
     if (unitBuilding && residentBuilding) return unitBuilding === residentBuilding
     return true
   })
+}
+
+function DraftFieldLabel({
+  text,
+  attention,
+}: {
+  text: string
+  attention?: ReviewFieldAttention
+}) {
+  const state = reviewFieldStateLabel(attention)
+  return (
+    <span className={fieldLabelClass}>
+      {text}
+      {state ? (
+        <span
+          className={`ml-2 text-[11px] font-semibold ${attention === 'verified' ? 'text-[#64748b]' : 'text-amber-800'}`}
+        >
+          {state}
+        </span>
+      ) : null}
+    </span>
+  )
 }
 
 function residentsForProperty(
@@ -440,7 +468,10 @@ export function OnboardingAiReviewStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the list is empty
   }, [review.vendors.length])
 
+  const requiredBlankMessage = leaseDraftRequiredBlankMessage(review)
+
   function requestContinue() {
+    if (requiredBlankMessage) return
     if (!hasSelectedVendors) {
       setConfirmNoVendorsOpen(true)
       return
@@ -462,6 +493,10 @@ export function OnboardingAiReviewStep({
       properties,
       residents: syncLinkedResidents(properties, review.residents),
     })
+  }
+
+  function patchDraft(id: string, key: string, value: string) {
+    onReviewChange(editLeaseReviewDraft(review, id, key, value))
   }
 
   function patchResident(id: string, patch: Partial<OnboardingExtractedResident>) {
@@ -655,11 +690,15 @@ export function OnboardingAiReviewStep({
     return (
       <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
         <label className="block sm:col-span-2">
-          <span className={fieldLabelClass}>Full name</span>
+          <DraftFieldLabel text="Full name" attention={item.fieldAttention?.fullName} />
           <input
             className={inputClass}
             value={item.fullName}
-            onChange={(e) => patchResident(item.id, { fullName: e.target.value })}
+            onChange={(e) =>
+              item.fieldAttention
+                ? patchDraft(item.id, 'fullName', e.target.value)
+                : patchResident(item.id, { fullName: e.target.value })
+            }
             placeholder="Full name"
           />
         </label>
@@ -688,11 +727,15 @@ export function OnboardingAiReviewStep({
         </label>
         {opts.showUnit ? (
           <label className="block min-w-0">
-            <span className={fieldLabelClass}>Unit</span>
+            <DraftFieldLabel text="Unit" attention={item.fieldAttention?.unit} />
             <input
               className={inputClass}
               value={item.unit}
-              onChange={(e) => patchResident(item.id, { unit: e.target.value })}
+              onChange={(e) =>
+                item.fieldAttention
+                  ? patchDraft(item.id, 'unit', e.target.value)
+                  : patchResident(item.id, { unit: e.target.value })
+              }
               placeholder="4B"
             />
           </label>
@@ -709,24 +752,68 @@ export function OnboardingAiReviewStep({
           />
         </label>
         <label className="block min-w-0">
-          <span className={fieldLabelClass}>Monthly rent</span>
+          <DraftFieldLabel text="Monthly rent" attention={item.fieldAttention?.monthlyRent} />
           <input
             className={inputClass}
             value={item.monthlyRent}
-            onChange={(e) => patchResident(item.id, { monthlyRent: e.target.value })}
+            onChange={(e) =>
+              item.fieldAttention
+                ? patchDraft(item.id, 'monthlyRent', e.target.value)
+                : patchResident(item.id, { monthlyRent: e.target.value })
+            }
             placeholder="$2,850"
           />
         </label>
         <label className="block min-w-0">
-          <span className={fieldLabelClass}>Rent due day (1–31)</span>
+          <DraftFieldLabel text="Rent due day (1–31)" attention={item.fieldAttention?.rentDueDay} />
           <input
             className={inputClass}
             value={item.rentDueDay}
-            onChange={(e) => patchResident(item.id, { rentDueDay: e.target.value })}
+            onChange={(e) =>
+              item.fieldAttention
+                ? patchDraft(item.id, 'rentDueDay', e.target.value)
+                : patchResident(item.id, { rentDueDay: e.target.value })
+            }
             placeholder="1"
           />
         </label>
         </div>
+        {item.fieldAttention ? (
+          <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+            <label className="block min-w-0">
+              <DraftFieldLabel text="Lease start" attention={item.fieldAttention.leaseStart} />
+              <input
+                className={inputClass}
+                type="date"
+                value={item.leaseStart}
+                onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)}
+              />
+            </label>
+            <label className="block min-w-0">
+              <DraftFieldLabel text="Lease end" attention={item.fieldAttention.leaseEnd} />
+              <input
+                className={inputClass}
+                type="date"
+                value={item.leaseEnd}
+                onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)}
+              />
+            </label>
+            {(() => {
+              const lease = review.leases.find((row) => row.id === item.id.replace('ext-res-', 'ext-lease-'))
+              if (!lease) return null
+              return (
+                <label className="block min-w-0">
+                  <DraftFieldLabel text="Security deposit" attention={lease.fieldAttention?.securityDeposit} />
+                  <input
+                    className={inputClass}
+                    value={lease.securityDeposit}
+                    onChange={(e) => patchDraft(lease.id, 'securityDeposit', e.target.value)}
+                  />
+                </label>
+              )
+            })()}
+          </div>
+        ) : null}
         <label className="block sm:col-span-2">
           <span className={fieldLabelClass}>Maintenance responsibilities clause</span>
           <textarea
@@ -829,21 +916,23 @@ export function OnboardingAiReviewStep({
                       />
                     </label>
                     <div className="min-w-0">
-                      <span className={fieldLabelClass}>Street address</span>
+                      <DraftFieldLabel text="Street address" attention={item.fieldAttention?.address} />
                       <StreetAddressAutocomplete
                         className={inputClass}
                         value={item.address}
                         onChange={(address) =>
-                          patchProperty(
-                            item.id,
-                            addedByHand
-                              ? {
-                                  address,
-                                  selected:
-                                    item.name.trim().length > 0 || address.trim().length > 0,
-                                }
-                              : { address },
-                          )
+                          item.fieldAttention
+                            ? patchDraft(item.id, 'address', address)
+                            : patchProperty(
+                                item.id,
+                                addedByHand
+                                  ? {
+                                      address,
+                                      selected:
+                                        item.name.trim().length > 0 || address.trim().length > 0,
+                                    }
+                                  : { address },
+                              )
                         }
                         onPlaceResolved={(parsed) =>
                           patchProperty(item.id, {
@@ -1670,7 +1759,34 @@ export function OnboardingAiReviewStep({
                   : undefined
               }
             >
-              {renderSimpleRows<ExtractedLeaseInfo>(
+              {review.leases.some((item) => item.fieldAttention)
+                ? review.leases.map((item) =>
+                    item.fieldAttention ? (
+                      <div key={item.id} className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+                        <label className="block">
+                          <DraftFieldLabel text="Tenant" attention={item.fieldAttention.residentName} />
+                          <input className={inputClass} value={item.residentName} onChange={(e) => patchDraft(item.id, 'residentName', e.target.value)} />
+                        </label>
+                        <label className="block">
+                          <DraftFieldLabel text="Monthly rent" attention={item.fieldAttention.rentAmount} />
+                          <input className={inputClass} value={item.rentAmount} onChange={(e) => patchDraft(item.id, 'rentAmount', e.target.value)} />
+                        </label>
+                        <label className="block">
+                          <DraftFieldLabel text="Lease start" attention={item.fieldAttention.leaseStart} />
+                          <input className={inputClass} type="date" value={item.leaseStart} onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)} />
+                        </label>
+                        <label className="block">
+                          <DraftFieldLabel text="Lease end" attention={item.fieldAttention.leaseEnd} />
+                          <input className={inputClass} type="date" value={item.leaseEnd} onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)} />
+                        </label>
+                        <label className="block">
+                          <DraftFieldLabel text="Security deposit" attention={item.fieldAttention.securityDeposit} />
+                          <input className={inputClass} value={item.securityDeposit} onChange={(e) => patchDraft(item.id, 'securityDeposit', e.target.value)} />
+                        </label>
+                      </div>
+                    ) : null,
+                  )
+                : renderSimpleRows<ExtractedLeaseInfo>(
                 review.leases,
                 'leases',
                 (item) => item.residentName,
@@ -1708,6 +1824,11 @@ export function OnboardingAiReviewStep({
         )}
       </div>
 
+      {requiredBlankMessage ? (
+        <p className="mt-4 text-[13px] text-[#b54708]" role="status">
+          {requiredBlankMessage}
+        </p>
+      ) : null}
       <OnboardingStepNav showBack onBack={onBackToUploads} saving={saving}>
         <OnboardingContinueButton disabled={saving} onClick={requestContinue}>
           {continueLabel}

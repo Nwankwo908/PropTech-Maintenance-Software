@@ -1,5 +1,11 @@
 import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
 import { documentAttention, leaseAttentionMessage } from '@shared/onboarding/documentAttention'
+import {
+  buildLeaseReviewDraft,
+  draftBlocksPermanentWrite,
+  reviewRowNeedsAttention,
+  type ReviewFieldAttentionMap,
+} from '@/lib/onboarding/leaseReviewDraft'
 import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
 import {
   findRelevantInsurancePages,
@@ -114,6 +120,8 @@ export type ExtractedLeaseInfo = {
   confidence: number
   selected: boolean
   needsReview: boolean
+  /** Field-level lease draft state. Absent on rent-roll and manual rows. */
+  fieldAttention?: ReviewFieldAttentionMap
 }
 
 export type ExtractedFinancialRecord = {
@@ -161,6 +169,8 @@ export type OnboardingExtractedProperty = {
   confidence: number
   selected: boolean
   needsReview: boolean
+  /** Field-level lease draft state. Absent on rent-roll and manual rows. */
+  fieldAttention?: ReviewFieldAttentionMap
 }
 
 export type OnboardingExtractedUnit = {
@@ -189,6 +199,8 @@ export type OnboardingExtractedResident = {
   confidence: number
   selected: boolean
   needsReview: boolean
+  /** Field-level lease draft state. Absent on rent-roll and manual rows. */
+  fieldAttention?: ReviewFieldAttentionMap
   /** When true, send tenant welcome SMS on Complete setup. */
   sendOnboardingOnComplete?: boolean
   /** Manual Add tenant row linked to an Add properties row. */
@@ -928,7 +940,9 @@ function mergeExtractedResidentRow(
     ),
     confidence,
     selected: primary.selected || extra.selected,
-    needsReview: confidence < 75 || Boolean(fullName.trim() && !usableLeaseUnit(unit)),
+    needsReview: primary.fieldAttention || extra.fieldAttention
+      ? reviewRowNeedsAttention(primary.fieldAttention ?? extra.fieldAttention)
+      : confidence < 75 || Boolean(fullName.trim() && !usableLeaseUnit(unit)),
     sendOnboardingOnComplete: Boolean(
       primary.sendOnboardingOnComplete || extra.sendOnboardingOnComplete,
     ),
@@ -1026,7 +1040,9 @@ function mergeExtractedLeaseRow(primary: ExtractedLeaseInfo, extra: ExtractedLea
     ),
     confidence,
     selected: primary.selected || extra.selected,
-    needsReview: confidence < 75 || Boolean(residentName.trim() && !unit.trim()),
+    needsReview: primary.fieldAttention || extra.fieldAttention
+      ? reviewRowNeedsAttention(primary.fieldAttention ?? extra.fieldAttention)
+      : confidence < 75 || Boolean(residentName.trim() && !unit.trim()),
   }
 }
 
@@ -1247,11 +1263,12 @@ function fillExtractedResidentsFromLeases(
         ? resident.monthlyRent.trim()
         : resident.monthlyRent.trim() || lease.rentAmount.trim(),
       rentDueDay: resident.rentDueDay.trim() || (lease.rentDueDay ?? '').trim(),
-      needsReview:
-        resident.needsReview ||
-        rentConflict ||
-        resident.confidence < 75 ||
-        Boolean(fullName.trim() && !unit.trim()),
+      needsReview: resident.fieldAttention
+        ? reviewRowNeedsAttention(resident.fieldAttention)
+        : resident.needsReview ||
+          rentConflict ||
+          resident.confidence < 75 ||
+          Boolean(fullName.trim() && !unit.trim()),
     }
   })
 
@@ -1397,7 +1414,9 @@ function enrichExtractedResidentPlacement(
     }
     building = canonicalExtractedBuilding(building, properties)
 
-    const missingPlacement = Boolean(resident.fullName.trim() && !unit.trim())
+    const missingPlacement = Boolean(
+      !resident.fieldAttention && resident.fullName.trim() && !unit.trim(),
+    )
       return {
       ...resident,
       unit,
@@ -1439,7 +1458,9 @@ function enrichExtractedResidentPlacement(
       ...lease,
       unit,
       building,
-      needsReview: lease.needsReview || Boolean(lease.residentName.trim() && !unit.trim()),
+      needsReview: lease.fieldAttention
+        ? reviewRowNeedsAttention(lease.fieldAttention)
+        : lease.needsReview || Boolean(lease.residentName.trim() && !unit.trim()),
     }
   })
 
@@ -1738,7 +1759,12 @@ export function enrichExtractedProperties(
     const match = [...merged.values()].find((existing) => extractedPropertyRowsMatch(existing, row))
     if (!match) {
       const key = normalizePropertyIdentityKey(row.name, row.address)
-      if (!key) return
+      if (!key) {
+        if (row.fieldAttention && Object.keys(row.fieldAttention).length > 0) {
+          merged.set(`draft:${row.id}`, row)
+        }
+        return
+      }
       merged.set(key, row)
       return
     }
@@ -1977,7 +2003,7 @@ function applyLandlordTenantReviewPlacement(
       }
       return row
     })
-    .filter((row) => row.fullName.trim())
+    .filter((row) => row.fullName.trim() || row.fieldAttention)
 
   const nextLeases = leases.map((row) => {
     if (looksLikeExtractedCompanyName(row.residentName) && !wantedKeys.has(row.residentName.toLowerCase())) {
@@ -2189,9 +2215,24 @@ function mergeExtractedDocuments(
       // Unknown docs may still contribute vendors / maintenance / financial notes below.
     }
 
-    // Rent roll is portfolio SoT when present. Lease-only uploads may create
-    // properties, units, and residents from the agreement.
-    if (isRentRoll || (isLease && leaseOnlyPortfolio)) {
+    // Rent roll is portfolio SoT when present. A lease-only upload with a
+    // structured scan becomes a draft even when citation checks failed.
+    const leaseDraft =
+      isLease && leaseOnlyPortfolio && payload.leaseReview
+        ? buildLeaseReviewDraft({
+            review: payload.leaseReview,
+            docId: doc.id,
+            sourceDocumentName: source,
+          })
+        : null
+    if (leaseDraft) {
+      properties.push(...leaseDraft.properties)
+      units.push(...leaseDraft.units)
+      residents.push(...leaseDraft.residents)
+      leases.push(...leaseDraft.leases)
+    }
+
+    if (!leaseDraft && (isRentRoll || (isLease && leaseOnlyPortfolio))) {
       payload.properties.forEach((item, index) => {
         const placed = placePropertyAddressFields({
           name: cleanOnboardingExtractText(item.name),
@@ -2285,7 +2326,7 @@ function mergeExtractedDocuments(
     }
 
     // Lease Information Found — always ingest leases; match/enrich later.
-    if (isLease) {
+    if (isLease && !leaseDraft) {
       const leaseRowsFromDoc: ExtractedLeaseInfo[] = []
       payload.leases.forEach((item, index) => {
         const residentMatch = payload.residents.find((resident) => {
@@ -2839,7 +2880,7 @@ export function normalizeExtractionReview(
         securityDeposit: cleanOnboardingExtractText(item.securityDeposit),
       }
     })
-    .filter((item) => item.residentName.trim())
+    .filter((item) => item.residentName.trim() || item.fieldAttention)
   const normalizedUnits = (review.units ?? [])
     .map((item) => ({
       ...item,
@@ -2870,7 +2911,10 @@ export function normalizeExtractionReview(
     })
     .filter(
       (item) =>
-        review.skippedDocumentUpload === true || item.name.trim() || item.address.trim(),
+        review.skippedDocumentUpload === true ||
+        item.name.trim() ||
+        item.address.trim() ||
+        Boolean(item.fieldAttention && Object.keys(item.fieldAttention).length > 0),
     )
   const normalizedResidents = (review.residents ?? [])
     .map((item) => {
@@ -2891,7 +2935,7 @@ export function normalizeExtractionReview(
       maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
       }
     })
-    .filter((item) => item.fullName.trim())
+    .filter((item) => item.fullName.trim() || item.fieldAttention)
   const leaseOnlyPortfolio =
     review.leaseOnlyPortfolio === true ||
     (normalizedLeases.length > 0 &&
@@ -2945,7 +2989,7 @@ export function normalizeExtractionReview(
 export function toMockExtractionReview(review: OnboardingExtractionReview): MockExtractionReview {
   return {
     properties: review.properties
-      .filter((item) => item.selected)
+      .filter((item) => item.selected && !draftBlocksPermanentWrite(item.fieldAttention))
       .map((item) => ({
         id: item.id,
         name: item.name,
@@ -2962,7 +3006,7 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
         selected: true,
       })),
     residents: review.residents
-      .filter((item) => item.selected)
+      .filter((item) => item.selected && !draftBlocksPermanentWrite(item.fieldAttention))
       .map((item) => ({
         id: item.id,
         fullName: item.fullName,
@@ -3015,7 +3059,7 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
         sourceDocumentName: item.sourceDocumentName,
       })),
     leases: review.leases
-      .filter((item) => item.selected)
+      .filter((item) => item.selected && !draftBlocksPermanentWrite(item.fieldAttention))
       .map((item) => ({
         id: item.id,
         residentName: item.residentName,
