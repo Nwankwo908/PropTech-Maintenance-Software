@@ -33,8 +33,6 @@ export function documentAttention(input: { extracted: { leaseReview?: LeaseScanR
 
 export function leaseAttentionMessage(review: LeaseScanReview): string | null {
   const { fields, reasons } = leaseReviewIssues(review)
-  if (!reasons.length) return null
-  if (!fields.length) return reasons[0]
-  const names = fields.map(name => LEASE_FIELD_LABELS[name])
-  return `Review ${names.length > 3 ? `${names.length} flagged lease fields` : names.join(', ')}. The reason is shown beside each flagged detail below.`
+  if (!reasons.length || fields.length) return null
+  return reasons[0]
 }

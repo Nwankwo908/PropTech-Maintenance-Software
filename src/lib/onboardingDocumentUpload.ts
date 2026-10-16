@@ -1,5 +1,4 @@
 import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
-import { documentAttention, leaseAttentionMessage } from '@shared/onboarding/documentAttention'
 import {
   buildLeaseReviewDraft,
   draftBlocksPermanentWrite,
@@ -708,8 +707,8 @@ export async function runDocumentProcessing(
         .map((item) => cleanOnboardingExtractText(item))
         .find(Boolean) ?? null
     const review = result.extracted.leaseReview
-    const attention = review ? documentAttention(result) : null
-    const needsAttention = attention ? attention.needsAttention : !result.hasData || result.needsAttention
+    const scanComplete = Boolean(review && review.pageCount > 0 && review.coverageComplete)
+    const needsAttention = review ? !scanComplete : !result.hasData || result.needsAttention
 
     current = {
       ...current,
@@ -722,9 +721,8 @@ export async function runDocumentProcessing(
       processingLabel:
         UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
     uploadProgress: 100,
-      errorMessage: needsAttention
-        ? (review ? leaseAttentionMessage(review) || attention?.attentionReasons[0] : warning) ||
-          'We couldn’t find property, tenant, vendor, or lease details in this file.'
+      errorMessage: needsAttention && !review
+        ? warning || 'We couldn’t find property, tenant, vendor, or lease details in this file.'
         : null,
     }
   } catch (err) {

@@ -3,35 +3,44 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { LeaseScanSummary } from './LeaseScanSummary'
 import { normalizeLeaseScan } from '@shared/onboarding/leaseScan'
 import { leaseFixture } from '@shared/onboarding/leaseScan.fixtures'
-it('shows readable details, original page references and confidence while recovery continues', () => {
+
+it('waits until the scan finishes before saying the lease is ready', () => {
   const raw = leaseFixture([1, 2, 3])
   raw.fields.monthly_rent.pages = [3]
   raw.fields.unit = { ...raw.fields.unit, value: null, status: 'not_stated' }
   raw.fields.lease_end = { ...raw.fields.lease_end, value: null, status: 'unreadable' }
   const { review } = normalizeLeaseScan(raw, ['', '', ''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing />)
-  expect(html).toContain('Morgan Tenant')
-  expect(html).toContain('$1,500.00')
-  expect(html).toContain('96% extraction confidence · p. 3')
-  expect(html).toContain('checking remaining fields')
-  expect(html).toContain('Not stated in document')
-  expect(html.match(/Needs review/g)).toHaveLength(1)
+  expect(html).toContain('Checking this lease')
+  expect(html).toContain('3 of 3 pages checked')
+  expect(html).not.toContain('detail')
+  expect(html).not.toContain('Morgan Tenant')
 })
-it('distinguishes an unverified 100% reading from a validated field and shows its reason', () => {
+
+it('summarizes a finished scan as pages checked and details left to review', () => {
   const raw = leaseFixture()
   raw.fields.monthly_rent.confidence = 100
   raw.fields.monthly_rent.quote = ''
   const { review } = normalizeLeaseScan(raw, [''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Unverified reading · reported confidence 100%')
-  expect(html).toContain('The source page or supporting text is missing.')
+  expect(html).toContain('Lease scanned')
+  expect(html).toContain('1 of 1 page checked')
+  expect(html).toContain('1 detail to review')
+  expect(html).toContain('<svg')
+  expect(html).not.toContain('Morgan Tenant')
+  expect(html).not.toContain('Unverified reading')
+  expect(html).not.toContain('$1,500.00')
+  expect(html).not.toContain('confirm or correct')
 })
-it('lists unreviewed pages while leaving validated 100% field rows unflagged', () => {
+
+it('counts every page that was checked and does not turn a coverage gap into a field list', () => {
   const raw = leaseFixture()
   for (const field of Object.values(raw.fields)) field.confidence = 100
   const { review } = normalizeLeaseScan(raw, ['', ''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Page coverage needs review: page 2 was not confirmed as read.')
+  expect(html).toContain('Lease scan incomplete')
+  expect(html).toContain('1 of 2 pages checked')
+  expect(html).not.toContain('to review')
+  expect(html).not.toContain('Page coverage needs review')
   expect(html).not.toContain('Unverified reading')
-  expect(html).not.toContain('Needs review')
 })

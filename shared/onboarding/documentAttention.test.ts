@@ -20,6 +20,15 @@ it('names unread pages without implying the validated fields need review', () =>
   expect(issues.pages).toEqual([2, 3])
   expect(leaseAttentionMessage(review)).toBe('Page coverage needs review: pages 2, 3 were not confirmed as read.')
 })
+it('does not ask the upload screen to list flagged lease fields', () => {
+  const raw = leaseFixture()
+  raw.fields.monthly_rent.quote = ''
+  raw.fields.lease_start.quote = ''
+  raw.fields.lease_end.quote = ''
+  raw.fields.property_address.quote = ''
+  const { review } = normalizeLeaseScan(raw, [''])
+  expect(leaseAttentionMessage(review)).toBeNull()
+})
 it('explains a failed evidence check despite reported 100% confidence', () => {
   const raw = confident()
   const { review } = normalizeLeaseScan(raw, ['A different source text '.repeat(20)])

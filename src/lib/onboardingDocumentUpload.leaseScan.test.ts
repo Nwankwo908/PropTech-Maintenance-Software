@@ -8,7 +8,7 @@ import { normalizeLeaseScan } from '@shared/onboarding/leaseScan'
 import { leaseFixture } from '@shared/onboarding/leaseScan.fixtures'
 
 const payload = () => ({ account: {}, properties: [], units: [], residents: [], vendors: [], leases: [], maintenanceIssues: [], financialRecords: [], imageLabels: [], warnings: [], leaseReview: normalizeLeaseScan(leaseFixture(), ['']).review })
-it('shows partial fields and explains a structured lease review flag', async () => {
+it('keeps a finished lease ready to continue when a detail still needs review', async () => {
   const file = new File(['%PDF fixture'], 'lease.pdf', { type: 'application/pdf' })
   const updates: OnboardingUploadedDocument[] = [], extracted = payload()
   extracted.leaseReview.fields.monthly_rent.needsReview = true
@@ -22,8 +22,8 @@ it('shows partial fields and explains a structured lease review flag', async () 
   })
   const final = await runDocumentProcessing(createUploadedDocumentFromFile(file), file, updated => updates.push(updated))
   expect(renderPdfFileToJpegDataUrls).not.toHaveBeenCalled()
-  expect(final.uploadStatus).toBe('needs_attention')
-  expect(final.errorMessage).toContain('Monthly rent')
+  expect(final.uploadStatus).toBe('ready_for_review')
+  expect(final.errorMessage).toBeNull()
 })
 it('clears a generic attention flag when all structured fields and page coverage pass', async () => {
   const file = new File(['fixture'], 'lease.pdf', { type: 'application/pdf' }), extracted = payload()
@@ -43,7 +43,8 @@ it('shows a page-coverage message when all fields are validated at 100%', async 
   vi.mocked(extractOnboardingDocument).mockResolvedValueOnce({ extracted, hasData: true, needsAttention: true })
   const final = await runDocumentProcessing(createUploadedDocumentFromFile(file), file, () => {})
   expect(final.uploadStatus).toBe('needs_attention')
-  expect(final.errorMessage).toBe('Page coverage needs review: page 2 was not confirmed as read.')
+  expect(final.errorMessage).toBeNull()
+  expect(final.extractedPayload?.leaseReview?.coverageComplete).toBe(false)
 })
 it('keeps partial details visible if the response stream fails', async () => {
   const file = new File(['fixture'], 'lease.pdf', { type: 'application/pdf' }), extracted = payload()

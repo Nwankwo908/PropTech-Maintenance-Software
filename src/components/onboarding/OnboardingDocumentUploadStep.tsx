@@ -16,6 +16,10 @@ import {
   OnboardingContinueButton,
   OnboardingStepNav,
 } from './OnboardingStepChrome'
+function isFlaggedLeaseFieldNote(message: string): boolean {
+  return /flagged lease field/i.test(message)
+}
+
 function UploadDocumentsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="size-8 text-[#99a1af]" aria-hidden>
@@ -55,8 +59,10 @@ function FileRow({
     UPLOAD_STATUS_LABELS[doc.uploadStatus] ||
     null
 
+  const leaseScan = Boolean(doc.extractedPayload?.leaseReview)
   const showStatusText =
     Boolean(statusLabel) &&
+    !(leaseScan && (doc.uploadStatus === 'needs_attention' || statusLabel === 'Needs attention')) &&
     (isProcessing ||
       doc.uploadStatus === 'uploading' ||
       doc.uploadStatus === 'ready_for_review' ||
@@ -128,7 +134,7 @@ function FileRow({
         </div>
       ) : null}
 
-      {doc.errorMessage ? (
+      {doc.errorMessage && !isFlaggedLeaseFieldNote(doc.errorMessage) ? (
         <p className={`mt-2 text-[12px] ${doc.uploadStatus === 'needs_attention' ? 'text-[#b54708]' : 'text-[#b91c1c]'}`}>{doc.errorMessage}</p>
       ) : null}
       {doc.extractedPayload?.leaseReview ? <LeaseScanSummary review={doc.extractedPayload.leaseReview} processing={isProcessing} /> : null}
@@ -283,10 +289,6 @@ export function OnboardingDocumentUploadStep({
               />
             ))}
           </ul>
-          <p className="mt-3 text-[12px] leading-relaxed text-[#6a7282]">
-            Ulo digitizes each file, runs text recognition, labels inspection photos, and reads
-            handwritten notes before you review extracted data.
-          </p>
         </div>
       ) : null}
 

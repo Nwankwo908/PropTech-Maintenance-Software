@@ -228,6 +228,7 @@ function DraftFieldLabel({
         <span
           className={`ml-2 text-[11px] font-semibold ${attention === 'verified' ? 'text-[#64748b]' : 'text-amber-800'}`}
         >
+          {attention === 'needs_verification' ? '* ' : null}
           {state}
         </span>
       ) : null}
@@ -1746,7 +1747,7 @@ export function OnboardingAiReviewStep({
                 {renderManualTenants()}
               </ReviewSection>
             ) : null}
-            {manualAdd ? null : (
+            {manualAdd || review.leases.some((item) => item.fieldAttention) ? null : (
             <ReviewSection
               title="Lease Information Found"
               count={review.leases.length}

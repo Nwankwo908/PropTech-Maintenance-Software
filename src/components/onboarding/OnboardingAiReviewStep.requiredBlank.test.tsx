@@ -59,6 +59,7 @@ describe('onboarding review required blanks', () => {
     )
     expect(html).toContain('Enter the lease details marked Required before continuing.')
     expect(html).toContain('Required')
+    expect(html).not.toContain('Lease Information Found')
     expect(html).toContain('value="1500"')
     expect(html).toContain('Verified')
     expect(onImportAll).not.toHaveBeenCalled()
