@@ -27,7 +27,7 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.pagesProvided).toEqual([1, 2, 3, 4])
     expect(result.leaseReview.coverageComplete).toBe(true)
   })
-  it('skips Fast Track recovery and backup so review stays one model pass', async () => {
+  it('skips Fast Track recovery and field backup when Gemini returns a scan', async () => {
     buildParts.mockClear()
     const raw = leaseFixture([1, 2, 3, 4])
     raw.fields.monthly_rent = { ...raw.fields.monthly_rent, value: null, status: 'unreadable' }
@@ -42,6 +42,30 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.attempts.map((attempt) => attempt.phase)).toEqual(['initial'])
     expect(result.leaseReview.coverageComplete).toBe(true)
     expect(result.leaseReview.fields.monthly_rent.needsReview).toBe(true)
+  })
+  it('uses OpenAI on Fast Track only when Gemini completely fails', async () => {
+    buildParts.mockClear()
+    const request = vi.fn(async (call: DocumentProviderInput) => {
+      if (call.provider === 'gemini') throw new Error('fixture gemini outage')
+      expect(call.provider).toBe('openai')
+      return response(leaseFixture([1, 2, 3, 4]), 'openai')
+    })
+    const stages: string[] = []
+    const result = await extractLeaseDocument({
+      ...input(),
+      maxPages: FAST_TRACK_LEASE_SCAN_PAGES,
+      request,
+      onUpdate: (_partial, stage) => { stages.push(stage) },
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(result.leaseReview.attempts.map((attempt) => [attempt.provider, attempt.phase, attempt.outcome])).toEqual([
+      ['gemini', 'initial', 'request_failed'],
+      ['openai', 'backup', 'read'],
+    ])
+    expect(result.leaseReview.attempts[1].model).toBe(OPENAI_LEASE_BACKUP_MODEL)
+    expect(result.leaseReview.coverageComplete).toBe(true)
+    expect(stages).toContain('backup')
+    expect(result.leaseReview.fields.tenant_names.status).toBe('found')
   })
   it('shows partial fields before rereading and recovers a late-page term', async () => {
     const raw = leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1))

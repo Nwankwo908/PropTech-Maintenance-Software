@@ -100,8 +100,13 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
   await read('gemini','initial',allPages)
   if (state.current) input.onUpdate?.(result(),'checking')
   // Fast Track: one model pass on the opening pages, then human review. Skip
-  // coverage/recovery/backup round-trips that dominate latency on long leases.
+  // coverage/recovery round-trips that dominate latency on long leases. OpenAI
+  // runs only when Gemini produced no usable scan at all.
   if (fastTrack) {
+    if (!state.current && input.openaiApiKey) {
+      input.onUpdate?.(null, 'backup')
+      await read('openai', 'backup', allPages)
+    }
     if (state.current) {
       const review = state.current.review
       state.current.review = {
