@@ -24,7 +24,30 @@ Deno.test('native lease input retains every page and selected rereads preserve o
   const selected = await leaseDocumentParts({ bytes, mimeType: 'application/pdf', pageTexts }, [2, 12])
   assertEquals('text' in selected[0] && selected[0].text.includes('2, 12'), true)
   if (!('bytes' in selected[1])) throw new Error('Expected selected PDF')
-  assertEquals((await PDFDocument.load(selected[1].bytes)).getPageCount(), 2)
+  assertEquals((await PDFDocument.load(selected[1].bytes, { ignoreEncryption: true })).getPageCount(), 2)
+})
+Deno.test('encrypted lease PDFs load with ignoreEncryption and keep original bytes', async () => {
+  // Minimal PDF with /Encrypt — pdf-lib refuses load without ignoreEncryption.
+  const encrypted = Uint8Array.from(
+    `%PDF-1.4
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>endobj
+4 0 obj<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -44 >>endobj
+trailer<< /Size 5 /Root 1 0 R /Encrypt 4 0 R >>
+startxref
+0
+%%EOF`.split('').map((c) => c.charCodeAt(0)),
+  )
+  await PDFDocument.load(encrypted).then(
+    () => { throw new Error('expected encrypted load to fail') },
+    () => undefined,
+  )
+  const parts = await leaseDocumentParts(
+    { bytes: encrypted, mimeType: 'application/pdf', pageTexts: [''] },
+    [1],
+  )
+  assertEquals('bytes' in parts[1] && parts[1].bytes, encrypted)
 })
 Deno.test('mixed PDF extraction sends original bytes including scanned page 12 despite a short browser preview', async () => {
   const bytes = await mixedPdf(), originalFetch = globalThis.fetch

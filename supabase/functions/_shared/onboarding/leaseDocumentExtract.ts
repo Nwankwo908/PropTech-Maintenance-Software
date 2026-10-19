@@ -94,6 +94,9 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
       attempts.push({provider,model:provider==='gemini'?GEMINI_DOCUMENT_MODEL:OPENAI_LEASE_BACKUP_MODEL,phase,pages,inputTokens:0,outputTokens:0,outcome:'request_failed',purpose})
       if (!state.current && provider === 'openai') {
         const detail = error instanceof Error ? error.message.trim() : ''
+        if (detail && /password-protected|not password-protected|Configure OPENAI_API_KEY/i.test(detail)) {
+          throw error instanceof Error ? error : new Error(detail)
+        }
         throw new Error(
           detail
             ? `Lease reading is unavailable. ${detail}`
