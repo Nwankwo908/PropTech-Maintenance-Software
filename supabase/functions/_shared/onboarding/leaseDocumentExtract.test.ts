@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('./leaseDocumentSource.ts', () => ({ leaseDocumentParts: vi.fn() }))
 import { extractLeaseDocument } from './leaseDocumentExtract'
+import { FAST_TRACK_LEASE_SCAN_PAGES } from '../../../../shared/onboarding/leaseScan'
 import { leaseFixture } from '../../../../shared/onboarding/leaseScan.fixtures'
 import { GEMINI_DOCUMENT_MODEL, OPENAI_LEASE_BACKUP_MODEL, type DocumentProviderInput } from './documentProvider'
 
@@ -15,6 +16,16 @@ describe('single-upload lease recovery', () => {
     expect(buildParts.mock.calls.at(-1)?.[1]).toEqual(Array.from({ length: 12 }, (_, i) => i + 1))
     expect(result.leaseReview.coverageComplete).toBe(true)
     expect(result.leaseReview.attempts[0].inputTokens).toBe(2000)
+  })
+  it('limits Fast Track scans to the first four pages', async () => {
+    buildParts.mockClear()
+    const request = vi.fn(async () => response(leaseFixture([1, 2, 3, 4])))
+    const result = await extractLeaseDocument({ ...input(), maxPages: FAST_TRACK_LEASE_SCAN_PAGES, request })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(buildParts.mock.calls.at(-1)?.[1]).toEqual([1, 2, 3, 4])
+    expect(result.leaseReview.pageCount).toBe(4)
+    expect(result.leaseReview.pagesProvided).toEqual([1, 2, 3, 4])
+    expect(result.leaseReview.coverageComplete).toBe(true)
   })
   it('shows partial fields before rereading and recovers a late-page term', async () => {
     const raw = leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1))

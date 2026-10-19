@@ -188,6 +188,9 @@ Deno.serve(async (req) => {
   const insuranceIntent =
     asString(body.insuranceIntent) === "property_policy" ? "property_policy" : "auto"
   const propertyInsuranceExtract = insuranceIntent === "property_policy"
+  const setupPathRaw = asString(body.setupPath)
+  const setupPath =
+    setupPathRaw === "fast_track" || setupPathRaw === "guided" ? setupPathRaw : null
   const pageImages = Array.isArray(body.pageImages)
     ? body.pageImages
         .filter((item): item is string => typeof item === "string" && item.trim().startsWith("data:image/"))
@@ -241,7 +244,7 @@ Deno.serve(async (req) => {
       async start(controller) {
         const emit = (event: string, data: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
         try {
-          const extracted = await extractPortfolioDocument({apiKey:geminiKey,openaiApiKey:Deno.env.get('OPENAI_API_KEY')?.trim(),fileName,documentCategory:propertyInsuranceExtract?'property_insurance':documentCategory,contentType,bytes:bytes || new Uint8Array(),pageImages,insuranceIntent,signal:AbortSignal.any([req.signal,abort.signal]),onLeaseUpdate:(result,stage)=>emit('progress',{stage,extracted:result})})
+          const extracted = await extractPortfolioDocument({apiKey:geminiKey,openaiApiKey:Deno.env.get('OPENAI_API_KEY')?.trim(),fileName,documentCategory:propertyInsuranceExtract?'property_insurance':documentCategory,contentType,bytes:bytes || new Uint8Array(),pageImages,insuranceIntent,setupPath,signal:AbortSignal.any([req.signal,abort.signal]),onLeaseUpdate:(result,stage)=>emit('progress',{stage,extracted:result})})
           const hasData = portfolioExtractHasData(extracted)
           emit('result',{extracted,hasData,...documentAttention({extracted,hasData})})
           controller.close()
@@ -265,6 +268,7 @@ Deno.serve(async (req) => {
       bytes: bytes ?? new Uint8Array(),
       pageImages,
       insuranceIntent,
+      setupPath,
     })
 
     const hasData = portfolioExtractHasData(extracted)

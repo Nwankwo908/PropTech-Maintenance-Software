@@ -955,7 +955,9 @@ export function useOnboardingWizard() {
         }
       }
 
-      await runDocumentProcessing(latest, file, applyDocumentUpdate, controller.signal)
+      await runDocumentProcessing(latest, file, applyDocumentUpdate, controller.signal, {
+        setupPath: state.setupPath,
+      })
     })().finally(() => {
       processingControllersRef.current.delete(doc.id)
     })

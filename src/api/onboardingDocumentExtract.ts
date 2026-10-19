@@ -145,6 +145,7 @@ export type ExtractOnboardingDocumentInput = {
   fileBase64?: string
   pageImages?: string[]
   insuranceIntent?: 'property_policy' | 'auto'
+  setupPath?: 'fast_track' | 'guided' | null
 }
 
 export type ExtractOnboardingDocumentResult = {
@@ -213,6 +214,7 @@ export async function extractOnboardingDocument(
         fileBase64: input.fileBase64 ?? undefined,
         pageImages: input.pageImages?.length ? input.pageImages : undefined,
         insuranceIntent: input.insuranceIntent ?? undefined,
+        setupPath: input.setupPath ?? undefined,
       }),
     })
   } catch (err) {

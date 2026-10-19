@@ -6,12 +6,13 @@ import type { DocumentPart } from './documentProvider.ts'
 export async function leaseDocumentParts(input: { bytes: Uint8Array; mimeType: string; pageTexts: string[]; pageImages?: string[] }, pages: number[]): Promise<DocumentPart[]> {
   const parts: DocumentPart[] = []
   if (input.mimeType === 'application/pdf' && input.bytes.length) {
-    const all = pages.length === input.pageTexts.length && pages.every((page,i)=>page===i+1)
+    const original = await PDFDocument.load(input.bytes)
+    const pdfPageCount = original.getPageCount()
+    const all = pages.length === pdfPageCount && pages.every((page, i) => page === i + 1)
     if (all) parts.push({bytes:input.bytes,mimeType:'application/pdf'})
     else {
-      const original = await PDFDocument.load(input.bytes)
       const selected = await PDFDocument.create()
-      const copied = await selected.copyPages(original,pages.map(page=>page-1))
+      const copied = await selected.copyPages(original, pages.map(page => page - 1))
       for (const page of copied) selected.addPage(page)
       parts.push({bytes:new Uint8Array(await selected.save()),mimeType:'application/pdf'})
     }

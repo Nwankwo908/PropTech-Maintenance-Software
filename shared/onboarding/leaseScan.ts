@@ -32,6 +32,8 @@ export type LeaseScanReview = {
   attempts: Array<{ provider: 'gemini' | 'openai'; model: string; phase: 'initial' | 'recovery' | 'backup'; pages: number[]; inputTokens: number; outputTokens: number; outcome: string; purpose?: 'fields' | 'coverage' }>
 }
 export type LeaseScanStage = 'reading' | 'checking' | 'recovering' | 'verifying_pages' | 'backup' | 'complete'
+/** Fast Track reads only the opening pages so landlords can continue sooner. */
+export const FAST_TRACK_LEASE_SCAN_PAGES = 4
 export const LEASE_FIELD_NAMES = Object.keys(LEASE_FIELD_LABELS) as LeaseFieldName[]
 const record = (raw: unknown): Record<string, unknown> => raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
 const percent = (raw: unknown) => typeof raw === 'number' && Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0

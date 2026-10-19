@@ -1,4 +1,5 @@
 import { requestDocumentJson, type DocumentPart } from "./documentProvider.ts"
+import { FAST_TRACK_LEASE_SCAN_PAGES } from "../../../../shared/onboarding/leaseScan.ts"
 import { extractLeaseDocument, type LeaseDocumentResult } from "./leaseDocumentExtract.ts"
 import type { LeaseScanReview, LeaseScanStage } from "../../../../shared/onboarding/leaseScan.ts"
 import * as XLSX from "npm:xlsx@0.18.5"
@@ -1437,6 +1438,7 @@ export async function extractPortfolioDocument(input: {
   bytes: Uint8Array
   pageImages?: string[]
   insuranceIntent?: "property_policy" | "auto"
+  setupPath?: "fast_track" | "guided" | null
   openaiApiKey?: string
   signal?: AbortSignal
   onLeaseUpdate?: (result: LeaseDocumentResult | null, stage: LeaseScanStage) => void
@@ -1546,7 +1548,17 @@ export async function extractPortfolioDocument(input: {
 
   if (kind === "lease") {
     const pageTexts = hasPdfBytes ? pdfPageTexts : wordText?.trim() ? [wordText] : Array.from({length: Math.max(1,pageImages.length)}, () => "")
-    return await extractLeaseDocument({apiKey: input.apiKey, openaiApiKey: input.openaiApiKey, bytes:input.bytes, mimeType:hasPdfBytes ? "application/pdf" : wordText?.trim() ? "text/plain" : input.contentType, pageTexts, pageImages, signal:input.signal, onUpdate:input.onLeaseUpdate})
+    return await extractLeaseDocument({
+      apiKey: input.apiKey,
+      openaiApiKey: input.openaiApiKey,
+      bytes: input.bytes,
+      mimeType: hasPdfBytes ? "application/pdf" : wordText?.trim() ? "text/plain" : input.contentType,
+      pageTexts,
+      pageImages,
+      maxPages: input.setupPath === "fast_track" ? FAST_TRACK_LEASE_SCAN_PAGES : undefined,
+      signal: input.signal,
+      onUpdate: input.onLeaseUpdate,
+    })
   }
 
   // Preview images from the browser are a short crop (first pages only).

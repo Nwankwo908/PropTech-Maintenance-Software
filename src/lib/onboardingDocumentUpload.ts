@@ -640,6 +640,7 @@ export async function runDocumentProcessing(
   file: File | null,
   onUpdate: (updated: OnboardingUploadedDocument) => void,
   signal?: AbortSignal,
+  options?: { setupPath?: 'fast_track' | 'guided' | null },
 ): Promise<OnboardingUploadedDocument> {
   let current = {
     ...doc,
@@ -686,7 +687,14 @@ export async function runDocumentProcessing(
         signal,
         onProgress: (event) => {
           if (signal?.aborted) return
-          const labels: Record<string, string> = { reading: 'Reading all lease pages', checking: 'Checking lease details', recovering: 'Rereading unclear sections', verifying_pages: 'Verifying remaining document pages', backup: 'Reviewing difficult sections', complete: 'Lease details checked' }
+          const labels: Record<string, string> = {
+            reading: options?.setupPath === 'fast_track' ? 'Reading the first lease pages' : 'Reading all lease pages',
+            checking: 'Checking lease details',
+            recovering: 'Rereading unclear sections',
+            verifying_pages: 'Verifying remaining document pages',
+            backup: 'Reviewing difficult sections',
+            complete: 'Lease details checked',
+          }
           const progress: Record<string, number> = { reading: 52, checking: 74, recovering: 82, verifying_pages: 86, backup: 90, complete: 98 }
           current = { ...current, uploadStatus: 'extracting', extractionStatus: 'extracting', processingLabel: labels[event.stage] || 'Reading document', uploadProgress: Math.max(current.uploadProgress, progress[event.stage] || 52), ...(event.extracted ? { extractedPayload: event.extracted } : {}) }
           onUpdate(current)
@@ -699,6 +707,7 @@ export async function runDocumentProcessing(
         contentType: doc.contentType,
         fileBase64,
         pageImages,
+        setupPath: options?.setupPath,
       }),
     )
 
