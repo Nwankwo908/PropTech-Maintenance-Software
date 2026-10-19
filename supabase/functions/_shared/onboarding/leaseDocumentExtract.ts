@@ -92,7 +92,14 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
     } catch (error) {
       if (input.signal?.aborted) throw error
       attempts.push({provider,model:provider==='gemini'?GEMINI_DOCUMENT_MODEL:OPENAI_LEASE_BACKUP_MODEL,phase,pages,inputTokens:0,outputTokens:0,outcome:'request_failed',purpose})
-      if (!state.current && provider==='openai') throw new Error('Lease reading is unavailable. Check the document provider configuration and retry.')
+      if (!state.current && provider === 'openai') {
+        const detail = error instanceof Error ? error.message.trim() : ''
+        throw new Error(
+          detail
+            ? `Lease reading is unavailable. ${detail}`
+            : 'Lease reading is unavailable. Check the document provider configuration and retry.',
+        )
+      }
     }
   }
   const fastTrack = Boolean(input.maxPages && input.maxPages > 0)

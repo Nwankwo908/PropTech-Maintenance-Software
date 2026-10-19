@@ -107,6 +107,14 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.attempts.map(a => a.phase)).toEqual(['initial', 'backup'])
     expect(result.leaseReview.needsReview).toBe(false)
   })
+  it('surfaces the OpenAI failure detail when both providers fail', async () => {
+    const request = vi.fn(async () => {
+      throw new Error('Document provider request failed (401). Check the provider configuration.')
+    })
+    await expect(extractLeaseDocument({ ...input(), request })).rejects.toThrow(
+      /Lease reading is unavailable\. Document provider request failed \(401\)/,
+    )
+  })
   it('does not claim coverage for a PDF with unknown pages', async () => {
     await expect(extractLeaseDocument({ ...input(), pageTexts: [] })).rejects.toThrow('Could not verify')
   })

@@ -73,7 +73,10 @@ export async function requestDocumentJson(input: DocumentProviderInput): Promise
       if (file.state !== 'ACTIVE' || !file.uri) throw new Error('Document is still processing. Please retry shortly.')
       parts.push({fileData:{mimeType:part.mimeType,fileUri:file.uri}})
     }
-    const response = await request(fetcher,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':input.apiKey},body:JSON.stringify({systemInstruction:{parts:[{text:input.system}]},contents:[{role:'user',parts}],generationConfig:{temperature:0,maxOutputTokens:16384,mediaResolution:input.mediaResolution || 'MEDIA_RESOLUTION_HIGH',responseMimeType:'application/json',...(input.schema ? {responseJsonSchema:input.schema} : {})}})},input.signal)
+    // Gemini 3.8 Flash thinks by default (MEDIUM). Without LOW, thinking often
+    // consumes maxOutputTokens before the large lease JSON finishes — which
+    // surfaces as "incomplete" / empty content and forces OpenAI backup.
+    const response = await request(fetcher,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':input.apiKey},body:JSON.stringify({systemInstruction:{parts:[{text:input.system}]},contents:[{role:'user',parts}],generationConfig:{temperature:0,maxOutputTokens:16384,mediaResolution:input.mediaResolution || 'MEDIA_RESOLUTION_HIGH',responseMimeType:'application/json',thinkingConfig:{thinkingLevel:'LOW'},...(input.schema ? {responseJsonSchema:input.schema} : {})}})},input.signal)
     const payload = await response.json(), candidate = payload.candidates?.[0]
     if (candidate?.finishReason !== 'STOP') throw new Error('Document reading returned an incomplete result.')
     const content = candidate.content?.parts?.filter((part:{text?:string;thought?:boolean})=>!part.thought&&typeof part.text==='string').map((part:{text:string})=>part.text).join('')

@@ -10,6 +10,7 @@ describe('document model transport', () => {
     expect(url).toContain('models/gemini-3.8-flash:generateContent')
     const body = JSON.parse(String(init.body))
     expect(body.generationConfig.mediaResolution).toBe('MEDIA_RESOLUTION_HIGH')
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'LOW' })
     expect(body.contents[0].parts[0].inlineData).toEqual({ mimeType: 'application/pdf', data: 'AQID' })
     expect(result.outputTokens).toBe(250)
     expect(result.raw).toEqual({ rent: 1500 })
