@@ -26,8 +26,9 @@ Deno.test('native lease input retains every page and selected rereads preserve o
   if (!('bytes' in selected[1])) throw new Error('Expected selected PDF')
   assertEquals((await PDFDocument.load(selected[1].bytes, { ignoreEncryption: true })).getPageCount(), 2)
 })
-Deno.test('encrypted lease PDFs load with ignoreEncryption and keep original bytes', async () => {
-  // Minimal PDF with /Encrypt — pdf-lib refuses load without ignoreEncryption.
+Deno.test('encrypted or broken lease PDFs fall back to original bytes', async () => {
+  // Minimal PDF with /Encrypt — pdf-lib refuses a normal load and may throw PDFDict
+  // errors even with ignoreEncryption when reading page trees.
   const encrypted = Uint8Array.from(
     `%PDF-1.4
 1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
@@ -48,6 +49,13 @@ startxref
     [1],
   )
   assertEquals('bytes' in parts[1] && parts[1].bytes, encrypted)
+
+  const broken = Uint8Array.from('%PDF-1.4\ntrailer<< /Root 1 0 R >>\n%%EOF'.split('').map((c) => c.charCodeAt(0)))
+  const brokenParts = await leaseDocumentParts(
+    { bytes: broken, mimeType: 'application/pdf', pageTexts: ['', ''] },
+    [1, 2],
+  )
+  assertEquals('bytes' in brokenParts[1] && brokenParts[1].bytes, broken)
 })
 Deno.test('mixed PDF extraction sends original bytes including scanned page 12 despite a short browser preview', async () => {
   const bytes = await mixedPdf(), originalFetch = globalThis.fetch
