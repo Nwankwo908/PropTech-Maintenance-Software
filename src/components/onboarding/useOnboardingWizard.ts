@@ -835,52 +835,60 @@ export function useOnboardingWizard() {
 
   async function beginOnboarding(path: 'guided' | 'fast_track', targetStep: OnboardingStep) {
     if (saving) return
+    setSaving(true)
     setError(null)
 
-    const landlordId = state.landlordId || getActiveLandlordId()
-    const session = mintOnboardingSession()
+    try {
+      const landlordId = state.landlordId || getActiveLandlordId()
+      const session = mintOnboardingSession()
 
-    // Lineage-scoped leftover Fast Track import purge — independent of
-    // Start/Back permission soft-fail / wipePortfolioSession. Full portfolio
-    // wipe stays on Reset onboarding only.
-    const purged = await runOnboardingStartPrep(landlordId)
-    if (!purged.ok) {
-      console.warn('[onboarding] start prep leftover import ops', purged.error)
-    }
+      // Lineage-scoped leftover Fast Track import purge — independent of
+      // Start/Back permission soft-fail / wipePortfolioSession. Full portfolio
+      // wipe stays on Reset onboarding only.
+      const purged = await runOnboardingStartPrep(landlordId)
+      if (!purged.ok) {
+        console.warn('[onboarding] start prep leftover import ops', purged.error)
+      }
 
-    // Soft isolation only — do not factory-reset the portfolio on Start.
-    // Full wipe stays on Reset onboarding.
-    const priorCleared = await archiveOrClearPriorOnboardingResidents({
-      landlordId,
-      currentSessionId: session.onboardingSessionId,
-      mode: 'clear',
-    })
-    if (!priorCleared.ok) {
-      setError(
-        priorCleared.error ??
-          'Could not clear residents from the previous setup run. Try Factory reset, then Start again.',
+      // Soft isolation only — do not factory-reset the portfolio on Start.
+      // Full wipe stays on Reset onboarding.
+      const priorCleared = await archiveOrClearPriorOnboardingResidents({
+        landlordId,
+        currentSessionId: session.onboardingSessionId,
+        mode: 'clear',
+      })
+      if (!priorCleared.ok) {
+        setError(
+          priorCleared.error ??
+            'Could not clear residents from the previous setup run. Try Factory reset, then Start again.',
+        )
+        return
+      }
+
+      resetOnboardingForms()
+      // Leave the welcome hub on the first click. Do not wipe-to-entry first —
+      // that kept status at `not_started` and pinned the display on `entry`.
+      // Explicit null extractionReview clears any leftover Fast Track AI review
+      // from draft_state / localStorage on Start.
+      await goTo(
+        targetStep,
+        {
+          onboardingStatus: 'in_progress',
+          setupPath: path,
+          properties: [],
+          onboardingSessionId: session.onboardingSessionId,
+          onboardingSessionStartedAt: session.onboardingSessionStartedAt,
+          completedAt: null,
+        },
+        { extractionReview: null },
       )
-      return
+      trackProductEventOnce('signup_started', 'onboarding')
+    } catch (err) {
+      console.error('[onboarding] beginOnboarding failed', err)
+      setError(getErrorMessage(err, 'Could not start setup. Please try again.'))
+    } finally {
+      setSaving(false)
     }
-
-    resetOnboardingForms()
-    // Leave the welcome hub on the first click. Do not wipe-to-entry first —
-    // that kept status at `not_started` and pinned the display on `entry`.
-    // Explicit null extractionReview clears any leftover Fast Track AI review
-    // from draft_state / localStorage on Start.
-    await goTo(
-      targetStep,
-      {
-        onboardingStatus: 'in_progress',
-        setupPath: path,
-        properties: [],
-        onboardingSessionId: session.onboardingSessionId,
-        onboardingSessionStartedAt: session.onboardingSessionStartedAt,
-        completedAt: null,
-      },
-      { extractionReview: null },
-    )
-    trackProductEventOnce('signup_started', 'onboarding')
   }
 
   async function handleStartFastTrack() {

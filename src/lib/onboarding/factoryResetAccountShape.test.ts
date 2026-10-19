@@ -62,6 +62,39 @@ describe('factoryResetAccountShape', () => {
     }
   })
 
+  it('does not throw when expected or actual shape is missing', () => {
+    expect(assertFactoryResetAccountShape(null, null).ok).toBe(false)
+    expect(
+      assertFactoryResetAccountShape(expectedFactoryResetAccountShape(LIMITED_ALPHA_2_LANDLORD_ID), null)
+        .ok,
+    ).toBe(false)
+    expect(() =>
+      assertFactoryResetAccountShape(
+        undefined as unknown as ReturnType<typeof expectedFactoryResetAccountShape>,
+        {
+          landlord: {
+            name: 'Limited Alpha 2',
+            email: 'limitedalpha2@ulohome.io',
+            contact_name: null,
+            phone: null,
+            display_name: null,
+          },
+          onboarding: {
+            onboarding_status: 'not_started',
+            current_step: 'entry',
+            account_settings: {},
+            emergency_contact: {},
+            draft_state: {},
+            auto_approval_threshold: 500,
+            notification_preference: 'all',
+            notification_channel: 'sms',
+            communication_style: 'friendly',
+          },
+        },
+      ),
+    ).not.toThrow()
+  })
+
   it('fails when account_settings, landlords.email, or draft leftovers remain', () => {
     const expected = expectedFactoryResetAccountShape(LIMITED_ALPHA_2_LANDLORD_ID)!
     const rules = defaultOnboardingApprovalRules()

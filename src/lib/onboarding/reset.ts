@@ -846,17 +846,17 @@ async function resetLandlordProfileForFactoryReset(
   if (!supabase) {
     return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
   }
-  const expected = expectedFactoryResetAccountShape(landlordId)
-  if (!expected) return { ok: true }
+  const expectedShape = expectedFactoryResetAccountShape(landlordId)
+  if (!expectedShape) return { ok: true }
 
   const { error } = await supabase
     .from('landlords')
     .update({
-      name: expected.landlord.name,
-      email: expected.landlord.email,
-      contact_name: expected.landlord.contact_name,
-      phone: expected.landlord.phone,
-      display_name: expected.landlord.display_name,
+      name: expectedShape.landlord.name,
+      email: expectedShape.landlord.email,
+      contact_name: expectedShape.landlord.contact_name,
+      phone: expectedShape.landlord.phone,
+      display_name: expectedShape.landlord.display_name,
     })
     .eq('id', landlordId)
 
@@ -864,8 +864,8 @@ async function resetLandlordProfileForFactoryReset(
     const { error: nameEmail } = await supabase
       .from('landlords')
       .update({
-        name: expected.landlord.name,
-        email: expected.landlord.email,
+        name: expectedShape.landlord.name,
+        email: expectedShape.landlord.email,
       })
       .eq('id', landlordId)
     if (nameEmail) {
@@ -882,17 +882,16 @@ async function resetLandlordProfileForFactoryReset(
   }
 
   // Apply the full blank onboarding clear (not just account_settings {}).
-  const clearRow = factoryResetOnboardingClearRow(expected)
+  const clearRow = factoryResetOnboardingClearRow(expectedShape)
   let settingsError = (
     await supabase.from('landlord_onboarding').update(clearRow).eq('landlord_id', landlordId)
   ).error
 
   if (settingsError && /onboarding_session|column .* does not exist/i.test(settingsError.message)) {
-    const {
-      onboarding_session_id: _dropSessionId,
-      onboarding_session_started_at: _dropSessionStarted,
-      ...withoutSession
-    } = clearRow
+    // Avoid destructuring renames that minifiers can collide with `expectedShape`.
+    const withoutSession = { ...clearRow }
+    delete withoutSession.onboarding_session_id
+    delete withoutSession.onboarding_session_started_at
     settingsError = (
       await supabase
         .from('landlord_onboarding')
@@ -915,7 +914,7 @@ async function resetLandlordProfileForFactoryReset(
 
   // If some columns are missing on older DBs, still force account_settings wipe.
   if (settingsError && /account_settings|emergency_contact|column/i.test(settingsError.message)) {
-    const { error: fallback } = await supabase
+    const { error: fallbackError } = await supabase
       .from('landlord_onboarding')
       .update({
         account_settings: {},
@@ -923,21 +922,21 @@ async function resetLandlordProfileForFactoryReset(
       })
       .eq('landlord_id', landlordId)
     if (
-      fallback &&
+      fallbackError &&
       !/account_settings|column .* does not exist|does not exist|Could not find the table/i.test(
-        fallback.message,
+        fallbackError.message,
       )
     ) {
       return {
         ok: false,
-        error: getErrorMessage(fallback, 'Could not clear saved account settings.'),
+        error: getErrorMessage(fallbackError, 'Could not clear saved account settings.'),
       }
     }
   }
 
   const snapshot = await loadFactoryResetShapeSnapshot(landlordId)
   if (snapshot) {
-    const asserted = assertFactoryResetAccountShape(expected, snapshot)
+    const asserted = assertFactoryResetAccountShape(expectedShape, snapshot)
     if (!asserted.ok) {
       console.warn('[landlordOnboarding] factory reset shape assert', asserted.error)
       return { ok: false, error: asserted.error }

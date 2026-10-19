@@ -162,6 +162,16 @@ export function diffFactoryResetAccountShape(
     mismatches.push(`${path}: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`)
   }
 
+  // Fail closed — never throw. Minified callers historically hit `e.landlord` when
+  // `expected` was missing/undefined and surfaced as "can't access property landlord".
+  if (!expected?.landlord || !actual?.landlord || !expected?.onboarding || !actual?.onboarding) {
+    push('factory_reset_shape', 'landlord+onboarding snapshot', {
+      hasExpected: Boolean(expected?.landlord && expected?.onboarding),
+      hasActual: Boolean(actual?.landlord && actual?.onboarding),
+    })
+    return mismatches
+  }
+
   if (normText(actual.landlord.name) !== expected.landlord.name) {
     push('landlords.name', expected.landlord.name, actual.landlord.name)
   }
@@ -242,9 +252,16 @@ export function diffFactoryResetAccountShape(
 }
 
 export function assertFactoryResetAccountShape(
-  expected: FactoryResetAccountShape,
-  actual: FactoryResetShapeSnapshot,
+  expected: FactoryResetAccountShape | null | undefined,
+  actual: FactoryResetShapeSnapshot | null | undefined,
 ): { ok: true } | { ok: false; error: string; mismatches: string[] } {
+  if (!expected || !actual) {
+    return {
+      ok: false,
+      mismatches: ['factory_reset_shape: missing expected or actual snapshot'],
+      error: 'Factory reset could not verify the blank account shape.',
+    }
+  }
   const mismatches = diffFactoryResetAccountShape(expected, actual)
   if (mismatches.length === 0) return { ok: true }
   return {
