@@ -758,12 +758,14 @@ export function useOnboardingWizard() {
       extractionReview: draftSnap.extractionReview,
     }
 
-    setSaving(true)
+    // Persist in the background. Do not toggle `saving` here — that flag disables
+    // Continue on ai_review, and a slow/hung draft save left the button gray until refresh.
     setError(null)
     try {
       await saveLandlordOnboarding(next!)
-    } finally {
-      setSaving(false)
+    } catch (err) {
+      console.error('[onboarding] goTo save failed', err)
+      setError(getErrorMessage(err, 'Could not save your progress.'))
     }
   }
 
@@ -796,33 +798,39 @@ export function useOnboardingWizard() {
   async function returnToWelcomeHub(): Promise<void> {
     setSaving(true)
     setError(null)
-    const landlordId = state.landlordId || getActiveLandlordId()
-    const cleared: LandlordOnboardingState = {
-      ...defaultOnboardingState(landlordId),
-      accountSetup: state.accountSetup,
-      onboardingStatus: 'not_started',
-      currentStep: 'entry',
-      setupPath: null,
-      properties: [],
+    try {
+      const landlordId = state.landlordId || getActiveLandlordId()
+      const cleared: LandlordOnboardingState = {
+        ...defaultOnboardingState(landlordId),
+        accountSetup: state.accountSetup,
+        onboardingStatus: 'not_started',
+        currentStep: 'entry',
+        setupPath: null,
+        properties: [],
+      }
+      await saveLandlordOnboarding(cleared)
+      setState(cleared)
+      resetOnboardingForms()
+    } finally {
+      setSaving(false)
     }
-    await saveLandlordOnboarding(cleared)
-    setState(cleared)
-    resetOnboardingForms()
-    setSaving(false)
   }
 
   async function wipePortfolioSession(): Promise<LandlordOnboardingState | null> {
     setSaving(true)
     setError(null)
-    const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
-    setSaving(false)
-    if (!cleared.ok) {
-      setError(cleared.error ?? 'Could not clear previous portfolio data.')
-      return null
+    try {
+      const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
+      if (!cleared.ok) {
+        setError(cleared.error ?? 'Could not clear previous portfolio data.')
+        return null
+      }
+      setState(cleared.state)
+      resetOnboardingForms()
+      return cleared.state
+    } finally {
+      setSaving(false)
     }
-    setState(cleared.state)
-    resetOnboardingForms()
-    return cleared.state
   }
 
   async function beginOnboarding(path: 'guided' | 'fast_track', targetStep: OnboardingStep) {
@@ -1042,14 +1050,19 @@ export function useOnboardingWizard() {
   }
 
   async function returnToDocumentUpload() {
-    if (editingFromReviewRef.current) {
-      await goTo('document_upload')
-      return
+    try {
+      if (editingFromReviewRef.current) {
+        await goTo('document_upload')
+        return
+      }
+      // Drop the prior AI review so the next Review rebuilds from files
+      // instead of reusing (and inflating) a stale lease list.
+      setExtractionReview(null)
+      await goTo('document_upload', {}, { extractionReview: null })
+    } finally {
+      // Clear any leftover lock from a prior review import/navigation.
+      setSaving(false)
     }
-    // Drop the prior AI review so the next Review rebuilds from files
-    // instead of reusing (and inflating) a stale lease list.
-    setExtractionReview(null)
-    await goTo('document_upload', {}, { extractionReview: null })
   }
 
   async function continueFromDocumentUpload() {
@@ -1060,16 +1073,22 @@ export function useOnboardingWizard() {
     if (anyDocumentProcessing(uploadDocuments)) {
       return
     }
-    setSaving(true)
     setError(null)
-    const review = fillExtractionReviewAccount(
-      buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
-      uploadDocuments,
-      state.accountSetup,
-    )
-    setExtractionReview(review)
-    await goTo('ai_review', {}, { extractionReview: review })
-    setSaving(false)
+    try {
+      const review = fillExtractionReviewAccount(
+        buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
+        uploadDocuments,
+        state.accountSetup,
+      )
+      setExtractionReview(review)
+      await goTo('ai_review', {}, { extractionReview: review })
+    } catch (err) {
+      console.error('[onboarding] continueFromDocumentUpload failed', err)
+      setError(getErrorMessage(err, 'Could not open review.'))
+    } finally {
+      // Never leave Continue gray on ai_review because draft persistence lagged.
+      setSaving(false)
+    }
   }
 
   async function skipDocumentUpload() {
@@ -1187,40 +1206,42 @@ export function useOnboardingWizard() {
     setSaving(true)
     setError(null)
 
-    const snapshot = { ...wizardSnapshotRef.current.state, ...patch }
-    setState(snapshot)
+    try {
+      const snapshot = { ...wizardSnapshotRef.current.state, ...patch }
+      setState(snapshot)
 
-    // Fast track: no separate Review step — return to approval (last stage).
-    if (snapshot.setupPath === 'fast_track') {
-      await goTo('approval', patch)
-      await refreshCounts()
-      setSaving(false)
-      return
-    }
+      // Fast track: no separate Review step — return to approval (last stage).
+      if (snapshot.setupPath === 'fast_track') {
+        await goTo('approval', patch)
+        await refreshCounts()
+        return
+      }
 
-    const [vendors, residents, smsIntakeNumber] = await Promise.all([
-      fetchOnboardingVendors(),
-      fetchOnboardingResidents(),
-      fetchLandlordSmsIntakeNumber(snapshot.landlordId),
-    ])
-    setReviewData(
-      buildOnboardingReviewData(
-        snapshot,
-        applySendOnboardingVendorFlags(
-          vendors,
-          wizardSnapshotRef.current.extractionReview?.vendors,
-          wizardSnapshotRef.current.vendorForms,
+      const [vendors, residents, smsIntakeNumber] = await Promise.all([
+        fetchOnboardingVendors(),
+        fetchOnboardingResidents(),
+        fetchLandlordSmsIntakeNumber(snapshot.landlordId),
+      ])
+      setReviewData(
+        buildOnboardingReviewData(
+          snapshot,
+          applySendOnboardingVendorFlags(
+            vendors,
+            wizardSnapshotRef.current.extractionReview?.vendors,
+            wizardSnapshotRef.current.vendorForms,
+          ),
+          residents,
+          undefined,
+          smsIntakeNumber,
+          reviewExtractedResidents(),
+          loadImportedOpsRecords(snapshot.landlordId),
         ),
-        residents,
-        undefined,
-        smsIntakeNumber,
-        reviewExtractedResidents(),
-        loadImportedOpsRecords(snapshot.landlordId),
-      ),
-    )
-    await goTo('review', patch)
-    await refreshCounts()
-    setSaving(false)
+      )
+      await goTo('review', patch)
+      await refreshCounts()
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function editReviewStep(targetStep: OnboardingStep) {
