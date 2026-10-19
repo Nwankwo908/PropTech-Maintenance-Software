@@ -2,7 +2,17 @@ export const GEMINI_DOCUMENT_MODEL = 'gemini-3.8-flash'
 export const OPENAI_LEASE_BACKUP_MODEL = 'gpt-4o-mini'
 export type DocumentPart = { text: string } | { bytes: Uint8Array; mimeType: string; page?: number }
 export type DocumentJsonResult = { raw: unknown; provider: 'gemini' | 'openai'; model: string; inputTokens: number; outputTokens: number }
-export type DocumentProviderInput = { provider?: 'gemini' | 'openai'; apiKey: string; system: string; parts: DocumentPart[]; schema?: Record<string, unknown>; fetchImpl?: typeof fetch; signal?: AbortSignal }
+export type DocumentProviderInput = {
+  provider?: 'gemini' | 'openai'
+  apiKey: string
+  system: string
+  parts: DocumentPart[]
+  schema?: Record<string, unknown>
+  /** Gemini only. Fast Track uses a lower resolution to cut latency. */
+  mediaResolution?: 'MEDIA_RESOLUTION_HIGH' | 'MEDIA_RESOLUTION_MEDIUM' | 'MEDIA_RESOLUTION_LOW'
+  fetchImpl?: typeof fetch
+  signal?: AbortSignal
+}
 export function documentBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i=0;i<bytes.length;i+=32768) binary += String.fromCharCode(...bytes.subarray(i,i+32768))
@@ -63,7 +73,7 @@ export async function requestDocumentJson(input: DocumentProviderInput): Promise
       if (file.state !== 'ACTIVE' || !file.uri) throw new Error('Document is still processing. Please retry shortly.')
       parts.push({fileData:{mimeType:part.mimeType,fileUri:file.uri}})
     }
-    const response = await request(fetcher,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':input.apiKey},body:JSON.stringify({systemInstruction:{parts:[{text:input.system}]},contents:[{role:'user',parts}],generationConfig:{temperature:0,maxOutputTokens:16384,mediaResolution:'MEDIA_RESOLUTION_HIGH',responseMimeType:'application/json',...(input.schema ? {responseJsonSchema:input.schema} : {})}})},input.signal)
+    const response = await request(fetcher,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':input.apiKey},body:JSON.stringify({systemInstruction:{parts:[{text:input.system}]},contents:[{role:'user',parts}],generationConfig:{temperature:0,maxOutputTokens:16384,mediaResolution:input.mediaResolution || 'MEDIA_RESOLUTION_HIGH',responseMimeType:'application/json',...(input.schema ? {responseJsonSchema:input.schema} : {})}})},input.signal)
     const payload = await response.json(), candidate = payload.candidates?.[0]
     if (candidate?.finishReason !== 'STOP') throw new Error('Document reading returned an incomplete result.')
     const content = candidate.content?.parts?.filter((part:{text?:string;thought?:boolean})=>!part.thought&&typeof part.text==='string').map((part:{text:string})=>part.text).join('')

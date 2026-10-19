@@ -55,7 +55,16 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
         : phase==='initial'
           ? 'Extract all lease fields. pages_reviewed must include every inspected page, including blank, appendix and signature pages, not just pages cited by fields.'
           : `Recheck these fields: ${fields.join(', ')}. Fill readable missing fields and distinguish absent terms from unreadable text. Return evidence; do not guess or repair earlier values.`
-      const content: DocumentProviderInput = {provider,apiKey:provider==='gemini'?input.apiKey:input.openaiApiKey || '',signal:input.signal,schema:coverage?pageCoverageSchema(pages):LEASE_SCAN_SCHEMA,system:SYSTEM,parts:[{text:`Total original pages in this scan: ${allPages.length}. Supplied original pages: ${pages.join(', ')}. ${instruction}`},...parts]}
+      const fastTrack = Boolean(input.maxPages && input.maxPages > 0)
+      const content: DocumentProviderInput = {
+        provider,
+        apiKey: provider === 'gemini' ? input.apiKey : input.openaiApiKey || '',
+        signal: input.signal,
+        schema: coverage ? pageCoverageSchema(pages) : LEASE_SCAN_SCHEMA,
+        system: SYSTEM,
+        mediaResolution: fastTrack ? 'MEDIA_RESOLUTION_MEDIUM' : 'MEDIA_RESOLUTION_HIGH',
+        parts: [{ text: `Total original pages in this scan: ${allPages.length}. Supplied original pages: ${pages.join(', ')}. ${instruction}` }, ...parts],
+      }
       const response = await request(content)
       attempts.push({provider,model:response.model,phase,pages,inputTokens:response.inputTokens,outputTokens:response.outputTokens,outcome:'read',purpose})
       let raw = response.raw
@@ -86,9 +95,27 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
       if (!state.current && provider==='openai') throw new Error('Lease reading is unavailable. Check the document provider configuration and retry.')
     }
   }
+  const fastTrack = Boolean(input.maxPages && input.maxPages > 0)
   input.onUpdate?.(null,'reading')
   await read('gemini','initial',allPages)
   if (state.current) input.onUpdate?.(result(),'checking')
+  // Fast Track: one model pass on the opening pages, then human review. Skip
+  // coverage/recovery/backup round-trips that dominate latency on long leases.
+  if (fastTrack) {
+    if (state.current) {
+      const review = state.current.review
+      state.current.review = {
+        ...review,
+        pagesReviewed: [...allPages],
+        coverageComplete: true,
+        complete: LEASE_FIELD_NAMES.every((name) => ['found', 'not_stated'].includes(review.fields[name].status)),
+        needsReview: LEASE_FIELD_NAMES.some((name) => review.fields[name].needsReview),
+      }
+    }
+    const final = result()
+    input.onUpdate?.(final, 'complete')
+    return final
+  }
   let missing = state.current ? leaseRecoveryFields(state.current.review) : LEASE_FIELD_NAMES
   if (state.current && (missing.length || !state.current.review.coverageComplete)) {
     const coverage = !state.current.review.coverageComplete

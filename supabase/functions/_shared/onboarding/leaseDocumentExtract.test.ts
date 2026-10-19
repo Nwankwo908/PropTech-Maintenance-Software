@@ -27,6 +27,22 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.pagesProvided).toEqual([1, 2, 3, 4])
     expect(result.leaseReview.coverageComplete).toBe(true)
   })
+  it('skips Fast Track recovery and backup so review stays one model pass', async () => {
+    buildParts.mockClear()
+    const raw = leaseFixture([1, 2, 3, 4])
+    raw.fields.monthly_rent = { ...raw.fields.monthly_rent, value: null, status: 'unreadable' }
+    raw.fields.lease_start.quote = ''
+    const request = vi.fn(async (call: DocumentProviderInput) => {
+      expect(call.provider).toBe('gemini')
+      expect(call.mediaResolution).toBe('MEDIA_RESOLUTION_MEDIUM')
+      return response(raw)
+    })
+    const result = await extractLeaseDocument({ ...input(), maxPages: FAST_TRACK_LEASE_SCAN_PAGES, request })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(result.leaseReview.attempts.map((attempt) => attempt.phase)).toEqual(['initial'])
+    expect(result.leaseReview.coverageComplete).toBe(true)
+    expect(result.leaseReview.fields.monthly_rent.needsReview).toBe(true)
+  })
   it('shows partial fields before rereading and recovers a late-page term', async () => {
     const raw = leaseFixture(Array.from({ length: 12 }, (_, i) => i + 1))
     raw.fields.monthly_rent = { ...raw.fields.monthly_rent, value: null, status: 'unreadable' }
