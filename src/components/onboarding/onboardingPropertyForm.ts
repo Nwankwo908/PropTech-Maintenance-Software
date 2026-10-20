@@ -153,6 +153,7 @@ export async function mintOnboardingPropertyIdIfNeeded(
 export type SaveOnboardingPropertyStepInput = {
   propertyForms: PropertyFormRow[]
   editingFromReview: boolean
+  onboardingSessionId?: string | null
   setSaving: (value: boolean) => void
   setError: (value: string | null) => void
   returnToReviewAfterEdit: (patch?: Partial<LandlordOnboardingState>) => Promise<void>
@@ -169,6 +170,7 @@ export async function saveOnboardingPropertyStep(
   const {
     propertyForms,
     editingFromReview,
+    onboardingSessionId,
     setSaving,
     setError,
     returnToReviewAfterEdit,
@@ -189,7 +191,11 @@ export async function saveOnboardingPropertyStep(
 
   setSaving(true)
   setError(null)
-  const result = await persistOnboardingProperties(properties)
+  const sessionId = onboardingSessionId?.trim() || ''
+  const result = await persistOnboardingProperties(properties, undefined, {
+    onboardingSessionId: sessionId || undefined,
+    mode: sessionId ? 'reconcile' : 'upsert',
+  })
   if (!result.ok) {
     setSaving(false)
     setError(result.error ?? 'Could not register units.')

@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal, type VendorManagementRow } from '@/components/VendorFormModal'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
+import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
@@ -1094,7 +1095,7 @@ export function AdminVendorsDashboard() {
         key={`checkbox-${checkboxGuideRunId}`}
         active={showCheckboxGuide}
         targetRef={checkboxGuideTargetRef}
-        message="Select the checkbox to start vendor onboarding"
+        message="Select the checkbox to activate vendors accounts"
       />
       <div className="flex items-start justify-between gap-3 py-6">
         <div>
@@ -1147,9 +1148,9 @@ export function AdminVendorsDashboard() {
           <ActivationReminderAlertIcon />
           <p className="text-[#101828]">
             {notStartedVendorCount === 1
-              ? '1 vendor has not been activated yet.'
-              : `${notStartedVendorCount} vendors have not been activated yet.`}{' '}
-            Select the checkbox to start onboarding when you&apos;re ready.
+              ? '1 vendor has not received the SMS invite yet.'
+              : `${notStartedVendorCount} vendors have not received the SMS invite yet.`}{' '}
+            Select the checkbox to activate vendors accounts.
           </p>
         </div>
       ) : null}
@@ -1240,18 +1241,21 @@ export function AdminVendorsDashboard() {
             Clear
           </button>
           {selectedCanSetupOrRetry ? (
-            <button
-              type="button"
-              disabled={onboardingSaving || deleteVendorsSaving}
-              onClick={() => setSetupOutreachAckOpen(true)}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {onboardingSaving
-                ? 'Sending…'
-                : selectedOnboardingRetryOnly
-                  ? 'Retry setup'
-                  : 'Setup Vendor'}
-            </button>
+            <div className="inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={onboardingSaving || deleteVendorsSaving}
+                onClick={() => setSetupOutreachAckOpen(true)}
+                className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {onboardingSaving
+                  ? 'Sending…'
+                  : selectedOnboardingRetryOnly
+                    ? 'Retry invite'
+                    : 'Send invite'}
+              </button>
+              <SendInviteInfoTip variant="vendor" />
+            </div>
           ) : null}
         </div>
       ) : null}

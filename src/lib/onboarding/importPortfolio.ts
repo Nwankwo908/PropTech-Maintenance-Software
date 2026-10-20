@@ -418,6 +418,12 @@ async function importExtractedFinancialRecords(
 export async function importMockExtraction(
   review: MockExtractionReview,
   landlordId: string = getActiveLandlordId(),
+  options?: {
+    onboardingSessionId?: string | null
+    onboardingSessionStartedAt?: string | null
+    skipPropertyPersist?: boolean
+    persistedProperties?: OnboardingProperty[]
+  },
 ): Promise<{ ok: boolean; error?: string; imported: Record<string, number> }> {
   const scope = requireOnboardingLandlord(landlordId)
   if (!scope.ok) {
@@ -427,6 +433,7 @@ export async function importMockExtraction(
     return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.', imported: {} }
   }
   landlordId = scope.landlordId
+  const sessionId = options?.onboardingSessionId?.trim() || ''
 
   const imported = {
     properties: 0,
@@ -462,13 +469,18 @@ export async function importMockExtraction(
     }
   })
 
-  let persistedProperties: OnboardingProperty[] = []
-  if (onboardingProperties.length > 0) {
-    const unitResult = await persistOnboardingProperties(onboardingProperties)
+  let persistedProperties: OnboardingProperty[] = options?.persistedProperties ?? []
+  if (!options?.skipPropertyPersist && onboardingProperties.length > 0) {
+    const unitResult = await persistOnboardingProperties(onboardingProperties, landlordId, {
+      onboardingSessionId: sessionId || undefined,
+      mode: sessionId ? 'reconcile' : 'upsert',
+    })
     if (!unitResult.ok) return { ...unitResult, imported }
     persistedProperties = unitResult.properties
-    imported.properties = unitResult.properties.length
-    imported.units = unitResult.properties.reduce(
+  }
+  if (persistedProperties.length > 0) {
+    imported.properties = persistedProperties.length
+    imported.units = persistedProperties.reduce(
       (s, p) => s + (p.unitLabels?.length || p.unitCount),
       0,
     )
@@ -485,6 +497,13 @@ export async function importMockExtraction(
         id: property.id,
         name: property.name,
       })),
+      onboardingSession: sessionId
+        ? {
+            onboardingSessionId: sessionId,
+            onboardingSessionStartedAt:
+              options?.onboardingSessionStartedAt?.trim() || new Date().toISOString(),
+          }
+        : undefined,
     },
   )
 

@@ -12,6 +12,7 @@ import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
 import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 import { resolveUnitByIdOrLabel } from "../unitVacancy.ts"
 import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
+import { queueWorkOrderContext } from "../workOrderContext.ts"
 import { sendVendorJobAlert } from "./vendorSmsRouting.ts"
 import { findResidentLeaseDocumentUrl } from "./residentLeaseDocument.ts"
 import type {
@@ -1295,6 +1296,13 @@ async function handleMaintenanceUpdate(
         .from("maintenance_requests")
         .update(patch)
         .eq("id", ticket.id)
+      if (typeof patch.description === "string") {
+        queueWorkOrderContext(
+          ctx.supabase,
+          { id: ticket.id, description: patch.description },
+          "[inbound-interpretation]",
+        )
+      }
       await patchIntakeState(ctx.supabase, ctx.conversationId, {
         awaiting_ticket_update_confirm: false,
         pending_ticket_update_id: undefined,

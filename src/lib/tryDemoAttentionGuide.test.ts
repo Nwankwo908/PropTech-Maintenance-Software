@@ -113,7 +113,7 @@ const RESIDENTS_BODY =
   'Manage residents, their units, lease details, and rent in one place. Start or retry their welcome text from Residents.'
 
 const VENDORS_BODY =
-  'Manage your vendors and track their setup progress. After adding a vendor, select Setup Vendor to send their verification link.'
+  'Manage your vendors and track their setup progress. After adding a vendor, select Send invite to send their verification link.'
 
 const ULO_ACTIVITY_BODY =
   'Select the bell icon to see Ulo’s latest updates—from new repairs and vendor replies to setup progress and failed texts.'

@@ -1,9 +1,9 @@
-/** Shared copy for Setup Resident / Setup Vendor SMS outreach acknowledgement. */
+/** Shared copy for Send invite SMS outreach acknowledgement. */
 
 export type SetupOutreachRecipientKind = 'resident' | 'vendor'
 
-export function setupOutreachAckTitle(kind: SetupOutreachRecipientKind): string {
-  return kind === 'resident' ? 'Before you set up this resident' : 'Before you set up this vendor'
+export function setupOutreachAckTitle(_kind: SetupOutreachRecipientKind): string {
+  return 'Before you send this invite'
 }
 
 export function setupOutreachAckBody(kind: SetupOutreachRecipientKind): string {
@@ -20,6 +20,6 @@ export function setupOutreachAckConfirmLabel(input: {
   kind: SetupOutreachRecipientKind
   retry?: boolean
 }): string {
-  if (input.retry) return 'Retry setup'
-  return input.kind === 'resident' ? 'Setup Resident' : 'Setup Vendor'
+  if (input.retry) return 'Retry invite'
+  return 'Send invite'
 }

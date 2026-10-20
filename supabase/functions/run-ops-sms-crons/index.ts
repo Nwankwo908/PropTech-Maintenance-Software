@@ -8,6 +8,12 @@
  *     -H "Authorization: Bearer $ULO_OPS_CRON_SECRET" \
  *     -H "Content-Type: application/json" \
  *     -d '{}'
+ *
+ * Preview needs-admin vendor digest (no email, no once-per-day mark):
+ *   curl -sS -X POST "$SUPABASE_URL/functions/v1/run-ops-sms-crons" \
+ *     -H "Authorization: Bearer $ULO_OPS_CRON_SECRET" \
+ *     -H "Content-Type: application/json" \
+ *     -d '{"needs_admin_digest_only":true,"dry_run":true}'
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
@@ -78,6 +84,14 @@ serve(async (req) => {
   const digestForce =
     body.needs_admin_digest_force === true ||
     body.needsAdminDigestForce === true
+  const digestPreview =
+    body.preview === true || body.needs_admin_digest_preview === true
+  const digestRecipients = Array.isArray(body.recipients)
+    ? body.recipients
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => v.trim())
+        .filter(Boolean)
+    : undefined
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -92,6 +106,8 @@ serve(async (req) => {
       const needsAdminDigest = await sendNeedsAdminVendorDigest(supabase, {
         force: digestForce,
         dryRun,
+        preview: digestPreview,
+        recipients: digestRecipients,
       })
       return jsonResponse({
         ok: true,

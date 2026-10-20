@@ -119,6 +119,16 @@ export function defaultOnboardingState(landlordId: string = getActiveLandlordId(
   }
 }
 
+/** Never read landlordId from a possibly-missing wizard snapshot. */
+export function coalesceOnboardingState(
+  state: LandlordOnboardingState | null | undefined,
+  landlordId: string = getActiveLandlordId(),
+): LandlordOnboardingState {
+  const id = state?.landlordId?.trim() || landlordId
+  if (!state) return defaultOnboardingState(id)
+  return state.landlordId === id ? state : { ...state, landlordId: id }
+}
+
 function normalizeAccountSetup(raw: unknown): OnboardingAccountSetup {
   const defaults = defaultOnboardingState().accountSetup
   if (!raw || typeof raw !== 'object') return { ...defaults }
@@ -179,9 +189,10 @@ export function readLocalOnboardingState(
   return readLocalOnboarding(landlordId)
 }
 
-export function writeLocalOnboarding(state: LandlordOnboardingState): void {
+export function writeLocalOnboarding(state: LandlordOnboardingState | null | undefined): void {
+  const safeState = coalesceOnboardingState(state)
   try {
-    window.localStorage.setItem(localKey(state.landlordId), JSON.stringify(state))
+    window.localStorage.setItem(localKey(safeState.landlordId), JSON.stringify(safeState))
   } catch {
     // private mode
   }
@@ -377,6 +388,14 @@ function mergeOnboardingDraft(
   if (!local) return state
   if (state.onboardingStatus === 'completed') return state
 
+  // Discard local drafts from a prior Start-setup run.
+  const serverSession = state.onboardingSessionId?.trim() || ''
+  const localSession = local.onboardingSessionId?.trim() || ''
+  if (serverSession && localSession && serverSession !== localSession) {
+    clearLocalOnboardingStorage(landlordId)
+    return state
+  }
+
   // Server (or explicit reset) is on the welcome hub — never let a stale local
   // in_progress draft jump the user past the path-choice screen.
   const serverOnWelcome =
@@ -499,24 +518,45 @@ async function loadLandlordOnboarding(
 }
 
 export async function saveLandlordOnboarding(
-  state: LandlordOnboardingState,
-  options: { clearAccountSettings?: boolean } = {},
-): Promise<void> {
-  invalidateOnboardingFetchCache(state.landlordId)
-  // During Reset, only persist explicit welcome-hub writes from restart helpers.
-  if (
-    isOnboardingResetInProgress() &&
-    !(state.onboardingStatus === 'not_started' && state.currentStep === 'entry')
-  ) {
+  state: LandlordOnboardingState | null | undefined,
+  options: { clearAccountSettings?: boolean; requireRemote?: boolean } = {},
+): Promise<{ ok: true } | { ok: false; error: string } | void> {
+  const safeState = coalesceOnboardingState(state)
+  const landlordId = safeState.landlordId.trim()
+  if (!landlordId) {
+    console.error('[landlordOnboarding] save skipped — missing landlordId', state)
+    if (options.requireRemote) {
+      return { ok: false, error: 'Missing landlord id for onboarding save.' }
+    }
     return
   }
 
-  writeLocalOnboarding(state)
+  invalidateOnboardingFetchCache(landlordId)
+  // During Reset, only persist explicit welcome-hub writes from restart helpers.
+  if (
+    isOnboardingResetInProgress() &&
+    !(safeState.onboardingStatus === 'not_started' && safeState.currentStep === 'entry')
+  ) {
+    if (options.requireRemote) {
+      return { ok: false, error: 'Onboarding reset is in progress.' }
+    }
+    return
+  }
 
-  if (!supabase) return
+  writeLocalOnboarding(safeState)
+
+  if (!supabase) {
+    if (options.requireRemote) {
+      return {
+        ok: false,
+        error: "We can't reach the server right now. Please try again in a moment.",
+      }
+    }
+    return
+  }
 
   const row: Record<string, unknown> = {
-    ...stateToRow(state),
+    ...stateToRow(safeState),
     ...(options.clearAccountSettings ? { account_settings: {} } : {}),
   }
   const { error } = await supabase.from('landlord_onboarding').upsert(row, {
@@ -543,24 +583,45 @@ export async function saveLandlordOnboarding(
       })
       if (retry.error) {
         console.warn('[landlordOnboarding] save', retry.error.message)
+        if (options.requireRemote) {
+          return { ok: false, error: retry.error.message }
+        }
       }
+      if (options.requireRemote) return { ok: true }
       return
     }
     console.warn('[landlordOnboarding] save', error.message)
+    if (options.requireRemote) {
+      return { ok: false, error: error.message }
+    }
+    return
   }
+
+  if (options.requireRemote) return { ok: true }
+}
+
+/** Completion path: local write is not enough — remote upsert must succeed. */
+export async function saveLandlordOnboardingConfirmed(
+  state: LandlordOnboardingState | null | undefined,
+  options: { clearAccountSettings?: boolean } = {},
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const result = await saveLandlordOnboarding(state, { ...options, requireRemote: true })
+  if (result && typeof result === 'object' && 'ok' in result) return result
+  return { ok: false, error: 'Could not confirm onboarding save.' }
 }
 
 export function persistOnboardingWizardLocally(
-  state: LandlordOnboardingState,
+  state: LandlordOnboardingState | null | undefined,
   formDraft?: OnboardingFormDraft,
 ): LandlordOnboardingState {
+  const safeState = coalesceOnboardingState(state)
   if (
     isOnboardingResetInProgress() &&
-    !(state.onboardingStatus === 'not_started' && state.currentStep === 'entry')
+    !(safeState.onboardingStatus === 'not_started' && safeState.currentStep === 'entry')
   ) {
-    return state
+    return safeState
   }
-  const next: LandlordOnboardingState = formDraft ? { ...state, formDraft } : state
+  const next: LandlordOnboardingState = formDraft ? { ...safeState, formDraft } : safeState
   writeLocalOnboarding(next)
   return next
 }

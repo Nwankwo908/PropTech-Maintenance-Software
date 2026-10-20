@@ -14,7 +14,7 @@ import {
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import {
   requireOnboardingLandlord,
-  saveLandlordOnboarding,
+  saveLandlordOnboardingConfirmed,
 } from './draftStorage'
 import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { persistOnboardingProperties } from './persist/properties'
@@ -109,7 +109,12 @@ export async function completeOnboarding(
   vendors: OnboardingVendor[] = [],
   residents: OnboardingResident[] = [],
   dbCounts?: AccountSetupCounts,
-): Promise<{ ok: boolean; error?: string; activationWarning?: string }> {
+): Promise<{
+  ok: boolean
+  error?: string
+  activationWarning?: string
+  properties?: LandlordOnboardingState['properties']
+}> {
   const scope = requireOnboardingLandlord(state.landlordId)
   if (!scope.ok) return scope
 
@@ -119,21 +124,52 @@ export async function completeOnboarding(
     return { ok: false, error: `Missing: ${check.missing.join(', ')}` }
   }
 
+  const sessionId = state.onboardingSessionId?.trim() || ''
+  if (!sessionId) {
+    return {
+      ok: false,
+      error: 'Missing onboarding session. Refresh and start setup again.',
+    }
+  }
+
   // Do not purge tickets/workflow runs on complete — live SMS intake may already
   // have created real work orders. Wipe only via Reset onboarding.
 
   // Persist inventory first so activation can match saved units (new rows start inactive).
   let properties = state.properties
-  if (properties.length > 0) {
-    try {
-      const synced = await persistOnboardingProperties(properties, scope.landlordId)
-      if (synced.ok) {
-        properties = synced.properties
-      } else {
-        console.warn('[landlordOnboarding] properties sync on complete failed', synced.error)
+  if (properties.length === 0) {
+    return { ok: false, error: 'Add at least one property before finishing setup.' }
+  }
+
+  try {
+    const synced = await persistOnboardingProperties(properties, scope.landlordId, {
+      onboardingSessionId: sessionId,
+      mode: 'reconcile',
+    })
+    if (!synced.ok) {
+      return {
+        ok: false,
+        error: synced.error ?? 'Could not save properties. Setup was not completed.',
       }
-    } catch (err) {
-      console.warn('[landlordOnboarding] properties sync on complete failed', err)
+    }
+    properties = synced.properties
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Could not save properties. Setup was not completed.',
+    }
+  }
+
+  const reviewedPropertyIds = new Set(
+    properties.map((property) => property.id.trim()).filter(Boolean),
+  )
+  if (reviewedPropertyIds.size !== properties.length) {
+    return {
+      ok: false,
+      error: 'Property save returned incomplete ids. Setup was not completed.',
     }
   }
 
@@ -142,6 +178,13 @@ export async function completeOnboarding(
   if (residents.length > 0) {
     try {
       const importRows = onboardingResidentsToImportRows(residents)
+      const session = onboardingSessionFromState(state)
+      if (!session) {
+        return {
+          ok: false,
+          error: 'Missing onboarding session. Refresh and start setup again.',
+        }
+      }
       const persisted = await importOnboardingResidentsFromExtraction(
         importRows,
         [],
@@ -152,19 +195,23 @@ export async function completeOnboarding(
             name: property.name,
             propertyType: property.propertyType ?? null,
           })),
-          onboardingSession: onboardingSessionFromState(state),
+          onboardingSession: session,
         },
       )
       if (persisted < importRows.length) {
-        console.warn(
-          '[landlordOnboarding] review resident persist partial',
-          persisted,
-          'of',
-          importRows.length,
-        )
+        return {
+          ok: false,
+          error: `Could not save all residents (${persisted} of ${importRows.length}). Setup was not completed.`,
+        }
       }
     } catch (err) {
-      console.warn('[landlordOnboarding] review resident persist failed', err)
+      return {
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Could not save residents. Setup was not completed.',
+      }
     }
   }
 
@@ -187,7 +234,14 @@ export async function completeOnboarding(
     currentStep: 'review',
     completedAt: new Date().toISOString(),
   }
-  await saveLandlordOnboarding(completed)
+  const saved = await saveLandlordOnboardingConfirmed(completed)
+  if (!saved.ok) {
+    return {
+      ok: false,
+      error: saved.error || 'Could not confirm setup completion. Setup was not completed.',
+      properties,
+    }
+  }
 
   const metrics = buildOnboardingReviewMetrics(completed, vendors, residents, dbCounts)
   trackProductEventOnce('signup_completed', 'onboarding', {
@@ -403,5 +457,5 @@ export async function completeOnboarding(
         ? 'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
         : undefined
 
-  return { ok: true, activationWarning }
+  return { ok: true, activationWarning, properties }
 }

@@ -21,6 +21,7 @@ import {
   streetLineFromAddress,
 } from '@shared/onboarding/typedDocumentExtract/placeFields'
 import { parseRentDueDay } from '@shared/onboarding/typedDocumentExtract/parse'
+import { reconcilePropertiesByAddressIdentity } from '@shared/onboarding/addressIdentity'
 import {
   looksLikePropertyFeatureNotRepair,
   shouldAutoSelectMaintenanceIssue,
@@ -1930,6 +1931,18 @@ function finalizeExtractionReviewEntities(input: {
     leases,
     properties.length === 1 ? properties[0]?.propertyType : null,
   )
+
+  // Collapse nickname/address aliases before Review so UI matches persist identity.
+  const addressCollapsed = reconcilePropertiesByAddressIdentity(
+    properties.map((property) => ({
+      ...property,
+      streetAddress: property.address,
+    })),
+  )
+  properties = addressCollapsed.properties.map(({ streetAddress, ...property }) => ({
+    ...property,
+    address: (streetAddress || property.address || '').trim(),
+  }))
 
   const propertyNames = properties.map((property) => property.name)
   properties = properties.map((property) => {

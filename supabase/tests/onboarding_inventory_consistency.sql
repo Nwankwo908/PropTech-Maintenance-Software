@@ -1,0 +1,32 @@
+-- Manual / CI Postgres checks for onboarding inventory RPCs.
+-- Run against a disposable DB after applying 20261020120000_onboarding_inventory_consistency.sql
+-- with a service_role or staff JWT. Do not run against production without review.
+--
+-- Expected:
+-- 1) start_fresh_onboarding_run clears properties/units/users/occupancy for LA landlord
+-- 2) start fails (exception) when a non-import maintenance_request exists
+-- 3) reconcile rejects mismatched session_id
+-- 4) reconcile removes surplus properties absent from desired set
+-- 5) two display names + same address collapse to one property id
+
+-- Example sketch (adapt landlord id / auth):
+--
+-- begin;
+-- select public.start_fresh_onboarding_run(
+--   'de300000-0000-4000-8000-000000000004'::uuid,
+--   '11111111-1111-4111-8111-111111111111'
+-- );
+-- select public.reconcile_onboarding_inventory(
+--   'de300000-0000-4000-8000-000000000004'::uuid,
+--   '11111111-1111-4111-8111-111111111111',
+--   '[{"name":"Maple","streetAddress":"14 Maple Ave","city":"Austin","state":"TX","zipCode":"78701","unitCount":1,"unitLabels":"1"}]'::jsonb
+-- );
+-- -- stale session must fail:
+-- select public.reconcile_onboarding_inventory(
+--   'de300000-0000-4000-8000-000000000004'::uuid,
+--   '00000000-0000-4000-8000-000000000099',
+--   '[{"name":"Maple","streetAddress":"14 Maple Ave","city":"Austin","state":"TX","zipCode":"78701","unitCount":1,"unitLabels":"1"}]'::jsonb
+-- );
+-- rollback;
+
+select 'onboarding_inventory_consistency.sql loaded — run sketched checks in a transaction against a disposable DB'::text as note;

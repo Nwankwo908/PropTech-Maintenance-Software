@@ -21,8 +21,19 @@ import {
   isSingleFamilyPropertyType,
   SINGLE_FAMILY_UNIT_LABEL,
 } from '@shared/properties/propertyType'
+import { reconcilePropertiesByAddressIdentity } from '@shared/onboarding/addressIdentity'
 import { requireOnboardingLandlord } from '../scope'
 import type { OnboardingProperty } from '../types'
+
+export type PersistOnboardingPropertiesOptions = {
+  /** Current setup run — required for transactional reconcile. */
+  onboardingSessionId?: string | null
+  /**
+   * `reconcile` (default when session present): desired set is authoritative.
+   * `upsert` : legacy name upsert for post-complete enrich (no surplus deletes).
+   */
+  mode?: 'reconcile' | 'upsert'
+}
 
 export function generateUnitLabels(count: number): string[] {
   const labels: string[] = []
@@ -537,9 +548,105 @@ async function syncOnboardingPropertyUnits(
   return { ok: true }
 }
 
+async function persistOnboardingPropertiesViaReconcile(
+  properties: OnboardingProperty[],
+  landlordId: string,
+  sessionId: string,
+): Promise<
+  | { ok: true; properties: OnboardingProperty[] }
+  | { ok: false; error: string }
+> {
+  if (!supabase) {
+    return {
+      ok: false,
+      error: "We can't reach the server right now. Please try again in a moment.",
+    }
+  }
+
+  const collapsed = reconcilePropertiesByAddressIdentity(properties)
+  const desired = collapsed.properties
+    .map((property) => {
+      const unitLabels = resolveOnboardingUnitLabels(property, property.unitLabels ?? [])
+      const unitCount = Math.max(property.unitCount || 0, unitLabels.length, 1)
+      return {
+        id: property.id,
+        name: property.name.trim(),
+        streetAddress: property.streetAddress?.trim() || '',
+        city: property.city?.trim() || '',
+        state: property.state?.trim() || '',
+        zipCode: property.zipCode?.trim() || '',
+        propertyType: property.propertyType ?? null,
+        propertyManagerName: property.propertyManagerName ?? null,
+        propertyManagerPhone: property.propertyManagerPhone ?? null,
+        unitCount,
+        unitLabels: unitLabels.join(', '),
+      }
+    })
+    .filter((row) => row.name)
+
+  if (desired.length === 0) {
+    return { ok: false, error: 'Add at least one property.' }
+  }
+
+  const { data, error } = await supabase.rpc('reconcile_onboarding_inventory', {
+    p_landlord_id: landlordId,
+    p_session_id: sessionId,
+    p_properties: desired,
+  })
+
+  if (error) {
+    return {
+      ok: false,
+      error: getOnboardingErrorMessage(
+        error,
+        'Could not save properties. Your previous inventory was left unchanged.',
+      ),
+    }
+  }
+
+  const payload = (data ?? {}) as {
+    properties?: Array<{
+      id?: string
+      name?: string
+      streetAddress?: string | null
+      city?: string | null
+      state?: string | null
+      zipCode?: string | null
+      propertyType?: string | null
+      unitCount?: number
+      unitLabels?: string
+    }>
+  }
+
+  const canonicalProperties: OnboardingProperty[] = (payload.properties ?? []).map((row) => {
+    const labels = String(row.unitLabels ?? '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+    return {
+      id: String(row.id ?? ''),
+      name: String(row.name ?? ''),
+      streetAddress: String(row.streetAddress ?? ''),
+      city: String(row.city ?? ''),
+      state: String(row.state ?? ''),
+      zipCode: String(row.zipCode ?? ''),
+      propertyType: row.propertyType ?? undefined,
+      unitCount: Math.max(Number(row.unitCount) || labels.length || 1, 1),
+      unitLabels: labels.length > 0 ? labels : undefined,
+    }
+  })
+
+  if (canonicalProperties.length === 0) {
+    return { ok: false, error: 'Add at least one property.' }
+  }
+
+  return { ok: true, properties: canonicalProperties }
+}
+
 export async function persistOnboardingProperties(
   properties: OnboardingProperty[],
   landlordId: string = getActiveLandlordId(),
+  options: PersistOnboardingPropertiesOptions = {},
 ): Promise<
   | { ok: true; properties: OnboardingProperty[] }
   | { ok: false; error: string }
@@ -551,51 +658,27 @@ export async function persistOnboardingProperties(
     return { ok: false, error: 'Add at least one property.' }
   }
 
-  const existingUnitRows = supabase
-    ? (
-        await supabase
-          .from('units')
-          .select('unit_label, building, property_id')
-          .eq('landlord_id', scope.landlordId)
-      ).data ?? []
-    : []
-  const existingResidentRows = supabase
-    ? (
-        await supabase
-          .from('users')
-          .select('unit, building')
-          .eq('landlord_id', scope.landlordId)
-      ).data ?? []
-    : []
+  const sessionId = options.onboardingSessionId?.trim() || ''
+  const mode = options.mode ?? (sessionId ? 'reconcile' : 'upsert')
 
+  if (mode === 'reconcile') {
+    if (!sessionId) {
+      return {
+        ok: false,
+        error: 'Missing onboarding session. Refresh and start setup again.',
+      }
+    }
+    return persistOnboardingPropertiesViaReconcile(properties, scope.landlordId, sessionId)
+  }
+
+  // Upsert path (post-complete enrich): do not inherit unrelated prior-session labels.
   const propertyIdByBuilding = new Map<string, string>()
   const canonicalProperties: OnboardingProperty[] = []
   for (const property of properties) {
     const name = property.name.trim()
     if (!name) continue
     const buildingKey = normalizeBuildingKey(name)
-    const existingLabels = [
-      ...existingUnitRows
-        .filter((row) => {
-          const propertyId = String((row as { property_id?: string | null }).property_id ?? '')
-          const building = String((row as { building?: string | null }).building ?? '')
-          return (
-            (property.id && propertyId === property.id) ||
-            normalizeBuildingKey(building) === buildingKey
-          )
-        })
-        .map((row) => String((row as { unit_label?: string }).unit_label ?? '')),
-      ...existingResidentRows
-        .filter((row) => {
-          const building = String((row as { building?: string | null }).building ?? '')
-          const unit = String((row as { unit?: string | null }).unit ?? '').trim()
-          if (!unit) return false
-          if (!building.trim()) return true
-          return normalizeBuildingKey(building) === buildingKey
-        })
-        .map((row) => String((row as { unit?: string | null }).unit ?? '')),
-    ]
-    const unitLabels = resolveOnboardingUnitLabels(property, existingLabels)
+    const unitLabels = resolveOnboardingUnitLabels(property, property.unitLabels ?? [])
     const unitCount = Math.max(property.unitCount || 0, unitLabels.length, 1)
     const ensured = await ensureProperty({
       landlordId: scope.landlordId,

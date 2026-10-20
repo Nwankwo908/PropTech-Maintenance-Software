@@ -113,8 +113,8 @@ export function OnboardingResidentsStep({
                       }
                       aria-label={
                         form.phone.trim()
-                          ? `Send onboarding message to resident ${index + 1} when setup completes`
-                          : `Add a phone number to send onboarding to resident ${index + 1}`
+                          ? `Send invite to resident ${index + 1} when setup completes`
+                          : `Add a phone number to send invite to resident ${index + 1}`
                       }
                     />
                     {residentForms.length > 1 ? (

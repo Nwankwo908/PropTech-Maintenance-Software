@@ -20,13 +20,15 @@ import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import { importMockExtraction } from './importPortfolio'
 import { persistLandlordAccountProfile } from './persist/account'
 import { persistOnboardingProperties, collectExtractedUnitLabels } from './persist/properties'
-import { importOnboardingResidentsFromExtraction } from './persist/importResidents'
 import { requireOnboardingLandlord } from './scope'
 import type { LandlordOnboardingState, OnboardingProperty, OnboardingStep } from './types'
 
 export type CommitFastTrackImportInput = {
   review: OnboardingExtractionReview
   accountSetup: LandlordOnboardingState['accountSetup']
+  /** Caller’s current setup run — required so stale tabs cannot write. */
+  onboardingSessionId: string
+  onboardingSessionStartedAt?: string | null
   onError: (message: string) => void
   onExtractionReview: (review: OnboardingExtractionReview) => void
   onSaving: (saving: boolean) => void
@@ -128,23 +130,14 @@ export async function commitFastTrackImport(
 
     let properties: OnboardingProperty[] = []
 
+    const sessionId = input.onboardingSessionId.trim()
+    if (!sessionId) {
+      input.onError('Missing onboarding session. Refresh and start setup again.')
+      return false
+    }
+
     if (hasImport) {
-      const result = await importMockExtraction(toMockExtractionReview(normalized))
-      if (!result.ok) {
-        input.onError(result.error ?? "We couldn't finish the import. Please try again.")
-        return false
-      }
-
-      const selectedResidentCount = normalized.residents.filter((row) => row.selected).length
-      if (selectedResidentCount > 0 && result.imported.residents < selectedResidentCount) {
-        console.warn(
-          '[onboarding] fast-track resident import partial',
-          result.imported.residents,
-          'of',
-          selectedResidentCount,
-        )
-      }
-
+      // Build the desired property set once (with city/state/zip), then reconcile once.
       properties = normalized.properties
         .filter((property) => property.selected)
         .map((property) => {
@@ -174,7 +167,10 @@ export async function commitFastTrackImport(
         })
 
       if (properties.length > 0) {
-        const unitResult = await persistOnboardingProperties(properties)
+        const unitResult = await persistOnboardingProperties(properties, scope.landlordId, {
+          onboardingSessionId: sessionId,
+          mode: 'reconcile',
+        })
         if (!unitResult.ok) {
           input.onError(unitResult.error ?? 'Could not save property locations.')
           return false
@@ -182,28 +178,23 @@ export async function commitFastTrackImport(
         properties = unitResult.properties
       }
 
-      const selectedResidents = normalized.residents.filter((row) => row.selected)
-      if (selectedResidents.length > 0) {
-        const importedResidents = await importOnboardingResidentsFromExtraction(
-          selectedResidents,
-          normalized.leases.filter((lease) => lease.selected),
-          scope.landlordId,
-          {
-            properties: properties.map((property) => ({
-              id: property.id,
-              name: property.name,
-              propertyType: property.propertyType ?? null,
-            })),
-          },
+      const result = await importMockExtraction(toMockExtractionReview(normalized), scope.landlordId, {
+        onboardingSessionId: sessionId,
+        onboardingSessionStartedAt: input.onboardingSessionStartedAt,
+        skipPropertyPersist: true,
+        persistedProperties: properties,
+      })
+      if (!result.ok) {
+        input.onError(result.error ?? "We couldn't finish the import. Please try again.")
+        return false
+      }
+
+      const selectedResidentCount = normalized.residents.filter((row) => row.selected).length
+      if (selectedResidentCount > 0 && result.imported.residents < selectedResidentCount) {
+        input.onError(
+          `Could not save all residents (${result.imported.residents} of ${selectedResidentCount}). Setup was not completed.`,
         )
-        if (importedResidents < selectedResidents.length) {
-          console.warn(
-            '[onboarding] fast-track resident import partial',
-            importedResidents,
-            'of',
-            selectedResidents.length,
-          )
-        }
+        return false
       }
 
       await activateUnitsFromResidentAssignments({

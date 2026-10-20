@@ -9,7 +9,7 @@ import {
 
 const {
   recordActivityLog,
-  saveLandlordOnboarding,
+  saveLandlordOnboardingConfirmed,
   requireOnboardingLandlord,
   activateUnitsFromResidentAssignments,
   persistLandlordAccountProfile,
@@ -27,7 +27,7 @@ const {
   const supabaseFrom = vi.fn()
   return {
     recordActivityLog: vi.fn(),
-    saveLandlordOnboarding: vi.fn(),
+    saveLandlordOnboardingConfirmed: vi.fn(),
     requireOnboardingLandlord: vi.fn(),
     activateUnitsFromResidentAssignments: vi.fn(),
     persistLandlordAccountProfile: vi.fn(),
@@ -62,7 +62,7 @@ vi.mock('@/lib/unitActivation', () => ({
 
 vi.mock('./draftStorage', () => ({
   requireOnboardingLandlord,
-  saveLandlordOnboarding,
+  saveLandlordOnboardingConfirmed,
 }))
 
 vi.mock('./persist/account', () => ({
@@ -170,7 +170,7 @@ describe('completeOnboarding', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     requireOnboardingLandlord.mockReturnValue({ ok: true, landlordId: TEST_LANDLORD_ID })
-    saveLandlordOnboarding.mockResolvedValue(undefined)
+    saveLandlordOnboardingConfirmed.mockResolvedValue({ ok: true })
     activateUnitsFromResidentAssignments.mockResolvedValue(undefined)
     persistLandlordAccountProfile.mockResolvedValue({ ok: true })
     persistLandlordDefaultRentDueDay.mockResolvedValue({ ok: true })
@@ -179,7 +179,9 @@ describe('completeOnboarding', () => {
       ok: true,
       properties,
     }))
-    importOnboardingResidentsFromExtraction.mockResolvedValue(2)
+    importOnboardingResidentsFromExtraction.mockImplementation(async (rows: unknown[]) =>
+      Array.isArray(rows) ? rows.length : 0,
+    )
     fetchOnboardingResidents.mockResolvedValue([])
     fetchOnboardingVendors.mockResolvedValue([])
     sendTenantWelcomeSms.mockResolvedValue({ ok: true, configured: true })
@@ -222,14 +224,13 @@ describe('completeOnboarding', () => {
 
     const result = await completeOnboarding(state, vendors, residents)
 
-    expect(result).toEqual({
-      ok: true,
-      activationWarning:
-        'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
-    })
+    expect(result.ok).toBe(true)
+    expect(result.activationWarning).toBe(
+      'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+    )
     expect(sendTenantWelcomeSms).not.toHaveBeenCalled()
-    expect(saveLandlordOnboarding).toHaveBeenCalledTimes(1)
-    const saved = saveLandlordOnboarding.mock.calls[0]?.[0] as LandlordOnboardingState
+    expect(saveLandlordOnboardingConfirmed).toHaveBeenCalledTimes(1)
+    const saved = saveLandlordOnboardingConfirmed.mock.calls[0]?.[0] as LandlordOnboardingState
     expect(saved.onboardingStatus).toBe('completed')
     expect(saved.currentStep).toBe('review')
     expect(saved.completedAt).toBeTruthy()
@@ -281,12 +282,44 @@ describe('completeOnboarding', () => {
       [sampleResident()],
     )
 
-    expect(result).toEqual({
-      ok: true,
-      activationWarning:
-        'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+    expect(result.ok).toBe(true)
+    expect(result.activationWarning).toBe(
+      'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+    )
+    expect(saveLandlordOnboardingConfirmed).toHaveBeenCalled()
+  })
+
+  it('fails closed when property persist fails', async () => {
+    persistOnboardingProperties.mockResolvedValueOnce({
+      ok: false,
+      error: 'Could not save properties.',
     })
-    expect(saveLandlordOnboarding).toHaveBeenCalled()
+
+    const result = await completeOnboarding(
+      validOnboardingState(),
+      [sampleVendor()],
+      [sampleResident()],
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/Could not save properties/)
+    expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when resident persist is partial', async () => {
+    importOnboardingResidentsFromExtraction.mockResolvedValueOnce(0)
+
+    const result = await completeOnboarding(
+      validOnboardingState(),
+      [sampleVendor()],
+      [sampleResident()],
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/Could not save all residents/)
+    expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
   })
 
   it('sends welcome SMS for residents with Onboarding switch enabled', async () => {
@@ -338,7 +371,7 @@ describe('completeOnboarding', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Missing/)
-    expect(saveLandlordOnboarding).not.toHaveBeenCalled()
+    expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
     expect(recordActivityLog).not.toHaveBeenCalled()
   })
 })

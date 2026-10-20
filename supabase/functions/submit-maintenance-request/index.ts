@@ -18,6 +18,7 @@ import { emitJobCreatedBundle } from "../_shared/ga4MeasurementProtocol.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { lookupOutdoorTempForProperty } from "../_shared/weather/propertyOutdoorTemp.ts"
 import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
+import { queueWorkOrderContext } from "../_shared/workOrderContext.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -355,6 +356,7 @@ serve(async (req) => {
   }
 
   const ticketId = row.id as string
+  queueWorkOrderContext(supabase, { id: ticketId, description }, "[submit-maintenance-request]")
   const landlordId = resolveLandlordId()
   void emitJobCreatedBundle(supabase, {
     landlordId,

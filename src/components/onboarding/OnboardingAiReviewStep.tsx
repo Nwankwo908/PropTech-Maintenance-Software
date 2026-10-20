@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { StreetAddressAutocomplete } from '@/components/StreetAddressAutocomplete'
 import { TableCheckbox, checkboxInputClassName } from '@/components/TableCheckbox'
@@ -17,9 +17,11 @@ import {
 import {
   editLeaseReviewDraft,
   leaseDraftRequiredBlankMessage,
+  reviewFieldNeedsScrollGlow,
   reviewFieldStateLabel,
   type ReviewFieldAttention,
 } from '@/lib/onboarding/leaseReviewDraft'
+import { useReviewAttentionScrollGlow } from '@/lib/onboarding/useReviewAttentionScrollGlow'
 import {
   onboardingNestedCardClass,
   onboardingSectionStackClass,
@@ -170,6 +172,12 @@ const selectClass = `${inputClass} appearance-none pr-8`
 
 const fieldLabelClass = 'block text-[12px] font-medium text-[#6a7282]'
 
+function attentionFieldClass(attention?: ReviewFieldAttention) {
+  return reviewFieldNeedsScrollGlow(attention)
+    ? `${inputClass} onb-review-needs-attention`
+    : inputClass
+}
+
 function normalizeBuildingLabel(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
@@ -221,14 +229,24 @@ function DraftFieldLabel({
   attention?: ReviewFieldAttention
 }) {
   const state = reviewFieldStateLabel(attention)
+  /** Needs review only appears while the input stroke is glowing. */
+  const needsReviewGlowOnly = attention === 'needs_verification'
   return (
     <span className={fieldLabelClass}>
       {text}
       {state ? (
         <span
-          className={`ml-2 text-[11px] font-semibold ${attention === 'verified' ? 'text-[#64748b]' : 'text-amber-800'}`}
+          className={`ml-2 text-[11px] font-semibold ${
+            attention === 'verified'
+              ? 'text-[#64748b]'
+              : needsReviewGlowOnly
+                ? 'onb-review-attention-label onb-review-attention-label--glow-only text-amber-800'
+                : reviewFieldNeedsScrollGlow(attention)
+                  ? 'onb-review-attention-label text-amber-800'
+                  : 'text-amber-800'
+          }`}
+          aria-hidden={needsReviewGlowOnly ? true : undefined}
         >
-          {attention === 'needs_verification' ? '* ' : null}
           {state}
         </span>
       ) : null}
@@ -255,9 +273,24 @@ function residentsForProperty(
   })
 }
 
+function ReviewTrashIcon({ className = 'size-4 shrink-0' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+        stroke="currentColor"
+        strokeWidth={1.65}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function ReviewItemRow({
-  checked,
+  checked = false,
   onToggle,
+  onRemove,
   label,
   value,
   sourceDocumentName,
@@ -274,8 +307,10 @@ function ReviewItemRow({
   as = 'li',
   showSelection = true,
 }: {
-  checked: boolean
-  onToggle: () => void
+  checked?: boolean
+  onToggle?: () => void
+  /** When set, replaces the include checkbox with a delete control. */
+  onRemove?: () => void
   label: string
   value?: string
   sourceDocumentName: string
@@ -295,13 +330,25 @@ function ReviewItemRow({
   showSelection?: boolean
 }) {
   const Wrapper = as
+  const showHeader = showSelection || Boolean(onRemove) || Boolean(trailing)
   return (
     <Wrapper className="sa-row rounded-[8px] border border-[#eef0f3] px-3 py-3">
-      <div className={showSelection ? 'flex items-start gap-3' : undefined}>
-        {showSelection ? (
-        <div className="pt-0.5">
-          <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
-        </div>
+      <div className={showHeader ? 'flex items-start gap-3' : undefined}>
+        {onRemove ? (
+          <div className="pt-0.5">
+            <button
+              type="button"
+              onClick={onRemove}
+              className="rounded-[6px] p-1 text-[#94a3b8] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
+              aria-label={`Remove ${label}`}
+            >
+              <ReviewTrashIcon />
+            </button>
+          </div>
+        ) : showSelection && onToggle ? (
+          <div className="pt-0.5">
+            <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
+          </div>
         ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -317,7 +364,7 @@ function ReviewItemRow({
                   aria-label={editFieldLabel ?? 'Edit name'}
                 />
               </div>
-            ) : showSelection ? (
+            ) : showHeader ? (
               <p className="text-[13px] font-medium text-[#101828]">{label}</p>
             ) : null}
           </div>
@@ -339,9 +386,6 @@ function ReviewItemRow({
             </div>
           ) : value?.trim() ? (
             <p className="mt-1 text-[13px] leading-relaxed text-[#364153]">{value}</p>
-          ) : null}
-          {showSelection ? (
-            <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
           ) : null}
           {children}
         </div>
@@ -430,6 +474,8 @@ export function OnboardingAiReviewStep({
   const [teamMemberOpen, setTeamMemberOpen] = useState(false)
   const smsConsentId = useId()
   const noVendorsTitleId = useId()
+  const reviewScrollRootRef = useRef<HTMLDivElement | null>(null)
+  useReviewAttentionScrollGlow(reviewScrollRootRef)
 
   const hasSelectedVendors = review.vendors.some(
     (vendor) => vendor.selected && vendor.name.trim().length > 0,
@@ -686,14 +732,14 @@ export function OnboardingAiReviewStep({
 
   function renderResidentEditFields(
     item: OnboardingExtractedResident,
-    opts: { showUnit?: boolean } = {},
+    opts: { showUnit?: boolean; onRemove?: () => void } = {},
   ) {
     return (
       <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
         <label className="block sm:col-span-2">
           <DraftFieldLabel text="Full name" attention={item.fieldAttention?.fullName} />
           <input
-            className={inputClass}
+            className={attentionFieldClass(item.fieldAttention?.fullName)}
             value={item.fullName}
             onChange={(e) =>
               item.fieldAttention
@@ -730,7 +776,7 @@ export function OnboardingAiReviewStep({
           <label className="block min-w-0">
             <DraftFieldLabel text="Unit" attention={item.fieldAttention?.unit} />
             <input
-              className={inputClass}
+              className={attentionFieldClass(item.fieldAttention?.unit)}
               value={item.unit}
               onChange={(e) =>
                 item.fieldAttention
@@ -755,7 +801,7 @@ export function OnboardingAiReviewStep({
         <label className="block min-w-0">
           <DraftFieldLabel text="Monthly rent" attention={item.fieldAttention?.monthlyRent} />
           <input
-            className={inputClass}
+            className={attentionFieldClass(item.fieldAttention?.monthlyRent)}
             value={item.monthlyRent}
             onChange={(e) =>
               item.fieldAttention
@@ -768,7 +814,7 @@ export function OnboardingAiReviewStep({
         <label className="block min-w-0">
           <DraftFieldLabel text="Rent due day (1–31)" attention={item.fieldAttention?.rentDueDay} />
           <input
-            className={inputClass}
+            className={attentionFieldClass(item.fieldAttention?.rentDueDay)}
             value={item.rentDueDay}
             onChange={(e) =>
               item.fieldAttention
@@ -784,7 +830,7 @@ export function OnboardingAiReviewStep({
             <label className="block min-w-0">
               <DraftFieldLabel text="Lease start" attention={item.fieldAttention.leaseStart} />
               <input
-                className={inputClass}
+                className={attentionFieldClass(item.fieldAttention.leaseStart)}
                 type="date"
                 value={item.leaseStart}
                 onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)}
@@ -793,7 +839,7 @@ export function OnboardingAiReviewStep({
             <label className="block min-w-0">
               <DraftFieldLabel text="Lease end" attention={item.fieldAttention.leaseEnd} />
               <input
-                className={inputClass}
+                className={attentionFieldClass(item.fieldAttention.leaseEnd)}
                 type="date"
                 value={item.leaseEnd}
                 onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)}
@@ -806,7 +852,7 @@ export function OnboardingAiReviewStep({
                 <label className="block min-w-0">
                   <DraftFieldLabel text="Security deposit" attention={lease.fieldAttention?.securityDeposit} />
                   <input
-                    className={inputClass}
+                    className={attentionFieldClass(lease.fieldAttention?.securityDeposit)}
                     value={lease.securityDeposit}
                     onChange={(e) => patchDraft(lease.id, 'securityDeposit', e.target.value)}
                   />
@@ -828,6 +874,19 @@ export function OnboardingAiReviewStep({
             placeholder="Optional. Who handles what from the lease."
           />
         </label>
+        {opts.onRemove ? (
+          <button
+            type="button"
+            className="flex w-full items-center justify-center gap-1.5 rounded-[8px] bg-[#fef2f2] px-3 py-2.5 text-[12px] font-medium text-[#b91c1c] transition-colors hover:bg-[#fee2e2] sm:col-span-2"
+            onClick={opts.onRemove}
+            aria-label={
+              item.fullName.trim() ? `Remove resident ${item.fullName.trim()}` : 'Remove resident'
+            }
+          >
+            <ReviewTrashIcon className="size-3.5 shrink-0" />
+            Remove resident
+          </button>
+        ) : null}
       </div>
     )
   }
@@ -843,8 +902,8 @@ export function OnboardingAiReviewStep({
         }
         aria-label={
           hasPhone
-            ? `Send onboarding message to ${resident.fullName || 'resident'} when setup completes`
-            : `Add a phone number to send onboarding to ${resident.fullName || 'resident'}`
+            ? `Send invite to ${resident.fullName || 'resident'} when setup completes`
+            : `Add a phone number to send invite to ${resident.fullName || 'resident'}`
         }
       />
     )
@@ -877,8 +936,7 @@ export function OnboardingAiReviewStep({
               <li key={item.id} className="list-none">
               <ReviewItemRow
                 as="div"
-                checked={item.selected}
-                onToggle={() => patchProperty(item.id, { selected: !item.selected })}
+                showSelection={false}
                 label={item.name}
                 sourceDocumentName={item.sourceDocumentName}
                 editing={false}
@@ -886,7 +944,6 @@ export function OnboardingAiReviewStep({
                 onSaveEdit={() => undefined}
                 onCancelEdit={() => undefined}
                 onEditChange={() => undefined}
-                showSelection={!manualAdd}
               >
                   <div
                     className={
@@ -919,7 +976,7 @@ export function OnboardingAiReviewStep({
                     <div className="min-w-0">
                       <DraftFieldLabel text="Street address" attention={item.fieldAttention?.address} />
                       <StreetAddressAutocomplete
-                        className={inputClass}
+                        className={attentionFieldClass(item.fieldAttention?.address)}
                         value={item.address}
                         onChange={(address) =>
                           item.fieldAttention
@@ -1033,6 +1090,15 @@ export function OnboardingAiReviewStep({
                       </div>
                     </label>
                     </div>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-center gap-1.5 rounded-[8px] bg-[#fef2f2] px-3 py-2.5 text-[12px] font-medium text-[#b91c1c] transition-colors hover:bg-[#fee2e2] sm:col-span-2"
+                      onClick={() => removePropertyForm(item.id)}
+                      aria-label={`Remove property ${item.name.trim() || index + 1}`}
+                    >
+                      <ReviewTrashIcon className="size-3.5 shrink-0" />
+                      Remove property
+                    </button>
                   </div>
 
                   {manualAdd
@@ -1065,10 +1131,7 @@ export function OnboardingAiReviewStep({
                             <li key={resident.id} className="list-none">
                               <ReviewItemRow
                                 as="div"
-                                checked={resident.selected}
-                                onToggle={() =>
-                                  patchResident(resident.id, { selected: !resident.selected })
-                                }
+                                showSelection={false}
                                 label={resident.fullName}
                                 sourceDocumentName={resident.sourceDocumentName}
                                 editing={false}
@@ -1078,7 +1141,10 @@ export function OnboardingAiReviewStep({
                                 onEditChange={() => undefined}
                                 trailing={residentOnboardingTrailing(resident)}
                               >
-                                {renderResidentEditFields(resident, { showUnit: isMultifamily })}
+                                {renderResidentEditFields(resident, {
+                                  showUnit: isMultifamily,
+                                  onRemove: () => removeTenantForm(resident.id),
+                                })}
                               </ReviewItemRow>
                             </li>
                           ))}
@@ -1087,18 +1153,6 @@ export function OnboardingAiReviewStep({
                     )
                   })()}
               </ReviewItemRow>
-              {addedByHand ? (
-                <div className="mt-2 flex justify-center">
-                  <button
-                    type="button"
-                    className="rounded-[8px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
-                    onClick={() => removePropertyForm(item.id)}
-                    aria-label={`Remove property ${index + 1}`}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ) : null}
               </li>
             )
           })
@@ -1141,8 +1195,7 @@ export function OnboardingAiReviewStep({
                     {resident ? (
                       <ReviewItemRow
                         as="div"
-                        checked={resident.selected}
-                        onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
+                        showSelection={false}
                         label={resident.fullName}
                         sourceDocumentName={resident.sourceDocumentName}
                         editing={false}
@@ -1152,7 +1205,9 @@ export function OnboardingAiReviewStep({
                         onEditChange={() => undefined}
                         trailing={residentOnboardingTrailing(resident)}
                       >
-                        {renderResidentEditFields(resident)}
+                        {renderResidentEditFields(resident, {
+                          onRemove: () => removeTenantForm(resident.id),
+                        })}
                       </ReviewItemRow>
                     ) : null}
                   </li>
@@ -1169,8 +1224,7 @@ export function OnboardingAiReviewStep({
                 <li key={resident.id} className="list-none">
                   <ReviewItemRow
                     as="div"
-                    checked={resident.selected}
-                    onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
+                    showSelection={false}
                     label={resident.fullName}
                     sourceDocumentName={resident.sourceDocumentName}
                     editing={false}
@@ -1180,7 +1234,9 @@ export function OnboardingAiReviewStep({
                     onEditChange={() => undefined}
                     trailing={residentOnboardingTrailing(resident)}
                   >
-                    {renderResidentEditFields(resident)}
+                    {renderResidentEditFields(resident, {
+                      onRemove: () => removeTenantForm(resident.id),
+                    })}
                   </ReviewItemRow>
                 </li>
               ))}
@@ -1225,8 +1281,8 @@ export function OnboardingAiReviewStep({
                     }
                     aria-label={
                       item.phone.trim()
-                        ? `Send onboarding message to tenant ${index + 1} when setup completes`
-                        : `Add a phone number to send onboarding to tenant ${index + 1}`
+                        ? `Send invite to tenant ${index + 1} when setup completes`
+                        : `Add a phone number to send invite to tenant ${index + 1}`
                     }
                   />
                   <button
@@ -1413,6 +1469,7 @@ export function OnboardingAiReviewStep({
               <p className="text-[13px] font-semibold text-[#101828]">Vendor {index + 1}</p>
               <div className="flex items-center gap-3">
                 <OnboardingSendSwitch
+                  variant="vendor"
                   enabled={Boolean(item.sendOnboardingOnComplete)}
                   disabled={!item.phone.trim() && !item.email.trim()}
                   onChange={(sendOnboardingOnComplete) =>
@@ -1421,7 +1478,7 @@ export function OnboardingAiReviewStep({
                   aria-label={
                     item.phone.trim() || item.email.trim()
                       ? `Send verification invite to vendor ${index + 1} when setup completes`
-                      : `Add a phone or email to send onboarding to vendor ${index + 1}`
+                      : `Add a phone or email to send invite to vendor ${index + 1}`
                   }
                 />
                 {vendors.length > 1 ? (
@@ -1553,7 +1610,7 @@ export function OnboardingAiReviewStep({
 
   return (
     <section className={onboardingSurfaceSectionClass}>
-      <div className={onboardingSectionStackClass}>
+      <div ref={reviewScrollRootRef} className={onboardingSectionStackClass}>
         <OnboardingUloNumberCard
           smsIntakeNumber={smsIntakeNumber}
           smsIntakeNumberDisplay={smsIntakeNumberDisplay}
@@ -1585,23 +1642,23 @@ export function OnboardingAiReviewStep({
             </label>
             <label className="block">
               <span className={fieldLabelClass}>
-                Your name <span className="text-[#b91c1c]">*</span> (Required)
+                Name <span className="text-[#b91c1c]">*</span> (Required)
               </span>
               <input
                 className={inputClass}
                 value={account.contactName}
                 onChange={(e) => patchAccount({ contactName: e.target.value })}
-                placeholder="Your name"
+                placeholder="Enter your name"
               />
             </label>
             <label className="block">
-              <span className={fieldLabelClass}>Support email</span>
+              <span className={fieldLabelClass}>Email</span>
               <input
                 className={inputClass}
                 type="email"
                 value={account.email}
                 onChange={(e) => patchAccount({ email: e.target.value })}
-                placeholder="Support email"
+                placeholder="Enter your email"
               />
             </label>
             <div className="sm:col-span-2">
@@ -1766,23 +1823,23 @@ export function OnboardingAiReviewStep({
                       <div key={item.id} className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
                         <label className="block">
                           <DraftFieldLabel text="Tenant" attention={item.fieldAttention.residentName} />
-                          <input className={inputClass} value={item.residentName} onChange={(e) => patchDraft(item.id, 'residentName', e.target.value)} />
+                          <input className={attentionFieldClass(item.fieldAttention.residentName)} value={item.residentName} onChange={(e) => patchDraft(item.id, 'residentName', e.target.value)} />
                         </label>
                         <label className="block">
                           <DraftFieldLabel text="Monthly rent" attention={item.fieldAttention.rentAmount} />
-                          <input className={inputClass} value={item.rentAmount} onChange={(e) => patchDraft(item.id, 'rentAmount', e.target.value)} />
+                          <input className={attentionFieldClass(item.fieldAttention.rentAmount)} value={item.rentAmount} onChange={(e) => patchDraft(item.id, 'rentAmount', e.target.value)} />
                         </label>
                         <label className="block">
                           <DraftFieldLabel text="Lease start" attention={item.fieldAttention.leaseStart} />
-                          <input className={inputClass} type="date" value={item.leaseStart} onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)} />
+                          <input className={attentionFieldClass(item.fieldAttention.leaseStart)} type="date" value={item.leaseStart} onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)} />
                         </label>
                         <label className="block">
                           <DraftFieldLabel text="Lease end" attention={item.fieldAttention.leaseEnd} />
-                          <input className={inputClass} type="date" value={item.leaseEnd} onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)} />
+                          <input className={attentionFieldClass(item.fieldAttention.leaseEnd)} type="date" value={item.leaseEnd} onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)} />
                         </label>
                         <label className="block">
                           <DraftFieldLabel text="Security deposit" attention={item.fieldAttention.securityDeposit} />
-                          <input className={inputClass} value={item.securityDeposit} onChange={(e) => patchDraft(item.id, 'securityDeposit', e.target.value)} />
+                          <input className={attentionFieldClass(item.fieldAttention.securityDeposit)} value={item.securityDeposit} onChange={(e) => patchDraft(item.id, 'securityDeposit', e.target.value)} />
                         </label>
                       </div>
                     ) : null,

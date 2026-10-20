@@ -30,6 +30,7 @@ import {
   upsertSmsIdentity,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
+import { queueWorkOrderContext } from "../workOrderContext.ts"
 
 export const UNKNOWN_CONTACT_INTAKE_KEY = "unknown_contact_intake"
 export const UNKNOWN_CONTACT_MAX_CLARIFY = 3
@@ -564,6 +565,10 @@ async function createUnknownMaintenanceTicket(
   const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
   const name = params.senderName?.trim() || "Unknown contact"
   const emailDigits = params.phone.replace(/\D/g, "") || "unknown"
+  // Same string for insert + context (do not re-derive from buildingLabel alone).
+  const description = params.buildingLabel
+    ? `${params.issueSummary}\n\nProperty: ${params.buildingLabel}`
+    : params.issueSummary
 
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
@@ -575,9 +580,7 @@ async function createUnknownMaintenanceTicket(
       email: `${emailDigits}@sms-unknown.ulohome.local`,
       resident_phone: normalizeSmsPhone(params.phone),
       unit: params.unitLabel,
-      description: params.buildingLabel
-        ? `${params.issueSummary}\n\nProperty: ${params.buildingLabel}`
-        : params.issueSummary,
+      description,
       resident_user_id: params.residentUserId,
       photo_paths: [],
       issue_category: issueCategory,
@@ -595,6 +598,7 @@ async function createUnknownMaintenanceTicket(
   }
 
   const ticketId = String(ticket.id)
+  queueWorkOrderContext(supabase, { id: ticketId, description }, "[unknown-contact]")
   await attachAiClassificationLogToTicket(supabase, {
     landlordId: params.landlordId,
     conversationId: params.conversationId,

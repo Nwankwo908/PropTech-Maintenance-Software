@@ -109,8 +109,8 @@ export function OnboardingAccountSetupStep({
               className={onboardingInputClass}
               value={accountSetup.contactName}
               onChange={(e) => updateAccountSetup({ contactName: e.target.value })}
-              placeholder="Full name"
-              aria-label="Full name"
+              placeholder="Enter your name"
+              aria-label="Enter your name"
               autoComplete="name"
               name="ulo-onboarding-contact-name"
             />
@@ -121,7 +121,7 @@ export function OnboardingAccountSetupStep({
               onChange={(e) => updateAccountSetup({ email: e.target.value })}
               onFocus={() => setEmailFieldUnlocked(true)}
               readOnly={!emailFieldUnlocked}
-              placeholder="Email"
+              placeholder="Enter your email"
               aria-label="Email"
               // Block Chrome from painting the signed-in Google login into Support email.
               autoComplete="off"

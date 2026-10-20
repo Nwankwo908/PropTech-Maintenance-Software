@@ -48,10 +48,12 @@ export {
   isOnboardingResetInProgress,
   clearLocalOnboardingStorage,
   defaultOnboardingState,
+  coalesceOnboardingState,
   readLocalOnboardingState,
   writeLocalOnboarding,
   fetchLandlordOnboarding,
   saveLandlordOnboarding,
+  saveLandlordOnboardingConfirmed,
   persistOnboardingWizardLocally,
   saveOnboardingWizardDraft,
   hasOnboardingAccountDraft,
@@ -168,7 +170,15 @@ export {
 export type { OnboardingSessionStamp } from './session'
 export { archiveOrClearPriorOnboardingResidents } from './sessionResidents'
 
+export { startFreshOnboardingRun } from './startFreshRun'
+export type { StartFreshOnboardingRunResult } from './startFreshRun'
+
 export { importMockExtraction } from './importPortfolio'
+
+export {
+  recordOnboardingImportKey,
+  residentImportRecordKey,
+} from './importKeys'
 
 export {
   isLandlordStripePayoutsReady,
@@ -182,6 +192,7 @@ export {
   loadCanonicalOnboardingProperties,
   propertyRecordToOnboardingProperty,
 } from './hydrateProperties'
+export type { PersistOnboardingPropertiesOptions } from './persist/properties'
 export {
   buildOnboardingFormDraft,
   readPersistedExtractionReview,

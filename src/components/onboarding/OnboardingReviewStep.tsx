@@ -247,7 +247,7 @@ export function OnboardingReviewStep({
           <ReviewSummaryCard title="Account" onEdit={() => onEditStep('account_setup')}>
             <ReviewSummaryRow label="Company" value={reviewData.accountSetup.companyName} />
             <ReviewSummaryRow label="Contact" value={reviewData.accountSetup.contactName} />
-            <ReviewSummaryRow label="Support email" value={reviewData.accountSetup.email} />
+            <ReviewSummaryRow label="Email" value={reviewData.accountSetup.email} />
             <ReviewSummaryRow label="Phone" value={reviewData.accountSetup.phone} />
             <ReviewSummaryRow
               label="Team member"
@@ -322,13 +322,14 @@ export function OnboardingReviewStep({
                   trailing={
                     onVendorOnboardingChange ? (
                       <OnboardingSendSwitch
+                        variant="vendor"
                         enabled={Boolean(vendor.sendOnboardingOnComplete)}
                         disabled={!vendor.phone.trim() && !vendor.email.trim()}
                         onChange={(enabled) => onVendorOnboardingChange(vendor.id, enabled)}
                         aria-label={
                           vendor.phone.trim() || vendor.email.trim()
                             ? `Send verification invite to ${vendor.name.trim() || `vendor ${index + 1}`} when setup completes`
-                            : `Add a phone or email to send onboarding to ${vendor.name.trim() || `vendor ${index + 1}`}`
+                            : `Add a phone or email to send invite to ${vendor.name.trim() || `vendor ${index + 1}`}`
                         }
                       />
                     ) : undefined
@@ -360,8 +361,8 @@ export function OnboardingReviewStep({
                         }
                         aria-label={
                           resident.phone.trim()
-                            ? `Send onboarding message to ${resident.fullName} when setup completes`
-                            : `Add a phone number to send onboarding to ${resident.fullName}`
+                            ? `Send invite to ${resident.fullName} when setup completes`
+                            : `Add a phone number to send invite to ${resident.fullName}`
                         }
                       />
                     ) : null

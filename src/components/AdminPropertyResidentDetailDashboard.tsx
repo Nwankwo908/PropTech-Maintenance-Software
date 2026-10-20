@@ -17,6 +17,7 @@ import {
 } from '@shared/landlordCapabilities'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
+import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
 import {
   EditResidentModal,
   type EditResidentModalRow,
@@ -1453,7 +1454,7 @@ export function AdminPropertyResidentDetailDashboard() {
                   {[profile.buildingShort, profile.unitDisplay].filter(Boolean).join(' · ')}
                 </p>
                 {activationChip ? (
-                  <div className="mt-3">
+                  <div className="mt-3 inline-flex items-center gap-1.5">
                     <button
                       type="button"
                       disabled={resendingActivation || !canSendOnboardingSms}
@@ -1463,9 +1464,10 @@ export function AdminPropertyResidentDetailDashboard() {
                       {resendingActivation
                         ? 'Sending…'
                         : retryOnboarding
-                          ? 'Retry setup'
-                          : 'Setup Resident'}
+                          ? 'Retry invite'
+                          : 'Send invite'}
                     </button>
+                    <SendInviteInfoTip variant="tenant" />
                   </div>
                 ) : null}
               </div>

@@ -1,6 +1,7 @@
 /**
  * Onboarding wizard step resolution and state merge helpers.
  */
+import { coalesceOnboardingState } from './draftStorage'
 import {
   normalizeOnboardingStep,
   resolveOnboardingStepForPath,
@@ -33,19 +34,20 @@ export function resolveWizardDisplayStep(input: {
 }
 
 export function mergeOnboardingStep(
-  prev: LandlordOnboardingState,
+  prev: LandlordOnboardingState | null | undefined,
   nextStep: OnboardingStep,
   patch: Partial<LandlordOnboardingState> = {},
 ): LandlordOnboardingState {
+  const base = coalesceOnboardingState(prev)
   return {
-    ...prev,
+    ...base,
     ...patch,
     currentStep: nextStep,
     onboardingStatus:
       patch.onboardingStatus === 'completed'
         ? 'completed'
         : nextStep === 'entry' && patch.onboardingStatus == null
-          ? prev.onboardingStatus
+          ? base.onboardingStatus
           : patch.onboardingStatus ?? 'in_progress',
   }
 }

@@ -23,15 +23,18 @@ const REQUIRED_LEASE_FIELDS = new Set<LeaseFieldName>([
 
 export function reviewFieldStateLabel(state?: ReviewFieldAttention): string | null {
   if (state === 'verified') return 'Verified'
-  if (state === 'needs_verification') return 'Needs verification'
+  if (state === 'needs_verification') return 'Needs review'
   if (state === 'required') return 'Required'
   return null
 }
 
 export function reviewRowNeedsAttention(attention?: ReviewFieldAttentionMap): boolean {
-  return Object.values(attention ?? {}).some(
-    (state) => state === 'needs_verification' || state === 'required',
-  )
+  return Object.values(attention ?? {}).some((state) => state === 'required')
+}
+
+/** Fields that should pulse a border glow when they scroll into view. */
+export function reviewFieldNeedsScrollGlow(attention?: ReviewFieldAttention): boolean {
+  return attention === 'required' || attention === 'needs_verification'
 }
 
 /** A required blank is not ready to become a permanent portfolio row. */

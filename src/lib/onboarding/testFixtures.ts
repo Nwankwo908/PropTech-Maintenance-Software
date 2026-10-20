@@ -39,6 +39,8 @@ export function validOnboardingState(
     ],
     approvalRules: defaultOnboardingApprovalRules(),
     completedAt: null,
+    onboardingSessionId: '11111111-2222-4333-8444-555555555555',
+    onboardingSessionStartedAt: '2026-01-01T00:00:00.000Z',
     ...patch,
   }
 }

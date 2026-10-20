@@ -60,6 +60,7 @@ import {
   fetchOnboardingVendors,
   clearOnboardingPortfolioSession,
   clearOnboardingResetGuard,
+  coalesceOnboardingState,
   fetchLandlordSmsIntakeNumber,
   getPreviousOnboardingStep,
   isLandlordStripePayoutsReady,
@@ -90,7 +91,7 @@ import type {
   OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
 import { mintOnboardingSession } from '@/lib/onboarding/session'
-import { archiveOrClearPriorOnboardingResidents } from '@/lib/onboarding/sessionResidents'
+import { startFreshOnboardingRun } from '@/lib/onboarding/startFreshRun'
 import {
   buildOnboardingFormDraft,
   readPersistedExtractionReview,
@@ -268,11 +269,12 @@ export function useOnboardingWizard() {
   function scheduleWizardPersist() {
     if (isOnboardingResetInProgress()) return
     const snap = wizardSnapshotRef.current
-    if (snap.state.onboardingStatus === 'not_started' && snap.state.currentStep === 'entry') {
+    const baseState = coalesceOnboardingState(snap.state)
+    if (baseState.onboardingStatus === 'not_started' && baseState.currentStep === 'entry') {
       return
     }
     const formDraft = buildWizardFormDraft(snap.propertyForms, snap.vendorForms, snap.residentForms, snap)
-    persistOnboardingWizardLocally(snap.state, formDraft)
+    persistOnboardingWizardLocally(baseState, formDraft)
 
     if (wizardRemoteSaveTimer.current != null) {
       window.clearTimeout(wizardRemoteSaveTimer.current)
@@ -280,7 +282,8 @@ export function useOnboardingWizard() {
     wizardRemoteSaveTimer.current = window.setTimeout(() => {
       if (isOnboardingResetInProgress()) return
       const latest = wizardSnapshotRef.current
-      if (latest.state.onboardingStatus === 'not_started' && latest.state.currentStep === 'entry') {
+      const latestState = coalesceOnboardingState(latest.state)
+      if (latestState.onboardingStatus === 'not_started' && latestState.currentStep === 'entry') {
         return
       }
       const latestDraft = buildWizardFormDraft(
@@ -289,7 +292,7 @@ export function useOnboardingWizard() {
         latest.residentForms,
         latest,
       )
-      void saveOnboardingWizardDraft(latest.state, latestDraft)
+      void saveOnboardingWizardDraft(latestState, latestDraft)
     }, 400)
   }
 
@@ -322,11 +325,12 @@ export function useOnboardingWizard() {
       // Reset navigates away with a hard reload; do not write the old wizard back.
       if (isOnboardingResetInProgress()) return
       const snap = wizardSnapshotRef.current
-      if (snap.state.onboardingStatus === 'not_started' && snap.state.currentStep === 'entry') {
+      const baseState = coalesceOnboardingState(snap.state)
+      if (baseState.onboardingStatus === 'not_started' && baseState.currentStep === 'entry') {
         return
       }
       const formDraft = buildWizardFormDraft(snap.propertyForms, snap.vendorForms, snap.residentForms, snap)
-      persistOnboardingWizardLocally(snap.state, formDraft)
+      persistOnboardingWizardLocally(baseState, formDraft)
     }
 
     window.addEventListener('beforeunload', flush)
@@ -731,19 +735,23 @@ export function useOnboardingWizard() {
         forms?.extractionReview !== undefined ? forms.extractionReview : snap.extractionReview,
     }
 
-    let next!: LandlordOnboardingState
-    setState((prev) => {
-      next = mergeOnboardingStep(prev, targetStep, {
-        ...patch,
-        formDraft: buildWizardFormDraft(
-          draftPropertyForms,
-          draftVendorForms,
-          draftResidentForms,
-          draftSnap,
-        ),
-      })
-      return next
+    // Compute next synchronously — do not assign inside setState. If the updater
+    // is skipped/deferred, `next` stayed undefined and save threw
+    // "Cannot read properties of undefined (reading 'landlordId')".
+    const prev = coalesceOnboardingState(snap.state ?? state)
+    const resolvedLandlordId =
+      patch.landlordId?.trim() || prev.landlordId.trim() || getActiveLandlordId()
+    const next = mergeOnboardingStep(prev, targetStep, {
+      ...patch,
+      landlordId: resolvedLandlordId,
+      formDraft: buildWizardFormDraft(
+        draftPropertyForms,
+        draftVendorForms,
+        draftResidentForms,
+        draftSnap,
+      ),
     })
+    setState(next)
 
     if (targetStep === 'residents') {
       setResidentForms(draftResidentForms)
@@ -751,7 +759,7 @@ export function useOnboardingWizard() {
 
     wizardSnapshotRef.current = {
       ...wizardSnapshotRef.current,
-      state: next!,
+      state: next,
       propertyForms: draftPropertyForms,
       vendorForms: draftVendorForms,
       residentForms: draftResidentForms,
@@ -762,7 +770,7 @@ export function useOnboardingWizard() {
     // Continue on ai_review, and a slow/hung draft save left the button gray until refresh.
     setError(null)
     try {
-      await saveLandlordOnboarding(next!)
+      await saveLandlordOnboarding(next)
     } catch (err) {
       console.error('[onboarding] goTo save failed', err)
       setError(getErrorMessage(err, 'Could not save your progress.'))
@@ -842,27 +850,22 @@ export function useOnboardingWizard() {
       const landlordId = state.landlordId || getActiveLandlordId()
       const session = mintOnboardingSession()
 
-      // Lineage-scoped leftover Fast Track import purge — independent of
-      // Start/Back permission soft-fail / wipePortfolioSession. Full portfolio
-      // wipe stays on Reset onboarding only.
+      // DB transaction is the authority for fresh Start inventory (LA only).
+      // Do not clear the UI draft until this succeeds — prior portfolio stays intact.
+      const started = await startFreshOnboardingRun({
+        landlordId,
+        sessionId: session.onboardingSessionId,
+      })
+      if (!started.ok) {
+        setError(started.error)
+        return
+      }
+
+      // Lineage-scoped leftover Fast Track import purge — best-effort after inventory txn.
+      // Full portfolio wipe stays on Reset onboarding only.
       const purged = await runOnboardingStartPrep(landlordId)
       if (!purged.ok) {
         console.warn('[onboarding] start prep leftover import ops', purged.error)
-      }
-
-      // Soft isolation only — do not factory-reset the portfolio on Start.
-      // Full wipe stays on Reset onboarding.
-      const priorCleared = await archiveOrClearPriorOnboardingResidents({
-        landlordId,
-        currentSessionId: session.onboardingSessionId,
-        mode: 'clear',
-      })
-      if (!priorCleared.ok) {
-        setError(
-          priorCleared.error ??
-            'Could not clear residents from the previous setup run. Try Factory reset, then Start again.',
-        )
-        return
       }
 
       resetOnboardingForms()
@@ -873,11 +876,12 @@ export function useOnboardingWizard() {
       await goTo(
         targetStep,
         {
+          landlordId,
           onboardingStatus: 'in_progress',
           setupPath: path,
           properties: [],
-          onboardingSessionId: session.onboardingSessionId,
-          onboardingSessionStartedAt: session.onboardingSessionStartedAt,
+          onboardingSessionId: started.sessionId,
+          onboardingSessionStartedAt: started.startedAt,
           completedAt: null,
         },
         { extractionReview: null },
@@ -1120,9 +1124,16 @@ export function useOnboardingWizard() {
     try {
       const returnToReview = editingFromReviewRef.current
       let importedPatch: Partial<LandlordOnboardingState> = {}
+      const sessionId = state.onboardingSessionId?.trim() || ''
+      if (!sessionId) {
+        setError('Missing onboarding session. Refresh and start setup again.')
+        return
+      }
       const imported = await commitFastTrackImport({
         review: { ...extractionReview, maintenanceIssues: [] },
         accountSetup: state.accountSetup,
+        onboardingSessionId: sessionId,
+        onboardingSessionStartedAt: state.onboardingSessionStartedAt,
         onError: setError,
         onExtractionReview: setExtractionReview,
         onSaving: setSaving,

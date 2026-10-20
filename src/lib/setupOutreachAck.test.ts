@@ -13,10 +13,10 @@ describe('setupOutreachAck', () => {
     expect(setupOutreachAckCheckboxLabel('vendor')).toMatch(/save our number/i)
   })
 
-  it('labels confirm by recipient and retry', () => {
-    expect(setupOutreachAckTitle('resident')).toMatch(/resident/i)
-    expect(setupOutreachAckTitle('vendor')).toMatch(/vendor/i)
-    expect(setupOutreachAckConfirmLabel({ kind: 'resident' })).toBe('Setup Resident')
-    expect(setupOutreachAckConfirmLabel({ kind: 'vendor', retry: true })).toBe('Retry setup')
+  it('labels confirm as Send invite, with Retry invite when retrying', () => {
+    expect(setupOutreachAckTitle('resident')).toMatch(/send this invite/i)
+    expect(setupOutreachAckTitle('vendor')).toMatch(/send this invite/i)
+    expect(setupOutreachAckConfirmLabel({ kind: 'resident' })).toBe('Send invite')
+    expect(setupOutreachAckConfirmLabel({ kind: 'vendor', retry: true })).toBe('Retry invite')
   })
 })

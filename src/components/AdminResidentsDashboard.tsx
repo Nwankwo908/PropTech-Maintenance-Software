@@ -39,6 +39,7 @@ import {
   TenantActivationStatusChip,
 } from '@/components/TenantActivationStatusChip'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
+import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
 import { PaymentStatusChip } from '@/components/PaymentStatusChip'
 import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -746,6 +747,32 @@ export function AdminResidentsDashboard() {
         identityType: 'resident',
         residentId: newResidentId,
       })
+    }
+
+    if (payload.leaseDocumentFiles && payload.leaseDocumentFiles.length > 0 && newResidentId) {
+      const unitLabel =
+        unitCell.kind === 'assigned' && unitCell.unit.trim() ? unitCell.unit.trim() : ''
+      const buildingLabel =
+        unitCell.kind === 'assigned' && unitCell.building.trim()
+          ? unitCell.building.trim()
+          : propertyName
+      const docsResult = await uploadResidentLeaseDocuments({
+        landlordId,
+        residentId: newResidentId,
+        resident: {
+          fullName: payload.fullName,
+          unit: unitLabel,
+          building: buildingLabel,
+          phone: phoneResult.phone,
+          email: payload.email,
+        },
+        files: payload.leaseDocumentFiles,
+      })
+      if (!docsResult.ok) {
+        setAddResidentError(docsResult.error)
+        await loadResidents()
+        return
+      }
     }
 
     await loadResidents()
@@ -1654,9 +1681,9 @@ export function AdminResidentsDashboard() {
           <ActivationReminderAlertIcon />
           <p className="text-[#101828]">
             {unactivatedResidentCount === 1
-              ? '1 resident has not been activated yet.'
-              : `${unactivatedResidentCount} residents have not been activated yet.`}{' '}
-            Select the checkbox to start onboarding when you're ready.
+              ? '1 resident has not received the SMS invite yet.'
+              : `${unactivatedResidentCount} residents have not received the SMS invite yet.`}{' '}
+            Select the checkbox to activate residents accounts.
           </p>
         </div>
       ) : null}
@@ -1722,18 +1749,21 @@ export function AdminResidentsDashboard() {
           >
             Clear
           </button>
-          <button
-            type="button"
-            disabled={onboardingSaving || deleteResidentsSaving}
-            onClick={() => setSetupOutreachAckOpen(true)}
-            className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-          >
-            {onboardingSaving
-              ? 'Sending…'
-              : selectedOnboardingRetryOnly
-                ? 'Retry setup'
-                : 'Setup Resident'}
-          </button>
+          <div className="inline-flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={onboardingSaving || deleteResidentsSaving}
+              onClick={() => setSetupOutreachAckOpen(true)}
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {onboardingSaving
+                ? 'Sending…'
+                : selectedOnboardingRetryOnly
+                  ? 'Retry invite'
+                  : 'Send invite'}
+            </button>
+            <SendInviteInfoTip variant="tenant" />
+          </div>
         </div>
       ) : null}
 

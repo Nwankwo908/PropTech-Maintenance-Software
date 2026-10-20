@@ -1,5 +1,6 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
+import { ACCEPTED_UPLOAD_MIME, isAcceptedUploadFile } from '@/lib/onboardingDocumentUpload'
 import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { customUnitPickKey } from '@/lib/residentUnitKeys'
 
@@ -48,6 +49,8 @@ export type AddResidentSubmitPayload = {
   isNewUnit?: boolean
   /** After save, open the Add Property rail and link it to this resident. */
   openAddPropertyAfter?: boolean
+  /** Lease / move-in files to attach after the resident is created. */
+  leaseDocumentFiles?: File[]
 }
 
 const ADD_UNIT_OPTION_VALUE = '__add_unit__'
@@ -109,6 +112,9 @@ export function AddResidentModal({
   const [leaseEnd, setLeaseEnd] = useState('')
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]['value']>('active')
   const [phoneError, setPhoneError] = useState<string | null>(null)
+  const [leaseFiles, setLeaseFiles] = useState<File[]>([])
+  const [leaseUploadError, setLeaseUploadError] = useState<string | null>(null)
+  const leaseFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const formValid = useMemo(() => {
     return fullName.trim().length > 0 && email.trim().length > 0
@@ -153,7 +159,31 @@ export function AddResidentModal({
     setLeaseEnd('')
     setStatus('active')
     setPhoneError(null)
+    setLeaseFiles([])
+    setLeaseUploadError(null)
   }, [open, prevOpen])
+
+  function addLeaseFiles(list: FileList | File[] | null) {
+    if (!list) return
+    const next: File[] = []
+    let error: string | null = null
+    for (const file of Array.from(list)) {
+      const accepted = isAcceptedUploadFile(file)
+      if (!accepted.ok) {
+        error = accepted.error
+        continue
+      }
+      const duplicate = leaseFiles.some(
+        (existing) =>
+          existing.name === file.name &&
+          existing.size === file.size &&
+          existing.lastModified === file.lastModified,
+      )
+      if (!duplicate) next.push(file)
+    }
+    if (next.length > 0) setLeaseFiles((prev) => [...prev, ...next])
+    setLeaseUploadError(error)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -198,6 +228,7 @@ export function AddResidentModal({
       customUnitLabel: customLabel || selectedExisting?.unitLabel || undefined,
       isNewUnit: Boolean(isNewUnit && customLabel),
       openAddPropertyAfter,
+      leaseDocumentFiles: leaseFiles.length > 0 ? leaseFiles : undefined,
     })
     onClose()
   }
@@ -442,6 +473,84 @@ export function AddResidentModal({
                   <IconChevronDown />
                 </span>
               </div>
+            </div>
+            <div className="space-y-2 border-t border-secondary pt-4">
+              <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
+                Lease documents
+              </p>
+              <p className="text-[12px] font-normal leading-4 text-neutral">
+                Upload lease or move-in files. They appear under Documents on this profile and in
+                Organization settings after you save.
+              </p>
+              <button
+                type="button"
+                onClick={() => leaseFileInputRef.current?.click()}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  addLeaseFiles(event.dataTransfer.files)
+                }}
+                className="sa-press flex w-full flex-col items-center justify-center rounded-[10px] border border-dashed border-[#d1d5db] bg-[#fafafa] px-4 py-6 text-center outline-none hover:border-[#9ca3af] hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              >
+                <span className="text-[14px] font-semibold text-[#101828]">
+                  Drop files here or click to browse
+                </span>
+                <span className="mt-1 text-[12px] text-[#6a7282]">
+                  PDF, Word, Excel, images · up to 20MB each
+                </span>
+              </button>
+              <input
+                ref={leaseFileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPTED_UPLOAD_MIME}
+                className="sr-only"
+                onChange={(event) => {
+                  addLeaseFiles(event.target.files)
+                  event.target.value = ''
+                }}
+              />
+              {leaseUploadError ? (
+                <p className="text-[13px] font-medium text-red-800" role="alert">
+                  {leaseUploadError}
+                </p>
+              ) : null}
+              {leaseFiles.length > 0 ? (
+                <ul className="space-y-2">
+                  {leaseFiles.map((file) => (
+                    <li
+                      key={`${file.name}-${file.size}-${file.lastModified}`}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-[#e5e7eb] bg-white px-3 py-2"
+                    >
+                      <span className="min-w-0 truncate text-[13px] font-medium text-[#0a0a0a]">
+                        {file.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLeaseFiles((prev) =>
+                            prev.filter(
+                              (item) =>
+                                !(
+                                  item.name === file.name &&
+                                  item.size === file.size &&
+                                  item.lastModified === file.lastModified
+                                ),
+                            ),
+                          )
+                        }
+                        className="sa-press shrink-0 text-[12px] font-medium text-[#b52a00] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
             <label
               htmlFor="add-resident-add-property"

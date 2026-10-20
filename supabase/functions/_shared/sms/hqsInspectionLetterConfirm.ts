@@ -19,6 +19,7 @@ import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispatch.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
 import { formatUnitReference } from "../properties/unitLabelDisplay.ts"
+import { queueWorkOrderContext } from "../workOrderContext.ts"
 
 export type ConfirmHqsInspectionLetterInput = {
   landlordId: string
@@ -130,6 +131,8 @@ export async function confirmAndCreateHqsInspectionLetter(
     const dueAt = row.dueAtIsoDate
       ? new Date(`${row.dueAtIsoDate}T17:00:00.000Z`).toISOString()
       : null
+    // Exact HQS line text written on the ticket (e.g. "HQS fail: Kitchen - Stove...").
+    const description = row.description
     const { data: ticket, error } = await supabase
       .from("maintenance_requests")
       .insert({
@@ -137,7 +140,7 @@ export async function confirmAndCreateHqsInspectionLetter(
         property_id: input.propertyId ?? null,
         unit_id: input.unitId,
         resident_id: residentId,
-        description: row.description,
+        description,
         issue_category: row.issueCategory,
         urgency: row.urgency,
         priority: row.priority,
@@ -152,7 +155,9 @@ export async function confirmAndCreateHqsInspectionLetter(
       console.error("[hqs-letter] work order insert failed", error?.message)
       continue
     }
-    workOrderIds.push(String(ticket.id))
+    const ticketId = String(ticket.id)
+    workOrderIds.push(ticketId)
+    queueWorkOrderContext(supabase, { id: ticketId, description }, "[hqs-letter]")
   }
 
   await recordActivityLog(supabase, {

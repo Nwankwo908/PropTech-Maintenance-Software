@@ -20,6 +20,7 @@ import {
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
 import { rehostInboundSmsMedia } from "./rehostInboundMedia.ts"
 import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
+import { queueWorkOrderContext } from "../workOrderContext.ts"
 
 type ResidentRow = {
   id: string
@@ -206,6 +207,8 @@ export async function submitSmsMaintenanceRequest(
     ticketId = ticket.id as string
     created = true
   }
+
+  queueWorkOrderContext(supabase, { id: ticketId, description }, "[sms-intake]")
 
   let photoPaths: string[] = []
   try {

@@ -237,6 +237,7 @@ export function OnboardingWizardShell() {
     get editingFromReview() {
       return editingFromReviewRef.current
     },
+    onboardingSessionId: state.onboardingSessionId,
     setSaving,
     setError,
     returnToReviewAfterEdit,

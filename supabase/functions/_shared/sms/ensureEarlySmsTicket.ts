@@ -20,6 +20,7 @@ import {
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
+import { queueWorkOrderContext } from "../workOrderContext.ts"
 
 type ResidentRow = {
   id: string
@@ -161,6 +162,8 @@ export async function ensureEarlySmsMaintenanceTicket(
 
     if (updateErr) {
       console.error("[sms-intake] early ticket patch failed", updateErr.message)
+    } else {
+      queueWorkOrderContext(supabase, { id: draftId, description }, "[sms-intake]")
     }
 
     await supabase
@@ -207,6 +210,7 @@ export async function ensureEarlySmsMaintenanceTicket(
   }
 
   const ticketId = ticket.id as string
+  queueWorkOrderContext(supabase, { id: ticketId, description }, "[sms-intake]")
   void emitJobCreatedBundle(supabase, {
     landlordId: params.landlordId,
     jobType: issueCategory,

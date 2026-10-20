@@ -42,6 +42,7 @@ import {
 } from '@/api/vendorVerification'
 import { OverrideOnboardingModal } from '@/components/OverrideOnboardingModal'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
+import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
 import {
   VENDOR_ONBOARDING_OVERRIDE_DISCLAIMER_VERSION,
   vendorOnboardingOverrideDisclaimerText,
@@ -1141,18 +1142,21 @@ export function AdminVendorDetailDashboard() {
                 canSendOverrideActivationSms ? (
                   <div className="flex flex-wrap items-center gap-2">
                     {canSendVerificationInvite || canRetryVerificationInvite ? (
-                      <button
-                        type="button"
-                        disabled={inviteSaving}
-                        onClick={() => setSetupOutreachAckOpen(true)}
-                        className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:pointer-events-none disabled:opacity-60"
-                      >
-                        {inviteSaving
-                          ? 'Sending…'
-                          : canRetryVerificationInvite
-                            ? 'Retry setup'
-                            : 'Setup Vendor'}
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={inviteSaving}
+                          onClick={() => setSetupOutreachAckOpen(true)}
+                          className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:pointer-events-none disabled:opacity-60"
+                        >
+                          {inviteSaving
+                            ? 'Sending…'
+                            : canRetryVerificationInvite
+                              ? 'Retry invite'
+                              : 'Send invite'}
+                        </button>
+                        <SendInviteInfoTip variant="vendor" />
+                      </div>
                     ) : null}
                     {canOverrideOnboarding ? (
                       <button

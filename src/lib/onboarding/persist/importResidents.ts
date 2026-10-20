@@ -11,6 +11,10 @@ import {
 } from '@/lib/onboarding/importActor'
 import { readLocalOnboardingState } from '@/lib/onboarding/draftStorage'
 import {
+  recordOnboardingImportKey,
+  residentImportRecordKey,
+} from '@/lib/onboarding/importKeys'
+import {
   onboardingSessionActivityMetadata,
   onboardingSessionFromState,
   onboardingSessionUserColumns,
@@ -693,6 +697,24 @@ export async function importOnboardingResidentsFromExtraction(
         existingMatch.unit = resolvedUnit
         existingMatch.building = resolvedBuilding
         existingMatch.phone = phoneForUpdate
+        if (session?.onboardingSessionId) {
+          void recordOnboardingImportKey({
+            landlordId,
+            onboardingSessionId: session.onboardingSessionId,
+            documentKey:
+              asTrimmed((resident as { sourceDocumentName?: string }).sourceDocumentName) ||
+              'extraction',
+            recordKind: 'resident',
+            recordKey: residentImportRecordKey({
+              fullName: payload.full_name,
+              unit: resolvedUnit,
+              building: resolvedBuilding,
+              leaseStart: payload.move_in_date,
+              leaseEnd: payload.lease_end_date,
+            }),
+            entityId: existingMatch.id,
+          })
+        }
       }
       continue
     }
@@ -730,13 +752,32 @@ export async function importOnboardingResidentsFromExtraction(
     }
 
     imported += 1
+    const entityId = inserted.id || `imported-${imported}`
     existing.push({
-      id: inserted.id || `imported-${imported}`,
+      id: entityId,
       full_name: payload.full_name,
       unit: resolvedUnit,
       building: resolvedBuilding,
       phone: phoneForInsert,
     })
+    if (session?.onboardingSessionId) {
+      void recordOnboardingImportKey({
+        landlordId,
+        onboardingSessionId: session.onboardingSessionId,
+        documentKey:
+          asTrimmed((resident as { sourceDocumentName?: string }).sourceDocumentName) ||
+          'extraction',
+        recordKind: 'resident',
+        recordKey: residentImportRecordKey({
+          fullName: payload.full_name,
+          unit: resolvedUnit,
+          building: resolvedBuilding,
+          leaseStart: payload.move_in_date,
+          leaseEnd: payload.lease_end_date,
+        }),
+        entityId,
+      })
+    }
   }
 
   if (imported > 0) {

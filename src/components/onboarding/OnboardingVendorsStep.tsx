@@ -99,6 +99,7 @@ export function OnboardingVendorsStep({
                   <p className="text-[14px] font-semibold text-[#101828]">Vendor {index + 1}</p>
                   <div className="flex items-center gap-3">
                     <OnboardingSendSwitch
+                      variant="vendor"
                       enabled={Boolean(form.sendOnboardingOnComplete)}
                       disabled={!form.phone.trim() && !form.email.trim()}
                       onChange={(sendOnboardingOnComplete) =>
@@ -107,7 +108,7 @@ export function OnboardingVendorsStep({
                       aria-label={
                         form.phone.trim() || form.email.trim()
                           ? `Send verification invite to vendor ${index + 1} when setup completes`
-                          : `Add a phone or email to send onboarding to vendor ${index + 1}`
+                          : `Add a phone or email to send invite to vendor ${index + 1}`
                       }
                     />
                     {vendorForms.length > 1 ? (

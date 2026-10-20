@@ -30,6 +30,7 @@ export const EMAIL_TO_LANDLORD_ID: Readonly<Record<string, string>> = {
   'adeogunfowora@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   'o.k.okafor@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   'drake@gtwgroupnwa.com': LIMITED_ALPHA_2_LANDLORD_ID,
+  'awrighthall@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,

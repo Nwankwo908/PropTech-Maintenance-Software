@@ -23,6 +23,7 @@ import type { InsightRecommendationActionType } from "./portfolioIntelligence/ty
 import { isVendorMatchableForDispatch } from "./vendor_assignment.ts"
 import type { VendorAssignmentOption, VendorAssignmentRow } from "./vendor_assignment.ts"
 import { startVendorAvailabilityProbe } from "./vendorAvailabilityProbe.ts"
+import { queueWorkOrderContext } from "./workOrderContext.ts"
 
 export type StartInsightInspectorSchedulingInput = {
   landlordId: string
@@ -252,9 +253,13 @@ async function mintInsightInspectionTicket(
     if (retry.error || !retry.data?.id) {
       throw new Error(retry.error?.message || error?.message || "Failed to create work order")
     }
-    return retry.data.id as string
+    const retryId = retry.data.id as string
+    queueWorkOrderContext(supabase, { id: retryId, description }, "[insight-inspector]")
+    return retryId
   }
-  return data.id as string
+  const ticketId = data.id as string
+  queueWorkOrderContext(supabase, { id: ticketId, description }, "[insight-inspector]")
+  return ticketId
 }
 
 async function claimHold(
