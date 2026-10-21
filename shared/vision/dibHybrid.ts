@@ -1,5 +1,7 @@
 import type { ApplianceVisionResult, DibIdentification, VisionCategory } from "./types.ts"
 
+export type { DibIdentification }
+
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
 }

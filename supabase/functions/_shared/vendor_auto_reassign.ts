@@ -70,6 +70,19 @@ export async function tryAutoReassignAfterDecline(
     return { outcome: "skipped", reason: "missing_landlord" }
   }
 
+  // Vendor decline is a real event — clear any manual stage override, then continue.
+  try {
+    const { clearManualStageOverrideForTicket } = await import(
+      "./workflowStageMove/manualStageOverride.ts"
+    )
+    await clearManualStageOverrideForTicket(supabase, {
+      ticketId,
+      reason: "vendor_declined",
+    })
+  } catch (e) {
+    console.error("[vendor-auto-reassign] clear manual override", e)
+  }
+
   const engineResult = await runMaintenanceRequestViaEngine(supabase, {
     landlordId,
     trigger: "automation",

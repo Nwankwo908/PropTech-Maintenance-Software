@@ -2,6 +2,7 @@ import {
   formatInspectionReportRef,
   formatLocationContextLabel,
   isSettledOnActiveTasks,
+  maintenanceTicketIdFromWorkflowRun,
   workflowMatchesPropertyScope,
   workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
@@ -84,11 +85,24 @@ export type WorkflowKanbanCard = {
   category: WorkflowKanbanCategory
   /** Trade / issue category chip for maintenance work orders, e.g. Plumbing. */
   issueCategoryLabel: string | null
+  /** Work-order / intake ref shown next to chips (e.g. WO-A1B2). */
+  workOrderRef: string | null
   /** 3–5 word work-order summary on Active Tasks cards. */
   workOrderSummary: string | null
   stage: WorkflowKanbanStageId
   critical: boolean
   initials: string | null
+  /** Template id for stage-move rules (maintenance vs rent, etc.). */
+  templateId: string
+  /** Linked maintenance ticket when this card can be stage-moved. */
+  ticketId: string | null
+  /**
+   * All sibling ticket ids for an inspection visit rollup (stage-move applies to
+   * every open fail item). Empty for single work-order cards.
+   */
+  stageMoveTicketIds: string[]
+  assignedVendorId: string | null
+  assignedVendorName: string | null
   /** Present when this card represents an inspection_report visit group. */
   inspectionReportId?: string | null
   inspectionProgress?: { complete: number; total: number } | null
@@ -99,7 +113,53 @@ export type WorkflowKanbanCard = {
     statusLabel: string
     stage: WorkflowKanbanStageId
     runId: string | null
+    assignedVendorId: string | null
   }> | null
+}
+
+/** True when this Active Tasks card is a multi-ticket inspection visit rollup. */
+export function isInspectionVisitKanbanCard(card: {
+  inspectionReportId?: string | null
+  inspectionChecklist?: unknown[] | null
+  stageMoveTicketIds?: string[] | null
+}): boolean {
+  const reportId = card.inspectionReportId?.trim()
+  if (!reportId) return false
+  const checklistLen = card.inspectionChecklist?.length ?? 0
+  const idsLen = card.stageMoveTicketIds?.length ?? 0
+  return checklistLen > 1 || idsLen > 1
+}
+
+/** Ticket ids the stage-move API should update for this card. */
+export function stageMoveTicketIdsForCard(card: {
+  ticketId?: string | null
+  stageMoveTicketIds?: string[] | null
+}): string[] {
+  const fromGroup = (card.stageMoveTicketIds ?? [])
+    .map((id) => id.trim())
+    .filter(Boolean)
+  if (fromGroup.length > 0) return [...new Set(fromGroup)]
+  const single = card.ticketId?.trim()
+  return single ? [single] : []
+}
+
+/** Whether every unfinished visit sibling (or the single WO) has a vendor. */
+export function cardHasAssignedVendorForStageMove(card: {
+  assignedVendorId?: string | null
+  inspectionChecklist?: Array<{
+    stage: WorkflowKanbanStageId
+    assignedVendorId: string | null
+  }> | null
+  inspectionReportId?: string | null
+}): boolean {
+  if (isInspectionVisitKanbanCard(card) && card.inspectionChecklist?.length) {
+    const unfinished = card.inspectionChecklist.filter((item) => item.stage !== 'completed')
+    if (unfinished.length === 0) {
+      return card.inspectionChecklist.some((item) => Boolean(item.assignedVendorId?.trim()))
+    }
+    return unfinished.every((item) => Boolean(item.assignedVendorId?.trim()))
+  }
+  return Boolean(card.assignedVendorId?.trim())
 }
 
 /** User-facing helper copy for the workflow pipeline (Operations / Active Tasks). */
@@ -347,9 +407,24 @@ export function dedupeMoveOutWorkflowRunsForKanban(
   return [...passthrough, ...byScope.values()]
 }
 
+/** Vendor / identity onboarding runs are Communications / Vendors — not Active Tasks. */
+const ONBOARDING_ACTIVE_TASKS_TEMPLATE_IDS = new Set([
+  'vendor_onboarding',
+  'identity_onboarding',
+])
+
+export function isOnboardingActiveTasksTemplateId(templateId: string | null | undefined): boolean {
+  const id = (templateId ?? '').trim()
+  if (!id) return false
+  if (ONBOARDING_ACTIVE_TASKS_TEMPLATE_IDS.has(id)) return true
+  // Catch seeded variants like vendor_onboarding_v2 without listing every id.
+  return id.includes('onboarding')
+}
+
 /**
  * Runs shown on Active Tasks (kanban, nav count, Overview KPI, property/resident lists).
  * Rent collection reminders live on Overview / rent surfaces — not Active Tasks.
+ * Vendor / identity onboarding lives on Vendors / Communication — not Active Tasks.
  */
 export function collectAdminWorkflowRuns(data: AdminWorkflowDashboardData): AdminWorkflowRow[] {
   const byId = new Map<string, AdminWorkflowRow>()
@@ -361,6 +436,7 @@ export function collectAdminWorkflowRuns(data: AdminWorkflowDashboardData): Admi
     ...(data.standaloneInspectionTasks ?? []),
   ]) {
     if (row.templateId === 'rent_collection') continue
+    if (isOnboardingActiveTasksTemplateId(row.templateId)) continue
     byId.set(row.id, row)
   }
   return dedupeMoveOutWorkflowRunsForKanban(
@@ -522,33 +598,38 @@ function deriveInspectionKanbanStage(row: AdminWorkflowRow): WorkflowKanbanStage
 /**
  * Maintenance Operations columns follow ticket lifecycle (not the collapsed “all open → In Progress” map).
  * Source of truth: `maintenance_requests.vendor_work_status` when linked; else intake / run heuristics.
+ *
+ * Intake/run `status = completed` only means the SMS wizard closed (e.g. resident asked for
+ * status). That must not put an unfinished repair in Completed — use vendor_work_status.
  */
 export function deriveMaintenanceKanbanStage(row: AdminWorkflowRow): WorkflowKanbanStageId {
-  if (row.status === 'completed') return 'completed'
-
   const vendorStatus = (row.vendorWorkStatus ?? '').trim().toLowerCase()
-  if (vendorStatus === 'completed' || vendorStatus === 'cancelled') return 'completed'
-  if (vendorStatus === 'in_progress' || vendorStatus === 'accepted') {
-    return 'in_progress'
+
+  // Linked ticket: assignment status owns the board column.
+  if (vendorStatus) {
+    if (vendorStatus === 'completed' || vendorStatus === 'cancelled') return 'completed'
+    if (vendorStatus === 'in_progress' || vendorStatus === 'accepted') {
+      return 'in_progress'
+    }
+    // Sticky needs_admin + dead pending_accept belongs with unassigned work needing a pick —
+    // not the ordinary Assigned / "Awaiting vendor" column.
+    if (
+      isStalePendingAcceptNeedsAdminVendor({
+        vendorWorkStatus: vendorStatus,
+        assignedVendorId: row.assignedVendorId,
+        autoReassignLastOutcome: row.autoReassignLastOutcome,
+        workflowNeedsAdminVendor:
+          row.status === 'escalated' &&
+          isMaintenanceAdminVendorEscalationReason(row.escalationReason),
+      })
+    ) {
+      return 'new_intake'
+    }
+    if (vendorStatus === 'pending_accept' || vendorStatus === 'declined') {
+      return 'assigned'
+    }
+    if (vendorStatus === 'unassigned') return 'new_intake'
   }
-  // Sticky needs_admin + dead pending_accept belongs with unassigned work needing a pick —
-  // not the ordinary Assigned / "Awaiting vendor" column.
-  if (
-    isStalePendingAcceptNeedsAdminVendor({
-      vendorWorkStatus: vendorStatus,
-      assignedVendorId: row.assignedVendorId,
-      autoReassignLastOutcome: row.autoReassignLastOutcome,
-      workflowNeedsAdminVendor:
-        row.status === 'escalated' &&
-        isMaintenanceAdminVendorEscalationReason(row.escalationReason),
-    })
-  ) {
-    return 'new_intake'
-  }
-  if (vendorStatus === 'pending_accept' || vendorStatus === 'declined') {
-    return 'assigned'
-  }
-  if (vendorStatus === 'unassigned') return 'new_intake'
 
   // SMS intake still collecting (no ticket yet, or ticket not linked).
   if (row.templateId === 'maintenance_intake') {
@@ -568,6 +649,9 @@ export function deriveMaintenanceKanbanStage(row: AdminWorkflowRow): WorkflowKan
   if (step === 'completed' || /complete|closed|done/.test(event)) return 'completed'
   if (step === 'in_progress' || event === 'in_progress') return 'in_progress'
   // Do not treat intake steps containing "accept"/"await" as assigned without a vendor id.
+
+  // No ticket status: only then may a completed maintenance_request run mean done.
+  if (row.status === 'completed') return 'completed'
 
   return 'new_intake'
 }
@@ -633,20 +717,30 @@ export function buildWorkflowKanbanCard(
   const category =
     groupItems || isStandaloneInspectionNotice ? 'inspection' : derivedCategory
 
-  const title = groupItems
-    ? `Inspection visit · ${formatInspectionReportRef(row.inspectionReportId!)}`
-    : isStandaloneInspectionNotice
-      ? row.templateName
-      : derivedCategory === 'maintenance'
+  const maintenanceWorkOrderRef =
+    !groupItems && !isStandaloneInspectionNotice && derivedCategory === 'maintenance'
       ? formatWorkOrderRefForWorkflowRun(
           row.templateId,
           row.id,
           row.entityId,
           row.entityType,
         )
-      : row.templateId === 'move_out'
-        ? 'Move-Out Preparation'
-        : row.templateName
+      : null
+
+  const maintenanceBlurb =
+    !groupItems && !isStandaloneInspectionNotice && derivedCategory === 'maintenance'
+      ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
+      : null
+
+  const title = groupItems
+    ? `Inspection visit · ${formatInspectionReportRef(row.inspectionReportId!)}`
+    : isStandaloneInspectionNotice
+      ? row.templateName
+      : derivedCategory === 'maintenance'
+        ? maintenanceBlurb || maintenanceWorkOrderRef || row.templateName
+        : row.templateId === 'move_out'
+          ? 'Move-Out Preparation'
+          : row.templateName
 
   // Visit / notice cards: category badge already says Inspection — skip a
   // second identical chip. Individual WO cards keep their trade label.
@@ -661,6 +755,31 @@ export function buildWorkflowKanbanCard(
     ? 'new_intake'
     : deriveWorkflowKanbanStage(row, metadata)
 
+  const singleTicketId =
+    groupItems || isStandaloneInspectionNotice
+      ? null
+      : maintenanceTicketIdFromWorkflowRun(row)
+
+  const stageMoveTicketIds = groupItems
+    ? [...new Set(groupItems.map((item) => item.ticketId.trim()).filter(Boolean))]
+    : singleTicketId
+      ? [singleTicketId]
+      : []
+
+  // Visit rollups: primary ticketId is first unfinished sibling (API / undo).
+  const visitPrimaryTicketId = groupItems
+    ? groupItems.find((item) => !isTerminalVendorWorkStatus(item.vendorWorkStatus))
+        ?.ticketId.trim() ||
+      groupItems[0]?.ticketId.trim() ||
+      null
+    : singleTicketId
+
+  const visitAllHaveVendor = groupItems
+    ? groupItems
+        .filter((item) => !isTerminalVendorWorkStatus(item.vendorWorkStatus))
+        .every((item) => Boolean(item.assignedVendorId?.trim()))
+    : Boolean(row.assignedVendorId?.trim())
+
   return {
     id: row.id,
     title,
@@ -671,13 +790,13 @@ export function buildWorkflowKanbanCard(
     }),
     category,
     issueCategoryLabel,
+    workOrderRef: maintenanceWorkOrderRef,
     workOrderSummary: groupItems
       ? `${progress!.complete} of ${progress!.total} complete`
       : isStandaloneInspectionNotice
         ? (row.issueDescription?.split('\n')[0]?.trim() || 'Prepare for inspection')
-      : derivedCategory === 'maintenance'
-        ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
-        : null,
+        : // Maintenance blurb is the title; avoid duplicating it under the chips.
+          null,
     stage,
     critical:
       row.status === 'escalated' ||
@@ -690,6 +809,16 @@ export function buildWorkflowKanbanCard(
           isMaintenanceAdminVendorEscalationReason(row.escalationReason),
       }),
     initials: deriveInitials(row),
+    templateId: row.templateId,
+    ticketId: visitPrimaryTicketId,
+    stageMoveTicketIds,
+    assignedVendorId: groupItems
+      ? visitAllHaveVendor
+        ? groupItems.find((item) => item.assignedVendorId?.trim())?.assignedVendorId?.trim() ||
+          null
+        : null
+      : row.assignedVendorId?.trim() || null,
+    assignedVendorName: null,
     inspectionReportId: groupItems ? row.inspectionReportId : null,
     inspectionProgress: progress,
     inspectionChecklist: groupItems
@@ -708,6 +837,7 @@ export function buildWorkflowKanbanCard(
               : vendorWorkStatusChipLabel(item.vendorWorkStatus),
             stage: stale ? 'new_intake' : stageFromVendorWorkStatus(item.vendorWorkStatus),
             runId: item.runId,
+            assignedVendorId: item.assignedVendorId?.trim() || null,
           }
         })
       : null,

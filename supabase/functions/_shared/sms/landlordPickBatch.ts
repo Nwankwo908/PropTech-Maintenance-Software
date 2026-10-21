@@ -14,6 +14,8 @@ import {
 import { pickBatchVendorProposal } from "../../../../shared/landlordDecisions/batchVendorFit.ts"
 import { resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { isVendorMatchableForDispatch } from "../vendor_assignment.ts"
+import { countVendorWeeklyAssignments } from "../vendor_capacity.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
@@ -113,13 +115,44 @@ export async function routeNonUrgentTicketIntoPickBatch(
   const propertyById = new Map((propertyRows ?? []).map((row) => [String(row.id), row]))
 
   let vendorCategory: string | null = null
+  let dispatchEligible = true
   if (primary.id) {
     const { data: vendor } = await supabase
       .from("vendors")
-      .select("category")
+      .select(
+        "category, active, roster_status, weekly_job_cap, onboarding_overridden_at",
+      )
       .eq("id", primary.id)
       .maybeSingle()
     vendorCategory = typeof vendor?.category === "string" ? vendor.category : null
+
+    const { data: verif } = await supabase
+      .from("vendor_verifications")
+      .select("status, availability")
+      .eq("vendor_id", primary.id)
+      .eq("landlord_id", params.landlordId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const matchable = isVendorMatchableForDispatch({
+      verificationStatus: typeof verif?.status === "string" ? verif.status : null,
+      vendorActive: vendor?.active !== false,
+      availability: typeof verif?.availability === "string" ? verif.availability : null,
+      rosterStatus: typeof vendor?.roster_status === "string" ? vendor.roster_status : null,
+      onboardingOverriddenAt:
+        typeof vendor?.onboarding_overridden_at === "string"
+          ? vendor.onboarding_overridden_at
+          : null,
+    })
+    let underCap = true
+    const cap = vendor?.weekly_job_cap
+    if (cap != null && Number.isFinite(Number(cap))) {
+      const limit = Math.max(0, Math.floor(Number(cap)))
+      const weeklyCount = await countVendorWeeklyAssignments(supabase, primary.id)
+      underCap = weeklyCount < limit
+    }
+    dispatchEligible = matchable && underCap
   }
 
   const items: BatchItemDraft[] = rows.slice(0, LANDLORD_PICK_BATCH_LIMIT).map((row) => {
@@ -136,6 +169,7 @@ export async function routeNonUrgentTicketIntoPickBatch(
         vendorCategory,
         issueCategory,
         windowLabel: primary.windowLabel,
+        dispatchEligible,
       })
       : {
         matched: true,
@@ -278,6 +312,7 @@ async function sendOrQueueBatch(
       ticket_class: item.ticketClass,
       issue: item.issue,
       unit_label: item.unitLabel ?? null,
+      property_address: item.propertyAddress ?? null,
     },
   }))
   if (itemRows.length === 0) return "fallback"

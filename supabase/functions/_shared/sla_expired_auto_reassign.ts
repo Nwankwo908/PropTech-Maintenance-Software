@@ -115,6 +115,23 @@ async function processSlaExpiredTicketRow(
     return { ticketId: ticket.id, outcome: "skipped", reason: "missing_landlord" }
   }
 
+  const { shouldSuppressAutomationForManualOverride } = await import(
+    "./workflowStageMove/manualStageOverride.ts"
+  )
+  if (
+    await shouldSuppressAutomationForManualOverride(supabase, {
+      ticketId: ticket.id,
+      landlordId,
+      reason: "sla_expired_auto_reassign",
+    })
+  ) {
+    return {
+      ticketId: ticket.id,
+      outcome: "skipped",
+      reason: "manual_stage_override",
+    }
+  }
+
   const engineResult = await runMaintenanceRequestViaEngine(supabase, {
     landlordId,
     trigger: "automation",

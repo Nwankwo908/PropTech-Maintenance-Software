@@ -62,6 +62,40 @@ Deno.test("bare SNOOZE FRI and SKIP apply only when one request is open", () => 
   assertEquals(many.unclear, ["SNOOZE FRI"])
 })
 
+Deno.test("decline / nope parse as no; bare no applies with one open item", () => {
+  const one = [{ displayId: 102, ticketClass: "reactive" as const }]
+  assertEquals(parseDecisionReply("no", one, now, tz).intents, [
+    { displayId: 102, action: "no" },
+  ])
+  assertEquals(parseDecisionReply("nope", one, now, tz).intents, [
+    { displayId: 102, action: "no" },
+  ])
+  assertEquals(parseDecisionReply("decline", one, now, tz).intents, [
+    { displayId: 102, action: "no" },
+  ])
+  const many = parseDecisionReply("no", three, now, tz)
+  assertEquals(many.intents, [])
+  assertEquals(many.unclear, ["no"])
+  assertEquals(parseDecisionReply("102 no, 105 yes", [
+    { displayId: 102, ticketClass: "reactive" },
+    { displayId: 105, ticketClass: "reactive" },
+  ], now, tz).intents, [
+    { displayId: 102, action: "no" },
+    { displayId: 105, action: "yes" },
+  ])
+})
+
+Deno.test("LLM proposals accept no and still drop skip on reactive", () => {
+  const accepted = filterLlmDecisionProposals(
+    [
+      { display_id: 101, action: "no", confidence: 0.9 },
+      { display_id: 103, action: "skip", confidence: 0.99 },
+    ],
+    three,
+  )
+  assertEquals(accepted, [{ displayId: 101, action: "no" }])
+})
+
 Deno.test("a unit number that is not a candidate stays unclear", () => {
   const parsed = parseDecisionReply("unit 12 is fine", three, now, tz)
   assertEquals(parsed.intents, [])

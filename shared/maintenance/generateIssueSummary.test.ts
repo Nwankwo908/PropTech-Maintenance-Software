@@ -48,9 +48,11 @@ describe('generateIssueSummary', () => {
       'Hi thanks something oddly specific about the northwest corner fixture rattling intermittently every evening lately when nobody is home'
     const title = generateIssueSummary(long, { format: 'title', maxChars: 40 })
     expect(title).not.toMatch(/Hi\b/i)
-    expect(title).not.toMatch(/\w…/)
     if (title.includes('…')) {
-      expect(title).toMatch(/\s…$|…$/)
+      // Ellipsis after a complete word is fine ("the…"); mid-word stems are not
+      // ("th…" / "northwes…"). Reject only when the truncated token looks incomplete.
+      expect(title).not.toMatch(/(?:^|\s)\w{1,2}…$/)
+      expect(title).toMatch(/\b\w{3,}…$|\s…$|…$/)
     }
   })
 })

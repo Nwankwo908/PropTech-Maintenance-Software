@@ -131,7 +131,11 @@ Deno.test("shortRepairLabel prefers the first description line", () => {
     shortRepairLabel("Leaking kitchen faucet\nTenant said it started today.", "plumbing"),
     "leaking kitchen faucet",
   )
-  assertEquals(shortRepairLabel("", "electrical"), "electrical repair")
+  assertEquals(shortRepairLabel("", "electrical"), "Electrical repair")
+  assertEquals(
+    shortRepairLabel("", "pest_control", { street: "109 S Grove St" }),
+    "Pest control at 109 S Grove St",
+  )
 })
 
 Deno.test("formatReportedAgo uses hours then days", () => {

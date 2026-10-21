@@ -116,6 +116,10 @@ describe('inspection report Active Tasks grouping', () => {
     // Display-only: visit rollup badge is Inspection (not Maintenance).
     expect(card.category).toBe('inspection')
     expect(card.issueCategoryLabel).toBeNull()
+    // Stage-move: visit cards expose every sibling ticket id (drag / Move to…).
+    expect(card.stageMoveTicketIds).toHaveLength(12)
+    expect(card.ticketId).toBeTruthy()
+    expect(card.inspectionReportId).toBe(REPORT)
   })
 
   it('keeps individual linked WO cards on their real trade categories', () => {

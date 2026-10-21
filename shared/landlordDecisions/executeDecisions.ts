@@ -16,6 +16,8 @@ export type BatchCandidate = {
   windowAvailable: boolean
   issue?: string | null
   unitLabel?: string | null
+  /** Property street address when known — used in single-ask decline copy. */
+  propertyAddress?: string | null
 }
 
 export type DecisionLineKind = "applied" | "unknown" | "unclear"
@@ -59,29 +61,84 @@ function unknownIdFromSegment(segment: string, known: Set<number>): number | nul
   return id
 }
 
-function lineFor(intent: DecisionIntent, candidate: BatchCandidate): {
+function issueLabel(candidate: BatchCandidate): string {
+  return candidate.issue?.trim() || "request"
+}
+
+function jobLabel(candidate: BatchCandidate): string {
+  const issue = issueLabel(candidate).toLowerCase()
+  if (/\bjob\b/i.test(issue)) return issue
+  // "Pest control" → "pest job" reads more naturally in SMS confirmations.
+  const control = issue.replace(/\s+control\b/i, "").trim()
+  if (control && control !== issue) return `${control} job`
+  return issue
+}
+
+function declineSubject(candidate: BatchCandidate): string {
+  const issue = issueLabel(candidate)
+  const address = candidate.propertyAddress?.trim()
+  if (address) return `${issue} at ${address}`
+  return issue
+}
+
+function lineFor(
+  intent: DecisionIntent,
+  candidate: BatchCandidate,
+  opts: { showDisplayId: boolean },
+): {
   mutation: DecisionMutation | null
   text: string
 } {
+  const showId = opts.showDisplayId
+  const idPrefix = showId ? `#${candidate.displayId} ` : ""
+
   if (!candidate.awaitingPick) {
-    return { mutation: null, text: `#${candidate.displayId} already decided.` }
-  }
-  if (intent.action === "skip" && candidate.ticketClass !== "proactive") {
     return {
       mutation: null,
-      text: `#${candidate.displayId} can't skip a tenant request — reply self or snooze.`,
+      text: showId ? `#${candidate.displayId} already decided.` : "Already decided.",
     }
   }
+
+  // "no" (and legacy skip on a tenant request) → other options for reactive,
+  // decline/skip for proactive.
+  if (intent.action === "no" || (intent.action === "skip" && candidate.ticketClass !== "proactive")) {
+    if (candidate.ticketClass === "reactive") {
+      const vendor = candidate.vendorName.trim() || "that vendor"
+      return {
+        mutation: {
+          kind: "options",
+          ticketId: candidate.ticketId,
+          displayId: candidate.displayId,
+        },
+        text: showId
+          ? `${idPrefix.trim()} — not ${vendor}. I'll send other options.`
+          : `Got it — not ${vendor}. I'll send other options for the ${jobLabel(candidate)}.`,
+      }
+    }
+    return {
+      mutation: {
+        kind: "skip",
+        ticketId: candidate.ticketId,
+        displayId: candidate.displayId,
+      },
+      text: showId
+        ? `#${candidate.displayId} declined.`
+        : `Got it — ${declineSubject(candidate)} is declined.`,
+    }
+  }
+
   if (intent.action === "yes") {
     if (!candidate.vendorAvailable || !candidate.windowAvailable) {
       return {
         mutation: null,
-        text: `#${candidate.displayId} isn't available as offered. Reply ${candidate.displayId} options.`,
+        text: showId
+          ? `#${candidate.displayId} isn't available as offered. Reply ${candidate.displayId} options.`
+          : "That offer isn't available anymore. Reply YES or NO.",
       }
     }
     return {
       mutation: { kind: "book", ticketId: candidate.ticketId, displayId: candidate.displayId },
-      text: `#${candidate.displayId} approved.`,
+      text: showId ? `#${candidate.displayId} approved.` : "Got it — approved.",
     }
   }
   if (intent.action === "snooze") {
@@ -93,24 +150,30 @@ function lineFor(intent: DecisionIntent, candidate: BatchCandidate): {
         displayId: candidate.displayId,
         until,
       },
-      text: `#${candidate.displayId} snoozed to ${formatSnoozeLabel(until)}.`,
+      text: showId
+        ? `#${candidate.displayId} snoozed to ${formatSnoozeLabel(until)}.`
+        : `Got it — snoozed to ${formatSnoozeLabel(until)}.`,
     }
   }
   if (intent.action === "self") {
     return {
       mutation: { kind: "self", ticketId: candidate.ticketId, displayId: candidate.displayId },
-      text: `#${candidate.displayId} marked for you to handle.`,
+      text: showId
+        ? `#${candidate.displayId} marked for you to handle.`
+        : "Got it — marked for you to handle.",
     }
   }
   if (intent.action === "skip") {
     return {
       mutation: { kind: "skip", ticketId: candidate.ticketId, displayId: candidate.displayId },
-      text: `#${candidate.displayId} skipped.`,
+      text: showId ? `#${candidate.displayId} skipped.` : "Got it — declined.",
     }
   }
   return {
     mutation: { kind: "options", ticketId: candidate.ticketId, displayId: candidate.displayId },
-    text: `#${candidate.displayId} — I'll list the other options.`,
+    text: showId
+      ? `#${candidate.displayId} — I'll list the other options.`
+      : "Got it — I'll list the other options.",
   }
 }
 
@@ -122,7 +185,13 @@ export function buildDecisionConfirmation(
   const other = lines.filter((line) => line.kind !== "applied" && line.text.trim())
   const parts: string[] = []
   if (applied.length > 0) {
-    parts.push(`Done: ${applied.map((line) => line.text.trim()).join(" ")}`)
+    const texts = applied.map((line) => line.text.trim())
+    // Single-ask confirmations already read as complete sentences ("Got it — …").
+    if (texts.every((text) => /^Got it\b/i.test(text))) {
+      parts.push(texts.join(" "))
+    } else {
+      parts.push(`Done: ${texts.join(" ")}`)
+    }
   }
   for (const line of other) parts.push(line.text.trim())
   if (question?.trim()) parts.push(question.trim())
@@ -142,7 +211,7 @@ function unknownIdRecovery(displayId: number, candidates: BatchCandidate[]): str
     const where = unit
       ? (/^unit\b/i.test(unit) ? unit : `Unit ${unit}`)
       : "that unit"
-    return `I couldn't find #${displayId}. Did you mean the ${issue} in ${where}? Reply YES to approve or SNOOZE FRI.`
+    return `I couldn't find #${displayId}. Did you mean the ${issue} in ${where}? Reply YES or NO.`
   }
   const ids = open.map((row) => `#${row.displayId}`).join(", ")
   if (!ids) return `I couldn't find #${displayId}.`
@@ -198,6 +267,10 @@ export function executeDecisionPlan(input: {
     if (!intents.has(intent.displayId)) intents.set(intent.displayId, intent)
   }
 
+  // Single-item asks never show #displayId; keep confirmations consistent.
+  const showDisplayId = openCandidates(input.candidates).length > 1 ||
+    input.candidates.length > 1
+
   const lines: DecisionStatusLine[] = []
   const mutations: DecisionMutation[] = []
   const covered = new Set<number>()
@@ -213,7 +286,7 @@ export function executeDecisionPlan(input: {
       })
       continue
     }
-    const applied = lineFor(intent, candidate)
+    const applied = lineFor(intent, candidate, { showDisplayId })
     if (applied.mutation) mutations.push(applied.mutation)
     lines.push({
       displayId: candidate.displayId,
@@ -230,8 +303,9 @@ export function executeDecisionPlan(input: {
       const candidate = byId.get(bare)!
       if (!covered.has(candidate.displayId) && !question) {
         const issue = candidate.issue?.trim() || "that request"
-        question =
-          `What should I do with #${candidate.displayId} (${issue})? Reply YES, SNOOZE FRI, or SKIP.`
+        question = showDisplayId
+          ? `What should I do with #${candidate.displayId} (${issue})? Reply YES or NO.`
+          : `What should I do with that request (${issue})? Reply YES or NO.`
       }
       continue
     }

@@ -3,6 +3,7 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   normalizeUsStateCode,
   vendorCoversJobState,
+  vendorCoversJobStateForDiscovery,
   vendorServiceStateCodes,
 } from "./vendorServiceArea.ts"
 
@@ -46,6 +47,13 @@ Deno.test("vendorCoversJobState requires the same state when the job state is kn
   assertEquals(vendorCoversJobState(["MD"], "Maryland"), true)
   assertEquals(vendorCoversJobState(["NJ"], "MD"), false)
   assertEquals(vendorCoversJobState([], "MD"), false)
+  // Booking gate: unknown job location must not authorize a commitment.
   assertEquals(vendorCoversJobState(["NJ"], null), false)
   assertEquals(vendorCoversJobState(["MD"], "NJ"), false)
+})
+
+Deno.test("vendorCoversJobStateForDiscovery allows unknown job state for preliminary search", () => {
+  assertEquals(vendorCoversJobStateForDiscovery(["NJ"], null), true)
+  assertEquals(vendorCoversJobStateForDiscovery(["NJ"], "MD"), false)
+  assertEquals(vendorCoversJobStateForDiscovery(["MD"], "Maryland"), true)
 })

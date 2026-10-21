@@ -34,6 +34,11 @@ interface ImportMetaEnv {
    * change updates the DB and re-notifies when the row has a real maintenance_requests UUID.
    */
   readonly VITE_ADMIN_REASSIGN_URL?: string
+  /**
+   * POST admin-move-workflow-stage (full URL). If omitted, derived from
+   * `VITE_ADMIN_REASSIGN_URL` or `${VITE_SUPABASE_URL}/functions/v1/admin-move-workflow-stage`.
+   */
+  readonly VITE_ADMIN_MOVE_WORKFLOW_STAGE_URL?: string
   /** Same value as Edge secret ADMIN_REASSIGN_SECRET — do not ship to public clients in production. */
   readonly VITE_ADMIN_REASSIGN_SECRET?: string
   /**
@@ -127,6 +132,11 @@ interface ImportMetaEnv {
   readonly VITE_PROPERTY_INSIGHTS_URL?: string
   /** Steadily partner embed script. Defaults to staging `partner/v3.js?ref=ulo-staging`. */
   readonly VITE_STEADILY_EMBED_SCRIPT_URL?: string
+  /**
+   * When `1`/`true`, excluded/unknown pilot workflows fail closed at UI entry points
+   * (see `shared/pilotGate.ts`). Soft Limited Alpha keeps this unset.
+   */
+  readonly VITE_PILOT_STRICT?: string
 }
 
 interface ImportMeta {

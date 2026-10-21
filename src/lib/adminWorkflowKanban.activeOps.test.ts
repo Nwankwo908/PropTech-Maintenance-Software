@@ -52,6 +52,19 @@ describe('snapshotActiveOperations', () => {
     expect(snap.lines).toEqual([{ id: 'maintenance', label: 'Maintenance', count: 1 }])
   })
 
+  it('excludes vendor and identity onboarding from Active Tasks board collection', () => {
+    const data: AdminWorkflowDashboardData = {
+      ...emptyAdminWorkflowDashboardData(),
+      active: [
+        run({ id: 'm1', templateId: 'maintenance_request' }),
+        run({ id: 'v1', templateId: 'vendor_onboarding' }),
+        run({ id: 'i1', templateId: 'identity_onboarding' }),
+      ],
+    }
+    const ids = collectAdminWorkflowRuns(data).map((row) => row.id)
+    expect(ids).toEqual(['m1'])
+  })
+
   it('treats settled runs as inactive for the board-aligned KPI', () => {
     expect(
       isWorkflowRunActiveAt(

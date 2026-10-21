@@ -1,0 +1,29 @@
+{
+  "description": "Shared-module ownership for readiness type gates. Each path must be covered by every runtime that imports it.",
+  "modules": [
+    {
+      "path": "shared/",
+      "consumedBy": ["frontend", "deno-edge"],
+      "frontendGate": "tsc -p tsconfig.app.json --noEmit (include: shared)",
+      "denoGate": "deno check --config supabase/functions/deno.json on edge entrypoints that import ../../../shared (and transitive)",
+      "notes": "Do not exclude shared/ production modules from either gate. Deno-only shared/**/*_test.ts files are excluded from browser tsc (naming convention) and covered by deno test/check. Browser tsc must not typecheck supabase/functions."
+    },
+    {
+      "path": "src/",
+      "consumedBy": ["frontend"],
+      "frontendGate": "tsc -p tsconfig.app.json --noEmit",
+      "testGate": "tsc -p tsconfig.vitest.json --noEmit + vitest"
+    },
+    {
+      "path": "supabase/functions/",
+      "consumedBy": ["deno-edge"],
+      "denoGate": "deno check --config supabase/functions/deno.json on every functions/*/index.ts",
+      "ideOnly": "supabase/functions/tsconfig.json + deno-ambient.d.ts are IDE aids; they are not the backend type gate"
+    },
+    {
+      "path": "vite.config.ts + src/prerender/",
+      "consumedBy": ["node-tooling"],
+      "frontendGate": "tsc -p tsconfig.node.json --noEmit"
+    }
+  ]
+}

@@ -157,7 +157,16 @@ export default function App() {
       <StayOnDevOrigin />
       <AnalyticsRoot />
       <ReferralLandingRedirect />
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={
+          <div
+            className="flex min-h-dvh items-center justify-center bg-white text-[14px] text-[#6a7282]"
+            aria-busy="true"
+          >
+            Loading…
+          </div>
+        }
+      >
         <Routes>
           <Route path="/" element={<LandingOrAdminOAuthReturn />} />
           <Route path="/demo" element={<DemoPageRedirect />} />

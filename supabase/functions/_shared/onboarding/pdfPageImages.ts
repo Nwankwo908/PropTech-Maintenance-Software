@@ -43,7 +43,9 @@ export async function pdfPagesToJpegDataUrls(
     const canvas = new OffscreenCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
     const context = canvas.getContext("2d")
     if (!context) return []
+    // pdfjs-dist RenderParameters requires `canvas` (context alone is optional).
     await page.render({
+      canvas: canvas as unknown as HTMLCanvasElement,
       canvasContext: context as unknown as CanvasRenderingContext2D,
       viewport,
     }).promise

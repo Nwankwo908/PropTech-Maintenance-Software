@@ -59,4 +59,24 @@ describe('isCompletedOnActiveTasks', () => {
       isCompletedOnActiveTasks({ status: 'escalated', vendorWorkStatus: 'pending_accept' }),
     ).toBe(false)
   })
+
+  it('does not treat intake handoff (status ask) as a finished repair', () => {
+    expect(
+      isCompletedOnActiveTasks({
+        status: 'completed',
+        vendorWorkStatus: 'unassigned',
+        templateId: 'maintenance_intake',
+      }),
+    ).toBe(false)
+  })
+
+  it('still treats non-maintenance completed runs as completed', () => {
+    expect(
+      isCompletedOnActiveTasks({
+        status: 'completed',
+        vendorWorkStatus: null,
+        templateId: 'move_in',
+      }),
+    ).toBe(true)
+  })
 })

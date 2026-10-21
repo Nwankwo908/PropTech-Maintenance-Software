@@ -13,6 +13,10 @@ import {
   shortRepairLabel,
 } from "./landlordAttentionNotify.ts"
 import { discoverExternalVendorsForTicket } from "./external_vendor/discover.ts"
+import {
+  loadOpenLandlordVendorAsk,
+  supersedeOpenLandlordVendorAskForTicket,
+} from "./openLandlordVendorAsk.ts"
 import { loadPropertyLocationFromTable } from "./properties/propertyLocation.ts"
 import {
   choiceOptionsFromExternalSuggestions,
@@ -83,6 +87,14 @@ export type EscalateMaintenanceNeedsVendorOpts = {
   eventMessage: string
   graphEventType: string
   graphMessage: string
+  /**
+   * When true, close any open landlord ask first (vendor declined / ask expired /
+   * landlord skip) then escalate with copy that explains the change.
+   * Default false — open asks suppress escalation entirely.
+   */
+  closeOpenAskFirst?: boolean
+  /** Prior vendor named on the open ask, when known by the caller. */
+  previousVendorName?: string | null
 }
 
 export const SUBMITTED_NO_VENDOR_ESCALATION: EscalateMaintenanceNeedsVendorOpts = {
@@ -96,6 +108,7 @@ export const SUBMITTED_NO_VENDOR_ESCALATION: EscalateMaintenanceNeedsVendorOpts 
 export type EscalateNeedsVendorResult = {
   nearbyOptionCount: number
   attention: Awaited<ReturnType<typeof notifyLandlordNeedsAttention>> | null
+  suppressed?: boolean
 }
 
 export async function escalateMaintenanceNeedsVendor(
@@ -105,6 +118,50 @@ export async function escalateMaintenanceNeedsVendor(
 ): Promise<EscalateNeedsVendorResult> {
   const landlordId = ticket.landlord_id?.trim()
   if (!landlordId) return { nearbyOptionCount: 0, attention: null }
+
+  const { shouldSuppressAutomationForManualOverride } = await import(
+    "./workflowStageMove/manualStageOverride.ts"
+  )
+  if (
+    await shouldSuppressAutomationForManualOverride(supabase, {
+      ticketId: ticket.id,
+      landlordId,
+      reason: opts.escalationReason || "escalate_needs_vendor",
+    })
+  ) {
+    return { nearbyOptionCount: 0, attention: null, suppressed: true }
+  }
+
+  let previousVendorName = opts.previousVendorName?.trim() || null
+  let closedPriorAsk = false
+
+  if (opts.closeOpenAskFirst === true) {
+    const closed = await supersedeOpenLandlordVendorAskForTicket(supabase, {
+      ticketId: ticket.id,
+      landlordId,
+      reason: opts.eventMessage,
+    })
+    closedPriorAsk = closed.closed
+    previousVendorName = previousVendorName || closed.previousVendorName
+  } else {
+    const openAsk = await loadOpenLandlordVendorAsk(supabase, ticket.id)
+    if (openAsk.open) {
+      await recordActivityLog(supabase, {
+        landlordId,
+        eventType: "maintenance.escalation_suppressed_pending_landlord_ask",
+        source: "automation",
+        actorType: "system",
+        maintenanceRequestId: ticket.id,
+        metadata: {
+          message:
+            "Escalation suppressed because a landlord vendor ask is still open.",
+          escalation_reason: opts.escalationReason,
+          sources: openAsk.sources,
+        },
+      })
+      return { nearbyOptionCount: 0, attention: null, suppressed: true }
+    }
+  }
 
   const { data: run } = await supabase
     .from("workflow_runs")
@@ -145,7 +202,9 @@ export async function escalateMaintenanceNeedsVendor(
   try {
     const { data: ticketRow } = await supabase
       .from("maintenance_requests")
-      .select("unit, building, description, issue_category, created_at, urgency, priority")
+      .select(
+        "unit, building, description, issue_category, issue_headline, created_at, urgency, priority",
+      )
       .eq("id", ticket.id)
       .maybeSingle()
     const unit =
@@ -160,16 +219,18 @@ export async function escalateMaintenanceNeedsVendor(
       typeof ticketRow?.description === "string" ? ticketRow.description : ""
     const issueCategory =
       typeof ticketRow?.issue_category === "string" ? ticketRow.issue_category : ""
+    const issueHeadline =
+      typeof ticketRow?.issue_headline === "string" ? ticketRow.issue_headline : ""
     const createdAt =
       typeof ticketRow?.created_at === "string" ? ticketRow.created_at : ""
     const location = await loadPropertyLocationFromTable(supabase, landlordId, {
       building: building || null,
     })
-    const repair = shortRepairLabel(description, issueCategory)
-    const prefix =
-      opts.escalationReason === "vendor_declined_no_vendor"
-        ? "Vendor declined"
-        : "No vendor found"
+    const street = location?.streetAddress?.trim() || building || ""
+    const repair = shortRepairLabel(description, issueCategory, {
+      issueHeadline,
+      street,
+    })
     const locationLine = formatAttentionLocationLine({
       street: location?.streetAddress,
       building,
@@ -212,13 +273,34 @@ export async function escalateMaintenanceNeedsVendor(
     } catch (e) {
       console.warn("[maintenance-admin-escalation] external vendor search", e)
     }
-    const whyLine = nextSteps.length
-      ? "No one on your preferred list can take this right now. Nearby vendors:"
-      : "No one on your preferred list can take this right now."
+
+    const vendorLabel = previousVendorName || "The vendor we asked about"
+    let headline: string
+    let whyLine: string
+    if (closedPriorAsk || opts.closeOpenAskFirst === true) {
+      const place = street || "this property"
+      headline = previousVendorName
+        ? `${previousVendorName} can't take this — ${repair}`
+        : `Vendor unavailable — ${repair}`
+      whyLine = nextSteps.length
+        ? `${vendorLabel} can't take the job at ${place} after all. Nearby options:`
+        : `${vendorLabel} can't take the job at ${place} after all.`
+    } else if (opts.escalationReason === "vendor_declined_no_vendor") {
+      headline = `Vendor declined — ${repair}`
+      whyLine = nextSteps.length
+        ? "No one on your preferred list can take this right now. Nearby vendors:"
+        : "No one on your preferred list can take this right now."
+    } else {
+      headline = `No vendor found — ${repair}`
+      whyLine = nextSteps.length
+        ? "No one on your preferred list can take this right now. Nearby vendors:"
+        : "No one on your preferred list can take this right now."
+    }
+
     const attention = await notifyLandlordNeedsAttention(supabase, {
       landlordId,
       kind: "assign_vendor",
-      headline: `${prefix} — ${repair}`,
+      headline,
       detail: locationLine,
       locationLine,
       whyLine,
@@ -228,6 +310,7 @@ export async function escalateMaintenanceNeedsVendor(
       idempotencyKey: `assign_vendor:${ticket.id}:${opts.escalationReason}`,
       maintenanceRequestId: ticket.id,
       workflowRunId: run?.id ?? null,
+      omitWorkOrderRef: true,
     })
     return { nearbyOptionCount: nextSteps.length, attention }
   } catch (e) {
@@ -344,6 +427,18 @@ export async function resumeMaintenanceWorkflowAfterVendorAccepted(
   supabase: SupabaseClient,
   ticketId: string,
 ): Promise<void> {
+  try {
+    const { clearManualStageOverrideForTicket } = await import(
+      "./workflowStageMove/manualStageOverride.ts"
+    )
+    await clearManualStageOverrideForTicket(supabase, {
+      ticketId,
+      reason: "vendor_accepted",
+    })
+  } catch (e) {
+    console.error("[maintenance-admin-escalation] clear manual override", e)
+  }
+
   const { data: run } = await supabase
     .from("workflow_runs")
     .select("id, status, metadata")

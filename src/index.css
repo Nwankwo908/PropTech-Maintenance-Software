@@ -2175,8 +2175,24 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
   will-change: transform, opacity;
 }
 
-/** Profile setup nav — morph dashed outline / fill when Property Health nudges it. */
+/**
+ * Profile setup / Set up portfolio nav — text-clipped light sweep.
+ * Narrow diagonal glint (#C68EC6) across letterforms only (background-clip: text).
+ * Plays once 500ms after load (1.5s), replays on hover / keyboard focus.
+ * Outline morph when Property Health nudges it is unchanged.
+ */
+@keyframes ulo-profile-setup-text-shine {
+  /* Both ends sample solid #611879 so glyphs stay fully filled */
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0% 0;
+  }
+}
+
 .ulo-profile-setup-nav {
+  position: relative;
   outline: 2px dashed transparent;
   outline-offset: 2px;
   transition:
@@ -2186,6 +2202,38 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
     outline-offset var(--sa-duration) var(--sa-ease),
     color var(--sa-fast) ease,
     transform var(--sa-press) ease;
+}
+
+.ulo-profile-setup-shine-text {
+  display: inline-block;
+  flex-shrink: 0;
+  overflow: visible;
+  white-space: nowrap;
+  /* Wide solid pads on both sides; narrow #C68EC6 glint in the middle */
+  background-image: linear-gradient(
+    105deg,
+    #611879 0%,
+    #611879 44%,
+    #e8c8e8 48%,
+    #c68ec6 50%,
+    #e8c8e8 52%,
+    #611879 56%,
+    #611879 100%
+  );
+  background-size: 280% 100%;
+  background-position: 100% 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  /* Load: 500ms delay, 1.5s sweep, once — ends on solid fill */
+  animation: ulo-profile-setup-text-shine 1.5s ease-in-out 0.5s 1 forwards;
+}
+
+.ulo-profile-setup-shine-text--immediate {
+  /* Hover / focus replay — no delay */
+  animation: ulo-profile-setup-text-shine 1.5s ease-in-out 0s 1 forwards;
 }
 
 .ulo-profile-setup-nav[data-pointed='true'] {
@@ -2218,6 +2266,14 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
 
   .ulo-profile-setup-nav {
     transition: none;
+  }
+
+  .ulo-profile-setup-shine-text,
+  .ulo-profile-setup-shine-text--immediate {
+    animation: none !important;
+    background-image: none;
+    color: #611879;
+    -webkit-text-fill-color: #611879;
   }
 
   .ulo-embed-crossfade {

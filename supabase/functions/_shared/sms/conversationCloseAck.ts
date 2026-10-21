@@ -100,7 +100,7 @@ export function hasOpenPendingAskForCloseAck(
 export function looksLikeInformationalOutbound(body: string): boolean {
   const t = body.trim()
   if (!t) return false
-  if (/\breply\s+(yes|no|y\/n|with|1\b|2\b|3\b)/i.test(t)) return false
+  if (/\breply\s+(?:yes|no|y\/n|with|[123])\b/i.test(t)) return false
   if (/\b(yes or no|y or n)\b/i.test(t)) return false
   if (/\bwhat do you need\b/i.test(t)) return false
   if (/\ba repair,\s*something about rent\b/i.test(t)) return false

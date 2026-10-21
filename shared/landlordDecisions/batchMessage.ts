@@ -82,11 +82,10 @@ export function formatLandlordPickBatchLine(
   return [head, vendorWindow, estimate].filter(Boolean).join(" - ")
 }
 
-function singleAskReply(ticketClass: LandlordPickTicketClass | null | undefined): string {
-  if (ticketClass === "proactive") {
-    return "Reply YES to approve, SNOOZE FRI to reschedule, or SKIP."
-  }
-  return "Reply YES to approve, or SNOOZE FRI to reschedule."
+function singleAskReply(
+  _ticketClass: LandlordPickTicketClass | null | undefined,
+): string {
+  return "Reply YES to approve or NO to decline."
 }
 
 function singleAskSms(item: LandlordPickBatchItem, includeAddress: boolean): string {
@@ -113,7 +112,7 @@ function exampleFromShown(shown: LandlordPickBatchItem[]): string {
   const first = shown[0]?.displayId
   const second = shown[1]?.displayId
   if (first == null || second == null) return ""
-  return `Reply like: ${first} yes, ${second} snooze fri. Or YES ALL.`
+  return `Reply like: ${first} yes, ${second} no. Or YES ALL.`
 }
 
 export function buildLandlordPickBatchSms(

@@ -53,18 +53,41 @@ function mockSupabaseForInvoicePaid(state: HandlerState) {
   const from = (table: string) => {
     let pendingUpdate: Record<string, unknown> | null = null
     let pendingInsert: Record<string, unknown> | null = null
+    let filters: Array<{ col: string; val: unknown }> = []
+    let wantSelectIds = false
 
+    // Mirror invoicePaidConfirmation_test mock: conditional approve uses
+    // .update().eq().eq().eq().select("id") and requires a non-empty row array.
     const finish = async () => {
+      if (pendingUpdate && table === "maintenance_invoices") {
+        const ok = filters.every(
+          (f) => String(state.invoice[f.col] ?? "") === String(f.val ?? ""),
+        )
+        if (!ok) {
+          return { data: wantSelectIds ? [] : null, error: null }
+        }
+        applyUpdate(table, pendingUpdate)
+        return {
+          data: wantSelectIds ? [{ id: state.invoice.id }] : null,
+          error: null,
+        }
+      }
       if (pendingUpdate) applyUpdate(table, pendingUpdate)
       if (pendingInsert) recordInsert(table, pendingInsert)
       return { data: pendingInsert ? { id: "row-1" } : null, error: null }
     }
 
     const chain: Record<string, unknown> = {}
+    chain.select = (..._args: unknown[]) => {
+      wantSelectIds = true
+      return chain
+    }
+    chain.eq = (col: string, val: unknown) => {
+      filters.push({ col, val })
+      return chain
+    }
     const passthrough = () => chain
     for (const m of [
-      "select",
-      "eq",
       "neq",
       "in",
       "not",
@@ -111,12 +134,7 @@ function mockSupabaseForInvoicePaid(state: HandlerState) {
     chain.then = (
       resolve: (v: unknown) => unknown,
       reject?: (e: unknown) => unknown,
-    ) =>
-      // Arrays for .select().eq()... without maybeSingle (vendor choice, etc.)
-      Promise.resolve({ data: [], error: null }).then(async (empty) => {
-        if (pendingUpdate || pendingInsert) return finish().then(resolve, reject)
-        return resolve(empty)
-      }, reject)
+    ) => finish().then(resolve, reject)
 
     return chain
   }

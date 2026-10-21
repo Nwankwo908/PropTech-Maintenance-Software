@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   startLifecycleWorkflow,
@@ -16,25 +25,19 @@ import {
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
 import {
-  WORKFLOW_CATEGORY_BADGE,
-  WORKFLOW_KANBAN_STAGES,
   WORKFLOW_PIPELINE_PAGE_SUBTITLE,
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
   type WorkflowKanbanCard,
-  type WorkflowKanbanStageId,
 } from '@/lib/adminWorkflowKanban'
 import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/workflowPipelineDetail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
+import { WorkflowKanbanBoard } from '@/components/workflowKanban/WorkflowKanbanBoard'
 import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
 import { mutateSearchParams, readCsvSet, writeCsvSet } from '@/lib/adminListUrlState'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { tryDemoActiveTasksFirstRowColumnId } from '@/lib/tryDemoAttentionGuide'
 
-type StageId = WorkflowKanbanStageId
-const STAGE_ORDER = WORKFLOW_KANBAN_STAGES
-const CATEGORY_BADGE = WORKFLOW_CATEGORY_BADGE
 type KanbanCard = WorkflowKanbanCard
 
 type WorkflowFilterKey = 'maintenance' | 'lease' | 'critical'
@@ -382,130 +385,41 @@ function StartWorkflowChooser({
   )
 }
 
-function KanbanCardItem({
-  card,
-  highlighted,
-  stagger = 0,
-  onSelect,
-  spotlightId,
-}: {
-  card: KanbanCard
-  highlighted?: boolean
-  stagger?: number
-  onSelect: (runId: string) => void
-  /** Tip step 7 cutout — set on first-row cards so the hole matches full card height. */
-  spotlightId?: string
-}) {
-  const badge = CATEGORY_BADGE[card.category]
-  const [checklistOpen, setChecklistOpen] = useState(false)
-  const checklist = card.inspectionChecklist
-  const hasChecklist = Boolean(checklist && checklist.length > 1)
+class WorkflowKanbanBoardErrorBoundary extends Component<
+  { children: ReactNode; onRetry: () => void },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null }
 
-  return (
-    <div
-      id={spotlightId ?? `workflow-card-${card.id}`}
-      data-workflow-card-id={card.id}
-      style={spotlightId ? undefined : ({ '--sa-stagger': stagger } as CSSProperties)}
-      className={[
-        // Tip cutout targets skip enter animation so getBoundingClientRect matches the card.
-        spotlightId ? '' : 'sa-stagger',
-        'sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
-        highlighted
-          ? 'border-[#101828] ring-2 ring-[#101828]/20'
-          : 'border-[#e5e7eb]',
-      ]
-        .filter(Boolean)
-        .join(' ')}
-    >
-      <button
-        type="button"
-        onClick={() => onSelect(card.id)}
-        className="flex w-full flex-col gap-2 text-left outline-none hover:opacity-95 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 rounded-[6px]"
-      >
-        <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 flex-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
-            {card.title}
-          </p>
-          {card.critical ? (
-            <span className="mt-1 size-2 shrink-0 rounded-full bg-[#fb2c36]" aria-hidden />
-          ) : null}
-        </div>
-        {card.workOrderSummary ? (
-          <p className="truncate text-[13px] font-medium leading-4 text-[#364153]">
-            {card.workOrderSummary}
-          </p>
-        ) : null}
-        {card.context && card.context !== '—' ? (
-          <p className="truncate text-[12px] leading-4 text-[#6a7282]">{card.context}</p>
-        ) : null}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {card.issueCategoryLabel ? (
-              <span className="inline-flex rounded-[6px] bg-[#e8f4f2] px-2 py-0.5 text-[11px] font-medium text-[#146b52]">
-                {card.issueCategoryLabel}
-              </span>
-            ) : null}
-            <span
-              className={`inline-flex rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${badge.className}`}
-            >
-              {badge.label}
-            </span>
-          </div>
-          {card.initials ? (
-            <span
-              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#6366f1] text-[10px] font-semibold text-white"
-              aria-hidden
-            >
-              {card.initials}
-            </span>
-          ) : (
-            <span className="size-6 shrink-0 rounded-full bg-[#e5e7eb]" aria-hidden />
-          )}
-        </div>
-      </button>
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
 
-      {hasChecklist ? (
-        <div className="border-t border-[#f3f4f6] pt-2">
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[Active Tasks] kanban crashed', error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="m-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[14px] text-[#b52a00]">
+          <p>Active Tasks hit a display error. Try refreshing this board.</p>
+          <p className="mt-1 text-[12px] text-[#9b1c1c]">{this.state.error.message}</p>
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              setChecklistOpen((open) => !open)
+            className="mt-3 rounded-[8px] bg-[#101828] px-3 py-1.5 text-[13px] font-medium text-white"
+            onClick={() => {
+              this.setState({ error: null })
+              this.props.onRetry()
             }}
-            className="flex w-full items-center justify-between gap-2 rounded-[6px] px-1 py-0.5 text-left text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5]"
-            aria-expanded={checklistOpen}
           >
-            <span>
-              {checklistOpen ? 'Hide' : 'Show'} fail items ({checklist!.length})
-            </span>
-            <span aria-hidden className="text-[#6a7282]">
-              {checklistOpen ? '▴' : '▾'}
-            </span>
+            Retry
           </button>
-          {checklistOpen ? (
-            <ul className="mt-2 flex max-h-48 flex-col gap-1.5 overflow-y-auto">
-              {checklist!.map((item) => (
-                <li
-                  key={item.ticketId}
-                  className="flex items-start justify-between gap-2 rounded-[6px] bg-[#f9fafb] px-2 py-1.5"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-[12px] font-medium text-[#0a0a0a]">
-                      {item.label}
-                    </p>
-                    <p className="text-[11px] text-[#6a7282]">{item.workOrderRef}</p>
-                  </div>
-                  <span className="shrink-0 rounded-[4px] bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#364153] ring-1 ring-[#e5e7eb]">
-                    {item.statusLabel}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </div>
-      ) : null}
-    </div>
-  )
+      )
+    }
+    return this.props.children
+  }
 }
 
 export function AdminWorkflowOperationsDashboard() {
@@ -572,16 +486,6 @@ export function AdminWorkflowOperationsDashboard() {
       .map((row) => buildWorkflowKanbanCard(row, runMetadata[row.id]))
     return all.filter((card) => cardMatchesWorkflowFilters(card, activeFilters))
   }, [allRuns, activeFilters, data?.runMetadata])
-
-  const columns = useMemo(() => {
-    const byStage = new Map<StageId, KanbanCard[]>()
-    for (const { id } of STAGE_ORDER) byStage.set(id, [])
-    for (const card of cards) byStage.get(card.stage)?.push(card)
-    return STAGE_ORDER.map((stage) => ({
-      ...stage,
-      cards: byStage.get(stage.id) ?? [],
-    }))
-  }, [cards])
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -730,73 +634,16 @@ export function AdminWorkflowOperationsDashboard() {
           onClear={() => writeFilters(new Set())}
         />
 
-        <div
-          className="min-w-0 overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden xl:overflow-visible"
-          aria-label="Workflow stages"
-          data-try-demo-active-tasks-ready={loading ? '0' : '1'}
-        >
-          <div className="flex w-max snap-x snap-mandatory gap-3 p-4 sm:gap-4 xl:grid xl:w-full xl:snap-none xl:grid-cols-4">
-            {columns.map((column, columnIndex) => (
-              <div
-                key={column.id}
-                style={{ '--sa-stagger': columnIndex } as CSSProperties}
-                className="sa-stagger-scale flex w-[min(85vw,20rem)] shrink-0 snap-start flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] min-h-[min(40vh,320px)] sm:w-[min(70vw,22rem)] xl:w-auto xl:min-w-0"
-              >
-                <div className="flex items-center justify-between gap-2 px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-semibold text-[#0a0a0a]">
-                      {column.label}
-                    </span>
-                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#e5e7eb] px-1.5 text-[11px] font-medium tabular-nums text-[#364153]">
-                      {column.cards.length}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setChooserOpen(true)}
-                    aria-label={`Add workflow to ${column.label}`}
-                    className="sa-press flex size-6 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] hover:bg-[#e5e7eb] hover:text-[#101828]"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
-                      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="flex flex-col gap-3 px-3 pb-3">
-                  {loading ? (
-                    <div className="min-h-[7.5rem] w-full rounded-[10px]">
-                      <p className="px-1 py-6 text-center text-[12px] text-[#6a7282]">Loading…</p>
-                    </div>
-                  ) : column.cards.length === 0 ? (
-                    <div
-                      id={tryDemoActiveTasksFirstRowColumnId(columnIndex)}
-                      className="min-h-[7.5rem] w-full rounded-[10px]"
-                    >
-                      <p className="px-1 py-6 text-center text-[12px] text-[#9ca3af]">
-                        No tasks in this stage
-                      </p>
-                    </div>
-                  ) : (
-                    column.cards.map((card, cardIndex) => (
-                      <KanbanCardItem
-                        key={card.id}
-                        card={card}
-                        stagger={Math.min(cardIndex, 6)}
-                        highlighted={highlightRunId === card.id}
-                        onSelect={openRun}
-                        spotlightId={
-                          cardIndex === 0
-                            ? tryDemoActiveTasksFirstRowColumnId(columnIndex)
-                            : undefined
-                        }
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <WorkflowKanbanBoardErrorBoundary onRetry={() => void load()}>
+          <WorkflowKanbanBoard
+            cards={cards}
+            loading={loading}
+            highlightRunId={highlightRunId}
+            onSelect={openRun}
+            onAdd={() => setChooserOpen(true)}
+            onReload={load}
+          />
+        </WorkflowKanbanBoardErrorBoundary>
       </section>
     </main>
   )

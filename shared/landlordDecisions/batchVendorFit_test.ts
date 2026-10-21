@@ -42,3 +42,17 @@ Deno.test("a plumber is proposed for a plumbing ticket", () => {
   assertEquals(proposal.vendorName, "ABC Plumbing")
   assertEquals(proposal.vendorId, "plumb-1")
 })
+
+Deno.test("a trade match is rejected when dispatchEligible is false", () => {
+  const proposal = pickBatchVendorProposal({
+    vendorId: "pest-1",
+    vendorName: "Ecosafe Pest Management LLC",
+    vendorCategory: "pest_control",
+    issueCategory: "pest",
+    windowLabel: "Wed AM",
+    dispatchEligible: false,
+  })
+  assertEquals(proposal.matched, false)
+  assertEquals(proposal.vendorId, null)
+  assertEquals(proposal.vendorName, "needs a vendor")
+})

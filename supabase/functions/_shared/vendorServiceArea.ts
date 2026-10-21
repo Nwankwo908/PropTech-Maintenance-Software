@@ -124,14 +124,33 @@ export function vendorServiceStateCodes(input: {
   }
   const license = normalizeUsStateCode(input.licenseState)
   if (license) codes.add(license)
+  // Verified service-area / license first; roster state only when nothing else
+  // is known (never invent coverage from an unrelated mailing address alone
+  // when verification data exists — but empty verification may use roster).
+  if (codes.size === 0) {
+    const roster = normalizeUsStateCode(input.rosterState)
+    if (roster) codes.add(roster)
+  }
   return [...codes]
 }
 
 /**
- * When the job's state is known, the vendor must serve that state.
- * Unknown job location does not block matching.
+ * Booking / dispatch eligibility: vendor must serve the job's state.
+ * Unknown job location blocks booking (preliminary discovery uses
+ * `vendorCoversJobStateForDiscovery` instead).
  */
 export function vendorCoversJobState(
+  vendorStates: string[],
+  jobState: string | null | undefined,
+): boolean {
+  const job = normalizeUsStateCode(jobState ?? "")
+  if (!job) return false
+  if (vendorStates.length === 0) return false
+  return vendorStates.includes(job)
+}
+
+/** Preliminary candidate search may proceed before the job address is known. */
+export function vendorCoversJobStateForDiscovery(
   vendorStates: string[],
   jobState: string | null | undefined,
 ): boolean {

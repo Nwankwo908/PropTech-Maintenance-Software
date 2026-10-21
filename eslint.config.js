@@ -6,9 +6,15 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores([
+    'dist',
+    '.readiness',
+    // Edge Functions use Deno lint (scripts/readiness/check-lint.sh). Browser globals
+    // here would mis-flag Deno APIs and are not the backend standards gate.
+    'supabase/functions/**',
+  ]),
   {
-    files: ['**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'shared/**/*.{ts,tsx}', 'vite.config.ts', 'vite/**/*.{ts,tsx}'],
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,
@@ -23,6 +29,14 @@ export default defineConfig([
       // This rule is currently too noisy for common patterns in this app (async loads, auth gates).
       // We rely on `react-hooks/exhaustive-deps` and good review practices instead.
       'react-hooks/set-state-in-effect': 'off',
+    },
+  },
+  {
+    files: ['scripts/**/*.{ts,mjs,js}'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.node,
     },
   },
   {

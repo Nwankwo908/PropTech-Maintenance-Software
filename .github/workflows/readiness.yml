@@ -1,0 +1,141 @@
+name: Application readiness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Each job is an independently visible required check.
+# Packaging success must not mask type/lint/behavior/connected failures.
+
+jobs:
+  packaging:
+    name: Packaging (Vite production build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run check:packaging
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-packaging
+          path: .readiness/
+          if-no-files-found: ignore
+
+  frontend-types:
+    name: Frontend type correctness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run check:frontend-types
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-frontend-types
+          path: .readiness/
+          if-no-files-found: ignore
+
+  backend-types:
+    name: Backend type correctness (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          # Newer than edge bundler is OK for check with --no-lock; do not commit new locks.
+          deno-version: v2.1.4
+      - run: npm run check:backend-types
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-backend-types
+          path: .readiness/
+          if-no-files-found: ignore
+
+  lint:
+    name: Coding standards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.1.4
+      - run: npm ci
+      - run: npm run check:lint
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-lint
+          path: .readiness/
+          if-no-files-found: ignore
+
+  behavior-frontend:
+    name: Automated behavior (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run check:behavior-frontend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-behavior-frontend
+          path: .readiness/
+          if-no-files-found: ignore
+
+  behavior-backend:
+    name: Automated behavior (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.1.4
+      - run: npm run check:behavior-backend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-behavior-backend
+          path: .readiness/
+          if-no-files-found: ignore
+
+  connected-workflows:
+    name: Connected workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.1.4
+      - name: Install PostgreSQL 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16 postgresql-client-16
+          echo "PG_BIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
+      - run: npm run check:connected-workflows
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-connected-workflows
+          path: .readiness/
+          if-no-files-found: ignore

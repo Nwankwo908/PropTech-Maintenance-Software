@@ -800,6 +800,19 @@ export async function assignVendorAndNotify(
     })
   }
   if (!vendor) {
+    // Open landlord ask must survive a refresh rematch that finds nothing.
+    // Never overwrite AWAITING_LANDLORD_VENDOR_CHOICE or fall through to no_vendor.
+    if (alreadyAwaitingChoice && payload.landlordAcknowledged !== true) {
+      console.log(
+        "[vendor-notify] keep open landlord choice ask; rematch found no assignable vendor",
+        { ticketId: payload.ticketId },
+      )
+      return {
+        assigned: false,
+        vendorId: null,
+        skipReason: "awaiting_landlord_choice",
+      }
+    }
     console.warn("[vendor-notify] no active vendor; skipping assignment and notify", {
       ticketId: payload.ticketId,
       issueCategory,

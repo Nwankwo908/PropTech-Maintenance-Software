@@ -276,13 +276,32 @@ export function isCancelledOnActiveTasks(row: {
   return vws === 'cancelled' || vws === 'archived'
 }
 
-/** Completed repairs belong in Active Tasks Completed — not Needs Your Attention. */
+/**
+ * Completed repairs belong in Active Tasks Completed — not Needs Your Attention.
+ *
+ * For maintenance, only `vendor_work_status = completed` counts. Intake/run
+ * `status = completed` means the SMS wizard closed (status ask, handoff) — the
+ * repair itself may still be unassigned / in progress.
+ */
 export function isCompletedOnActiveTasks(row: {
   status?: string | null
   vendorWorkStatus?: string | null
+  templateId?: string | null
 }): boolean {
-  if ((row.status ?? '').trim().toLowerCase() === 'completed') return true
-  return (row.vendorWorkStatus ?? '').trim().toLowerCase() === 'completed'
+  const vws = (row.vendorWorkStatus ?? '').trim().toLowerCase()
+  if (vws === 'completed') return true
+
+  const template = (row.templateId ?? '').trim()
+  const isMaintenanceRepair =
+    template === 'maintenance_intake' ||
+    template === 'maintenance_request' ||
+    template === 'vendor_job_response' ||
+    // Any linked ticket status (including unassigned) → repair card.
+    Boolean(vws)
+
+  if (isMaintenanceRepair) return false
+
+  return (row.status ?? '').trim().toLowerCase() === 'completed'
 }
 
 export function isSettledOnActiveTasks(row: {

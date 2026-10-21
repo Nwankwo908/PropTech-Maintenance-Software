@@ -10,6 +10,7 @@ export type { VendorTrade, VendorTradeSlug } from './vendorTradeDefinitions.ts'
 
 export type IssueType =
   | 'leak'
+  | 'flooding'
   | 'plumbing'
   | 'electrical'
   | 'hvac'

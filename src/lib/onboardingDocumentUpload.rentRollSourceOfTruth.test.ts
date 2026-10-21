@@ -289,7 +289,9 @@ describe('rent roll vs lease agreement source of truth', () => {
       'Jordan Rivera',
     ])
     expect(review.residents.every((row) => row.unit === '1')).toBe(true)
-    expect(review.residents.every((row) => row.needsReview === false)).toBe(true)
+    // Empty / illegible lease units still default to "1" for inventory, but must
+    // stay flagged for review — do not silently clear uncertainty.
+    expect(review.residents.some((row) => row.needsReview === true)).toBe(true)
     expect(review.units.some((row) => row.label === '1')).toBe(true)
   })
 

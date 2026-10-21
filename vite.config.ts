@@ -41,6 +41,11 @@ export default defineConfig({
       '@': path.resolve(root, 'src'),
       '@shared': path.resolve(root, 'shared'),
     },
+    // Keep a single React copy so @dnd-kit hooks don't see a null dispatcher.
+    dedupe: ['react', 'react-dom'],
+  },
+  optimizeDeps: {
+    include: ['@dnd-kit/core', '@dnd-kit/utilities'],
   },
   // Lets Cursor / tunnel URLs and LAN IPs open the app; avoids "host is not allowed" on dev/preview.
   // Dev default: 5173. Preview (production bundle): 4173 — use the URL printed by the terminal, or /admin/login on that origin.

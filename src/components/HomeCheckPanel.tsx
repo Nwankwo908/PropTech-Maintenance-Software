@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import { notifyInspectionSessionChanged } from '@/lib/inspectionSession'
 import { HOME_CHECK_PHOTOS, type HomeCheckRole } from '@shared/homeCheck'
+import { assertPilotAllows, pilotWorkflowGate } from '@shared/pilotGate'
 
 export function HomeCheckPanel(
   { building, propertyId }: { building: string; propertyId?: string | null },
@@ -68,7 +69,16 @@ export function HomeCheckPanel(
       window.clearInterval(timer)
     }
   }, [scope, refresh])
+  const homeCheckPilot = assertPilotAllows('home_checks', {
+    VITE_PILOT_STRICT: import.meta.env.VITE_PILOT_STRICT,
+  })
+  const homeCheckExcluded = !homeCheckPilot.ok
+
   async function start() {
+    if (homeCheckExcluded && !homeCheckPilot.ok) {
+      setError(homeCheckPilot.reason)
+      return
+    }
     setBusy(true)
     setError('')
     setLink('')
@@ -129,6 +139,14 @@ export function HomeCheckPanel(
           Home Check · Start each property’s baseline with its water heater and heating system:
           make, model, approximate age and visible condition.
         </p>
+        {homeCheckExcluded || pilotWorkflowGate('home_checks').status === 'excluded'
+          ? (
+            <p className='mt-2 text-sm text-[#9a3412]' role='status'>
+              Home Checks stay off this pilot until capture and confirmation are verified
+              end to end. Starting a new check is blocked when pilot strict mode is on.
+            </p>
+          )
+          : null}
       </header>
       <ul className='space-y-1 text-xs text-[#64748b]'>
         {EQUIPMENT_PHOTO_TIPS.map((tip) => <li key={tip}>{tip}</li>)}
@@ -264,12 +282,18 @@ export function HomeCheckPanel(
       )}
       <button
         type='button'
-        disabled={busy || !scope || !supabase || (role === 'tenant' && !unitId) ||
-          (role === 'contractor' && !windowEnd)}
+        disabled={busy || homeCheckExcluded || !scope || !supabase ||
+          (role === 'tenant' && !unitId) || (role === 'contractor' && !windowEnd)}
         onClick={() => void start()}
         className='rounded bg-[#186179] px-4 py-2 text-sm text-white disabled:opacity-50'
       >
-        {busy ? 'Working…' : role === 'landlord' ? 'Open my Home Check' : 'Send Home Check'}
+        {busy
+          ? 'Working…'
+          : homeCheckExcluded
+          ? 'Home Check unavailable in pilot'
+          : role === 'landlord'
+          ? 'Open my Home Check'
+          : 'Send Home Check'}
       </button>
       {link && (
         <div className='space-y-2 rounded border border-[#e2e8f0] p-3'>

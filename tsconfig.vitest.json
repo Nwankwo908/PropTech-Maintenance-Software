@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.vitest.tsbuildinfo",
+    "types": ["vite/client", "vitest/globals"]
+  },
+  "include": ["src", "shared"],
+  "exclude": [
+    "supabase/functions",
+    "node_modules",
+    "dist",
+    "**/*_test.ts",
+    "**/*_test.tsx"
+  ]
+}

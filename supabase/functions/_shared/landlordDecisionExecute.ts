@@ -32,6 +32,7 @@ export type PickSnapshot = {
   ticket_class?: "reactive" | "proactive" | null
   issue?: string | null
   unit_label?: string | null
+  property_address?: string | null
 }
 
 type BatchItemRow = {
@@ -51,7 +52,7 @@ async function proposeUnclearDecisions(input: {
   if (!key) return []
   const prompt = [
     "Turn the unclear landlord text into JSON only.",
-    "Schema: [{\"display_id\":number,\"action\":\"yes\"|\"options\"|\"self\"|\"snooze\"|\"skip\",\"params\":{\"snooze_until\":\"YYYY-MM-DD\"},\"confidence\":0-1}]",
+    "Schema: [{\"display_id\":number,\"action\":\"yes\"|\"no\"|\"options\"|\"self\"|\"snooze\"|\"skip\",\"params\":{\"snooze_until\":\"YYYY-MM-DD\"},\"confidence\":0-1}]",
     "Candidates:",
     ...input.candidates.map((row) => `#${row.displayId} ${row.ticketClass}`),
     "Unclear text:",
@@ -211,6 +212,7 @@ export async function tryHandleLandlordPickBatchInbound(
       windowLabel: row.snapshot?.window?.trim() || "",
       issue: row.snapshot?.issue?.trim() || "",
       unitLabel: row.snapshot?.unit_label?.trim() || "",
+      propertyAddress: row.snapshot?.property_address?.trim() || "",
       vendorAvailable: available,
       windowAvailable: available && Boolean(row.snapshot?.window?.trim() || available),
     })
@@ -279,7 +281,10 @@ export async function tryHandleLandlordPickBatchInbound(
       })
       if (!applied) {
         const index = lines.findIndex((line) => line.displayId === mutation.displayId)
-        const text = `#${mutation.displayId} already decided.`
+        const showId = candidates.length > 1
+        const text = showId
+          ? `#${mutation.displayId} already decided.`
+          : "Already decided."
         if (index >= 0) lines[index] = { displayId: mutation.displayId, text, kind: "unclear" }
         else lines.push({ displayId: mutation.displayId, text, kind: "unclear" })
       }

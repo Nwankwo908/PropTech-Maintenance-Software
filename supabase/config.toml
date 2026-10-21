@@ -36,6 +36,12 @@ verify_jwt = false
 import_map = "./functions/admin-reassign-vendor/deno.json"
 entrypoint = "./functions/admin-reassign-vendor/index.ts"
 
+[functions.admin-move-workflow-stage]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-move-workflow-stage/deno.json"
+entrypoint = "./functions/admin-move-workflow-stage/index.ts"
+
 [functions.vendor-submit-maintenance-invoice]
 enabled = true
 verify_jwt = false
@@ -547,3 +553,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/home-check/deno.json"
 entrypoint = "./functions/home-check/index.ts"
+
+[functions.integration-sms-journey]
+enabled = true
+verify_jwt = false
+import_map = "./functions/integration-sms-journey/deno.json"
+entrypoint = "./functions/integration-sms-journey/index.ts"

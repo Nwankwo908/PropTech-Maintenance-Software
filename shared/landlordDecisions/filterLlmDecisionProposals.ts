@@ -6,6 +6,7 @@ import type { DecisionAction, DecisionCandidate, DecisionIntent } from "./parseD
 
 const ALLOWED: ReadonlySet<DecisionAction> = new Set([
   "yes",
+  "no",
   "options",
   "self",
   "snooze",

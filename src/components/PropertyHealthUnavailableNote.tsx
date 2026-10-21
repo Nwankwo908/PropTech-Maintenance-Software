@@ -53,7 +53,7 @@ export function PropertyHealthUnavailableNote() {
           }}
           className="sa-link mt-2 text-[12px] font-semibold leading-4 text-[#186179]"
         >
-          Profile setup →
+          Set up portfolio →
         </button>
       </div>
       <ProfileSetupPointingArrow active={pointing} />

@@ -2,6 +2,7 @@
  * Public client wrappers for resident rent Stripe Checkout.
  */
 import { supabase } from '@/lib/supabase'
+import { assertPilotAllows } from '@shared/pilotGate'
 
 export type RentCheckoutCreateResult = {
   url: string
@@ -51,6 +52,14 @@ export async function createRentPaymentCheckout(params: {
   runId: string
   residentId: string
 }): Promise<RentCheckoutCreateResult> {
+  const pilotGate = assertPilotAllows('rent_payment_ledger', {
+    VITE_PILOT_STRICT: import.meta.env.VITE_PILOT_STRICT,
+  })
+  if (!pilotGate.ok) {
+    throw new Error(
+      'Rent checkout is excluded from this pilot until ledger reconciliation is verified.',
+    )
+  }
   const json = await invokeRentPaymentCheckout({
     action: 'create',
     runId: params.runId,

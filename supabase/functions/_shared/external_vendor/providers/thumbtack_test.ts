@@ -121,7 +121,14 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
   const hit = hits[0]
   if (hit.source !== "thumbtack") throw new Error("source")
   if (hit.providerRef !== "468046965846925323") throw new Error("providerRef")
-  if (hit.listingUrl !== "https://thumbtack.com/example") throw new Error("listingUrl")
+  // Partner UTM is appended deliberately for attribution — assert it, not strip it.
+  if (
+    !hit.listingUrl?.startsWith("https://thumbtack.com/example") ||
+    !hit.listingUrl.includes("utm_source=cma-ulohome") ||
+    !hit.listingUrl.includes("utm_medium=partnership")
+  ) {
+    throw new Error(`listingUrl ${hit.listingUrl}`)
+  }
   if (
     hit.requestFlowUrl !==
       "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome&utm_medium=partnership"

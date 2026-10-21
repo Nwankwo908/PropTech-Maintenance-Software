@@ -17,6 +17,7 @@ import {
 } from "../_shared/engine/rentStripeCheckout.ts"
 import { runAmountDue, runBillingPeriod } from "../_shared/engine/workflowRuns.ts"
 import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
+import { assertPilotAllows } from "../../../shared/pilotGate.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +50,18 @@ serve(async (req) => {
       {
         error:
           "Rent payment is not configured. Set STRIPE_SECRET_KEY and APP_URL Edge secrets.",
+      },
+      503,
+    )
+  }
+
+  const pilotGate = assertPilotAllows("rent_payment_ledger", Deno.env)
+  if (!pilotGate.ok) {
+    return jsonResponse(
+      {
+        error:
+          "Rent checkout is excluded from this pilot until ledger reconciliation is verified.",
+        pilot: { status: pilotGate.status, reason: pilotGate.reason },
       },
       503,
     )

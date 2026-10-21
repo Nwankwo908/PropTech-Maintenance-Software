@@ -15,6 +15,7 @@ import {
   lifecycleStepKey,
   vendorWorkStatusChipLabel,
   type WorkflowKanbanCategory,
+  type WorkflowKanbanStageId,
 } from '@/lib/adminWorkflowKanban'
 import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
 import {
@@ -141,6 +142,11 @@ export type WorkflowPipelineDetail = {
   statusContext: string | null
   progressSteps: WorkflowPipelineStep[]
   progressCaption: string
+  /**
+   * One short sentence under Repair progress: who acts next.
+   * Built only from saved ticket/run fields — never invented.
+   */
+  progressNextAction: string | null
   overviewFields: WorkflowPipelineField[]
   maintenanceDetails: WorkflowPipelineField[]
   /** Vendor invoice + 1099-NEC YTD tracking for maintenance jobs. */
@@ -173,15 +179,17 @@ export type WorkflowPipelineDetail = {
       runId: string | null
     }>
   } | null
+  /**
+   * Active Tasks board stage + vendor — used by right-rail override dropdowns
+   * (same mutations as kanban drag / Move to…).
+   */
+  kanbanStage: WorkflowKanbanStageId | null
+  templateId: string
+  assignedVendorId: string | null
+  assignedVendorName: string | null
+  stageMoveTicketIds: string[]
+  inspectionReportId: string | null
 }
-
-const MAINTENANCE_PIPELINE_LABELS = [
-  'Issue',
-  'Work',
-  'Evidence',
-  'Invoice',
-  'Property History',
-] as const
 
 const RENT_PIPELINE_LABELS = [
   'Rent Due',
@@ -413,41 +421,155 @@ function progressCaptionFromSteps(steps: WorkflowPipelineStep[]): string {
     -1,
   )
   const progressIndex = activeIndex >= 0 ? activeIndex : Math.max(0, lastCompleteIndex)
-  return `Stage ${progressIndex + 1} of ${steps.length}`
+  return `Step ${progressIndex + 1} of ${steps.length}`
+}
+
+function ticketCompletionPhotoPaths(ticket: Record<string, unknown> | null): string[] {
+  const completion = ticket?.completion_photo_paths
+  if (!Array.isArray(completion)) return []
+  return completion.map((entry) => asString(entry)).filter(Boolean)
 }
 
 function ticketMediaPaths(ticket: Record<string, unknown> | null): string[] {
   const photos = ticket?.photo_paths
-  const completion = ticket?.completion_photo_paths
   const fromPhotos = Array.isArray(photos)
     ? photos.map((entry) => asString(entry)).filter(Boolean)
     : []
-  const fromCompletion = Array.isArray(completion)
-    ? completion.map((entry) => asString(entry)).filter(Boolean)
-    : []
-  return [...fromPhotos, ...fromCompletion]
+  return [...fromPhotos, ...ticketCompletionPhotoPaths(ticket)]
 }
 
-function deriveMaintenancePipelineIndex(
-  row: AdminWorkflowRow,
-  ticket: Record<string, unknown> | null,
-  invoice: Record<string, unknown> | null,
-): number {
-  const vendorStatus = asString(ticket?.vendor_work_status).toLowerCase()
-  const assignedVendorId = asString(ticket?.assigned_vendor_id) || asString(row.assignedVendorId)
-  const hasVendor = Boolean(assignedVendorId)
-  const hasInvoice = Boolean(
-    asString(invoice?.invoice_number) ||
-      asString(invoice?.status) ||
-      (asFiniteNumber(invoice?.total_cost) ?? 0) > 0,
-  )
-  const hasEvidence = ticketMediaPaths(ticket).length > 0 || vendorStatus === 'completed'
+/**
+ * Work-phase label for the third repair-progress step.
+ * Uses saved schedule when present; otherwise reflects work underway.
+ */
+export function maintenanceRepairWorkPhaseLabel(input: {
+  scheduledAt: string | null | undefined
+  vendorWorkStatus: string | null | undefined
+  hasCompletionPhotos?: boolean
+}): string {
+  // Visit window is the clearest landlord signal when present.
+  if (input.scheduledAt?.trim()) return 'Scheduled'
+  // Only label this step "Completion photos" when close-out photos are on the ticket
+  // (that is the step that collects them — not intake report photos).
+  if (input.hasCompletionPhotos) return 'Completion photos'
+  return 'In progress'
+}
 
-  if (row.status === 'completed' || vendorStatus === 'completed') return 5
-  if (hasInvoice) return 4
-  if (hasEvidence) return 3
-  if (hasVendor || vendorStatus === 'in_progress' || vendorStatus === 'accepted') return 2
-  return 1
+/**
+ * Four board-aligned repair steps. Caption count and visible steps share this array.
+ * 1 Reported · 2 Awaiting vendor · 3 Scheduled | In progress | Completion photos · 4 Complete
+ */
+export function buildMaintenanceRepairProgressSteps(input: {
+  kanbanStage: WorkflowKanbanStageId
+  vendorWorkStatus: string | null | undefined
+  scheduledAt: string | null | undefined
+  hasCompletionPhotos?: boolean
+}): WorkflowPipelineStep[] {
+  const workLabel = maintenanceRepairWorkPhaseLabel({
+    scheduledAt: input.scheduledAt,
+    vendorWorkStatus: input.vendorWorkStatus,
+    hasCompletionPhotos: input.hasCompletionPhotos,
+  })
+  const labels = ['Reported', 'Awaiting vendor', workLabel, 'Complete'] as const
+  const activeIndex =
+    input.kanbanStage === 'completed'
+      ? 4
+      : input.kanbanStage === 'in_progress'
+        ? 3
+        : input.kanbanStage === 'assigned'
+          ? 2
+          : 1
+  return buildProgressSteps(labels, activeIndex)
+}
+
+/** Who acts next — only from saved fields. */
+export function buildMaintenanceRepairNextAction(input: {
+  vendorWorkStatus: string | null
+  vendorName: string | null
+  scheduledAt: string | null
+  scheduleConfirmedAt: string | null
+  awaitingLandlordChoice?: boolean
+  stalePendingAcceptNeedsAdmin?: boolean
+  hasCompletionPhotos?: boolean
+}): string {
+  const vendor = input.vendorName?.trim() || null
+  const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
+
+  if (input.awaitingLandlordChoice) {
+    return 'Choose a vendor to move this repair forward.'
+  }
+
+  if (input.stalePendingAcceptNeedsAdmin) {
+    return vendor
+      ? `${vendor} never accepted. Choose a vendor to move this repair forward.`
+      : 'Choose a vendor to move this repair forward.'
+  }
+
+  if (vws === 'completed') {
+    return vendor ? `Work marked complete by ${vendor}.` : 'Work marked complete.'
+  }
+  if (vws === 'cancelled') {
+    return 'This work order was cancelled.'
+  }
+
+  if (vws === 'pending_accept') {
+    return vendor
+      ? `Waiting for ${vendor} to accept. No action needed.`
+      : 'Waiting for a vendor to accept. No action needed.'
+  }
+
+  if (vws === 'declined') {
+    return vendor
+      ? `${vendor} declined. Choose a vendor to move this repair forward.`
+      : 'Choose a vendor to move this repair forward.'
+  }
+
+  if (vws === 'unassigned' || !vws) {
+    return 'Choose a vendor to move this repair forward.'
+  }
+
+  const scheduledAt = input.scheduledAt?.trim() || null
+  if (scheduledAt) {
+    const when = formatVisitWhenShort(scheduledAt)
+    if (when) {
+      if (input.scheduleConfirmedAt?.trim()) {
+        return vendor ? `${vendor} is scheduled for ${when}.` : `Visit scheduled for ${when}.`
+      }
+      return vendor
+        ? `${vendor} proposed ${when}. Waiting on confirmation.`
+        : `Visit proposed for ${when}. Waiting on confirmation.`
+    }
+  }
+
+  if (vws === 'accepted') {
+    return vendor
+      ? `${vendor} accepted. Ulo is coordinating a visit time with the resident.`
+      : 'Vendor accepted. Ulo is coordinating a visit time with the resident.'
+  }
+
+  if (vws === 'in_progress') {
+    if (input.hasCompletionPhotos) {
+      return vendor
+        ? `${vendor} uploaded completion photos. No action needed.`
+        : 'Completion photos are on file. No action needed.'
+    }
+    return vendor ? `Repair is in progress with ${vendor}.` : 'Repair is in progress.'
+  }
+
+  return vendor ? `Assigned to ${vendor}.` : 'Repair is open.'
+}
+
+/** Compact visit time from saved ISO — never invents a slot. */
+function formatVisitWhenShort(scheduledAt: string): string | null {
+  const date = new Date(scheduledAt)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function deriveRentPipelineIndex(
@@ -1495,6 +1617,7 @@ export async function fetchWorkflowPipelineDetail(
         { label: 'Inspection day', state: 'upcoming' as const },
       ],
       progressCaption: 'Prepare for inspection',
+      progressNextAction: null,
       overviewFields: [
         { label: 'Type', value: 'Tenant notice inspection' },
         { label: 'Property', value: row.propertyLabel || '—' },
@@ -1517,6 +1640,12 @@ export async function fetchWorkflowPipelineDetail(
       vendorConversationId: null,
       uloThread: null,
       inspectionGroup: null,
+      kanbanStage: null,
+      templateId: row.templateId,
+      assignedVendorId: null,
+      assignedVendorName: null,
+      stageMoveTicketIds: [],
+      inspectionReportId: null,
     }
   }
 
@@ -1657,12 +1786,26 @@ export async function fetchWorkflowPipelineDetail(
         `Current stage: ${stage.label}.`
 
   const lifecyclePipeline = deriveLifecyclePipeline(row, metadata)
-  const pipelineIndex = isMaintenance
-    ? deriveMaintenancePipelineIndex(row, ticket, invoice)
-    : lifecyclePipeline.index
-  const pipelineLabels = isMaintenance
-    ? MAINTENANCE_PIPELINE_LABELS
-    : lifecyclePipeline.labels
+  const hasCompletionPhotos = ticketCompletionPhotoPaths(ticket).length > 0
+  const maintenanceProgressSteps = isMaintenance
+    ? buildMaintenanceRepairProgressSteps({
+        kanbanStage: card.stage,
+        vendorWorkStatus,
+        scheduledAt,
+        hasCompletionPhotos,
+      })
+    : null
+  const progressNextAction = isMaintenance
+    ? buildMaintenanceRepairNextAction({
+        vendorWorkStatus,
+        vendorName: enrichment.vendorName,
+        scheduledAt,
+        scheduleConfirmedAt,
+        awaitingLandlordChoice,
+        stalePendingAcceptNeedsAdmin,
+        hasCompletionPhotos,
+      })
+    : null
 
   const residentName =
     asString(enrichment.resident?.full_name) || asString(ticket?.resident_name) || row.residentName || ''
@@ -1733,6 +1876,11 @@ export async function fetchWorkflowPipelineDetail(
         }))
       : null
 
+  const progressSteps =
+    moveOutProgressSteps ??
+    maintenanceProgressSteps ??
+    buildProgressSteps(lifecyclePipeline.labels, lifecyclePipeline.index)
+
   return {
     runId: row.id,
     workOrderRef: formatWorkOrderRef(row),
@@ -1750,10 +1898,9 @@ export async function fetchWorkflowPipelineDetail(
       .join(' · '),
     description,
     statusContext,
-    progressSteps: moveOutProgressSteps ?? buildProgressSteps(pipelineLabels, pipelineIndex),
-    progressCaption: moveOutProgressSteps
-      ? progressCaptionFromSteps(moveOutProgressSteps)
-      : `Stage ${Math.min(pipelineIndex, pipelineLabels.length)} of ${pipelineLabels.length}`,
+    progressSteps,
+    progressCaption: progressCaptionFromSteps(progressSteps),
+    progressNextAction,
     overviewFields: isMoveOut
       ? [
           { label: 'Resident', value: residentName || '—' },
@@ -1828,5 +1975,11 @@ export async function fetchWorkflowPipelineDetail(
     moveOutDateLabel,
     sourceLeaseRenewalRunId: asString(metadata.source_workflow_run_id),
     inspectionGroup,
+    kanbanStage: isMaintenance ? card.stage : null,
+    templateId: row.templateId,
+    assignedVendorId: card.assignedVendorId,
+    assignedVendorName: enrichment.vendorName?.trim() || null,
+    stageMoveTicketIds: card.stageMoveTicketIds,
+    inspectionReportId: card.inspectionReportId ?? row.inspectionReportId ?? null,
   }
 }

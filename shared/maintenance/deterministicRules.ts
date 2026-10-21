@@ -97,7 +97,7 @@ const GAS_RE =
   /\b(gas\s*smell|smell\s*(?:of\s*)?gas|smell\s+gas|gas\s*leak|natural\s*gas|carbon\s*monoxide|co\s+(?:alarm|detector)|rotten\s+eggs?|smells?\s+like\s+(?:rotten\s+)?(?:eggs?|sulfur)|sulfur\s+smell)\b/i
 const FIRE_RE = /\b(fire|smoke|flames?|burning)\b/i
 const FLOOD_ACTIVE_RE =
-  /\b(pouring|gushing|flooding|water\s*everywhere|burst|active\s*leak|soaking)\b/i
+  /\b(pouring|gushing|flood|flooding|flooded|water\s*everywhere|burst|active\s*leak|soaking)\b/i
 
 const INJURY_RE =
   /\b(?:hurt|injured|injury|almost\s+hurt|nearly\s+hurt|cut\s+(?:my|her|his|their)|trip(?:ped|ping)?|slip(?:ped|ping)?|fell|fall(?:ing)?|catch(?:ed|ing)?\s+onto|caught\s+onto|sandal|unsafe|sharp\s+edge|hazard)\b/i
@@ -175,9 +175,13 @@ export function matchDeterministicRules(text: string): RuleHit[] {
   push(
     PLUMBING_RE,
     'plumbing',
-    /\b(leak|drip|flood|overflow)\b/i.test(hay) ? 'leak' : 'plumbing',
+    /\b(flood|flooding|flooded)\b/i.test(hay)
+      ? 'flooding'
+      : /\b(leak|drip|overflow)\b/i.test(hay)
+        ? 'leak'
+        : 'plumbing',
     0.92,
-    /\b(overflow|flood|gushing|pouring)\b/i.test(hay) ? 'urgent' : null,
+    /\b(overflow|flood|flooding|flooded|gushing|pouring)\b/i.test(hay) ? 'urgent' : null,
   )
   if (WATER_OUTAGE_RE.test(hay)) {
     const wholeHome = WATER_OUTAGE_WHOLE_HOME_RE.test(hay)
@@ -272,7 +276,7 @@ export function matchDeterministicRules(text: string): RuleHit[] {
   if (FLOOD_ACTIVE_RE.test(hay) && PLUMBING_RE.test(hay) && !ceilingWater) {
     hits.push({
       trade: 'plumbing',
-      issueType: 'leak',
+      issueType: 'flooding',
       keywords: ['active water'],
       severityBoost: 'urgent',
       emergency: 'flood',
@@ -281,7 +285,7 @@ export function matchDeterministicRules(text: string): RuleHit[] {
   } else if (FLOOD_ACTIVE_RE.test(hay) && ceilingWater) {
     hits.push({
       trade: 'other',
-      issueType: 'leak',
+      issueType: 'flooding',
       keywords: ['active ceiling water'],
       severityBoost: 'urgent',
       emergency: 'flood',

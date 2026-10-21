@@ -69,6 +69,10 @@ export type NotifyLandlordAttentionParams = {
   unitId?: string | null
   residentId?: string | null
   propertyId?: string | null
+  /** When true, omit the trailing "Ref: WO-…" line (assign-vendor landlord texts). */
+  omitWorkOrderRef?: boolean
+  landlordFirstName?: string | null
+  invoicePaidConfirmation?: AwaitingInvoicePaidConfirmation | null
 }
 
 export type NotifyLandlordAttentionResult = {
@@ -158,17 +162,51 @@ export function formatReportedAgo(
   return days === 1 ? "reported 1 day ago" : `reported ${days} days ago`
 }
 
+function tradePhraseFromCategory(issueCategory: string | null | undefined): string | null {
+  const cat = (issueCategory ?? "").trim().toLowerCase().replace(/[_-]+/g, " ")
+  if (!cat || cat === "other" || cat === "general") return null
+  if (cat.includes("pest")) return "Pest control"
+  if (cat.includes("plumb")) return "Plumbing"
+  if (cat.includes("hvac") || cat.includes("heat") || cat.includes("air")) return "HVAC"
+  if (cat.includes("electr")) return "Electrical"
+  if (cat.includes("applian")) return "Appliance"
+  // Title-case remaining slug words.
+  return cat.replace(/\b\w/g, (ch) => ch.toUpperCase())
+}
+
+/**
+ * Short landlord-facing repair label. Never falls back to "this repair" when
+ * issue_headline, issue_category, or a street is available.
+ */
 export function shortRepairLabel(
   description: string | null | undefined,
   issueCategory?: string | null,
+  opts?: { issueHeadline?: string | null; street?: string | null },
 ): string {
+  const street = (opts?.street ?? "").trim()
+  const headline = (opts?.issueHeadline ?? "").trim().replace(/\s+/g, " ")
+  const trade = tradePhraseFromCategory(issueCategory)
+
   const line = (description ?? "").trim().split("\n")[0]?.trim() ?? ""
   const cleaned = line.replace(/\s+/g, " ").replace(/[.;]+$/g, "")
   if (cleaned && cleaned.length <= 72 && !/^wo-/i.test(cleaned)) {
     return cleaned.charAt(0).toLowerCase() + cleaned.slice(1)
   }
-  const cat = (issueCategory ?? "").trim().toLowerCase()
-  if (cat && cat !== "other" && cat !== "general") return `${cat} repair`
+
+  // No usable description — prefer "Pest control at {street}" over "this repair".
+  if (trade && street) return `${trade} at ${street}`
+  if (headline && headline.length <= 72 && !/^wo-/i.test(headline)) {
+    const lowered =
+      headline.charAt(0).toLowerCase() === headline.charAt(0)
+        ? headline
+        : headline.charAt(0).toLowerCase() + headline.slice(1)
+    if (street && !lowered.toLowerCase().includes(street.toLowerCase())) {
+      return `${lowered} at ${street}`
+    }
+    return lowered
+  }
+  if (trade) return `${trade} repair`
+  if (street) return `repair at ${street}`
   return "this repair"
 }
 
@@ -249,7 +287,9 @@ export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
   }
   const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
     attentionCopyParts(input)
-  const ref = landlordAskRefLine(workOrderRef)
+  // Assign-vendor landlord texts never trail a WO ref — the Details link is enough.
+  const ref =
+    input.kind === "assign_vendor" ? "" : landlordAskRefLine(workOrderRef)
   return [
     `Ulo: ${headline}`,
     "",
@@ -420,7 +460,8 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
     attentionCopyParts(input)
   const actionLabel =
     input.actionLabel?.trim() || attentionEmailActionLabel(input.kind)
-  const ref = landlordAskRefLine(workOrderRef)
+  const ref =
+    input.kind === "assign_vendor" ? "" : landlordAskRefLine(workOrderRef)
   const text = [
     `Ulo: ${headline}`,
     "",
@@ -754,9 +795,12 @@ export async function notifyLandlordNeedsAttention(
     dashboardUrl,
     actionLabel: attentionEmailActionLabel(params.kind),
     invoicePaid,
-    workOrderRef: params.maintenanceRequestId
-      ? formatWorkOrderRef(params.maintenanceRequestId)
-      : null,
+    workOrderRef:
+      params.omitWorkOrderRef === true || params.kind === "assign_vendor"
+        ? null
+        : params.maintenanceRequestId
+        ? formatWorkOrderRef(params.maintenanceRequestId)
+        : null,
   }
   const smsBody = buildLandlordAttentionSms(copy)
   const email = buildLandlordAttentionEmail(copy)

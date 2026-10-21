@@ -18,6 +18,7 @@ import {
   homeCheckMetrics,
   isHomeCheckSlot,
 } from '../../../shared/homeCheck.ts'
+import { assertPilotAllows } from '../../../shared/pilotGate.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -120,6 +121,17 @@ Deno.serve(async (req) => {
       })
     }
     if (action === 'start') {
+      const pilotGate = assertPilotAllows('home_checks', Deno.env)
+      if (!pilotGate.ok) {
+        return json(
+          {
+            error:
+              'Home Checks are excluded from this pilot until capture and confirmation are verified.',
+            pilot: { status: pilotGate.status, reason: pilotGate.reason },
+          },
+          503,
+        )
+      }
       if (!['tenant', 'contractor', 'landlord'].includes(body.role)) {
         return json({ error: 'Choose a capture role.' }, 400)
       }

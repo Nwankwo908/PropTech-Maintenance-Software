@@ -334,7 +334,12 @@ export async function escalateWhenNoReplacementVendor(
   ticket: MaintenanceTicketScope,
   trigger: NoVendorEscalationTrigger,
 ): Promise<void> {
-  await escalateMaintenanceNeedsVendor(supabase, ticket, NO_VENDOR_ESCALATION[trigger])
+  await escalateMaintenanceNeedsVendor(supabase, ticket, {
+    ...NO_VENDOR_ESCALATION[trigger],
+    // Vendor declined / SLA rematch failed — close any prior approval ask first
+    // so we can text nearby options without contradicting an open YES.
+    closeOpenAskFirst: true,
+  })
 }
 
 export type NoShowRematchInput = {

@@ -187,6 +187,9 @@ export function AdminSidebarContent({
   const setupNavHint = useSetupSuccessNavHint()
   const activeTasksCount = useActiveTasksNavCount()
   const [profileSetupPointed, setProfileSetupPointed] = useState(false)
+  /** Remounts shine text so hover / focus replay the sweep (load uses CSS delay). */
+  const [portfolioShineKey, setPortfolioShineKey] = useState(0)
+  const [portfolioShineImmediate, setPortfolioShineImmediate] = useState(false)
 
   useEffect(() => {
     const onPoint = (event: Event) => {
@@ -196,6 +199,11 @@ export function AdminSidebarContent({
     window.addEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
     return () => window.removeEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
   }, [])
+
+  const replayPortfolioShine = () => {
+    setPortfolioShineImmediate(true)
+    setPortfolioShineKey((k) => k + 1)
+  }
   // Desktop rail brand height must match AdminTopBar so the shared grey rule lines up.
   const gutter = forRail
     ? isCollapsedRail
@@ -314,12 +322,19 @@ export function AdminSidebarContent({
                 <button
                   type="button"
                   data-ulo-profile-setup-nav=""
-                  title={isCollapsedRail ? `Profile setup · ${setupNavHint.percent}%` : undefined}
-                  aria-label={`Profile setup, ${setupNavHint.percent}% complete`}
+                  title={isCollapsedRail ? `Set up portfolio · ${setupNavHint.percent}%` : undefined}
+                  aria-label={`Set up portfolio, ${setupNavHint.percent}% complete`}
                   onClick={() => {
                     endTryDemoTourForUserNavigation()
                     setupNavHint.expandCard()
                     item.onClick?.()
+                  }}
+                  onMouseEnter={replayPortfolioShine}
+                  onFocus={(event) => {
+                    // Keyboard focus only — mouse click already replays via mouseenter.
+                    if (event.currentTarget.matches(':focus-visible')) {
+                      replayPortfolioShine()
+                    }
                   }}
                   className={[
                     'ulo-profile-setup-nav',
@@ -333,7 +348,17 @@ export function AdminSidebarContent({
                   data-pointed={profileSetupPointed ? 'true' : 'false'}
                 >
                   {isCollapsedRail ? (
-                    <span className="tabular-nums">{setupNavHint.percent}%</span>
+                    <span
+                      key={portfolioShineKey}
+                      className={[
+                        'ulo-profile-setup-shine-text tabular-nums',
+                        portfolioShineImmediate ? 'ulo-profile-setup-shine-text--immediate' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {setupNavHint.percent}%
+                    </span>
                   ) : (
                     <>
                       <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
@@ -343,7 +368,17 @@ export function AdminSidebarContent({
                           className="size-5 max-w-none object-contain object-top"
                         />
                       </span>
-                      <span className="min-w-0 text-left">Profile setup</span>
+                      <span
+                        key={portfolioShineKey}
+                        className={[
+                          'ulo-profile-setup-shine-text text-left',
+                          portfolioShineImmediate ? 'ulo-profile-setup-shine-text--immediate' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        Set up portfolio
+                      </span>
                       <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
                     </>
                   )}

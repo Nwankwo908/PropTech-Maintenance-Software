@@ -64,7 +64,15 @@ describe('adminNavigation registry', () => {
 
   it('derives settings hub cards from settings children', () => {
     const categories = getAdminSettingsNavCategories()
-    expect(categories.length).toBe(4)
+    // Billing is omitted when the active landlord lacks payments capability.
+    expect(categories.length).toBeGreaterThanOrEqual(3)
+    expect(categories.map((c) => c.id)).toEqual(
+      expect.arrayContaining([
+        'settings_organization',
+        'settings_connected_email',
+        'settings_notifications',
+      ]),
+    )
     for (const category of categories) {
       expect(category.href.startsWith(adminNavPath('settings'))).toBe(true)
       expect(category.title.length).toBeGreaterThan(0)

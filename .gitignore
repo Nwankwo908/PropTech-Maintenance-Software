@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Readiness check artifacts (commit, commands, logs) — never commit credentials
+.readiness/
+
 # Env (secrets)
 .env
 .env.*

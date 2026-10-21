@@ -5,7 +5,7 @@
 
 export type TicketClass = "reactive" | "proactive"
 
-export type DecisionAction = "yes" | "options" | "self" | "snooze" | "skip"
+export type DecisionAction = "yes" | "no" | "options" | "self" | "snooze" | "skip"
 
 export type DecisionCandidate = {
   displayId: number
@@ -34,12 +34,20 @@ const ACTION_WORDS: Record<string, DecisionAction> = {
   approve: "yes",
   approved: "yes",
   book: "yes",
+  no: "no",
+  n: "no",
+  nope: "no",
+  decline: "no",
+  declined: "no",
+  deny: "no",
+  reject: "no",
   options: "options",
   option: "options",
   alternatives: "options",
   alternative: "options",
   self: "self",
   myself: "self",
+  // Legacy power-user words — still parsed, never shown in outbound copy.
   skip: "skip",
   pass: "skip",
   snooze: "snooze",
@@ -203,6 +211,18 @@ export function parseDecisionReply(
         intents.set(candidates[0]!.displayId, {
           displayId: candidates[0]!.displayId,
           action: "yes",
+        })
+      } else {
+        unclear.push(segment)
+      }
+      continue
+    }
+
+    if (/^(no|n|nope|decline|declined|deny|reject)$/i.test(segment)) {
+      if (candidates.length === 1) {
+        intents.set(candidates[0]!.displayId, {
+          displayId: candidates[0]!.displayId,
+          action: "no",
         })
       } else {
         unclear.push(segment)

@@ -39,8 +39,9 @@ Deno.test("does not store full issue sentence as room", () => {
   )
 })
 
-Deno.test("infers leak from flooded message", () => {
-  assertEqual(inferIssueTypeFromText("My basement is flooded"), "leak", "issue type")
+Deno.test("infers flooding from flooded message", () => {
+  assertEqual(inferIssueTypeFromText("My basement is flooded"), "flooding", "issue type")
+  assertEqual(inferIssueTypeFromText("Apartment flooding from upstairs"), "flooding", "flooding word")
 })
 
 Deno.test("infers HVAC from heater / AC wording", () => {

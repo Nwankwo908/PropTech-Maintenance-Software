@@ -28,6 +28,7 @@ export const ISSUE_TYPES = [
   "appliance",
   "HVAC",
   "leak",
+  "flooding",
   "pest",
   "lock",
   "general",
@@ -432,6 +433,8 @@ export function issueSymptomPhrase(state: SmsIntakeState): string {
 
   const issue = (state.issue_type ?? "").toLowerCase()
   switch (issue) {
+    case "flooding":
+      return "the flooding"
     case "leak":
       return "the leak"
     case "plumbing":
@@ -483,6 +486,9 @@ const ISSUE_TYPE_ALIASES: Record<string, IssueType> = {
   "air conditioning": "HVAC",
   leak: "leak",
   leaking: "leak",
+  flood: "flooding",
+  flooding: "flooding",
+  flooded: "flooding",
   pest: "pest",
   pests: "pest",
   bug: "pest",
@@ -639,6 +645,8 @@ export function computeIntakeSeverity(state: SmsIntakeState): "low" | "normal" |
 
 export function issueTypeToCategory(issueType: IssueType | string | undefined): string {
   const t = (issueType ?? "").toLowerCase()
+  // Flooding keeps its own label; trade may still resolve to plumbing/roofing later.
+  if (t === "flooding") return "plumbing"
   if (t === "plumbing" || t === "leak") return "plumbing"
   if (t === "electrical") return "electrical"
   if (t === "appliance") return "appliance_repair"
@@ -668,6 +676,7 @@ export function pipelineTradeToIssueType(
   vendorTrade: string | null | undefined,
 ): IssueType | null {
   const issue = (issueType ?? "").toLowerCase()
+  if (issue === "flooding" || issue === "flood") return "flooding"
   if (issue === "leak") return "leak"
   if (issue === "plumbing") return "plumbing"
   if (issue === "electrical") return "electrical"
