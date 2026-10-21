@@ -11,7 +11,7 @@ describe('pilotGate', () => {
   it('keeps overall pilot not ready while core safety is unverified', () => {
     const result = evaluatePilotReadiness()
     expect(result.ready).toBe(false)
-    expect(result.blockedBy.some((g) => g.id === 'emergency_alert')).toBe(true)
+    expect(result.blockedBy.some((g) => g.id === 'sms_identity_action')).toBe(true)
     expect(result.blockedBy.some((g) => g.id === 'rent_payment_ledger')).toBe(true)
     expect(isPilotWorkflowAllowed('onboarding')).toBe(true)
     expect(isPilotWorkflowAllowed('scheduling')).toBe(true)
