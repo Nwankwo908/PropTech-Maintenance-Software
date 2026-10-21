@@ -9,6 +9,7 @@ import { normalizePhoneFlexible } from "../resident_notify.ts"
 import {
   parseAvailabilityResolved,
   parseAvailabilityToScheduledAt,
+  resolveScheduleTimeZone,
   scheduleTimeZone,
 } from "../vendor_availability_parse.ts"
 import {
@@ -94,12 +95,15 @@ export function detectVendorRescheduleIntent(body: string): VendorRescheduleDete
  * True when the SMS looks like a day/window proposal (e.g. "Wed 2pm"),
  * independent of reschedule keywords.
  */
-export function looksLikeAvailabilityProposal(body: string): boolean {
+export function looksLikeAvailabilityProposal(
+  body: string,
+  timeZone?: string | null,
+): boolean {
   const text = body.trim()
   if (!text || text.length > 200) return false
   // Avoid treating long free-text / status messages as a window.
   if (text.split(/\s+/).length > 16) return false
-  const tz = scheduleTimeZone()
+  const tz = resolveScheduleTimeZone(timeZone)
   const resolved = parseAvailabilityResolved(text, new Date(), tz)
   if (resolved?.windowLabel?.trim() || resolved?.entity?.display_text?.trim()) {
     return true
@@ -221,15 +225,16 @@ export function humanizeTrade(issueCategory: string | null | undefined): string 
 export function formatRescheduleTimeLabel(
   scheduledAt: string | null,
   windowText: string,
-  timeZone = scheduleTimeZone(),
+  timeZone: string = scheduleTimeZone(),
 ): string {
+  const zone = resolveScheduleTimeZone(timeZone)
   const window = windowText.trim()
   if (scheduledAt) {
     try {
       const d = new Date(scheduledAt)
       if (!Number.isNaN(d.getTime())) {
         return new Intl.DateTimeFormat("en-US", {
-          timeZone,
+          timeZone: zone,
           weekday: "short",
           month: "short",
           day: "numeric",
@@ -465,8 +470,9 @@ export async function listVendorReschedulableJobs(
 export function filterJobsByExistingTimeHint(
   body: string,
   jobs: RescheduleJob[],
-  timeZone = scheduleTimeZone(),
+  timeZone: string = scheduleTimeZone(),
 ): RescheduleJob[] {
+  const zone = resolveScheduleTimeZone(timeZone)
   const clock = body.match(
     /\b(?:the\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i,
   )
@@ -482,7 +488,7 @@ export function filterJobsByExistingTimeHint(
     if (job.scheduledAt) {
       try {
         const parts = new Intl.DateTimeFormat("en-US", {
-          timeZone,
+          timeZone: zone,
           hour: "numeric",
           minute: "2-digit",
           hour12: false,
@@ -502,12 +508,15 @@ export function filterJobsByExistingTimeHint(
   return hits.length > 0 ? hits : jobs
 }
 
-export function buildVendorRescheduleClarifySms(jobs: RescheduleJob[]): string {
+export function buildVendorRescheduleClarifySms(
+  jobs: RescheduleJob[],
+  timeZone?: string | null,
+): string {
   const lines = [
     "You have more than one active job that could match. Which one do you want to reschedule?",
     "",
   ]
-  const tz = scheduleTimeZone()
+  const tz = resolveScheduleTimeZone(timeZone)
   for (let i = 0; i < Math.min(jobs.length, 8); i++) {
     const job = jobs[i]
     const unit = job.unit ? `Apt ${job.unit}` : "Unit —"
@@ -755,12 +764,15 @@ async function notifyResidentReschedule(
   return { ok: sent.ok, conversationId }
 }
 
-function resolveNewScheduleFromBody(body: string): {
+function resolveNewScheduleFromBody(
+  body: string,
+  timeZone?: string | null,
+): {
   scheduledAt: string | null
   windowText: string
   needsDateClarify: boolean
 } {
-  const tz = scheduleTimeZone()
+  const tz = resolveScheduleTimeZone(timeZone)
   const resolved = parseAvailabilityResolved(body, new Date(), tz)
   if (resolved) {
     const windowText =
@@ -819,9 +831,17 @@ export async function tryHandleVendorRescheduleSms(
     contextReschedule?: boolean
   },
 ): Promise<HandleVendorRescheduleResult> {
+  const { loadLandlordScheduleTimeZone } = await import(
+    "../landlordNotificationPrefs.ts"
+  )
+  const scheduleTz = await loadLandlordScheduleTimeZone(
+    supabase,
+    params.landlordId,
+  )
+
   const detected = detectVendorRescheduleIntent(params.inboundBody)
   const contextOk = Boolean(params.contextReschedule) &&
-    looksLikeAvailabilityProposal(params.inboundBody)
+    looksLikeAvailabilityProposal(params.inboundBody, scheduleTz)
   if (
     !detected.isReschedule &&
     !params.continuePending &&
@@ -975,7 +995,7 @@ export async function tryHandleVendorRescheduleSms(
     // Allow a new vendor proposal after a prior decline — continue.
   }
 
-  const parsed = resolveNewScheduleFromBody(params.inboundBody)
+  const parsed = resolveNewScheduleFromBody(params.inboundBody, scheduleTz)
   const scheduledAt = parsed.scheduledAt
   const windowText = parsed.windowText
 
@@ -1050,7 +1070,7 @@ export async function tryHandleVendorRescheduleSms(
 
   const lockedWindow =
     windowText.trim() ||
-    formatRescheduleTimeLabel(scheduledAt, "", scheduleTimeZone())
+    formatRescheduleTimeLabel(scheduledAt, "", scheduleTz)
 
   if (
     await alreadyProcessedInbound(supabase, {
@@ -1130,7 +1150,7 @@ export async function tryHandleVendorRescheduleSms(
   })
 
   const workOrderRef = formatWorkOrderRef(ticketId)
-  const tz = scheduleTimeZone()
+  const tz = scheduleTz
   const newTimeLabel = formatRescheduleTimeLabel(scheduledAt, lockedWindow, tz)
   const previousTimeLabel = formatRescheduleTimeLabel(
     previousScheduledAt,
@@ -1323,7 +1343,10 @@ export async function beginTenantInitiatedReschedule(
     typeof ticket.scheduled_window_text === "string"
       ? ticket.scheduled_window_text
       : null
-  const tz = scheduleTimeZone()
+  const { loadLandlordScheduleTimeZone } = await import(
+    "../landlordNotificationPrefs.ts"
+  )
+  const tz = await loadLandlordScheduleTimeZone(supabase, params.landlordId)
   const previousTimeLabel = formatRescheduleTimeLabel(
     previousScheduledAt,
     previousWindow ?? "",

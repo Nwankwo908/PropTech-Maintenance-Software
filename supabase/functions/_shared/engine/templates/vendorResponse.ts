@@ -25,7 +25,6 @@ import {
 import { resolveVendorAvailability } from "../../vendor_availability_parse.ts"
 import { confirmVendorSchedule } from "../../vendor_job_schedule.ts"
 import { closeOpenAsksForTicket } from "../../closeOpenAsksForTicket.ts"
-import { loadLandlordOperationalSettings } from "../../landlordNotificationPrefs.ts"
 import {
   buildVendorScheduleAlreadyAdvancedSms,
   ticketStatusBlocksScheduleAsks,
@@ -545,11 +544,10 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         (typeof ctx.landlordId === "string" ? ctx.landlordId : "")
       if (!landlordIdForTz) return undefined
       try {
-        const ops = await loadLandlordOperationalSettings(
-          supabase,
-          landlordIdForTz,
+        const { loadLandlordScheduleTimeZone } = await import(
+          "../../landlordNotificationPrefs.ts"
         )
-        return ops.timeZone?.trim() || undefined
+        return await loadLandlordScheduleTimeZone(supabase, landlordIdForTz)
       } catch {
         return undefined
       }

@@ -287,7 +287,10 @@ Deno.test("closeOpenAsksForTicket closes vendor FSM + resident awaiting on in_pr
 
 Deno.test("E6F7 replay: TTL on in_progress + past window quietly closes, no SMS", async () => {
   const ticketId = "e6f7d660-f024-4614-a84c-3a8ee5d84d2c"
-  const past = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+  // Fixed clock: Sep 28 check against a Sep 18 window that expired days earlier.
+  // Do not mix Date.now() with the fixed `now` passed to the TTL processor.
+  const fixedNow = new Date("2026-09-28T00:00:00.000Z")
+  const past = new Date("2026-09-18T21:00:00.000Z").toISOString()
   const fsm = withVendorScheduleFsm({}, {
     ...createIdleScheduleState(ticketId),
     step: "awaiting_tenant_confirmation",
@@ -309,12 +312,12 @@ Deno.test("E6F7 replay: TTL on in_progress + past window quietly closes, no SMS"
       vendor_id: "v-1",
       maintenance_request_id: ticketId,
       conversation_type: "vendor_alert",
-      updated_at: new Date().toISOString(),
+      updated_at: fixedNow.toISOString(),
       intake_state: { ...fsm },
     }],
   }
   const summary = await processScheduleFsmTtlChecks(mockSupabase(state), {
-    now: new Date("2026-09-28T00:00:00.000Z"),
+    now: fixedNow,
   })
   assertEquals(summary.notified, 0)
   assert(summary.quietExpired >= 1)
@@ -545,6 +548,7 @@ Deno.test("tomorrow 4:30pm at 11:07 PM local resolves to next local calendar day
   if (result.status === "needs_clarification") {
     throw new Error("expected resolved window")
   }
+  assertEquals(result.value.scheduledAt, "2026-09-17T20:30:00.000Z")
   const start = zonedParts(new Date(result.value.scheduledAt), TZ)
   assertEquals(start.day, 17) // Thursday local — not Friday 18
   assertEquals(start.weekday.toLowerCase(), "thursday")

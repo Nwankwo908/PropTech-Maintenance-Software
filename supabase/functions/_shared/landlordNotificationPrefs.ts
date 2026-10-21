@@ -157,6 +157,24 @@ const DEFAULT_SETTINGS: EdgeNotificationSettings = {
   categories: mergeNotificationMatrixCategories(undefined),
 }
 
+/**
+ * Landlord-configured IANA zone for vendor availability / reschedule parsing.
+ * Falls back to VENDOR_SCHEDULE_TZ / America/New_York — never the process TZ.
+ */
+export async function loadLandlordScheduleTimeZone(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<string> {
+  const { resolveScheduleTimeZone } = await import("./vendor_availability_parse.ts")
+  if (!landlordId.trim()) return resolveScheduleTimeZone(null)
+  try {
+    const ops = await loadLandlordOperationalSettings(supabase, landlordId)
+    return resolveScheduleTimeZone(ops.timeZone)
+  } catch {
+    return resolveScheduleTimeZone(null)
+  }
+}
+
 export async function loadLandlordOperationalSettings(
   supabase: SupabaseClient,
   landlordId: string,

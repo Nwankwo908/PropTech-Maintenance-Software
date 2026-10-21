@@ -57,9 +57,71 @@ export type AvailabilityResolveResult =
 const DEFAULT_TZ = "America/New_York"
 const PARSE_MODEL = "gpt-4o"
 
+/** True when `timeZone` is a usable IANA name for Intl. */
+export function isValidIanaTimeZone(timeZone: string): boolean {
+  const trimmed = timeZone.trim()
+  if (!trimmed) return false
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: trimmed }).format(new Date(0))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Resolve the requester schedule zone: configured IANA → env → documented default.
+ * Never substitutes the process/server timezone for an invalid setting.
+ */
+export function resolveScheduleTimeZone(
+  configured?: string | null,
+): string {
+  const fromConfig = configured?.trim()
+  if (fromConfig && isValidIanaTimeZone(fromConfig)) return fromConfig
+  const fromEnv = Deno.env.get("VENDOR_SCHEDULE_TZ")?.trim()
+  if (fromEnv && isValidIanaTimeZone(fromEnv)) return fromEnv
+  return DEFAULT_TZ
+}
+
 export function scheduleTimeZone(): string {
-  const raw = Deno.env.get("VENDOR_SCHEDULE_TZ")?.trim()
-  return raw || DEFAULT_TZ
+  return resolveScheduleTimeZone(null)
+}
+
+/**
+ * Chrono-compatible UTC offset in minutes at `instant` for an IANA zone.
+ * Chrono convention: local = UTC + offsetMinutes (EDT = -240, NPT = +345).
+ * Uses Intl wall-clock parts — not `Date#getTimezoneOffset()` / process TZ.
+ */
+export function chronoUtcOffsetMinutesAt(
+  instant: Date,
+  timeZone: string,
+): number | null {
+  if (!isValidIanaTimeZone(timeZone) || Number.isNaN(instant.getTime())) {
+    return null
+  }
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(instant)
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value)
+  let hour = get("hour")
+  if (hour === 24) hour = 0
+  const asUtcMs = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    hour,
+    get("minute"),
+    get("second"),
+  )
+  return Math.round((asUtcMs - instant.getTime()) / 60_000)
 }
 
 function pad2(n: number): string {
@@ -80,8 +142,9 @@ export function zonedParts(
   monthName: string
   dayNum: number
 } {
+  const zone = isValidIanaTimeZone(timeZone) ? timeZone.trim() : DEFAULT_TZ
   const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
+    timeZone: zone,
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -125,7 +188,32 @@ function monthNameToNumber(name: string): number {
   return idx >= 0 ? idx + 1 : 1
 }
 
-/** Convert a timezone wall-clock datetime to a UTC Date. */
+function wallPartsMatch(
+  actual: ReturnType<typeof zonedParts>,
+  want: {
+    year: number
+    month: number
+    day: number
+    hour: number
+    minute: number
+  },
+): boolean {
+  return (
+    actual.year === want.year &&
+    actual.month === want.month &&
+    actual.day === want.day &&
+    actual.hour === want.hour &&
+    actual.minute === want.minute
+  )
+}
+
+/**
+ * Convert IANA wall-clock components to a UTC Date at the **target** calendar
+ * date (DST-aware). Policy:
+ * - Invalid IANA → NaN Date
+ * - Nonexistent spring-forward wall → NaN Date (caller clarifies)
+ * - Ambiguous fall-back wall → earlier UTC instant (still in DST)
+ */
 export function zonedWallTimeToUtc(
   parts: {
     year: number
@@ -136,6 +224,8 @@ export function zonedWallTimeToUtc(
   },
   timeZone: string,
 ): Date {
+  if (!isValidIanaTimeZone(timeZone)) return new Date(NaN)
+
   const asUtcGuess = Date.UTC(
     parts.year,
     parts.month - 1,
@@ -160,34 +250,62 @@ export function zonedWallTimeToUtc(
 
   let utcMs = asUtcGuess - offsetFor(asUtcGuess)
   utcMs = asUtcGuess - offsetFor(utcMs)
-  return new Date(utcMs)
+
+  // Collect matching candidates near the guess (±3h covers US DST folds).
+  const candidates: number[] = []
+  for (const deltaHours of [-3, -2, -1, 0, 1, 2, 3]) {
+    const probe = utcMs + deltaHours * 60 * 60 * 1000
+    const refined = asUtcGuess - offsetFor(probe)
+    if (wallPartsMatch(zonedParts(new Date(refined), timeZone), parts)) {
+      candidates.push(refined)
+    }
+  }
+  const unique = [...new Set(candidates)].sort((a, b) => a - b)
+  if (unique.length === 0) {
+    // Nonexistent wall time (e.g. 2:30 AM on spring-forward day).
+    return new Date(NaN)
+  }
+  // Ambiguous: prefer the earlier UTC instant.
+  return new Date(unique[0]!)
+}
+
+/** Fixed-offset wall → UTC using Chrono's minute-east-of-UTC convention. */
+export function wallTimeWithChronoOffsetToUtc(
+  parts: {
+    year: number
+    month: number
+    day: number
+    hour: number
+    minute: number
+  },
+  chronoOffsetMinutes: number,
+): Date {
+  const asUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    0,
+  )
+  return new Date(asUtc - chronoOffsetMinutes * 60_000)
 }
 
 export function buildScheduleAnchor(
   now = new Date(),
   timeZone = scheduleTimeZone(),
 ): ScheduleAnchor {
-  const z = zonedParts(now, timeZone)
+  const zone = resolveScheduleTimeZone(timeZone)
+  const z = zonedParts(now, zone)
   const hour12 = ((z.hour + 11) % 12) + 1
   const ampm = z.hour >= 12 ? "PM" : "AM"
   return {
     now,
-    timeZone,
+    timeZone: zone,
     todayLabel: `${z.weekday}, ${z.monthName} ${z.dayNum}, ${z.year}`,
     nowTimeLabel: `${hour12}:${pad2(z.minute)} ${ampm}`,
     nowIso: now.toISOString(),
   }
-}
-
-function formatWindowLabel(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date)
 }
 
 function normalizeVendorText(raw: string): string {
@@ -522,18 +640,24 @@ export function parseAvailabilityRegex(
   let month = zNow.month
   let day = zNow.day
 
+  const absoluteMonth = text.match(
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/i,
+  )
+
   if (/\btomorrow\b/.test(text)) {
-    const noonToday = zonedWallTimeToUtc(
-      { year, month, day, hour: 12, minute: 0 },
-      anchor.timeZone,
-    )
-    const zT = zonedParts(
-      new Date(noonToday.getTime() + 24 * 60 * 60 * 1000),
-      anchor.timeZone,
-    )
-    year = zT.year
-    month = zT.month
-    day = zT.day
+    const next = addCalendarDays(zNow.year, zNow.month, zNow.day, 1)
+    year = next.year
+    month = next.month
+    day = next.day
+  } else if (/\b(today|tonight)\b/.test(text)) {
+    year = zNow.year
+    month = zNow.month
+    day = zNow.day
+  } else if (absoluteMonth) {
+    const monthNum = monthNameToNumber(absoluteMonth[1]!)
+    year = absoluteMonth[3] ? Number(absoluteMonth[3]) : zNow.year
+    month = monthNum
+    day = Number(absoluteMonth[2])
   } else if (!/\btoday\b/.test(text)) {
     const namedIdx = extractNamedWeekdayIndex(text)
     if (namedIdx != null) {
@@ -557,6 +681,7 @@ export function parseAvailabilityRegex(
       ].indexOf(zNow.weekday.toLowerCase())
       if (
         namedIdx === todayIdx &&
+        !Number.isNaN(candidate.getTime()) &&
         candidate.getTime() < anchor.now.getTime() - 60_000
       ) {
         const nextWeek = resolveNamedWeekdayDate(namedIdx, {
@@ -597,6 +722,66 @@ export function parseAvailabilityRegex(
   }
 }
 
+/** Add whole calendar days in a Y-M-D space (UTC noon stepping — DST-safe). */
+export function addCalendarDays(
+  year: number,
+  month: number,
+  day: number,
+  deltaDays: number,
+): { year: number; month: number; day: number } {
+  const noon = new Date(Date.UTC(year, month - 1, day + deltaDays, 12, 0, 0))
+  return {
+    year: noon.getUTCFullYear(),
+    month: noon.getUTCMonth() + 1,
+    day: noon.getUTCDate(),
+  }
+}
+
+/**
+ * Chrono 2.7.8 computes today/tomorrow from the process-local calendar of
+ * `instant`, ignoring ParsingReference.timezone for relative days. Re-anchor
+ * those phrases to the requester IANA calendar.
+ */
+export function applyRequesterRelativeCalendarDay(
+  text: string,
+  parts: { year: number; month: number; day: number },
+  anchor: ScheduleAnchor,
+): { year: number; month: number; day: number } {
+  const z = zonedParts(anchor.now, anchor.timeZone)
+  if (/\btomorrow\b/i.test(text)) {
+    return addCalendarDays(z.year, z.month, z.day, 1)
+  }
+  if (/\b(today|tonight)\b/i.test(text)) {
+    return { year: z.year, month: z.month, day: z.day }
+  }
+  return parts
+}
+
+/**
+ * Precedence for wall→UTC after Chrono resolves calendar components against the
+ * requester reference:
+ * 1) Certain timezoneOffset on the Chrono result (explicit abbr/offset in SMS)
+ * 2) Requester IANA zone at the **target** appointment wall time
+ * Never pass IANA names into Chrono's `timezone` field (2.7.8 only accepts
+ * minute offsets or abbr map keys).
+ */
+function wallComponentsToUtc(
+  parts: {
+    year: number
+    month: number
+    day: number
+    hour: number
+    minute: number
+  },
+  anchor: ScheduleAnchor,
+  explicitChronoOffsetMinutes: number | null,
+): Date {
+  if (typeof explicitChronoOffsetMinutes === "number") {
+    return wallTimeWithChronoOffsetToUtc(parts, explicitChronoOffsetMinutes)
+  }
+  return zonedWallTimeToUtc(parts, anchor.timeZone)
+}
+
 export function parseAvailabilityChrono(
   raw: string,
   anchor: ScheduleAnchor,
@@ -605,9 +790,12 @@ export function parseAvailabilityChrono(
   if (!text) return null
 
   try {
+    const refOffset = chronoUtcOffsetMinutesAt(anchor.now, anchor.timeZone)
+    if (refOffset == null) return null
+
     const results = chrono.parse(text, {
       instant: anchor.now,
-      timezone: anchor.timeZone,
+      timezone: refOffset,
     }, { forwardDate: true })
     const first = results[0]
     if (!first?.start) return null
@@ -615,11 +803,17 @@ export function parseAvailabilityChrono(
     const startDate = first.start.date()
     if (Number.isNaN(startDate.getTime())) return null
 
-    // Prefer component rebuild in landlord TZ when chrono returns a Date
-    // that may be UTC-shifted on edge runtimes.
-    const y = first.start.get("year")
-    const m = first.start.get("month")
-    const d = first.start.get("day")
+    const explicitStartOffset = first.start.isCertain("timezoneOffset")
+      ? first.start.get("timezoneOffset")
+      : null
+    const explicitEndOffset = first.end?.isCertain("timezoneOffset")
+      ? first.end.get("timezoneOffset")
+      : null
+
+    // Prefer component rebuild in requester IANA (or explicit message offset).
+    let y = first.start.get("year")
+    let m = first.start.get("month")
+    let d = first.start.get("day")
     const h = first.start.get("hour")
     const min = first.start.get("minute") ?? 0
     let scheduled: Date
@@ -629,19 +823,29 @@ export function parseAvailabilityChrono(
       typeof d === "number" &&
       typeof h === "number"
     ) {
-      scheduled = zonedWallTimeToUtc(
+      const cal = applyRequesterRelativeCalendarDay(
+        text,
+        { year: y, month: m, day: d },
+        anchor,
+      )
+      y = cal.year
+      m = cal.month
+      d = cal.day
+      scheduled = wallComponentsToUtc(
         { year: y, month: m, day: d, hour: h, minute: min },
-        anchor.timeZone,
+        anchor,
+        typeof explicitStartOffset === "number" ? explicitStartOffset : null,
       )
     } else {
       scheduled = startDate
     }
+    if (Number.isNaN(scheduled.getTime())) return null
 
     let endAt: string | null = null
     if (first.end) {
-      const ey = first.end.get("year") ?? y
-      const em = first.end.get("month") ?? m
-      const ed = first.end.get("day") ?? d
+      let ey = first.end.get("year") ?? y
+      let em = first.end.get("month") ?? m
+      let ed = first.end.get("day") ?? d
       const eh = first.end.get("hour")
       const emin = first.end.get("minute") ?? 0
       if (
@@ -650,10 +854,24 @@ export function parseAvailabilityChrono(
         typeof ed === "number" &&
         typeof eh === "number"
       ) {
-        endAt = zonedWallTimeToUtc(
+        const endCal = applyRequesterRelativeCalendarDay(
+          text,
+          { year: ey, month: em, day: ed },
+          anchor,
+        )
+        ey = endCal.year
+        em = endCal.month
+        ed = endCal.day
+        const endDate = wallComponentsToUtc(
           { year: ey, month: em, day: ed, hour: eh, minute: emin },
-          anchor.timeZone,
-        ).toISOString()
+          anchor,
+          typeof explicitEndOffset === "number"
+            ? explicitEndOffset
+            : typeof explicitStartOffset === "number"
+            ? explicitStartOffset
+            : null,
+        )
+        if (!Number.isNaN(endDate.getTime())) endAt = endDate.toISOString()
       }
     }
 
@@ -1051,7 +1269,7 @@ export async function resolveVendorAvailability(
     clarifyAttempts?: number
   },
 ): Promise<AvailabilityResolveResult> {
-  const timeZone = options?.timeZone ?? scheduleTimeZone()
+  const timeZone = resolveScheduleTimeZone(options?.timeZone)
   const anchor = buildScheduleAnchor(options?.now ?? new Date(), timeZone)
   const text = normalizeVendorText(raw)
   const clarifyAttempts = options?.clarifyAttempts ?? 0
@@ -1154,7 +1372,8 @@ export function parseAvailabilityResolved(
   now = new Date(),
   timeZone = scheduleTimeZone(),
 ): ResolvedAvailability | null {
-  const anchor = buildScheduleAnchor(now, timeZone)
+  const zone = resolveScheduleTimeZone(timeZone)
+  const anchor = buildScheduleAnchor(now, zone)
   const text = normalizeVendorText(raw)
   if (!text) return null
   const hit = hasClockRange(text)
@@ -1166,7 +1385,7 @@ export function parseAvailabilityResolved(
     )
     : (parseAvailabilityChrono(text, anchor) ??
       parseAvailabilityRegex(text, anchor))
-  return hit ? standardizeWindowLabel(hit, timeZone) : null
+  return hit ? standardizeWindowLabel(hit, zone) : null
 }
 
 /** Backward-compatible helper: ISO start or null. */

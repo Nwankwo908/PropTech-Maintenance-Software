@@ -1872,14 +1872,10 @@ export async function tryHandleVendorAvailabilityProbeInbound(
     clarifyAttempts: 0,
     timeZone: await (async () => {
       try {
-        const { loadLandlordOperationalSettings } = await import(
+        const { loadLandlordScheduleTimeZone } = await import(
           "./landlordNotificationPrefs.ts"
         )
-        const ops = await loadLandlordOperationalSettings(
-          supabase,
-          probe.landlordId,
-        )
-        return ops.timeZone?.trim() || undefined
+        return await loadLandlordScheduleTimeZone(supabase, probe.landlordId)
       } catch {
         return undefined
       }

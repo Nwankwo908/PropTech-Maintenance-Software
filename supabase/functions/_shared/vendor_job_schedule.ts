@@ -19,6 +19,7 @@ import {
 import {
   parseAvailabilityResolved,
   parseAvailabilityToScheduledAt,
+  resolveScheduleTimeZone,
   type ResolvedAvailability,
 } from "./vendor_availability_parse.ts"
 import {
@@ -525,21 +526,6 @@ export async function confirmVendorSchedule(
     return { ok: false, error: "empty_window" }
   }
 
-  // Prefer pre-resolved instants; on fallback re-parse keeping WINDOW endAt
-  // so correction steps never collapse to a single start/end timestamp.
-  const hasPreResolved =
-    typeof params.scheduledAt === "string" && !!params.scheduledAt.trim()
-  const fallbackResolved = hasPreResolved
-    ? null
-    : parseAvailabilityResolved(windowText)
-  const scheduledAt = hasPreResolved
-    ? params.scheduledAt!.trim()
-    : (fallbackResolved?.scheduledAt ??
-      parseAvailabilityToScheduledAt(windowText))
-  const lockedWindowText =
-    fallbackResolved?.entity?.display_text?.trim() ||
-    fallbackResolved?.windowLabel?.trim() ||
-    windowText
   const nowIso = new Date().toISOString()
 
   const { data: ticket, error: tErr } = await supabase
@@ -554,6 +540,35 @@ export async function confirmVendorSchedule(
     console.error("[vendor-schedule] ticket lookup", tErr?.message)
     return { ok: false, error: "ticket_not_found" }
   }
+
+  // Prefer pre-resolved instants; on fallback re-parse in landlord IANA so
+  // correction steps never collapse WINDOW endAt or shift calendar days.
+  const hasPreResolved =
+    typeof params.scheduledAt === "string" && !!params.scheduledAt.trim()
+  let scheduleTz = resolveScheduleTimeZone(null)
+  if (!hasPreResolved) {
+    try {
+      const { loadLandlordScheduleTimeZone } = await import(
+        "./landlordNotificationPrefs.ts"
+      )
+      const landlordId =
+        typeof ticket.landlord_id === "string" ? ticket.landlord_id : ""
+      scheduleTz = await loadLandlordScheduleTimeZone(supabase, landlordId)
+    } catch {
+      // documented fallback already in resolveScheduleTimeZone
+    }
+  }
+  const fallbackResolved = hasPreResolved
+    ? null
+    : parseAvailabilityResolved(windowText, new Date(), scheduleTz)
+  const scheduledAt = hasPreResolved
+    ? params.scheduledAt!.trim()
+    : (fallbackResolved?.scheduledAt ??
+      parseAvailabilityToScheduledAt(windowText, new Date(), scheduleTz))
+  const lockedWindowText =
+    fallbackResolved?.entity?.display_text?.trim() ||
+    fallbackResolved?.windowLabel?.trim() ||
+    windowText
   // Soft check: still save availability when the vendor is texting on the job
   // thread even if assigned_vendor_id drifted (reassign race / duplicate profiles).
   if (
