@@ -46,16 +46,17 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'emergency_alert',
     label: 'Emergency report → human alert',
-    status: 'unknown',
+    status: 'verified',
     reason:
-      'Flooding label + urgency unit coverage exists; durable alert delivery / idempotency connected-workflow not proven.',
+      'LA2 live flooding ticket + attention SMS delivered (Twilio SID) with idempotent re-notify; see readiness-final-b5f8087.md.',
     coreSafety: true,
   },
   {
     id: 'sms_identity_action',
     label: 'SMS identity → reply → action',
     status: 'unknown',
-    reason: 'Handler registry + invoice mocks exist; live handset YES/NO binding not verified.',
+    reason:
+      'LA2 outbounds delivered; physical handset YES (Twilio inbound SM…) still unverified — inject does not count.',
     coreSafety: true,
   },
   {
@@ -92,28 +93,28 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
     label: 'Vendor assignment',
     status: 'unknown',
     reason:
-      'Pest specialist + booking state gates unit-tested; full assign/outreach connected path not proven.',
+      'LA2 DB assign→accept→schedule→complete passed on non-routable phones; carrier handset accept still unverified.',
     coreSafety: true,
   },
   {
     id: 'scheduling',
     label: 'Scheduling',
     status: 'verified',
-    reason: 'Requester-timezone matrix (UTC/NY/LA/Tokyo) passed for Chrono offset fix.',
+    reason: 'Requester-timezone matrix (UTC/NY/LA/Tokyo) passed; LA2 visit window set in maintenance workflow DB path.',
     coreSafety: false,
   },
   {
     id: 'approvals',
     label: 'Approvals',
     status: 'unknown',
-    reason: 'Invoice YES router mocks passed; concurrent/stale approval connected path not proven.',
+    reason: 'Handset/late approval not proven; DB status progression is not SMS approval proof.',
     coreSafety: true,
   },
   {
     id: 'job_completion',
     label: 'Job completion',
-    status: 'unknown',
-    reason: 'No durable completion + notify connected-workflow evidence on this checkout.',
+    status: 'verified',
+    reason: 'LA2 maintenance workflow completed ticket + landlord visibility (DB); carrier notify not claimed.',
     coreSafety: false,
   },
   {

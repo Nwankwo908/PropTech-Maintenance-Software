@@ -29,9 +29,13 @@ describe('pilotGate', () => {
     }
   })
 
-  it('documents flooding emergency as core unknown until connected proof exists', () => {
+  it('documents flooding emergency as verified after LA2 live alert proof', () => {
     const gate = pilotWorkflowGate('emergency_alert')
     expect(gate.coreSafety).toBe(true)
-    expect(gate.status).toBe('unknown')
+    expect(gate.status).toBe('verified')
+  })
+
+  it('keeps SMS identity core unknown until handset YES is proven', () => {
+    expect(pilotWorkflowGate('sms_identity_action').status).toBe('unknown')
   })
 })

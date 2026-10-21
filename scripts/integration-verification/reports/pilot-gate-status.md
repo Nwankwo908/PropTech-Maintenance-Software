@@ -4,10 +4,11 @@
 
 | Field | Value |
 | --- | --- |
-| Generated | 2026-10-21 (local coding task) |
-| Base checkout | `9953d8468bafec87b6ad086bfd5f0806159b10e1` (+ uncommitted pilot-gate fixes) |
+| Generated | 2026-10-21 (LA2 readiness pass) |
+| Final commit | `b5f80878e1549a2c7c77f7a69849daa8d3457c4f` |
+| Full evidence | `scripts/integration-verification/reports/readiness-final-b5f8087.md` |
 | Repo path | PropTech Maintenance Software |
-| Note | Do not claim pilot-ready from packaging alone or from unit tests. |
+| Note | Do not claim pilot-ready from packaging alone or from unit tests. LA1 unused. |
 
 ## Gates re-checked this session
 
