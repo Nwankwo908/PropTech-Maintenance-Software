@@ -39,7 +39,15 @@ Deno.test("START/HELP/STOP compliance runs before conversations and activation r
 
 Deno.test("landlord_vendor_choice runs with other landlord pending asks", () => {
   assertEquals(priority("estimate_decision") < priority("landlord_vendor_choice"), true)
+  assertEquals(priority("landlord_vendor_choice") < priority("daily_priorities_reply"), true)
+  assertEquals(priority("daily_priorities_reply") < priority("landlord_rent_receipt"), true)
   assertEquals(priority("landlord_vendor_choice") < priority("landlord_rent_receipt"), true)
+})
+
+Deno.test("daily priorities ask runs after pending asks and before vendor probe", () => {
+  assertEquals(priority("daily_priorities_reply") < priority("daily_priorities_ask"), true)
+  assertEquals(priority("resident_quiet_hours") < priority("daily_priorities_ask"), true)
+  assertEquals(priority("daily_priorities_ask") < priority("vendor_availability_probe"), true)
 })
 
 Deno.test("schedule_confirm runs before tenant_activation_reply (YES disambiguation)", () => {

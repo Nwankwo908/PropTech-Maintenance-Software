@@ -21,11 +21,19 @@ const ADAPTER_ID_FROM_FN: Record<string, string> = {
   tryScheduleConfirmHandler: "schedule_confirm",
   tryEstimateDecisionHandler: "estimate_decision",
   tryLandlordVendorChoiceHandler: "landlord_vendor_choice",
+  tryDailyPrioritiesReplyHandler: "daily_priorities_reply",
   tryLandlordRentReceiptHandler: "landlord_rent_receipt",
+  tryTenantRentReportConfirmationHandler: "tenant_rent_report_confirmation",
   tryInvoicePaidConfirmationHandler: "invoice_paid_confirmation",
   tryInvoicePaymentHandler: "invoice_payment",
+  tryTenantRentReplyHandler: "tenant_rent_reply",
+  tryTenantDistressHandler: "tenant_distress",
+  tryHqsUnitReplyHandler: "hqs_unit_reply",
+  tryHqsConfirmHandler: "hqs_confirm",
   tryTenantActivationReplyHandler: "tenant_activation_reply",
   tryTenantActivationHoldHandler: "tenant_activation_hold",
+  tryResidentQuietHoursHandler: "resident_quiet_hours",
+  tryDailyPrioritiesAskHandler: "daily_priorities_ask",
   tryVendorAvailabilityProbeHandler: "vendor_availability_probe",
   tryVendorRescheduleHandler: "vendor_reschedule",
   tryVendorCapacityHandler: "vendor_capacity",
@@ -82,7 +90,9 @@ Deno.test("invoice_paid_confirmation is registered (live YES/NO ask)", () => {
   const handler = INBOUND_SMS_HANDLERS.find(
     (h) => h.id === "invoice_paid_confirmation",
   )
+  const rent = INBOUND_SMS_HANDLERS.find((h) => h.id === "landlord_rent_receipt")
+  const invoicePay = INBOUND_SMS_HANDLERS.find((h) => h.id === "invoice_payment")
   assertEquals(Boolean(handler), true)
-  assertEquals(handler!.priority < 25, true) // before invoice_payment (1–4)
-  assertEquals(handler!.priority > 22, true) // after landlord_rent_receipt
+  assertEquals(handler!.priority < invoicePay!.priority, true)
+  assertEquals(handler!.priority > rent!.priority, true)
 })

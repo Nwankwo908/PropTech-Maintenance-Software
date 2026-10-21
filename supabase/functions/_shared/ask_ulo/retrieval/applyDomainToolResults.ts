@@ -26,6 +26,7 @@ export type DomainToolEvidenceSeed = Partial<
     | "missingUpdates"
     | "vendorVerification"
     | "portfolioBriefing"
+    | "dailyPriorities"
     | "periodSummary"
     | "oldestWaitingWorkOrder"
     | "entityInvestigation"
@@ -116,6 +117,9 @@ export function applyDomainToolResults(
         break
       case "get_portfolio_briefing":
         seed.portfolioBriefing = row.result
+        break
+      case "get_daily_priorities":
+        seed.dailyPriorities = row.result as SpecialtyEvidenceBag["dailyPriorities"]
         break
       case "summarize_period":
         seed.periodSummary = row.result

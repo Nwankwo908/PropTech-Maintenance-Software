@@ -76,6 +76,11 @@ import {
   tryHandleHqsConfirmInbound,
   tryHandleHqsUnitReplyInbound,
 } from "./hqsInspectionLetterInbound.ts"
+import {
+  dailyPrioritiesRoleFromIdentity,
+  tryHandleDailyPrioritiesAskSms,
+  tryHandleDailyPrioritiesReplySms,
+} from "./dailyPrioritiesSms.ts"
 import type {
   InboundSmsHandler,
   InboundSmsHandlerContext,
@@ -227,6 +232,61 @@ async function tryLandlordPickBatchHandler(
     reply: {
       body: result.replyBody,
       source: "landlord_pick_batch",
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryDailyPrioritiesReplyHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { role } = dailyPrioritiesRoleFromIdentity(ctx.identity.identity_type)
+  const result = await tryHandleDailyPrioritiesReplySms(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    role,
+    residentId: ctx.identity.resident_id,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: "ask_ulo_daily_priorities_reply",
+    workflowMetadata: {
+      ok: result.ok,
+      entity_id: result.itemEntityId ?? null,
+      offered_action: result.offeredAction ?? null,
+      already_executed: result.alreadyExecuted ?? false,
+    },
+    reply: {
+      body: result.message,
+      source: "ask_ulo_daily_priorities_reply",
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryDailyPrioritiesAskHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleDailyPrioritiesAskSms(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    identityType: ctx.identity.identity_type,
+    residentId: ctx.identity.resident_id,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: "ask_ulo_daily_priorities",
+    workflowMetadata: {
+      list_id: result.listId,
+      read_only: true,
+    },
+    reply: {
+      body: result.replyBody,
+      source: "ask_ulo_daily_priorities",
       skipGenericFallback: true,
     },
   }
@@ -801,6 +861,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
   landlord_vendor_choice:
     "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3… — roster or nearby external vendors)",
+  daily_priorities_reply:
+    "Open ask_ulo_priority_lists row for this SMS conversation + reply token (1 / 102 YES) matching offered action bindings",
   landlord_rent_receipt:
     "intake_state.awaiting_landlord_rent_receipt, awaiting_landlord_rent_amount, or awaiting_landlord_rent_method (YES/NO/PARTIAL then amount/method)",
   tenant_rent_report_confirmation:
@@ -823,6 +885,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "users.activation_status === waiting + any other inbound (park request, remind YES/NO)",
   resident_quiet_hours:
     "Resident identity + QUIET / QUIET OFF command (set quiet-hours window)",
+  daily_priorities_ask:
+    "Landlord or resident identity + daily-priorities question phrasing (What should I prioritize today? / What's urgent?) — Ask Ulo cross-system briefing; read-only",
   vendor_availability_probe:
     "intake_state.awaiting_vendor_probes[] (or legacy awaiting_vendor_probe) on vendor thread — slot / NO before landlord assigns; multi-ticket replies match WO-XXXX or ask which job",
   vendor_reschedule:
@@ -850,52 +914,64 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
   { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
-  { id: "landlord_rent_receipt", priority: 22, try: tryLandlordRentReceiptHandler },
+  // After vendor-choice / estimate so "1" / "YES" pending asks win over list replies.
+  {
+    id: "daily_priorities_reply",
+    priority: 22,
+    try: tryDailyPrioritiesReplyHandler,
+  },
+  { id: "landlord_rent_receipt", priority: 23, try: tryLandlordRentReceiptHandler },
   {
     id: "tenant_rent_report_confirmation",
-    priority: 23,
+    priority: 24,
     try: tryTenantRentReportConfirmationHandler,
   },
   {
     id: "invoice_paid_confirmation",
-    priority: 24,
+    priority: 25,
     try: tryInvoicePaidConfirmationHandler,
   },
-  { id: "invoice_payment", priority: 25, try: tryInvoicePaymentHandler },
+  { id: "invoice_payment", priority: 26, try: tryInvoicePaymentHandler },
   {
     id: "tenant_rent_reply",
-    priority: 26,
+    priority: 27,
     try: tryTenantRentReplyHandler,
   },
   {
     id: "tenant_distress",
-    priority: 27,
+    priority: 28,
     try: tryTenantDistressHandler,
   },
   {
     id: "hqs_unit_reply",
-    priority: 28,
+    priority: 29,
     try: tryHqsUnitReplyHandler,
   },
   {
     id: "hqs_confirm",
-    priority: 29,
+    priority: 30,
     try: tryHqsConfirmHandler,
   },
   {
     id: "tenant_activation_reply",
-    priority: 30,
+    priority: 31,
     try: tryTenantActivationReplyHandler,
   },
   {
     id: "tenant_activation_hold",
-    priority: 32,
+    priority: 33,
     try: tryTenantActivationHoldHandler,
   },
   {
     id: "resident_quiet_hours",
-    priority: 34,
+    priority: 35,
     try: tryResidentQuietHoursHandler,
+  },
+  // Free-text Ask Ulo daily priorities (after pending asks / quiet-hours commands).
+  {
+    id: "daily_priorities_ask",
+    priority: 36,
+    try: tryDailyPrioritiesAskHandler,
   },
   {
     id: "vendor_availability_probe",

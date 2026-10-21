@@ -97,12 +97,12 @@ const ROUTES: Partial<Record<RouteKey, Omit<AskUloCapabilityRoute, "subject" | "
     optionalTools: ["search_work_orders"],
   },
   "portfolio:summarize": {
-    requiredTools: ["get_property_insights"],
+    requiredTools: ["get_daily_priorities", "get_awaiting_decisions", "search_work_orders"],
     optionalTools: [
-      "summarize_period",
       "get_portfolio_briefing",
+      "get_property_insights",
+      "summarize_period",
       "rank_properties",
-      "search_work_orders",
     ],
   },
   "portfolio:recommend": {
@@ -258,6 +258,14 @@ export function resolveCapabilityRoute(input: {
     }
   }
   if (input.capability === "summarize") {
+    if (input.subject === "portfolio") {
+      return {
+        subject: input.subject,
+        capability: input.capability,
+        requiredTools: ["get_daily_priorities", "get_awaiting_decisions", "search_work_orders"],
+        optionalTools: ["get_portfolio_briefing", "get_property_insights", "summarize_period"],
+      }
+    }
     return {
       subject: input.subject,
       capability: input.capability,

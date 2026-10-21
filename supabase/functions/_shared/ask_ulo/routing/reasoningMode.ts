@@ -10,6 +10,7 @@ import {
 } from "../tools/_shared/reasoningFirst.ts"
 import { requiresInvestigation } from "../tools/_shared/investigationDefinition.ts"
 import { isPortfolioWorkPrioritizationQuestion } from "../tools/maintenance/workOrderPresentation.ts"
+import { isDailyPrioritiesQuestion } from "../tools/ops/dailyPrioritiesDetect.ts"
 
 export type AskUloReasoningMode =
   | "factual"
@@ -116,6 +117,15 @@ export function classifyAskUloReasoningMode(question: string): AskUloReasoningRe
   const q = question.trim()
   if (!q) {
     return { mode: "factual", confidence: "low", reason: "empty" }
+  }
+
+  // Cross-system daily priorities → executive briefing (not WO-only ranking).
+  if (isDailyPrioritiesQuestion(q)) {
+    return {
+      mode: "executive_briefing",
+      confidence: "high",
+      reason: "daily_priorities_briefing",
+    }
   }
 
   // Open-ended focus / urgency across known work orders (not property ranking).

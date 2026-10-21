@@ -236,6 +236,13 @@ const TOOL_PARAMETER_SCHEMAS: Partial<Record<DomainToolId, Record<string, unknow
     properties: {},
     additionalProperties: false,
   },
+  get_daily_priorities: {
+    type: "object",
+    properties: {
+      buildingFilter: { type: "string" },
+    },
+    additionalProperties: false,
+  },
   summarize_period: {
     type: "object",
     properties: {

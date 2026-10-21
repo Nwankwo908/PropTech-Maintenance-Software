@@ -11,6 +11,7 @@ import type { ListActiveWorkflowsResult } from "../tools/maintenance/listActiveW
 import type { GetWeatherAlertsResult } from "../tools/localMarket/getWeatherAlerts.ts"
 import type { GetLandlordIncentivesResult } from "../tools/finance/getLandlordIncentives.ts"
 import type { PortfolioBriefingResult } from "../tools/properties/portfolioBriefingLookup.ts"
+import type { DailyPrioritiesResult } from "../tools/ops/dailyPriorities.ts"
 import type { RankPropertiesResult } from "../tools/properties/rankProperties.ts"
 import type { PeriodSummaryResult } from "../tools/properties/periodSummaryLookup.ts"
 import type { UnitMaintenanceRankingResult } from "../tools/maintenance/unitMaintenanceRankingLookup.ts"
@@ -72,6 +73,7 @@ export type SpecialtyEvidenceBag = {
   >["structured"]
   property: PropertySnapshotResult | null
   portfolioBriefing: PortfolioBriefingResult | null
+  dailyPriorities: DailyPrioritiesResult | null
   propertyInsights: GetPropertyInsightsResult | null
   recurringRepairs: RecurringRepairsResult | null
   repairsToApprove: GetAwaitingDecisionsResult | null
@@ -278,6 +280,7 @@ export async function fetchSpecialtyEvidence(
     structuredNonLegal,
     property: seed.property ?? null,
     portfolioBriefing: seed.portfolioBriefing ?? null,
+    dailyPriorities: seed.dailyPriorities ?? null,
     propertyInsights: seed.propertyInsights ?? null,
     recurringRepairs: seed.recurringRepairs ?? null,
     repairsToApprove: seed.repairsToApprove ?? null,

@@ -7,6 +7,7 @@ import { detectQuestionSubject } from "../../routing/detectSubject.ts"
 import { resolvePreferPacket } from "../../retrieval/resolvePreferPacket.ts"
 import { buildToolMissIncompleteSignal } from "../../guards/incompleteEvidence.ts"
 import { formatCatchAllWorkOrdersMarkdown } from "../../retrieval/catchAllFallback.ts"
+ // buildToolMissIncompleteSignal still used by entity-investigation refuse path below
 import { isEntityInvestigationQuestion } from "../../tools/maintenance/entityInvestigation.ts"
 import { isPortfolioWorkPrioritizationQuestion } from "../../tools/maintenance/workOrderPresentation.ts"
 import type { OperationalWorkOrder } from "../../tools/maintenance/searchOperationalRecords.ts"
@@ -18,55 +19,44 @@ const FOCUS_PHRASES = [
   "Where should I start?",
 ]
 
-Deno.test("open-ended focus phrases route to urgency-sorted work_order search", () => {
+Deno.test("open-ended daily focus phrases route to cross-system daily priorities briefing", () => {
   for (const q of FOCUS_PHRASES) {
-    assertEquals(isPortfolioWorkPrioritizationQuestion(q), true)
-    assertEquals(detectQuestionSubject(q), "work_order")
-    assertEquals(classifyAskUloIntent(q).intent, "maintenance")
+    assertEquals(isPortfolioWorkPrioritizationQuestion(q), false)
+    assertEquals(detectQuestionSubject(q), "portfolio")
+    assertEquals(classifyAskUloIntent(q).intent, "executive_briefing")
     const cap = detectAskUloCapability(q)
-    assertEquals(cap.capability, "search")
-    assertEquals(cap.hints.sortBy, "priority")
-    assertEquals(cap.hints.order, "desc")
+    assertEquals(cap.capability, "summarize")
     const route = resolveCapabilityRoute({
       subject: detectQuestionSubject(q),
       capability: cap.capability,
     })
-    assertEquals(route.requiredTools.includes("search_work_orders"), true)
+    assertEquals(route.requiredTools.includes("get_daily_priorities"), true)
     assertEquals(route.requiredTools.includes("rank_properties"), false)
   }
 })
 
-Deno.test("prefer packet: focus-today uses ranked catchall, not incomplete refuse", () => {
-  const incomplete = buildToolMissIncompleteSignal({
-    noToolMatched: true,
-    catchallNone: true,
-    subject: "work_order",
-    openWorkOrders: 18,
-    portfolioWorkPrioritization: true,
-  })
-  assertEquals(incomplete, null)
+Deno.test("explicit work-order urgency ranking still uses WO search path", () => {
+  const q = "Which work orders are most urgent?"
+  assertEquals(isPortfolioWorkPrioritizationQuestion(q), true)
+  assertEquals(detectQuestionSubject(q), "work_order")
+})
 
+Deno.test("prefer packet: focus-today uses daily priorities packet, not WO-only catchall", () => {
   const prefer = resolvePreferPacket({
     question: "What should I focus on today?",
-    intent: "maintenance",
-    reasoningMode: "recommendation",
-    subject: "work_order",
-    capability: "search",
-    gatedPropertyRanking: {
-      available: true,
-      canRank: false,
-      missingData: ["property-level maintenance detail"],
-      portfolioOpenWorkOrders: 18,
-    },
-    catchAllWorkOrders: {
-      found: true,
+    intent: "executive_briefing",
+    reasoningMode: "executive_briefing",
+    subject: "portfolio",
+    capability: "summarize",
+    dailyPriorities: {
       markdown:
-        "Here's what I'd focus on first across your **18** open requests — urgency first, then wait time, then anything waiting on your decision.\n\n### WO-FIRE — Orange Grove, Unit 1\n- **Urgency:** Fire\n",
+        "Today's priorities:\n1. Flooding, 45 Oak Ave #3. Vendor needed. Reply 1 to assign.\n2. Inspection repairs due Fri, 123 Main St.",
+      items: [{ position: 1 }, { position: 2 }],
     },
   })
   assertEquals(prefer.prefer, true)
-  assertEquals(prefer.kind, "catchall_search_work_orders")
-  assertMatch(prefer.markdown ?? "", /focus on first/i)
+  assertEquals(prefer.kind, "get_daily_priorities")
+  assertMatch(prefer.markdown ?? "", /Today's priorities/i)
   assertEquals(/Rephrase with the property/i.test(prefer.markdown ?? ""), false)
 })
 

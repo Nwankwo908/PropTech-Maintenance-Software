@@ -21,6 +21,7 @@ export type DomainToolId =
   | "get_missing_updates"
   | "get_vendor_verification"
   | "get_portfolio_briefing"
+  | "get_daily_priorities"
   | "summarize_period"
   | "get_oldest_waiting_work_order"
   | "investigate_entity"
@@ -175,6 +176,14 @@ export const DOMAIN_TOOL_REGISTRY: DomainToolMeta[] = [
     label: "Portfolio executive briefing",
     subject: "property",
     description: "Tier-1 portfolio health briefing (explicit executive briefing only).",
+    status: "live",
+  },
+  {
+    id: "get_daily_priorities",
+    label: "Daily priorities",
+    subject: "property",
+    description:
+      "Cross-system today's priorities: emergencies, costly deadlines, approvals, visits today.",
     status: "live",
   },
   {

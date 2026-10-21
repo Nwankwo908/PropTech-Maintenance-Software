@@ -24,6 +24,7 @@ import {
   isCriticalMaintenanceByPropertyQuestion,
   isPortfolioWorkPrioritizationQuestion,
 } from "../tools/maintenance/workOrderPresentation.ts"
+import { isDailyPrioritiesQuestion } from "../tools/ops/dailyPrioritiesDetect.ts"
 import { formatCriticalMaintenanceByPropertyMarkdown } from "../tools/properties/propertyRankingLookup.ts"
 import { polishAskUloProse } from "../synthesis/formatAnswer.ts"
 import type { AskUloContext } from "../core/context.ts"
@@ -117,6 +118,7 @@ export type PreferPacketBag = {
   oldestWaitingWorkOrder?: { markdown?: string | null; found?: boolean } | null
   entityInvestigation?: { markdown?: string | null; found?: boolean } | null
   periodSummary?: { markdown?: string | null; canSummarize?: boolean } | null
+  dailyPriorities?: { markdown?: string | null; smsText?: string | null; items?: unknown[] } | null
   catchAllWorkOrders?: { found?: boolean; markdown?: string | null } | null
 }
 
@@ -294,6 +296,19 @@ export function resolvePreferPacket(bag: PreferPacketBag): PreferPacketResult {
 
   const draftMd = bag.draftCommunication?.markdown
   if (draftMd) return hit("draft_communication", draftMd)
+
+  // Daily priorities — short ranked action list (SMS + chat shared contract).
+  if (
+    isDailyPrioritiesQuestion(bag.question) &&
+    typeof bag.dailyPriorities?.markdown === "string" &&
+    bag.dailyPriorities.markdown.trim()
+  ) {
+    return hit(
+      "get_daily_priorities",
+      polishAskUloProse(bag.dailyPriorities.markdown),
+      "daily_priorities",
+    )
+  }
 
   // Critical maintenance by property — severity ranking, never invented $ / timelines.
   if (
@@ -518,6 +533,7 @@ export function preferPacketBagFromEvidence(input: {
     landlordIncentives: e.landlordIncentivesResult ?? null,
     residents: e.residentsList ?? e.residents ?? null,
     repairsToApprove: e.repairsToApprove ?? null,
+    dailyPriorities: e.dailyPriorities ?? null,
     missingUpdates: e.missingUpdates ?? null,
     vendorInactive: e.vendorInactive ?? null,
     vendorOverload: e.vendorOverload ?? null,

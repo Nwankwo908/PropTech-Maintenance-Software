@@ -22,11 +22,15 @@ import {
   type RentHistoryResult,
 } from "../rent/rentHistoryLookup.ts"
 
+import { lookupDailyPriorities } from "../ops/dailyPrioritiesLookup.ts"
+import { persistDailyPrioritiesList } from "../ops/dailyPrioritiesActions.ts"
+
 export type ExtendedDomainToolId =
   | "get_recurring_repairs"
   | "get_missing_updates"
   | "get_vendor_verification"
   | "get_portfolio_briefing"
+  | "get_daily_priorities"
   | "summarize_period"
   | "get_oldest_waiting_work_order"
   | "investigate_entity"
@@ -89,6 +93,53 @@ export async function getPortfolioBriefing(
     ...base,
     toolId: "get_portfolio_briefing" as const,
     params: { organizationId: params.organizationId },
+  }
+}
+
+export async function getDailyPriorities(
+  supabase: SupabaseClient,
+  params: {
+    organizationId: string
+    question?: string
+    buildingFilter?: string | null
+    conversationId?: string | null
+    channel?: "sms" | "chat"
+    role?: "landlord" | "tenant"
+    residentId?: string | null
+    userId?: string | null
+    now?: Date
+    timeZone?: string | null
+  },
+) {
+  const role = params.role ?? "landlord"
+  const base = await lookupDailyPriorities(supabase, {
+    landlordId: params.organizationId,
+    role,
+    residentId: params.residentId ?? null,
+    buildingFilter: params.buildingFilter ?? null,
+    now: params.now,
+    timeZone: params.timeZone ?? null,
+  })
+  // Persist action bindings for follow-up replies (best-effort; briefing itself is read-only).
+  if (base.items.length > 0) {
+    await persistDailyPrioritiesList(supabase, {
+      landlordId: params.organizationId,
+      role,
+      actorUserId: params.userId ?? null,
+      actorResidentId: params.residentId ?? null,
+      conversationId: params.conversationId ?? null,
+      channel: params.channel ?? "chat",
+      timeZone: params.timeZone ?? "America/New_York",
+      result: base,
+    })
+  }
+  return {
+    ...base,
+    toolId: "get_daily_priorities" as const,
+    params: {
+      organizationId: params.organizationId,
+      buildingFilter: params.buildingFilter ?? null,
+    },
   }
 }
 

@@ -34,6 +34,14 @@ Deno.test("what should I prioritize is briefing not ranking", () => {
     "executive_briefing",
   )
   assertEquals(
+    classifyAskUloReasoningMode("What should I prioritize today?").mode,
+    "executive_briefing",
+  )
+  assertEquals(
+    classifyAskUloReasoningMode("What's urgent?").mode,
+    "executive_briefing",
+  )
+  assertEquals(
     classifyAskUloReasoningMode("Which property needs my attention first?").mode,
     "comparison_ranking",
   )

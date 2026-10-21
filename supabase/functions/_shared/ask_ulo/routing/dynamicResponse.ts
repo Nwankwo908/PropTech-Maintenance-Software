@@ -3,6 +3,8 @@
  * Choose format from the request — never force a universal template.
  */
 
+import { isDailyPrioritiesQuestion } from "../tools/ops/dailyPrioritiesDetect.ts"
+
 export type AskUloResponseFormat =
   | "summary"
   | "ranking"
@@ -59,8 +61,11 @@ export function classifyResponseFormat(question: string): AskUloResponseFormat {
     return "comparison"
   }
   if (CALC_RE.test(q)) return "calculation"
+  // Daily priorities / strategic briefing before generic ranking/recommend heuristics.
+  if (isDailyPrioritiesQuestion(q) || EXEC_BRIEF_FORMAT_RE.test(q)) {
+    return "executive_briefing"
+  }
   if (/\b(which|rank|most|least|highest|lowest|top\s+\d)\b/i.test(q)) return "ranking"
-  if (EXEC_BRIEF_FORMAT_RE.test(q)) return "executive_briefing"
   if (/\b(what\s+should\s+i|recommend|next\s+step)\b/i.test(q)) return "recommendation"
   if (/\b(why|what\s+caused|what\s+is\s+driving|diagnos)\b/i.test(q)) {
     return "maintenance_diagnosis"

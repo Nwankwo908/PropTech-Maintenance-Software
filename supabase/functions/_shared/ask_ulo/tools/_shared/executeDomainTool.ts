@@ -34,6 +34,7 @@ import {
   getMissingUpdates,
   getOldestWaitingWorkOrder,
   getPortfolioBriefing,
+  getDailyPriorities,
   getRecurringRepairs,
   getVendorVerification,
   investigateEntity,
@@ -71,6 +72,7 @@ export type ExecuteDomainToolResult =
   | { toolId: "get_missing_updates"; result: Awaited<ReturnType<typeof getMissingUpdates>> }
   | { toolId: "get_vendor_verification"; result: Awaited<ReturnType<typeof getVendorVerification>> }
   | { toolId: "get_portfolio_briefing"; result: Awaited<ReturnType<typeof getPortfolioBriefing>> }
+  | { toolId: "get_daily_priorities"; result: Awaited<ReturnType<typeof getDailyPriorities>> }
   | { toolId: "summarize_period"; result: Awaited<ReturnType<typeof summarizePeriod>> }
   | {
     toolId: "get_oldest_waiting_work_order"
@@ -329,6 +331,15 @@ export async function executeDomainTool(
         toolId: "get_portfolio_briefing",
         result: await getPortfolioBriefing(supabase, {
           organizationId: ctx.organizationId,
+        }),
+      }
+    case "get_daily_priorities":
+      return {
+        toolId: "get_daily_priorities",
+        result: await getDailyPriorities(supabase, {
+          organizationId: ctx.organizationId,
+          question: ctx.question,
+          buildingFilter: ctx.buildingFilter ?? null,
         }),
       }
     case "summarize_period":

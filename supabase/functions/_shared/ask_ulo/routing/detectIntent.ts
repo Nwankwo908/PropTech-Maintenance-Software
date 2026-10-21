@@ -20,6 +20,7 @@ import {
   isOverdueWorkOrdersQuestion,
   isPortfolioWorkPrioritizationQuestion,
 } from "../tools/maintenance/workOrderPresentation.ts"
+import { isDailyPrioritiesQuestion } from "../tools/ops/dailyPrioritiesDetect.ts"
 import { isAnyVendorMetricQuestion } from "../tools/_shared/questionMetricContext.ts"
 import {
   isMarketRentEstimateQuestion,
@@ -294,8 +295,16 @@ export function classifyAskUloIntent(
     }
   }
 
-  // Open-ended "what should I focus on today?" — urgency-first open work list,
-  // not executive briefing / property ranking / underspecified search.
+  // Daily priorities — cross-system Ask Ulo briefing (SMS + chat).
+  if (isDailyPrioritiesQuestion(latest)) {
+    return {
+      intent: "executive_briefing",
+      confidence: "high",
+      label: "Daily Priorities Briefing",
+    }
+  }
+
+  // Explicit work-order urgency ranking — not executive briefing.
   if (
     isPortfolioWorkPrioritizationQuestion(latest) ||
     isOverdueWorkOrdersQuestion(latest)

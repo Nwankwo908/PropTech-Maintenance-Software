@@ -144,6 +144,23 @@ export function isCriticalMaintenanceByPropertyQuestion(question: string): boole
 export function isPortfolioWorkPrioritizationQuestion(question: string): boolean {
   const q = question.trim()
   if (!q) return false
+  // Daily cross-system priorities belong on Ask Ulo executive briefing.
+  // Keep this path for explicit *work-order* urgency ranking only.
+  // Inline check (avoid import cycle with dailyPrioritiesDetect via ops tools).
+  if (
+    /\bwhat\s+should\s+i\s+prioriti[sz]e(?:\s+today|\s+now|\s+right\s+now)?\b/i.test(q) ||
+    /\bwhat\s+should\s+i\s+do(?:\s+today|\s+now|\s+right\s+now)?\b/i.test(q) ||
+    /\bwhat\s+should\s+i\s+focus\s+on(?:\s+today|\s+now|\s+right\s+now)?\b/i.test(q) ||
+    /\bwhat(?:'s|\s+is)\s+(?:the\s+)?(?:most\s+)?urgent\b/i.test(q) ||
+    /\banything\s+i\s+need\s+to\s+handle\b/i.test(q) ||
+    /\bwhat\s+needs\s+(?:my\s+)?attention(?:\s+today)?\b/i.test(q) ||
+    /\brank\s+today'?s\s+priorities\b/i.test(q) ||
+    /\btoday'?s\s+priorities\b/i.test(q) ||
+    /\bwhere\s+(?:should|would)\s+i\s+start\b/i.test(q) ||
+    /\bshow\s+me\s+everything\s+that\s+needs\s+my\s+attention\s+today\b/i.test(q)
+  ) {
+    return false
+  }
   // "Which property / building…" stays on property ranking.
   if (/\bwhich\s+(?:propert(?:y|ies)|buildings?|communities)\b/i.test(q)) {
     return false
@@ -163,16 +180,13 @@ export function isPortfolioWorkPrioritizationQuestion(question: string): boolean
     return false
   }
 
+  // Explicit work-order / ticket urgency ranking only.
   return (
-    /\bwhat\s+should\s+i\s+focus\s+on\b/i.test(q) ||
-    /\bwhat\s+to\s+focus\s+on\b/i.test(q) ||
-    /\bwhat\s+needs\s+(?:my\s+)?attention\b/i.test(q) ||
-    /\bwhat(?:'s|\s+is)\s+(?:the\s+)?most\s+urgent\b/i.test(q) ||
-    /\bwhere\s+(?:should|would)\s+i\s+start\b/i.test(q) ||
-    /\bwhat\s+should\s+happen\s+first\b/i.test(q) ||
-    /\bwhat\s+should\s+i\s+(?:do|prioriti[sz]e)(?:\s+first|\s+today|\s+now|\s+right\s+now)?\b/i
-      .test(q) ||
-    /\bneeds?\s+(?:my\s+)?attention\s+today\b/i.test(q) ||
-    /\bmost\s+urgent\s+(?:work\s*orders?|tickets?|repairs?|items?|issues?)?\b/i.test(q)
+    /\bmost\s+urgent\s+(?:work\s*orders?|tickets?|repairs?|items?|issues?)\b/i.test(q) ||
+    /\b(?:work\s*orders?|tickets?|repairs?)\b.{0,48}\bmost\s+urgent\b/i.test(q) ||
+    /\bwhat\s+should\s+happen\s+first\b.+\b(work\s*orders?|tickets?|repairs?)\b/i.test(q) ||
+    (/\bprioriti[sz]e\b/i.test(q) &&
+      /\b(work\s*orders?|tickets?|repairs?)\b/i.test(q) &&
+      !/\btoday\b/i.test(q))
   )
 }

@@ -101,11 +101,15 @@ Deno.test("isOverdueWorkOrdersQuestion matches suggested Ask Ulo prompt", () => 
   assertEquals(isOverdueWorkOrdersQuestion("What needs attention today?"), false)
 })
 
-Deno.test("isPortfolioWorkPrioritizationQuestion covers open-ended focus phrasing", () => {
-  assertEquals(isPortfolioWorkPrioritizationQuestion("What should I focus on today?"), true)
-  assertEquals(isPortfolioWorkPrioritizationQuestion("What needs my attention?"), true)
-  assertEquals(isPortfolioWorkPrioritizationQuestion("What's most urgent?"), true)
-  assertEquals(isPortfolioWorkPrioritizationQuestion("Where should I start?"), true)
+Deno.test("isPortfolioWorkPrioritizationQuestion excludes daily priorities; keeps WO urgency", () => {
+  assertEquals(isPortfolioWorkPrioritizationQuestion("What should I focus on today?"), false)
+  assertEquals(isPortfolioWorkPrioritizationQuestion("What needs my attention?"), false)
+  assertEquals(isPortfolioWorkPrioritizationQuestion("What's most urgent?"), false)
+  assertEquals(isPortfolioWorkPrioritizationQuestion("Where should I start?"), false)
+  assertEquals(
+    isPortfolioWorkPrioritizationQuestion("Which work orders are most urgent?"),
+    true,
+  )
   assertEquals(
     isPortfolioWorkPrioritizationQuestion("Which property needs my attention first?"),
     false,

@@ -47,7 +47,7 @@ const GOLD: GoldCase[] = [
   { q: "Show me the biggest maintenance trends this month.", subject: ["maintenance", "work_order", "period", "other"], forbidBriefing: true },
   { q: "Which building has the most recurring problems?", subject: ["property", "maintenance", "work_order"], forbidBriefing: false },
   { q: "Which units generate the most maintenance requests?", subject: "unit", intent: "unit_maintenance_ranking", forbidBriefing: true },
-  { q: "What should I prioritize today?", subject: ["property", "portfolio", "other"], forbidBriefing: false },
+  { q: "What should I prioritize today?", subject: ["property", "portfolio", "other"], intent: "executive_briefing", forbidBriefing: false },
   { q: "Give me a summary of everything that happened this week.", subject: ["period", "portfolio", "other"], intent: ["period_summary", "executive_briefing", "ops"] },
   { q: "What should I worry about over the next 30 days?", subject: ["portfolio", "other"], intent: "executive_briefing" },
 

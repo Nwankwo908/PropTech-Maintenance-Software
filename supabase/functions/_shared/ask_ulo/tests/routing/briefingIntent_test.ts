@@ -29,11 +29,12 @@ Deno.test("executive briefing: catch me up / what did I miss", () => {
   )
 })
 
-Deno.test("open-ended focus → work prioritization; week horizon stays briefing; risk/money stay priority", () => {
-  assertEquals(isRecommendationQuestion("What should I focus on today?"), true)
+Deno.test("open-ended focus today → daily priorities briefing; week horizon stays briefing; risk/money stay priority", () => {
+  assertEquals(isRecommendationQuestion("What should I focus on today?"), false)
+  assertEquals(isExecutiveBriefingQuestion("What should I focus on today?"), true)
   assertEquals(
     classifyAskUloIntent("What should I focus on today?").intent,
-    "maintenance",
+    "executive_briefing",
   )
   assertEquals(
     classifyAskUloIntent("What should I focus on this month?").intent,

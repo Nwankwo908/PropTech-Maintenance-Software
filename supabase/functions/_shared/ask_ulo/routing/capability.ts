@@ -32,6 +32,7 @@ import {
   isOverdueWorkOrdersQuestion,
   isPortfolioWorkPrioritizationQuestion,
 } from "../tools/maintenance/workOrderPresentation.ts"
+import { isDailyPrioritiesQuestion } from "../tools/ops/dailyPrioritiesDetect.ts"
 import { isRepairCostQuestion } from "../tools/maintenance/deepOperationalInvestigation.ts"
 import {
   isVendorBestQuestion,
@@ -166,8 +167,12 @@ export function detectAskUloCapability(
     }
   }
 
-  // Open-ended "what should I focus on / what's most urgent" — rank known open
-  // work by urgency (same path as overdue lists). Not an entity search.
+  // Cross-system daily priorities → summarize via get_daily_priorities.
+  if (isDailyPrioritiesQuestion(q)) {
+    return { capability: "summarize", confidence: "high", hints: {} }
+  }
+
+  // Explicit work-order urgency ranking only.
   if (isPortfolioWorkPrioritizationQuestion(q)) {
     return {
       capability: "search",
