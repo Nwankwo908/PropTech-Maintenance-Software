@@ -150,7 +150,7 @@ record('saved_residents', 'passed', `LA2 residents: ${residents?.length || 0}`, 
 {
   const onboarding = await admin
     .from('landlord_onboarding')
-    .select('landlord_id,completed_at,status')
+    .select('landlord_id,completed_at,onboarding_status')
     .eq('landlord_id', LA2)
     .maybeSingle()
   if (onboarding.error) {
@@ -165,6 +165,7 @@ record('saved_residents', 'passed', `LA2 residents: ${residents?.length || 0}`, 
   } else {
     record('onboarding_row', 'passed', 'LA2 onboarding completed_at present', {
       completedAt: onboarding.data.completed_at,
+      onboardingStatus: onboarding.data.onboarding_status,
     })
   }
 }

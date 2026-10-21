@@ -153,6 +153,7 @@ const insertRow = {
   description,
   issue_type: 'flooding',
   priority: 'Emergency',
+  urgency: 'emergency',
   vendor_work_status: 'unassigned',
   category: 'plumbing',
 }
@@ -190,27 +191,43 @@ record('ticket_flooding_fields', 'passed', 'Flooding issue_type + Emergency prio
 // Resolve configured ops / on-call phones for LA2 (read-only)
 const { data: landlordRow } = await admin
   .from('landlords')
-  .select('id,ops_phone,phone,notification_phone,company_name')
+  .select('id,phone,contact_name,name')
   .eq('id', LA2)
   .maybeSingle()
 
+const { data: onboardingRow } = await admin
+  .from('landlord_onboarding')
+  .select('emergency_contact,notification_channel,account_settings')
+  .eq('landlord_id', LA2)
+  .maybeSingle()
+
 const opsCandidates = [
-  landlordRow?.ops_phone,
-  landlordRow?.notification_phone,
   landlordRow?.phone,
+  onboardingRow?.emergency_contact,
 ]
   .map((p) => (typeof p === 'string' ? p.trim() : ''))
   .filter(Boolean)
 
+// account_settings may nest ops phones
+const acct = onboardingRow?.account_settings
+if (acct && typeof acct === 'object') {
+  for (const key of ['opsPhone', 'ops_phone', 'notificationPhone', 'phone']) {
+    const v = acct[key]
+    if (typeof v === 'string' && v.trim()) opsCandidates.push(v.trim())
+  }
+}
+
 const { data: smsIds } = await admin
   .from('sms_identities')
-  .select('phone_e164,role,landlord_id')
+  .select('phone_number,identity_type,landlord_id')
   .eq('landlord_id', LA2)
-  .in('role', ['landlord', 'ops', 'admin'])
-  .limit(10)
+  .limit(20)
 
 for (const row of smsIds || []) {
-  if (row.phone_e164) opsCandidates.push(row.phone_e164)
+  // Landlord-ops handset for LA2 journeys is the designated vendor/ops line when present.
+  if (row.phone_number && row.identity_type !== 'resident') {
+    opsCandidates.push(row.phone_number)
+  }
 }
 
 const uniqueOps = [...new Set(opsCandidates)]
@@ -256,7 +273,11 @@ if (!SEND_LIVE) {
   record('duplicate_alert_idempotency', 'not_run', 'Skipped — no ops phone')
 } else {
   const base = SUPABASE_URL.replace(/\/$/, '')
-  const secret = (process.env.ADMIN_REASSIGN_SECRET || '').trim()
+  const secret = (
+    process.env.ADMIN_REASSIGN_SECRET ||
+    process.env.VITE_ADMIN_REASSIGN_SECRET ||
+    ''
+  ).trim()
   if (!secret) {
     record('human_alert_delivery', 'blocked', 'ADMIN_REASSIGN_SECRET required for live emergency notify invoke')
     record('duplicate_alert_idempotency', 'not_run', 'Skipped — missing secret')
@@ -292,29 +313,53 @@ if (!SEND_LIVE) {
       record('human_alert_delivery', 'failed', `Notify invoke failed HTTP ${first.status}`, {
         body: first.json || first.text,
       })
+      record('duplicate_alert_idempotency', 'not_run', 'Skipped — first notify failed')
     } else {
-      const sid = first.json?.messageSid || first.json?.sid || null
-      const to = first.json?.to || null
-      record('human_alert_delivery', sid ? 'passed' : 'partial', 'Live attention notify invoked', {
-        http: first.status,
-        messageSid: sid,
-        toLast4: typeof to === 'string' ? to.slice(-4) : null,
-        note: sid
-          ? 'SID present — check Twilio/DB delivery separately; not a handset read receipt'
-          : 'No SID in response — inspect function support for emergency_attention',
-      })
+      // notifyLandlordNeedsAttention returns smsSent as destination phone strings.
+      // Prove delivery from durable sms_messages + Twilio SID (not the phone-as-sid quirk).
+      const since = new Date(Date.now() - 120_000).toISOString()
+      const { data: outbound } = await admin
+        .from('sms_messages')
+        .select(
+          'id,to_number,provider_message_sid,provider_status,body,created_at,direction',
+        )
+        .eq('direction', 'outbound')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(20)
+      const alertRow = (outbound || []).find((m) =>
+        /Emergency flooding reported/i.test(String(m.body || '')),
+      )
+      const sid = alertRow?.provider_message_sid || null
+      const delivered = String(alertRow?.provider_status || '').toLowerCase() === 'delivered'
+      if (sid && delivered) {
+        record('human_alert_delivery', 'passed', 'Emergency attention SMS delivered (Twilio SID in DB)', {
+          http: first.status,
+          messageSid: sid,
+          toLast4: typeof alertRow.to_number === 'string' ? alertRow.to_number.slice(-4) : null,
+          providerStatus: alertRow.provider_status,
+        })
+      } else if (sid) {
+        record('human_alert_delivery', 'partial', 'Alert SMS row exists but not yet delivered', {
+          messageSid: sid,
+          providerStatus: alertRow?.provider_status ?? null,
+        })
+      } else {
+        record('human_alert_delivery', 'failed', 'Notify returned ok but no flooding alert SMS row found', {
+          invoke: first.json,
+        })
+      }
       const second = await invoke()
-      const sid2 = second.json?.messageSid || second.json?.sid || null
-      if (sid && sid2 && sid === sid2) {
-        record('duplicate_alert_idempotency', 'passed', 'Second notify reused same outbound SID')
-      } else if (second.json?.skipped === true || second.json?.idempotent === true) {
-        record('duplicate_alert_idempotency', 'passed', 'Second notify skipped as idempotent', second.json)
+      if (second.json?.skipped === true || second.json?.idempotent === true) {
+        record('duplicate_alert_idempotency', 'passed', 'Second notify skipped as idempotent', {
+          reason: second.json?.reason ?? null,
+        })
       } else {
         record(
           'duplicate_alert_idempotency',
           'unknown',
-          'Second invoke returned a different shape — manual review of outbox required',
-          { firstSid: sid, second: second.json || second.text },
+          'Second invoke did not report idempotent skip — review outbox',
+          { second: second.json || second.text },
         )
       }
     }

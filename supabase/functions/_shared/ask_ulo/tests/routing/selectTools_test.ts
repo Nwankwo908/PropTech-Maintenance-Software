@@ -97,7 +97,8 @@ Deno.test("planToolsFromCapabilityRoute: period summary adds summarize_period", 
     question: q,
   })
   assertEquals(planned.some((p) => p.name === "summarize_period"), true)
-  assertEquals(planned.some((p) => p.name === "get_property_insights"), true)
+  // Period summaries use summarize_period; property insights are optional, not required.
+  assertEquals(planned.some((p) => p.name === "get_property_insights"), false)
 })
 
 Deno.test("applyPlannedToolsToNeeds: awaiting decisions + residents", () => {

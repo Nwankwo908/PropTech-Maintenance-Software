@@ -103,7 +103,12 @@ export function reconcilePropertiesByAddressIdentity<T extends AddressIdentityPr
     }
 
     const nameKey = row.name.trim().toLowerCase()
-    if (!nameKey) continue
+    // Keep blank review placeholders (e.g. lease draft with required address)
+    // so the UI can collect the missing address instead of dropping the row.
+    if (!nameKey) {
+      out.push(row)
+      continue
+    }
     const named = byName.get(nameKey)
     if (named) {
       const namedAddr = onboardingAddressMatchKey(named)
