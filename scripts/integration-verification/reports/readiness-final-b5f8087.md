@@ -1,10 +1,11 @@
-# Readiness evidence — final commit `b5f8087`
+# Readiness evidence — final commit `7a72fbd`
 
 **Decision: NOT PILOT-READY** (core SMS handset YES + type/lint gates still open; rent/Home Checks excluded).
 
 | Field | Value |
 | --- | --- |
-| Final commit | `b5f80878e1549a2c7c77f7a69849daa8d3457c4f` |
+| Final commit | `7a72fbddcedb036fec7269a77e4f454ecfa69fe4` |
+| Evidence suite commit | `b5f80878e1549a2c7c77f7a69849daa8d3457c4f` (journeys + gates); `83d8d88` / `7a72fbd` inventory/test follow-ups |
 | Environment | `mzpqwuizhiaczxcnmxbt.supabase.co` |
 | Test landlord | Limited Alpha 2 `de300000-0000-4000-8000-000000000004` only |
 | Limited Alpha 1 | **Not used** — no sign-in, password reset, record edits, or messages |
