@@ -6,6 +6,7 @@ import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
+  extractionReviewHasPortfolioData,
   formatExtractedUnitPlacement,
   type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
@@ -480,14 +481,21 @@ export function OnboardingAiReviewStep({
   const hasSelectedVendors = review.vendors.some(
     (vendor) => vendor.selected && vendor.name.trim().length > 0,
   )
-  const isEmpty =
-    review.properties.length === 0 &&
-    review.units.length === 0 &&
-    review.residents.length === 0 &&
-    review.leases.length === 0 &&
-    review.vendors.length === 0 &&
-    review.financialRecords.length === 0
-  const manualAdd = skippedUpload || review.skippedDocumentUpload === true
+  const hasPortfolioData = extractionReviewHasPortfolioData(review)
+  // Sticky: once we show manual add (skip upload or empty extract), keep those
+  // controls after the landlord adds their first property/tenant/vendor.
+  const [manualEntryMode, setManualEntryMode] = useState(
+    () =>
+      skippedUpload ||
+      review.skippedDocumentUpload === true ||
+      !hasPortfolioData,
+  )
+  useEffect(() => {
+    if (skippedUpload || review.skippedDocumentUpload === true || !hasPortfolioData) {
+      setManualEntryMode(true)
+    }
+  }, [skippedUpload, review.skippedDocumentUpload, hasPortfolioData])
+  const manualAdd = manualEntryMode
 
   useEffect(() => {
     const backup = review.account
@@ -1755,131 +1763,129 @@ export function OnboardingAiReviewStep({
           </div>
         </ReviewSection>
 
-        {isEmpty && !manualAdd ? (
-          <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-8 text-center">
-            <p className="text-[14px] font-medium text-[#101828]">No extracted portfolio data yet</p>
-            <p className="mt-1 text-[13px] text-[#6a7282]">
-              Upload documents to extract properties, residents, and vendors — or complete your
-              organization details above and continue.
-            </p>
-          </div>
-        ) : (
-          <>
-            <ReviewSection
-              title={manualAdd ? 'Add properties' : 'Properties Found'}
-              count={
-                manualAdd
-                  ? undefined
-                  : review.properties.length ||
-                    (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
-              }
-              headerActions={
-                manualAdd ? (
-                  <AddRowButton label="Add property" onClick={addPropertyForm} />
-                ) : undefined
-              }
-            >
-              {manualAdd && review.properties.length === 0 ? null : renderPropertyRows()}
-              {manualAdd ? null : (
-                <button
-                  type="button"
-                  className="mt-3 w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[13px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb]"
-                  onClick={addPropertyForm}
-                >
-                  + Add another property
-                </button>
-              )}
-            </ReviewSection>
-            {manualAdd ? (
-              <ReviewSection
-                title="Add tenant"
-                headerActions={
-                  <AddRowButton
-                    label="Add tenant"
-                    onClick={addTenantForm}
-                    disabled={review.properties.length === 0}
-                  />
-                }
+        <>
+          {!hasPortfolioData && manualAdd ? (
+            <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-5 text-center">
+              <p className="text-[14px] font-medium text-[#101828]">No portfolio data from your documents</p>
+              <p className="mt-1 text-[13px] text-[#6a7282]">
+                Add properties, tenants, and vendors below, or go back to upload different documents.
+              </p>
+            </div>
+          ) : null}
+          <ReviewSection
+            title={manualAdd ? 'Add properties' : 'Properties Found'}
+            count={
+              manualAdd
+                ? undefined
+                : review.properties.length ||
+                  (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
+            }
+            headerActions={
+              manualAdd ? (
+                <AddRowButton label="Add property" onClick={addPropertyForm} />
+              ) : undefined
+            }
+          >
+            {manualAdd && review.properties.length === 0 ? null : renderPropertyRows()}
+            {manualAdd ? null : (
+              <button
+                type="button"
+                className="mt-3 w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[13px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb]"
+                onClick={addPropertyForm}
               >
-                {renderManualTenants()}
-              </ReviewSection>
-            ) : null}
-            {manualAdd || review.leases.some((item) => item.fieldAttention) ? null : (
-            <ReviewSection
-              title="Lease Information Found"
-              count={review.leases.length}
-              headerActions={
-                review.leases.length > 0
-                  ? sectionSelectActions(
-                      () => setLeaseSectionSelected(true),
-                      () => setLeaseSectionSelected(false),
-                    )
-                  : undefined
-              }
-            >
-              {review.leases.some((item) => item.fieldAttention)
-                ? review.leases.map((item) =>
-                    item.fieldAttention ? (
-                      <div key={item.id} className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
-                        <label className="block">
-                          <DraftFieldLabel text="Tenant" attention={item.fieldAttention.residentName} />
-                          <input className={attentionFieldClass(item.fieldAttention.residentName)} value={item.residentName} onChange={(e) => patchDraft(item.id, 'residentName', e.target.value)} />
-                        </label>
-                        <label className="block">
-                          <DraftFieldLabel text="Monthly rent" attention={item.fieldAttention.rentAmount} />
-                          <input className={attentionFieldClass(item.fieldAttention.rentAmount)} value={item.rentAmount} onChange={(e) => patchDraft(item.id, 'rentAmount', e.target.value)} />
-                        </label>
-                        <label className="block">
-                          <DraftFieldLabel text="Lease start" attention={item.fieldAttention.leaseStart} />
-                          <input className={attentionFieldClass(item.fieldAttention.leaseStart)} type="date" value={item.leaseStart} onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)} />
-                        </label>
-                        <label className="block">
-                          <DraftFieldLabel text="Lease end" attention={item.fieldAttention.leaseEnd} />
-                          <input className={attentionFieldClass(item.fieldAttention.leaseEnd)} type="date" value={item.leaseEnd} onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)} />
-                        </label>
-                        <label className="block">
-                          <DraftFieldLabel text="Security deposit" attention={item.fieldAttention.securityDeposit} />
-                          <input className={attentionFieldClass(item.fieldAttention.securityDeposit)} value={item.securityDeposit} onChange={(e) => patchDraft(item.id, 'securityDeposit', e.target.value)} />
-                        </label>
-                      </div>
-                    ) : null,
-                  )
-                : renderSimpleRows<ExtractedLeaseInfo>(
-                review.leases,
-                'leases',
-                (item) => item.residentName,
-                (item) =>
-                  [
-                    formatExtractedUnitPlacement(item.building, item.unit),
-                    `${item.leaseStart} – ${item.leaseEnd}`,
-                    `Rent ${item.rentAmount}`,
-                    `Deposit ${item.securityDeposit}`,
-                  ]
-                    .filter(Boolean)
-                    .join(' · '),
-                'rentAmount',
-                (item) => item.rentAmount,
-                'No lease information detected.',
-              )}
-            </ReviewSection>
+                + Add another property
+              </button>
             )}
+          </ReviewSection>
+          {manualAdd ? (
             <ReviewSection
-              title={manualAdd ? 'Add vendor' : 'Vendors'}
-              count={
-                manualAdd
-                  ? undefined
-                  : review.vendors.filter((v) => v.name.trim()).length || undefined
-              }
+              title="Add tenant"
               headerActions={
-                manualAdd ? (
-                  <AddRowButton label="Add vendor" onClick={addVendorForm} />
-                ) : undefined
+                <AddRowButton
+                  label="Add tenant"
+                  onClick={addTenantForm}
+                  disabled={review.properties.length === 0}
+                />
               }
             >
-              {manualAdd && review.vendors.length === 0 ? null : renderVendorForms()}
+              {renderManualTenants()}
             </ReviewSection>
-          </>
-        )}
+          ) : null}
+          {manualAdd || review.leases.some((item) => item.fieldAttention) ? null : (
+          <ReviewSection
+            title="Lease Information Found"
+            count={review.leases.length}
+            headerActions={
+              review.leases.length > 0
+                ? sectionSelectActions(
+                    () => setLeaseSectionSelected(true),
+                    () => setLeaseSectionSelected(false),
+                  )
+                : undefined
+            }
+          >
+            {review.leases.some((item) => item.fieldAttention)
+              ? review.leases.map((item) =>
+                  item.fieldAttention ? (
+                    <div key={item.id} className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+                      <label className="block">
+                        <DraftFieldLabel text="Tenant" attention={item.fieldAttention.residentName} />
+                        <input className={attentionFieldClass(item.fieldAttention.residentName)} value={item.residentName} onChange={(e) => patchDraft(item.id, 'residentName', e.target.value)} />
+                      </label>
+                      <label className="block">
+                        <DraftFieldLabel text="Monthly rent" attention={item.fieldAttention.rentAmount} />
+                        <input className={attentionFieldClass(item.fieldAttention.rentAmount)} value={item.rentAmount} onChange={(e) => patchDraft(item.id, 'rentAmount', e.target.value)} />
+                      </label>
+                      <label className="block">
+                        <DraftFieldLabel text="Lease start" attention={item.fieldAttention.leaseStart} />
+                        <input className={attentionFieldClass(item.fieldAttention.leaseStart)} type="date" value={item.leaseStart} onChange={(e) => patchDraft(item.id, 'leaseStart', e.target.value)} />
+                      </label>
+                      <label className="block">
+                        <DraftFieldLabel text="Lease end" attention={item.fieldAttention.leaseEnd} />
+                        <input className={attentionFieldClass(item.fieldAttention.leaseEnd)} type="date" value={item.leaseEnd} onChange={(e) => patchDraft(item.id, 'leaseEnd', e.target.value)} />
+                      </label>
+                      <label className="block">
+                        <DraftFieldLabel text="Security deposit" attention={item.fieldAttention.securityDeposit} />
+                        <input className={attentionFieldClass(item.fieldAttention.securityDeposit)} value={item.securityDeposit} onChange={(e) => patchDraft(item.id, 'securityDeposit', e.target.value)} />
+                      </label>
+                    </div>
+                  ) : null,
+                )
+              : renderSimpleRows<ExtractedLeaseInfo>(
+              review.leases,
+              'leases',
+              (item) => item.residentName,
+              (item) =>
+                [
+                  formatExtractedUnitPlacement(item.building, item.unit),
+                  `${item.leaseStart} – ${item.leaseEnd}`,
+                  `Rent ${item.rentAmount}`,
+                  `Deposit ${item.securityDeposit}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+              'rentAmount',
+              (item) => item.rentAmount,
+              'No lease information detected.',
+            )}
+          </ReviewSection>
+          )}
+          <ReviewSection
+            title={manualAdd ? 'Add vendor' : 'Vendors'}
+            count={
+              manualAdd
+                ? undefined
+                : review.vendors.filter((v) => v.name.trim()).length || undefined
+            }
+            headerActions={
+              manualAdd ? (
+                <AddRowButton label="Add vendor" onClick={addVendorForm} />
+              ) : undefined
+            }
+          >
+            {manualAdd && review.vendors.length === 0 ? null : renderVendorForms()}
+          </ReviewSection>
+        </>
       </div>
 
       {requiredBlankMessage ? (

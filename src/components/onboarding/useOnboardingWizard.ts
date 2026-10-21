@@ -10,6 +10,7 @@ import {
   createUploadedDocumentFromFile,
   persistOnboardingDocumentFile,
   emptyExtractionReview,
+  enableManualEntryIfEmptyPortfolio,
   isAcceptedUploadFile,
   canRetryOnboardingDocumentExtract,
   normalizeExtractionReview,
@@ -1087,10 +1088,12 @@ export function useOnboardingWizard() {
     }
     setError(null)
     try {
-      const review = fillExtractionReviewAccount(
-        buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
-        uploadDocuments,
-        state.accountSetup,
+      const review = enableManualEntryIfEmptyPortfolio(
+        fillExtractionReviewAccount(
+          buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
+          uploadDocuments,
+          state.accountSetup,
+        ),
       )
       setExtractionReview(review)
       await goTo('ai_review', {}, { extractionReview: review })
@@ -1274,12 +1277,14 @@ export function useOnboardingWizard() {
 
     if (state.setupPath === 'fast_track' && (resolved === 'document_upload' || resolved === 'ai_review')) {
       if (resolved === 'ai_review' && !extractionReview) {
-        const review = fillExtractionReviewAccount(
-          uploadDocuments.length > 0
-            ? buildOnboardingExtractionReview(uploadDocuments, state.accountSetup)
-            : emptyExtractionReview(state.accountSetup),
-          uploadDocuments,
-          state.accountSetup,
+        const review = enableManualEntryIfEmptyPortfolio(
+          fillExtractionReviewAccount(
+            uploadDocuments.length > 0
+              ? buildOnboardingExtractionReview(uploadDocuments, state.accountSetup)
+              : emptyExtractionReview(state.accountSetup),
+            uploadDocuments,
+            state.accountSetup,
+          ),
         )
         setExtractionReview(review)
         await goTo('ai_review', {}, { extractionReview: review })

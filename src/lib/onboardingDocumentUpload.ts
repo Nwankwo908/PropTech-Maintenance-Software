@@ -2880,6 +2880,31 @@ export function emptyExtractionReview(
   }
 }
 
+/** True when AI Review has any named portfolio rows (blank seeded vendors don't count). */
+export function extractionReviewHasPortfolioData(review: OnboardingExtractionReview): boolean {
+  return (
+    review.properties.length > 0 ||
+    review.units.length > 0 ||
+    review.residents.length > 0 ||
+    review.leases.length > 0 ||
+    review.vendors.some((vendor) => vendor.name.trim().length > 0) ||
+    review.financialRecords.length > 0
+  )
+}
+
+/**
+ * When lease/docs extract nothing, stamp the same manual-entry path as Skip
+ * so AI Review keeps Add property / tenant / vendor controls.
+ */
+export function enableManualEntryIfEmptyPortfolio(
+  review: OnboardingExtractionReview,
+): OnboardingExtractionReview {
+  if (review.skippedDocumentUpload === true || extractionReviewHasPortfolioData(review)) {
+    return review
+  }
+  return { ...review, skippedDocumentUpload: true }
+}
+
 /** Ensure older persisted reviews still have account + new entity fields. */
 export function normalizeExtractionReview(
   review: OnboardingExtractionReview | null | undefined,
