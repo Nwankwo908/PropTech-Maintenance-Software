@@ -774,6 +774,7 @@ export function InvoicePaymentRail({
   async function launchProviderCheckout(
     paymentMethodId: InvoiceCheckoutPaymentMethod,
   ) {
+    if (!review) return
     setAddError(null)
     setCheckoutBusy(true)
     try {

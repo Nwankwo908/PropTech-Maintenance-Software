@@ -21,7 +21,7 @@ function destinationQuery(vendor: VendorDistanceTarget): string {
   return address || name
 }
 
-function geocodeResult(g: typeof google, result: google.maps.GeocoderResult | undefined): GeoLatLng | null {
+function geocodeResult(_g: typeof google, result: google.maps.GeocoderResult | undefined): GeoLatLng | null {
   const loc = result?.geometry?.location
   if (!loc) return null
   const lat = typeof loc.lat === 'function' ? loc.lat() : Number(loc.lat)
@@ -89,7 +89,7 @@ async function drivingMiles(
   for (let i = 0; i < vendors.length; i += batchSize) {
     const batch = vendors.slice(i, i + batchSize)
     const named = batch.map(destinationQuery)
-    let miles = await distanceMatrixBatch(g, origin, named)
+    const miles = await distanceMatrixBatch(g, origin, named)
     const retryIdx: number[] = []
     const retryQueries: string[] = []
     for (let j = 0; j < batch.length; j += 1) {

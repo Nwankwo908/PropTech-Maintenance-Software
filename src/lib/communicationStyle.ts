@@ -123,11 +123,6 @@ function residentAtUnit(facts: OperationalMessageFacts): string {
   return `${name}${formatInUnitPhrase(facts.unitLabel, facts.propertyType)}`
 }
 
-function residentLabel(facts: OperationalMessageFacts): string {
-  const name = (facts.residentName ?? '').trim()
-  return name || 'the resident'
-}
-
 function propertyLabel(facts: OperationalMessageFacts): string {
   return (facts.propertyName ?? '').trim() || 'your property'
 }

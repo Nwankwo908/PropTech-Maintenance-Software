@@ -111,7 +111,6 @@ function percentAbove(value: number, median: number): number {
 }
 
 function counterTarget(quoted: number, benchmark: VendorSetupMarketBenchmark, kind: 'service' | 'hourly'): number {
-  const low = kind === 'service' ? benchmark.serviceCallLow : benchmark.hourlyLow
   const high = kind === 'service' ? benchmark.serviceCallHigh : benchmark.hourlyHigh
   const median = kind === 'service' ? benchmark.serviceCallMedian : benchmark.hourlyMedian
 

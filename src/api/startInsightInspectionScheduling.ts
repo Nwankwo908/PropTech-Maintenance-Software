@@ -5,7 +5,6 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import type { InsightRecommendationActionType } from '@shared/portfolioIntelligence'
 
 export type StartInsightInspectionSchedulingOk = {

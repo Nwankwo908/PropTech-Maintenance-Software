@@ -10,12 +10,13 @@ import {
   computePortfolioInsights,
   computePortfolioRecommendations,
   type PortfolioRecommendation,
-  type PropertyInsightFinding,
-  type PropertyInsightTag,
+  type PortfolioInsightFinding,
+  type PortfolioInsightTag,
 } from "../../../portfolioIntelligence/index.ts"
 import { loadPortfolioIntelligenceInput } from "../../../portfolioIntelligence/loadSnapshot.ts"
 
-export type { PropertyInsightTag, PropertyInsightFinding }
+export type PropertyInsightTag = PortfolioInsightTag
+export type PropertyInsightFinding = PortfolioInsightFinding
 
 export type PropertyInsightsResult = {
   available: boolean

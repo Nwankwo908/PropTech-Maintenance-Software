@@ -288,7 +288,7 @@ export async function remediateOrphanedMaintenanceTicket(
       const outcome = await dispatchConfirmedMaintenanceTicket(supabase, {
         ticketId,
         priority,
-        unit,
+        unit: unit ?? "",
         description,
         dueAt,
         estimatedMinutes,

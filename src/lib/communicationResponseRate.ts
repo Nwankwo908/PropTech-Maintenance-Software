@@ -55,6 +55,9 @@ export async function fetchCommunicationInboundResponseRate(params: {
   toMs: number
   windowHours?: number
 }): Promise<CommunicationResponseRateResult> {
+  if (!supabase) {
+    return mapRpcRow(undefined)
+  }
   const { data, error } = await supabase.rpc('communication_inbound_response_rate', {
     p_landlord_id: params.landlordId,
     p_from: new Date(params.fromMs).toISOString(),

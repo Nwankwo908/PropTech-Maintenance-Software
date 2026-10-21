@@ -50,15 +50,6 @@ function IconChevronDown({ className = 'size-4 text-extended-3' }: { className?:
   )
 }
 
-function IconAddCheck({ className = 'size-4 shrink-0 text-white' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.5} />
-      <path d="M8 12l2.5 2.5L16 9" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 export type AddPropertyFormPayload = {
   propertyName: string
   propertyType: string

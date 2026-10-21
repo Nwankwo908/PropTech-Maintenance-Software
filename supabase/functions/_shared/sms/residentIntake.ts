@@ -381,14 +381,14 @@ async function logClassificationAudit(
   },
 ): Promise<void> {
   try {
-    await logGraphEvent(supabase, {
-      landlord_id: params.landlordId,
-      event_type: params.eventType,
-      source: "sms_intake",
-      actor_type: "system",
-      resident_id: params.residentId,
-      conversation_id: params.conversationId,
-      maintenance_request_id: params.state.draft_ticket_id ?? null,
+    await recordActivityLog(supabase, {
+      landlordId: params.landlordId,
+      eventType: params.eventType,
+      source: "sms",
+      actorType: "system",
+      residentId: params.residentId,
+      conversationId: params.conversationId,
+      maintenanceRequestId: params.state.draft_ticket_id ?? null,
       metadata: {
         raw_description: params.state.initial_message ?? params.state.description,
         sanitized_description: params.state.sanitized_description,
@@ -1323,7 +1323,7 @@ export async function processResidentMaintenanceIntake(
     )
   }
 
-  if (state.edit_field === "description" && step === "awaiting_edit_selection") {
+  if (state.edit_field === "description" && String(step) === "awaiting_edit_selection") {
     state = {
       ...state,
       description: body,

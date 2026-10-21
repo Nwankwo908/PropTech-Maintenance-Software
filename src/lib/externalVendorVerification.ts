@@ -12,6 +12,7 @@ export type VerificationChecklistItem = {
   detail: string
   verified: boolean
   requiresManualVerify?: boolean
+  requiresViewMessageAction?: boolean
 }
 
 export type PricingComparisonRow = {

@@ -8,7 +8,10 @@
  * dry-run review is clean.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  createClient,
+  type SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { processSlaExpiredAutoReassign } from "../_shared/sla_expired_auto_reassign.ts"
 import { runMaintenanceRequestViaEngine } from "../_shared/engine/maintenanceRequestEngine.ts"
@@ -33,8 +36,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+type ServiceSupabase = SupabaseClient<any, "public", any>
+
 async function landlordIsDemo(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ServiceSupabase,
   landlordId: string | null,
 ): Promise<boolean> {
   const id = landlordId?.trim()
@@ -60,7 +65,7 @@ export type PendingAcceptStaleResult = {
  * When `dryRun` is true, the engine suppresses SMS and ticket writes.
  */
 export async function processPendingAcceptStaleForTicket(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ServiceSupabase,
   ticketId: string,
   opts?: { dryRun?: boolean },
 ): Promise<PendingAcceptStaleResult> {

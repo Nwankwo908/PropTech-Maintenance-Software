@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { UniversalSearchItem } from '@/lib/adminUniversalSearchCore'
 
 vi.mock('@/lib/adminUniversalSearchLoad', () => ({
   loadAdminSearchIndexLight: vi.fn(async () => [
@@ -41,10 +42,11 @@ vi.mock('@/lib/adminNavigation', () => ({
 
 vi.mock('@/lib/adminUniversalSearchWorkerBridge', async () => {
   const core = await import('@/lib/adminUniversalSearchCore')
-  let prefix: ReturnType<typeof core.buildSearchPrefixIndex> | null = null
-  let previous: { query: string; results: core.UniversalSearchItem[] } | null = null
+  type PrefixIndex = ReturnType<typeof core.buildSearchPrefixIndex>
+  let prefix: PrefixIndex | null = null
+  let previous: { query: string; results: UniversalSearchItem[] } | null = null
   return {
-    setSearchWorkerIndex: (items: core.UniversalSearchItem[]) => {
+    setSearchWorkerIndex: (items: UniversalSearchItem[]) => {
       prefix = core.buildSearchPrefixIndex(items)
       previous = null
     },
@@ -94,7 +96,7 @@ describe('adminUniversalSearchCache', () => {
     expect(warm.cache).toBe('warm')
     expect(getCachedAdminSearchItems('landlord-a')).not.toBeNull()
 
-    // eslint-disable-next-line no-console
+     
     console.log(
       `[admin search perf] dropdown-open-to-first-results — cold=${coldOpenMs.toFixed(2)}ms ` +
         `warm=${warmOpenMs.toFixed(2)}ms searchWorkerMs cold/warm=${cold.timedMs.toFixed(3)}/${warm.timedMs.toFixed(3)}`,

@@ -4,11 +4,9 @@
  * so edge/SMS can share the same rule.
  */
 import {
-  isSingleFamilyPropertyType,
   PROPERTY_TYPE_OPTIONS,
   resolveCanonicalPropertyType,
   SINGLE_FAMILY_PROPERTY_TYPE,
-  SINGLE_FAMILY_UNIT_LABEL,
 } from '@shared/properties/propertyType'
 
 export {

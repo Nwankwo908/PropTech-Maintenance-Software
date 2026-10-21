@@ -9,7 +9,6 @@ import {
   propertyResidentDetailPathForBuilding,
   residentDetailPath,
 } from './propertyRoutes'
-import { normalizeBuildingKey } from './propertyHealth'
 
 describe('propertyRoutes', () => {
   it('detects canonical property UUID slugs', () => {

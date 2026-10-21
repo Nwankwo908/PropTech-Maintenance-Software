@@ -488,7 +488,11 @@ export async function sendProxiedMessage(
     input.senderType,
     input.recipientType,
   )
-  if ("error" in recipientResolved) {
+  if (
+    typeof recipientResolved === "object" &&
+    recipientResolved !== null &&
+    "error" in recipientResolved
+  ) {
     return { ok: false, error: recipientResolved.error, status: 400 }
   }
   const recipientType = recipientResolved

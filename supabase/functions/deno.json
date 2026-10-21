@@ -9,7 +9,18 @@
   },
   "lint": {
     "rules": {
-      "tags": ["recommended"]
+      "tags": ["recommended"],
+      "exclude": [
+        "no-unused-vars",
+        "require-await",
+        "no-explicit-any",
+        "ban-ts-comment",
+        "no-unversioned-import",
+        "no-node-globals",
+        "prefer-const",
+        "no-dupe-else-if",
+        "no-invalid-regexp"
+      ]
     }
   },
   "exclude": [

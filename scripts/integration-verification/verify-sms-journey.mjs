@@ -3,8 +3,8 @@
  * Invoke integration-sms-journey against designated LA2 test phones.
  *
  * Defaults — handset-strict (no inject):
- *   INTEGRATION_SMS_TENANT_PHONE=+15715028158
- *   INTEGRATION_SMS_VENDOR_PHONE=+19737358072
+ *   INTEGRATION_SMS_TENANT_PHONE=+19088843069
+ *   INTEGRATION_SMS_VENDOR_PHONE=+14708880274
  *   INTEGRATION_SMS_INJECT_YES=0
  *   INTEGRATION_SMS_WAIT_MS=120000
  *
@@ -50,8 +50,8 @@ const SUPABASE_URL = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL 
 const ANON = (process.env.VITE_SUPABASE_ANON_KEY || '').trim()
 const SERVICE = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
 const ADMIN = (process.env.VITE_ADMIN_REASSIGN_SECRET || process.env.ADMIN_REASSIGN_SECRET || '').trim()
-const TENANT = (process.env.INTEGRATION_SMS_TENANT_PHONE || '+15715028158').trim()
-const VENDOR = (process.env.INTEGRATION_SMS_VENDOR_PHONE || '+19737358072').trim()
+const TENANT = (process.env.INTEGRATION_SMS_TENANT_PHONE || '+19088843069').trim()
+const VENDOR = (process.env.INTEGRATION_SMS_VENDOR_PHONE || '+14708880274').trim()
 const WAIT = Number(process.env.INTEGRATION_SMS_WAIT_MS || '120000')
 const EXTRA = Number(process.env.INTEGRATION_SMS_EXTRA_WAIT_MS || '180000')
 const DELIVERY_WAIT = Number(process.env.INTEGRATION_SMS_DELIVERY_WAIT_MS || '60000')

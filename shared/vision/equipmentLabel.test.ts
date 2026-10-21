@@ -4,13 +4,15 @@ import {
   needsLabelBackup,
   normalizeLabelReadability,
   serialFormatWarnings,
+  type LabelReadability,
 } from './equipmentLabel'
 
-const readable = {
-  status: 'readable' as const,
+const readable: LabelReadability = {
+  status: 'readable',
   modelConfidence: 98,
   serialConfidence: 97,
   uncertainCharacters: [],
+  readings: {},
   retakeRequested: false,
   formatWarnings: [],
 }

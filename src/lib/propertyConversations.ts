@@ -328,7 +328,8 @@ export async function fetchPropertyConversations(
       })
       const profile = buildVendorComplianceProfile(
         { name: name || 'Vendor' },
-        verificationByVendorId.get(id) ?? null,
+        (verificationByVendorId.get(id) as import('@/lib/vendorVerificationChecklist').VerificationRecord | null) ??
+          null,
       )
       vendorById.set(id, {
         name,

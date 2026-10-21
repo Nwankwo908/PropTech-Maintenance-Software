@@ -6,7 +6,6 @@ import {
   looksLikeInternalEscalationCode,
   maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
-  shouldSkipSlaReassignForNeedsAdminVendor,
   STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL,
 } from '@/lib/maintenanceAdminVendor'
 

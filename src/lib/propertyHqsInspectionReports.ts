@@ -52,6 +52,7 @@ async function resolveUnitIdsForPropertySurface(input: {
   propertyId?: string | null
 }): Promise<Map<string, string | null>> {
   const unitLabelById = new Map<string, string | null>()
+  if (!supabase) return unitLabelById
 
   if (input.propertyId?.trim()) {
     const { data: byProp } = await supabase
@@ -95,7 +96,7 @@ export async function listHqsInspectionReportsForBuilding(
   options?: { propertyId?: string | null },
 ): Promise<PropertyHqsInspectionReportRow[]> {
   const landlordId = getActiveLandlordId()
-  if (!landlordId || !building.trim()) return []
+  if (!supabase || !landlordId || !building.trim()) return []
 
   const unitLabelById = await resolveUnitIdsForPropertySurface({
     landlordId,
@@ -273,6 +274,7 @@ async function ensureHqsPmTaskForReport(input: {
   reinspectionDate: string | null
   inspectionDate: string | null
 }): Promise<void> {
+  if (!supabase) return
   try {
     const standalone = shouldShowStandaloneInspectionActiveTask({
       letterType: input.letterType,

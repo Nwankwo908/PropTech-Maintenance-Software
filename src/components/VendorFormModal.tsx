@@ -9,7 +9,6 @@ import { emptyToNull } from '@/lib/vendorLocation'
 import {
   dbCategoryToVendorTrade,
   isVendorTradeSlug,
-  normalizeVendorTrade,
   VENDOR_TRADE_OPTIONS,
   vendorTradeToDbCategory,
 } from '@/lib/vendorTrades'

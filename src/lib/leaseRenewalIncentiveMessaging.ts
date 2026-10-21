@@ -1,5 +1,4 @@
 import type { LeaseRenewalEscalatedReview } from '@/lib/leaseRenewalEscalatedReview'
-import { getErrorMessage } from '@/lib/errorMessage'
 
 export type LeaseRenewalIncentiveChatMessage = {
   id: string

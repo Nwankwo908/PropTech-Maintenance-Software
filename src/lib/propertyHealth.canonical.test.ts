@@ -175,10 +175,6 @@ describe('filterResidentsForPropertyScope', () => {
   })
 
   it('excludes residents on the same unit number at a different property', () => {
-    const otherProperty: PropertyHealthCanonicalProperty = {
-      id: 'prop-oak',
-      name: 'Oak Court',
-    }
     const portfolioUnits: PropertyHealthUnit[] = [
       ...units,
       {

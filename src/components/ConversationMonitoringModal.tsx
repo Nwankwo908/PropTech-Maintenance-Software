@@ -291,7 +291,7 @@ function DeliveryEventRow({
                 {section.title}
               </p>
               <p className="whitespace-pre-wrap text-[12px] leading-5 text-[#364153]">
-                <LinkifiedMessageText text={section.body} />
+                <LinkifiedMessageText text={section.body ?? ''} />
               </p>
             </div>
           ))

@@ -42,6 +42,8 @@ import {
 } from "./routeDecision.ts"
 
 export type AskUloClassification = {
+  /** Original user question for this turn. */
+  question: string
   /** Fine-grained intent (+ agent-mode bias). */
   intentResult: ReturnType<typeof applyAskUloAgentModeBias>
   /** Subject family: resident, vendor, legal, maintenance, … */
@@ -122,6 +124,7 @@ export function classifyQuestion(input: {
   }
 
   return {
+    question: input.question,
     intentResult,
     subject,
     capability,

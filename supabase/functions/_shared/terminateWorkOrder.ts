@@ -780,8 +780,12 @@ export async function terminateWorkOrder(
   }).catch(() => {})
 
   // 3) Delivery (independent SMS + email).
-  let vendorNotify: TerminateWorkOrderResult extends { ok: true } ? TerminateWorkOrderResult["vendorNotify"] : never =
-    "not_required"
+  let vendorNotify:
+    | "notified"
+    | "failed"
+    | "skipped"
+    | "not_required"
+    | "pending" = "not_required"
   if (skipVendorNotifyCompleted && assignedVendorId && termination) {
     vendorNotify = "skipped"
     await alertStaffCompletedJobTerminated(supabase, {
@@ -1007,7 +1011,7 @@ async function deliverVendorTerminateNotify(
         params.emailCopy.text,
         params.emailCopy.html,
       )
-      if (res.error) {
+      if ("error" in res && res.error) {
         deliveryStatus = "failed"
         failureReason = res.error
       } else {

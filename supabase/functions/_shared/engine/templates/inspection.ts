@@ -7,6 +7,7 @@ import {
   cancelInspectionWorkflow,
   completeInspectionWorkflow,
   executeInspectionAdminAction,
+  type InspectionAdminEngineAction,
   executeInspectionMissedWindow,
   executeInspectionOutreach,
   executeInspectionRegisterAndOutreach,
@@ -174,10 +175,11 @@ export const inspectionTemplate: WorkflowTemplate = {
         "complete_inspection",
       ].includes(inspection.action)
     ) {
+      const adminAction = inspection.action as InspectionAdminEngineAction
       const result = await executeInspectionAdminAction(supabase, {
         landlordId: ctx.landlordId,
         runId,
-        action: inspection.action,
+        action: adminAction,
         outcome: inspection.outcome,
         notes: inspection.notes,
       })

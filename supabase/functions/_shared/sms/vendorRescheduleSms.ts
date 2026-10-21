@@ -604,7 +604,7 @@ async function notifyLandlordReschedule(
     if (from) {
       const provider = getSMSProviderForSend({
         landlordId: params.landlordId,
-        lineProvider: sender.provider,
+        lineProvider: sender!.provider,
       })
       for (const to of phones) {
         const send = await provider.sendMessage({ to, body: smsBody, from })

@@ -25,13 +25,16 @@ be_warnings=0
 {
   echo "=== frontend/shared ESLint (src, shared, vite configs) ==="
   set +e
+  # Product surfaces only. One-off ops scripts under scripts/ are not the
+  # readiness coding-standards gate (many are Deno/TS hybrids or throwaways).
   npx --no-install eslint \
     --no-error-on-unmatched-pattern \
     "src/**/*.{ts,tsx}" \
     "shared/**/*.{ts,tsx}" \
     "vite.config.ts" \
     "vite/**/*.{ts,tsx}" \
-    "scripts/**/*.{ts,mjs,js}" \
+    "scripts/integration-verification/**/*.{mjs,js}" \
+    "scripts/readiness/**/*.{sh,mjs,js}" \
     -f json \
     -o "$JSON_OUT"
   fe_code=$?

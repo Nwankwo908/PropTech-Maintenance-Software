@@ -419,12 +419,12 @@ export function formatCriticalMaintenanceByPropertyMarkdown(
       `### ${r.building}`,
       `- **Critical / urgent open:** ${r.criticalWorkOrders}`,
       `- **All open:** ${r.openWorkOrders}`,
-      r.agingWorkOrders > 0
-        ? `- **Past response time:** ${r.agingWorkOrders}`
-        : null,
-      r.awaitingDecision > 0
-        ? `- **Waiting on your decision:** ${r.awaitingDecision}`
-        : null,
+      ...(r.agingWorkOrders > 0
+        ? [`- **Past response time:** ${r.agingWorkOrders}`]
+        : []),
+      ...(r.awaitingDecision > 0
+        ? [`- **Waiting on your decision:** ${r.awaitingDecision}`]
+        : []),
       `- **Why it stands out:** ${why}`,
       "",
     )

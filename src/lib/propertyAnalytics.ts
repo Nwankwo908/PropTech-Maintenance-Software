@@ -1,7 +1,7 @@
 import type { RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import type { PmComplianceSummary, PmComplianceTask } from '@/lib/pmCompliance'
 import { summarizePmComplianceTasks } from '@/lib/pmCompliance'
-import { filterTicketsForBuildingScope, normalizeBuildingKey, type PropertyHealthUnit } from '@/lib/propertyHealth'
+import { filterTicketsForBuildingScope, type PropertyHealthUnit } from '@/lib/propertyHealth'
 
 export type PropertyMonthlySpend = {
   monthIndex: number
@@ -252,7 +252,7 @@ export function buildPropertyAnalytics(input: {
     const monthStart = new Date(year, monthIndex, 1).getTime()
     const monthEnd = new Date(year, monthIndex + 1, 1).getTime()
     const isFuture = monthIndex > currentMonthIndex
-    let proactive = isFuture
+    const proactive = isFuture
       ? 0
       : spendBetween(
           input.recognizedSpend,
@@ -262,7 +262,7 @@ export function buildPropertyAnalytics(input: {
           monthEnd,
           false,
         )
-    let reactive = isFuture
+    const reactive = isFuture
       ? 0
       : spendBetween(
           input.recognizedSpend,

@@ -9,7 +9,7 @@ import type {
   WorkflowTriggerType,
 } from "./types.ts"
 
-export type { WorkflowEntityType } from "./types.ts"
+export type { WorkflowEntityType, WorkflowRunRow } from "./types.ts"
 
 const runSelect =
   "id, template_id, status, landlord_id, trigger_type, entity_type, entity_id, property_id, unit_id, resident_id, current_stage, current_step, started_at, completed_at, created_at, updated_at, metadata"
@@ -44,7 +44,7 @@ export function runLeaseEndDate(run: WorkflowRunRow): string | null {
 }
 
 export function runAmountDue(run: WorkflowRunRow): number | null {
-  const value = run.metadata?.amount_due
+  const value = run.metadata?.amount_due as unknown
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value === "string" && value.trim()) {
     const parsed = Number.parseFloat(value)

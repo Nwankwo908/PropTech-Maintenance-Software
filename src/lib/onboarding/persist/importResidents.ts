@@ -619,7 +619,7 @@ export async function importOnboardingResidentsFromExtraction(
 
   let imported = 0
   let seq = await startResidentIdSequence(landlordId)
-  let existing = await loadExistingResidents(landlordId)
+  const existing = await loadExistingResidents(landlordId)
 
   for (const resident of selectedResidents) {
     const matchedLease = resolveLeaseMatch(resident, selectedLeases)

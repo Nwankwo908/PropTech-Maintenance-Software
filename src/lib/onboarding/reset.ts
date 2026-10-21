@@ -627,11 +627,12 @@ async function countFactoryResetActivityFeed(
   if (!supabase) {
     return emptyFactoryResetActivityFeed('Supabase is not configured.')
   }
+  const client = supabase
 
   async function countOne(
     table: 'operations_graph_events' | 'property_operations_graph',
   ): Promise<{ count: number | null; error?: string }> {
-    const { count, error } = await supabase
+    const { count, error } = await client
       .from(table)
       .select('id', { count: 'exact', head: true })
       .eq('landlord_id', landlordId)
@@ -643,7 +644,7 @@ async function countFactoryResetActivityFeed(
 
     // Timeout / overload: prove emptiness with a cheap existence probe.
     if (/timeout|canceling statement/i.test(error.message)) {
-      const probe = await supabase.from(table).select('id').eq('landlord_id', landlordId).limit(1)
+      const probe = await client.from(table).select('id').eq('landlord_id', landlordId).limit(1)
       if (probe.error) {
         return { count: null, error: `${table}: ${error.message}` }
       }

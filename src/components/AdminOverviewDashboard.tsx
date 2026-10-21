@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, Fragment, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -988,7 +988,9 @@ export function AdminOverviewDashboard() {
   const allowImportedOperationsRef = useRef(true)
   const invoicePaymentReturnHandledRef = useRef<string | null>(null)
   const invoicePayReviewsRef = useRef(invoicePayReviews)
-  invoicePayReviewsRef.current = invoicePayReviews
+  useEffect(() => {
+    invoicePayReviewsRef.current = invoicePayReviews
+  }, [invoicePayReviews])
 
   const showAwaitingDecisionOutcome = useCallback(
     (outcome: AwaitingDecisionOutcome, itemKey?: string) => {
@@ -1298,15 +1300,6 @@ export function AdminOverviewDashboard() {
       setRecognizedSpend(
         Array.isArray(recognizedSpendResult) ? recognizedSpendResult : [],
       )
-      // #region agent log
-      {
-        const mrRows = (!mrSpendResult.error
-          ? ((mrSpendResult.data ?? []) as Record<string, unknown>[])
-          : [])
-        const withAmount = mrRows.filter((r) => r.recognized_spend_amount != null).length
-      }
-      // #endregion
-
       const ratingByTicket = new Map<string, number>()
       if (!feedbackResult.error) {
         for (const row of (feedbackResult.data ?? []) as Record<string, unknown>[]) {
@@ -1488,7 +1481,8 @@ export function AdminOverviewDashboard() {
     }
   }, [])
 
-  const now = Date.now()
+  const [overviewNowMs] = useState(() => Date.now())
+  const now = overviewNowMs
   const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
 
   const openTickets = useMemo(() => tickets.filter(isTicketOpen), [tickets])
@@ -2203,7 +2197,6 @@ export function AdminOverviewDashboard() {
           dueAt: null,
           urgency: 'medium',
           unit: '',
-          unitId: null,
           building: null,
           description: null,
           issueCategory: null,
@@ -2837,12 +2830,7 @@ export function AdminOverviewDashboard() {
         setLeaseRenewalRailSaving(false)
       }
     },
-    [
-      closeLeaseRenewalRail,
-      overviewResidents,
-      showAwaitingDecisionOutcome,
-      workflowData?.escalated,
-    ],
+    [closeLeaseRenewalRail, overviewResidents, showAwaitingDecisionOutcome, workflowData],
   )
 
   const handleLeaseRenewalIncentiveSend = useCallback(
@@ -3010,11 +2998,12 @@ export function AdminOverviewDashboard() {
       (s) => s.status === 'probing' && s.requestId,
     )
     if (probing.length === 0 || !supabase) return
+    const client = supabase
     let cancelled = false
     const tick = async () => {
       for (const state of probing) {
         if (!state.requestId) continue
-        const { data } = await supabase
+        const { data } = await client
           .from('insight_scheduling_requests')
           .select('status, inspector_name, confirmed_window, ticket_id, target_day')
           .eq('id', state.requestId)

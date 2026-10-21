@@ -103,7 +103,9 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
   const [activeIndex, setActiveIndex] = useState(0)
   const [dropdownCoords, setDropdownCoords] = useState<DropdownCoords | null>(null)
   const landlordId = getActiveLandlordId()
-  landlordIdRef.current = landlordId
+  useEffect(() => {
+    landlordIdRef.current = landlordId
+  }, [landlordId])
 
   const applyDebounce = useMemo(
     () =>
@@ -271,7 +273,9 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
     [launchAskUlo, landlordId, openRecord, refreshRecent],
   )
 
-  activateRowRef.current = activateRow
+  useEffect(() => {
+    activateRowRef.current = activateRow
+  }, [activateRow])
 
   const grouped = useMemo(() => groupSearchResults(matched), [matched])
   const isQuestion = looksLikeAskUloQuestion(query)
@@ -303,7 +307,9 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
     return rows
   }, [trimmed, recent, matched, isQuestion])
 
-  flatRowsRef.current = flatRows
+  useEffect(() => {
+    flatRowsRef.current = flatRows
+  }, [flatRows])
 
   useEffect(() => {
     setActiveIndex(0)

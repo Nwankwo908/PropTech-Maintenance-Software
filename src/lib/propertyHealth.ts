@@ -1283,7 +1283,7 @@ function componentsFromHealthResult(
 
 function occupyingResidentsForHealthScope(
   residents: PropertyHealthResident[],
-  scopedUnits: PropertyHealthUnit[],
+  _scopedUnits: PropertyHealthUnit[],
   scopeBuilding: string | null,
   scopeProperty: PropertyHealthCanonicalProperty | null,
   allUnits: PropertyHealthUnit[],
@@ -1387,7 +1387,10 @@ export function computePropertyHealthScope(
       unitLabel: unit.unitLabel,
       status: unit.status,
     })),
-    tickets: scopedTickets,
+    tickets: scopedTickets.map((ticket) => ({
+      ...ticket,
+      issueCategory: ticket.issueCategory ?? null,
+    })),
     pmTasks: scopedPm,
     assets: scopedAssets,
     inspections: scopedInspections,

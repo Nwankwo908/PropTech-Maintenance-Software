@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AdminMoveWorkflowStageError,
   postAdminMoveWorkflowStage,
@@ -57,7 +57,9 @@ export function useWorkflowStageMove(opts: {
   const [toast, setToast] = useState<StageMoveToast | null>(null)
   const toastTimer = useRef<number | null>(null)
   const pendingAssignedRef = useRef(pendingAssignedTarget)
-  pendingAssignedRef.current = pendingAssignedTarget
+  useEffect(() => {
+    pendingAssignedRef.current = pendingAssignedTarget
+  }, [pendingAssignedTarget])
 
   const clearToastTimer = () => {
     if (toastTimer.current != null) {

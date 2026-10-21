@@ -76,6 +76,8 @@ function subjectForEvent(event: ResidentNotifyEvent): string {
       return "Your maintenance request is complete"
     case "vendor_no_show":
       return "We're finding another vendor for your repair"
+    default:
+      return "Update on your maintenance request"
   }
 }
 
@@ -288,6 +290,8 @@ function buildSms(
           `. We're lining up another pro and will text you soon. ${ref}`,
         320,
       )
+    default:
+      return truncate(`Update on your maintenance request. ${ref}`, 300)
   }
 }
 

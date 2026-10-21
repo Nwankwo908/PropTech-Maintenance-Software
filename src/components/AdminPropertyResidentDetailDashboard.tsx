@@ -624,9 +624,11 @@ export function AdminPropertyResidentDetailDashboard() {
   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null)
   const profileIdRef = useRef<string | null>(null)
   const navigateRef = useRef(navigate)
-  navigateRef.current = navigate
   const locationStateRef = useRef(location.state)
-  locationStateRef.current = location.state
+  useEffect(() => {
+    navigateRef.current = navigate
+    locationStateRef.current = location.state
+  }, [navigate, location.state])
 
   const loadResident = useCallback(async () => {
     const resolvedResidentId = (() => {

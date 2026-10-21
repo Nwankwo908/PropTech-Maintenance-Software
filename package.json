@@ -27,7 +27,9 @@
     "verify:sms-journey": "node scripts/integration-verification/verify-sms-journey.mjs",
     "verify:emergency-alert": "node scripts/integration-verification/verify-emergency-alert.mjs",
     "verify:onboarding-askulo": "node scripts/integration-verification/verify-onboarding-askulo.mjs",
-    "verify:failure-recovery": "node scripts/integration-verification/verify-failure-recovery.mjs"
+    "verify:failure-recovery": "node scripts/integration-verification/verify-failure-recovery.mjs",
+    "verify:sms-failure-recovery": "node scripts/integration-verification/verify-sms-failure-recovery.mjs",
+    "verify:live-ai-workflows": "node scripts/integration-verification/verify-live-ai-workflows.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

@@ -1,6 +1,8 @@
 /**
  * Rasterize PDF pages to JPEGs for Chat Completions vision (same path as photo uploads).
  */
+/// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
 import { getDocumentProxy } from "npm:unpdf@1.4.0"
 
 function bytesToBase64(bytes: Uint8Array): string {

@@ -906,7 +906,7 @@ export function AdminVendorDetailDashboard() {
     const { data: authSession } = await supabase.auth.getSession()
     const session = authSession.session
     const sessionToken = session?.access_token?.trim() ?? ''
-    if (!sessionToken) {
+    if (!session || !sessionToken) {
       setOverrideError('Sign in again to activate this vendor.')
       setOverrideSaving(false)
       return

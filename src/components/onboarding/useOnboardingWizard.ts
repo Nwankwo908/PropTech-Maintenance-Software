@@ -825,23 +825,6 @@ export function useOnboardingWizard() {
     }
   }
 
-  async function wipePortfolioSession(): Promise<LandlordOnboardingState | null> {
-    setSaving(true)
-    setError(null)
-    try {
-      const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
-      if (!cleared.ok) {
-        setError(cleared.error ?? 'Could not clear previous portfolio data.')
-        return null
-      }
-      setState(cleared.state)
-      resetOnboardingForms()
-      return cleared.state
-    } finally {
-      setSaving(false)
-    }
-  }
-
   async function beginOnboarding(path: 'guided' | 'fast_track', targetStep: OnboardingStep) {
     if (saving) return
     setSaving(true)

@@ -459,7 +459,8 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
   const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
     attentionCopyParts(input)
   const actionLabel =
-    input.actionLabel?.trim() || attentionEmailActionLabel(input.kind)
+    input.actionLabel?.trim() ||
+    attentionEmailActionLabel(input.kind ?? "assign_vendor")
   const ref =
     input.kind === "assign_vendor" ? "" : landlordAskRefLine(workOrderRef)
   const text = [

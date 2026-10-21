@@ -294,7 +294,7 @@ function ReviewItemRow({
   onRemove,
   label,
   value,
-  sourceDocumentName,
+  sourceDocumentName: _sourceDocumentName,
   editing,
   editValue,
   editMode = 'value',

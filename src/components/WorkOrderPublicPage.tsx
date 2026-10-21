@@ -817,17 +817,21 @@ function SmartLink({
 }) {
   const isExternal = /^https?:\/\//i.test(href)
   if (isExternal) {
+    let sameOriginPath: string | null = null
     try {
       const u = new URL(href)
       if (u.origin === window.location.origin) {
-        return (
-          <Link to={`${u.pathname}${u.search}`} className={className}>
-            {label}
-          </Link>
-        )
+        sameOriginPath = `${u.pathname}${u.search}`
       }
     } catch {
       /* fall through */
+    }
+    if (sameOriginPath) {
+      return (
+        <Link to={sameOriginPath} className={className}>
+          {label}
+        </Link>
+      )
     }
     return (
       <a href={href} className={className}>

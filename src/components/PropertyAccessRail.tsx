@@ -181,7 +181,6 @@ export function PropertyAccessRail({
                   label={field.label}
                   value={access[field.key]}
                   placeholder={field.placeholder}
-                  required={field.required}
                   onChange={(value) => setAccess((prev) => ({ ...prev, [field.key]: value }))}
                 />
               ))}

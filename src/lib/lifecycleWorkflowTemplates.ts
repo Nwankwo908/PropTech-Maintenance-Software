@@ -168,7 +168,7 @@ function parseEscalationRules(value: unknown): LifecycleEscalationRule[] {
         when_stage: readString(row.when_stage),
       }
     })
-    .filter((row): row is LifecycleEscalationRule => row !== null)
+    .filter((row) => row !== null) as LifecycleEscalationRule[]
 }
 
 function parseDashboardLabels(value: unknown): LifecycleDashboardLabels {

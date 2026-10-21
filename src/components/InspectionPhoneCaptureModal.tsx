@@ -31,7 +31,9 @@ export function InspectionPhoneCaptureModal({
   const [ending, setEnding] = useState(false)
 
   const onPhotosSyncedRef = useRef(onPhotosSynced)
-  onPhotosSyncedRef.current = onPhotosSynced
+  useEffect(() => {
+    onPhotosSyncedRef.current = onPhotosSynced
+  }, [onPhotosSynced])
 
   const refresh = useCallback(async (sessionId: string) => {
     const listed = await listInspectionCapturePhotos(sessionId)
@@ -108,7 +110,7 @@ export function InspectionPhoneCaptureModal({
     }, 3000)
     return () => {
       window.clearInterval(poll)
-      void supabase.removeChannel(channel)
+      if (supabase) void supabase.removeChannel(channel)
     }
   }, [session?.id, session?.assessmentId, refresh])
 

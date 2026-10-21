@@ -194,6 +194,7 @@ function useAdminApproverName(): string {
     let cancelled = false
 
     async function load() {
+      if (!supabase) return
       const { data } = await supabase.auth.getSession()
       if (cancelled) return
       const user = data.session?.user

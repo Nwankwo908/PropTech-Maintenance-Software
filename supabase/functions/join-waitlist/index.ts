@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  createClient,
+  type SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { landlordIdForPortalLoginEmail } from "../_shared/landlordLoginMap.ts"
 import {
@@ -98,7 +101,7 @@ function landlordAttributionPatch(
 }
 
 async function applyWaitlistAttributionToLandlord(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   email: string,
   attributionRaw: unknown,
 ): Promise<void> {
@@ -129,7 +132,7 @@ async function applyWaitlistAttributionToLandlord(
       console.error("[join-waitlist] landlord lookup error", lookupError.message)
       return
     }
-    landlordId = landlord?.id ?? null
+    landlordId = typeof landlord?.id === "string" ? landlord.id : null
   }
 
   console.info("[join-waitlist]", {
@@ -161,7 +164,7 @@ async function applyWaitlistAttributionToLandlord(
 }
 
 async function resolveReferrerId(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   ref: string,
   signupEmail: string,
 ): Promise<string | null> {
@@ -171,17 +174,18 @@ async function resolveReferrerId(
     .eq("referral_code", ref)
     .maybeSingle()
 
-  if (error || !data?.id) {
+  const referrerId = typeof data?.id === "string" ? data.id : null
+  if (error || !referrerId) {
     if (error) console.error("[join-waitlist] referrer lookup error", error)
     return null
   }
 
-  if (data.email === signupEmail) return null
-  return data.id
+  if (data?.email === signupEmail) return null
+  return referrerId
 }
 
 async function fetchSignupReferralLink(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   email: string,
   origin?: string,
 ): Promise<string | null> {
@@ -191,12 +195,13 @@ async function fetchSignupReferralLink(
     .eq("email", email)
     .maybeSingle()
 
-  if (error || !data?.referral_code) {
+  const referralCode = typeof data?.referral_code === "string" ? data.referral_code : null
+  if (error || !referralCode) {
     console.error("[join-waitlist] referral lookup error", error)
     return null
   }
 
-  return buildReferralLink(data.referral_code, origin)
+  return buildReferralLink(referralCode, origin)
 }
 
 function buildWaitlistConfirmationEmail(

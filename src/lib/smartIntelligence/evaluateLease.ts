@@ -72,7 +72,7 @@ export function evaluateLeaseIntelligence(ctx: SmartIntelligenceContext): SmartI
         route: renewalRun ? renewalRoute : leaseRoute,
         intent: renewalRun ? undefined : 'edit_resident',
       },
-      dueAt: end,
+      dueAt: end ?? undefined,
       entityId: renewalRun?.id ?? ctx.resident.id,
       score: scoreInsight('attention', { daysUntil: days, waitingOnLandlord: true }),
     })
@@ -91,7 +91,7 @@ export function evaluateLeaseIntelligence(ctx: SmartIntelligenceContext): SmartI
           ? 'The lease enters the recommended renewal window next week.'
           : `The recommended renewal window opens in ${untilWindow} days.`,
       action: { label: 'Start Renewal', route: renewalRun ? renewalRoute : leaseRoute },
-      dueAt: end,
+      dueAt: end ?? undefined,
       entityId: ctx.resident.id,
       score: scoreInsight('upcoming', { daysUntil: untilWindow }),
     })

@@ -130,11 +130,12 @@ export function VendorServiceAreaMap({
 
     const apiKey = resolveGoogleMapsApiKey()
     if (!apiKey || !mapHostRef.current) return undefined
+    const mapsApiKey = apiKey
 
     async function mount() {
       try {
         const g = await Promise.race([
-          loadGoogleMapsApi(apiKey),
+          loadGoogleMapsApi(mapsApiKey),
           new Promise<never>((_, reject) => {
             window.setTimeout(() => reject(new Error('maps-timeout')), MAP_LOAD_MS)
           }),

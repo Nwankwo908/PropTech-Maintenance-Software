@@ -7,6 +7,7 @@ import {
   cancelMoveOutWorkflow,
   completeMoveOutWorkflow,
   executeMoveOutAdminAction,
+  type MoveOutAdminEngineAction,
   executeMoveOutMarkVacated,
   executeMoveOutOutreach,
   executeMoveOutScheduleInspection,
@@ -156,10 +157,11 @@ export const moveOutTemplate: WorkflowTemplate = {
         "complete_move_out",
       ].includes(moveOut.action)
     ) {
+      const adminAction = moveOut.action as MoveOutAdminEngineAction
       const result = await executeMoveOutAdminAction(supabase, {
         landlordId: ctx.landlordId,
         runId,
-        action: moveOut.action,
+        action: adminAction,
       })
       return {
         templateId: "move_out",

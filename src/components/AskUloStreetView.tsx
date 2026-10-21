@@ -146,7 +146,6 @@ export function AskUloStreetView({
 
   useEffect(() => {
     let cancelled = false
-    let panorama: google.maps.StreetViewPanorama | null = null
     let authFailed = false
     setJsReady(false)
     setJsAttempted(false)
@@ -198,7 +197,7 @@ export function AskUloStreetView({
         if (!cancelled && containerRef.current && !authFailed) {
           const position = panoData?.location?.latLng
           if (position) {
-            panorama = new g.maps.StreetViewPanorama(containerRef.current, {
+            new g.maps.StreetViewPanorama(containerRef.current, {
               position,
               pov: { heading: 0, pitch: 0 },
               zoom: 1,
@@ -225,7 +224,6 @@ export function AskUloStreetView({
     void mount()
     return () => {
       cancelled = true
-      panorama = null
       window.gm_authFailure = previousAuth
       if (containerRef.current) containerRef.current.innerHTML = ''
     }

@@ -1283,12 +1283,6 @@ export function AdminPropertyDetailDashboard() {
     reviewVendorSmsState,
   ])
 
-  function openReview(ticketId: string) {
-    setReviewVendorSmsState(null)
-    setRailActionError(null)
-    setReviewTicketId(ticketId)
-  }
-
   function closeReview() {
     setReviewTicketId(null)
     setReviewVendorSmsState(null)

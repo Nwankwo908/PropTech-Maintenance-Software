@@ -82,23 +82,7 @@ function snapshotFromConversation(
     draftUrgency?.trim() ||
     null
   const urgencyAlertTier = normalizeAlertTier(state.urgency_alert_tier)
-  const thresholdProbe = thresholdsForIntakeSilence({
-    conversationId: row.id,
-    landlordId: String(row.landlord_id ?? ""),
-    step: state.step ?? null,
-    diagnosticQuestionType: state.diagnostic_question_type ?? null,
-    diagnosticQuestion: state.diagnostic_question ?? null,
-    openQuestionAskedAt: null,
-    silenceNudgeSentAt: state.intake_silence_nudge_sent_at ?? null,
-    silenceResolvedAt: state.intake_silence_resolved_at ?? null,
-    draftTicketId: state.draft_ticket_id ?? row.maintenance_request_id ?? null,
-    description: state.description ?? state.initial_message ?? null,
-    issueHeadline: state.acknowledged_headline ?? null,
-    issueType: state.issue_type ?? null,
-    vendorTrade: state.vendor_trade ?? null,
-    urgency,
-    urgencyAlertTier,
-  })
+  const thresholdProbe = thresholdsForIntakeSilence({ urgency, urgencyAlertTier })
   const { askedAt } = resolveIntakeSilenceAskedAt({
     openQuestionAskedAt: state.open_question_asked_at,
     silenceNudgeSentAt: state.intake_silence_nudge_sent_at,
@@ -544,13 +528,16 @@ export async function processIntakeSilenceFollowUps(
           open_question_asked_at: new Date(nowMs).toISOString(),
         }
         outboundBody = buildConfirmationSummary(next)
-      } else if (next.diagnostic_question?.trim()) {
-        next = {
-          ...next,
-          open_question_asked_at: new Date(nowMs).toISOString(),
-          intake_silence_resolved_at: undefined,
+      } else {
+        const diagnosticQuestion = next.diagnostic_question?.trim()
+        if (diagnosticQuestion) {
+          next = {
+            ...next,
+            open_question_asked_at: new Date(nowMs).toISOString(),
+            intake_silence_resolved_at: undefined,
+          }
+          outboundBody = diagnosticQuestion
         }
-        outboundBody = next.diagnostic_question.trim()
       }
       await saveState(supabase, row.id, next)
       if (outboundBody && residentId && phone) {

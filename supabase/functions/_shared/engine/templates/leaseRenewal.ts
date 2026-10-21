@@ -261,7 +261,7 @@ async function processEarlyLeaseInquiry(
       entityType: "sms_conversation",
       entityId: sms.conversationId,
       metadata: {
-        lease_end_date: leaseEnd,
+        lease_end_date: leaseEnd ?? undefined,
         early_inquiry: true,
         unit_label: unitLabel,
         step_state: {

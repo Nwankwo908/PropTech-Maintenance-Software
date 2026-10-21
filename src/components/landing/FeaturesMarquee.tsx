@@ -66,7 +66,7 @@ const TRANSITION_MS = 500
 const CARD_CLASS =
   'h-auto w-[calc((100vw-3rem)*0.7)] shrink-0 select-none rounded-2xl border border-[#e5e7eb] max-[410px]:!w-[calc((100vw-3rem)*0.7)] landing-compact:!w-[calc((100vw-3rem)*0.7)] landing-compact:!h-auto landing-phone-tall:!w-[calc(100vw-3rem)] [@media(min-width:580px)_and_(max-width:640px)_and_(min-height:920px)_and_(max-height:1080px)]:!w-[calc((100vw-3rem)*0.56)] [@media(min-width:610px)_and_(max-width:670px)_and_(min-height:450px)_and_(max-height:510px)]:!w-[calc((100vw-3rem)*0.56)] landing-720-576:!w-[calc((100vw-3rem)*0.56)] landing-720-576:!h-auto sm:h-[min(476px,70vw)] sm:w-auto landing-884:!h-[min(333px,49vw)] landing-884:!w-auto landing-1024-600:!h-auto landing-1024-600:!w-[calc((100cqw-2rem)/2.5)] landing-1024-600:!max-w-none landing-7680-4320:!h-[min(1190px,70vw)] landing-7680-4320:!w-auto landing-7680-4320:rounded-[2.5rem] [@media(min-width:580px)_and_(max-width:640px)_and_(min-height:920px)_and_(max-height:1080px)]:!h-auto [@media(min-width:610px)_and_(max-width:670px)_and_(min-height:450px)_and_(max-height:510px)]:!h-auto'
 
-const COUNT = FEATURE_MARQUEE_ITEMS.length
+const COUNT: number = FEATURE_MARQUEE_ITEMS.length
 /**
  * Three full copies so the viewport stays filled at both ends.
  * Live window is the middle copy (indices COUNT .. 2*COUNT-1).
@@ -188,6 +188,37 @@ export function FeaturesMarquee() {
     }
   }, [])
 
+  const settleAfterMoveRef = useRef<(index: number, moveId: number) => void>(() => {})
+
+  const goTrack = useCallback(
+    (next: number) => {
+      if (animatingRef.current) {
+        pendingDeltaRef.current = next > trackIndexRef.current ? 1 : -1
+        return
+      }
+      if (next !== START_INDEX) setHasLeftDefault(true)
+      const moveId = moveIdRef.current + 1
+      moveIdRef.current = moveId
+      animatingRef.current = true
+      setEnableTransition(true)
+      trackIndexRef.current = next
+      const slide = trackRef.current?.children[next] as HTMLElement | undefined
+      if (slide) setOffsetPx(slide.offsetLeft)
+      setTrackIndex(next)
+
+      const finish = () => settleAfterMoveRef.current(next, moveId)
+
+      if (prefersReducedMotion()) {
+        requestAnimationFrame(finish)
+        return
+      }
+
+      clearWrapTimeout()
+      wrapTimeoutRef.current = window.setTimeout(finish, TRANSITION_MS + 80)
+    },
+    [clearWrapTimeout],
+  )
+
   const jumpWithoutTransition = useCallback(
     (nextTrackIndex: number) => {
       clearWrapTimeout()
@@ -205,13 +236,13 @@ export function FeaturesMarquee() {
             const resume = pending > 0 ? 1 : -1
             pendingDeltaRef.current = pending - resume
             requestAnimationFrame(() => {
-              goTrackRef.current(trackIndexRef.current + resume)
+              goTrack(trackIndexRef.current + resume)
             })
           }
         })
       })
     },
-    [clearWrapTimeout, measureOffset],
+    [clearWrapTimeout, goTrack, measureOffset],
   )
 
   const settleAfterMove = useCallback(
@@ -235,44 +266,15 @@ export function FeaturesMarquee() {
       if (pending !== 0) {
         const resume = pending > 0 ? 1 : -1
         pendingDeltaRef.current = pending - resume
-        goTrackRef.current(trackIndexRef.current + resume)
+        goTrack(trackIndexRef.current + resume)
       }
     },
-    [clearWrapTimeout, jumpWithoutTransition],
+    [clearWrapTimeout, goTrack, jumpWithoutTransition],
   )
 
-  const goTrackRef = useRef<(next: number) => void>(() => {})
-
-  const goTrack = useCallback(
-    (next: number) => {
-      if (animatingRef.current) {
-        pendingDeltaRef.current = next > trackIndexRef.current ? 1 : -1
-        return
-      }
-      if (next !== START_INDEX) setHasLeftDefault(true)
-      const moveId = moveIdRef.current + 1
-      moveIdRef.current = moveId
-      animatingRef.current = true
-      setEnableTransition(true)
-      trackIndexRef.current = next
-      const slide = trackRef.current?.children[next] as HTMLElement | undefined
-      if (slide) setOffsetPx(slide.offsetLeft)
-      setTrackIndex(next)
-
-      const finish = () => settleAfterMove(next, moveId)
-
-      if (prefersReducedMotion()) {
-        requestAnimationFrame(finish)
-        return
-      }
-
-      clearWrapTimeout()
-      wrapTimeoutRef.current = window.setTimeout(finish, TRANSITION_MS + 80)
-    },
-    [clearWrapTimeout, settleAfterMove],
-  )
-
-  goTrackRef.current = goTrack
+  useLayoutEffect(() => {
+    settleAfterMoveRef.current = settleAfterMove
+  }, [settleAfterMove])
 
   const onTransitionEnd = useCallback(
     (event: TransitionEvent<HTMLDivElement>) => {

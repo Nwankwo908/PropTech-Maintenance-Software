@@ -107,7 +107,7 @@ export async function resolveWorkOrderToken(
     body: JSON.stringify({ token: trimmed }),
   })
 
-  let payload: {
+  type ResolvePayload = {
     ok?: boolean
     ticketId?: string
     workOrderRef?: string
@@ -115,9 +115,10 @@ export async function resolveWorkOrderToken(
     portalApiKey?: string | null
     job?: WorkOrderPublicJob
     error?: string
-  } | null = null
+  }
+  let payload: ResolvePayload | null = null
   try {
-    payload = (await res.json()) as typeof payload
+    payload = (await res.json()) as ResolvePayload
   } catch {
     payload = null
   }

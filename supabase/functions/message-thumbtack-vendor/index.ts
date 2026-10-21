@@ -92,7 +92,7 @@ serve(async (req) => {
   if (!ticket) {
     const loaded = await supabase
       .from("maintenance_requests")
-      .select("id, landlord_id, issue_category, unit")
+      .select("id, landlord_id, issue_category, building, unit")
       .eq("id", ticketId)
       .maybeSingle()
     if (loaded.error) {

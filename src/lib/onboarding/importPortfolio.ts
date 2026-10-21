@@ -7,6 +7,7 @@ import type {
   ExtractedMaintenanceIssue,
   MockExtractionReview,
 } from '@/lib/onboardingMockExtraction'
+import type { OnboardingProperty } from '@/lib/onboarding'
 import { supabase } from '@/lib/supabase'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
@@ -15,7 +16,6 @@ import {
   shouldMintTicketFromExpenseLine,
 } from './fastTrackTicketPolicy'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
-import { isUniqueViolation } from '@/lib/errorMessage'
 import {
   issueCategoryToVendorTrade,
   isGeneralistTrade,

@@ -1035,8 +1035,10 @@ export async function processUnknownContactIntakeTurn(
       const matched = await findActiveResidentsByUnit(
         supabase,
         state.unitLabel,
+        params.landlordId,
       )
       const resident = await attachPhoneToUnitResident(supabase, {
+        landlordId: params.landlordId,
         fromNumber: params.senderPhone,
         unit: state.unitLabel,
         matchedResidents: matched,

@@ -1414,6 +1414,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const requestGenRef = useRef(0)
+  const chatMessageSeqRef = useRef(0)
   const streamAbortRef = useRef<AbortController | null>(null)
   const isRail = variant === 'rail'
   const {
@@ -1557,11 +1558,11 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
     const gen = ++requestGenRef.current
     let rotateTimer = 0
     const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
+      id: `u-${++chatMessageSeqRef.current}`,
       role: 'user',
       text: question,
     }
-    const assistantId = `a-${Date.now()}`
+    const assistantId = `a-${++chatMessageSeqRef.current}`
     const assistantShell: ChatMessage = {
       id: assistantId,
       role: 'assistant',
@@ -1749,10 +1750,11 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
   }
 
   const handleSendRef = useRef(handleSend)
-  handleSendRef.current = handleSend
-
   const clearPendingPromptRef = useRef(clearPendingPrompt)
-  clearPendingPromptRef.current = clearPendingPrompt
+  useEffect(() => {
+    handleSendRef.current = handleSend
+    clearPendingPromptRef.current = clearPendingPrompt
+  }, [handleSend, clearPendingPrompt])
 
   // One-shot auto-send from universal search.
   // Claim is sync; clear URL/pending only after send has started so the open

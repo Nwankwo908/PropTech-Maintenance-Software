@@ -207,7 +207,7 @@ export function parseMaintenanceHistoryCsv(text: string): MaintenanceHistoryCsvJ
         draft.serviceDate = dateish(value)
         return
       }
-      draft[key] = value
+      ;(draft as Record<string, string | number>)[key] = value
     })
 
     if (

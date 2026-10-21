@@ -42,7 +42,9 @@ export function StripeConnectEmbeddedOnboarding({
   className = '',
 }: StripeConnectEmbeddedOnboardingProps) {
   const fetchClientSecretRef = useRef(fetchClientSecret)
-  fetchClientSecretRef.current = fetchClientSecret
+  useEffect(() => {
+    fetchClientSecretRef.current = fetchClientSecret
+  }, [fetchClientSecret])
   const cachedSecretRef = useRef<string | null>(null)
 
   const [connectInstance, setConnectInstance] = useState<StripeConnectInstance | null>(null)

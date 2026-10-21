@@ -35,13 +35,10 @@ const FOLLOWUP_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.followup.'
 /** Pending is only a short mobile fallback after a Get set up card click. */
 export const SETUP_SUCCESS_GUIDE_PENDING_MAX_AGE_MS = 60_000
 
-const PROPERTY_DETAIL_FOLLOWUPS = [
-  'property_access',
-  'property_tab',
-  'property_insurance',
-] as const
-
-export type SetupSuccessPropertyDetailFollowup = (typeof PROPERTY_DETAIL_FOLLOWUPS)[number]
+export type SetupSuccessPropertyDetailFollowup =
+  | 'property_access'
+  | 'property_tab'
+  | 'property_insurance'
 
 function pendingKey(landlordId: string): string {
   return `${PENDING_KEY_PREFIX}${landlordId}`

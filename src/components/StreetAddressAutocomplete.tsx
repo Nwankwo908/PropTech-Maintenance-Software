@@ -103,7 +103,9 @@ export function StreetAddressAutocomplete({
 }: StreetAddressAutocompleteProps) {
   const listId = useId()
   const onPlaceResolvedRef = useRef(onPlaceResolved)
-  onPlaceResolvedRef.current = onPlaceResolved
+  useEffect(() => {
+    onPlaceResolvedRef.current = onPlaceResolved
+  }, [onPlaceResolved])
   const suppressFetchRef = useRef(false)
 
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([])

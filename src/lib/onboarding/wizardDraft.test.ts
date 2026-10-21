@@ -14,13 +14,15 @@ const doc = {
   fileType: 'pdf',
   fileSize: 12,
   documentCategory: 'lease_agreement',
-  categoryGroup: 'lease',
+  categoryGroup: 'resident',
   uploadStatus: 'ready_for_review',
-  extractionStatus: 'complete',
-  processingLabel: null,
+  extractionStatus: 'ready_for_review',
+  processingLabel: 'Ready for review',
   uploadProgress: 100,
   errorMessage: null,
   extractedPayload: null,
+  imageLabels: [],
+  hasHandwriting: false,
 } as OnboardingUploadedDocument
 
 describe('buildOnboardingFormDraft', () => {

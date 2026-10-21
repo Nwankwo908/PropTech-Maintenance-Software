@@ -326,7 +326,6 @@ export async function finalizeVendorVerificationAdminApprove(
 
   const checklist = computeVerificationChecklist({
     ...fresh,
-    status: "verified",
   })
 
   await recordActivityLog(supabase, {

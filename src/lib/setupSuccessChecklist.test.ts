@@ -155,7 +155,7 @@ describe('setupSuccessChecklist', () => {
 
   it('tracks property access, intelligence, and insurance separately', () => {
     const progress = resolveSetupSuccessProgress(progressInput())
-    expect(progress.items.find((item) => item.id === 'property_details')).toBeUndefined()
+    expect(progress.items.map((item) => item.id)).not.toContain('property_details')
     expect(progress.items.find((item) => item.id === 'property_access')).toMatchObject({
       label: 'Set up property access',
       done: false,

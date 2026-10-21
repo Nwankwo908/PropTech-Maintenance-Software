@@ -703,7 +703,7 @@ export async function processMaintenanceStallFollowUps(
     throw new Error(error.message)
   }
 
-  const tickets = (rows ?? []) as DbTicketRow[]
+  const tickets = (rows ?? []) as unknown as DbTicketRow[]
   const summary: StallFollowUpProcessSummary = {
     scanned: tickets.length,
     followUpsSent: 0,

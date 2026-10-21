@@ -281,8 +281,8 @@ export function validatePropertyPolicyExtract(
     )
   }
 
-  let effective = extract.policy_effective_date
-  let issued = extract.date_issued
+  const effective = extract.policy_effective_date
+  const issued = extract.date_issued
   if (issued && effective && issued === effective) {
     // Keep both only when they truly match; do not copy issued into effective when effective is missing.
   }

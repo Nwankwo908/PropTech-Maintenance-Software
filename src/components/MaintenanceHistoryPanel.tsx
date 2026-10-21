@@ -219,7 +219,9 @@ export function MaintenanceHistoryPanel({
         if (doc.id !== id) return doc
         return {
           ...doc,
-          status: (outcome.needsAttention ? 'needs_attention' : 'ready_for_review') as const,
+          status: outcome.needsAttention
+            ? ('needs_attention' as const)
+            : ('ready_for_review' as const),
           records: outcome.records,
           error: outcome.needsAttention
             ? outcome.warnings[0] ||

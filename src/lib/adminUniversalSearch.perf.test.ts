@@ -87,7 +87,7 @@ describe('adminUniversalSearch performance (busy ~1.6k index)', () => {
     const prefixMed = median(prefixSamples)
 
     // Report for the task: before/after keystroke-sequence timing.
-    // eslint-disable-next-line no-console
+     
     console.log(
       `[admin search perf] keystroke sequence ${sequence.join('→')} on ${items.length} items — ` +
         `linear(median)=${linearMed.toFixed(3)}ms prefix+incremental(median)=${prefixMed.toFixed(3)}ms ` +

@@ -196,7 +196,9 @@ export function TryDemoAttentionGuideHost() {
   const navigate = useNavigate()
   const location = useLocation()
   const locationRef = useRef(location)
-  locationRef.current = location
+  useEffect(() => {
+    locationRef.current = location
+  }, [location])
   const { setDocked: setAskUloDocked, closeAskUlo } = useAskUlo()
   const [step, setStep] = useState<TryDemoAttentionGuideStep | null>(() =>
     resumeTryDemoAttentionGuideStepOnLoad(window.location.pathname),

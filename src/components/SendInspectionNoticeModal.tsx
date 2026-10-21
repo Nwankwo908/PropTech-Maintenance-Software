@@ -283,12 +283,16 @@ export function SendInspectionNoticeModal({
       setSendConfirmOpen(false)
       setSubmitError(null)
       setSuccessMessage(null)
-      if (closeAfterSuccessTimeoutRef.current != null) {
-        window.clearTimeout(closeAfterSuccessTimeoutRef.current)
-        closeAfterSuccessTimeoutRef.current = null
-      }
     }
   }
+
+  useEffect(() => {
+    if (open) return
+    if (closeAfterSuccessTimeoutRef.current != null) {
+      window.clearTimeout(closeAfterSuccessTimeoutRef.current)
+      closeAfterSuccessTimeoutRef.current = null
+    }
+  }, [open])
 
   const activeInspectionAutomationLines = useMemo(() => {
     const lines: string[] = []

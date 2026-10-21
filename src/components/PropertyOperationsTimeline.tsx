@@ -96,12 +96,13 @@ export function PropertyOperationsTimeline({
 
   useEffect(() => {
     if (!supabase || !hasScope(scope)) return
+    const client = supabase
 
     const scopeKey = `${
       'unitId' in scope && scope.unitId ? scope.unitId : 'none'
     }:${scope.residentId ?? 'none'}`
 
-    const channel = supabase
+    const channel = client
       .channel(`property-ops-timeline-${scopeKey}`)
       .on(
         'postgres_changes',
@@ -120,7 +121,7 @@ export function PropertyOperationsTimeline({
       .subscribe()
 
     return () => {
-      void supabase.removeChannel(channel)
+      void client.removeChannel(channel)
     }
   }, [load, scope])
 

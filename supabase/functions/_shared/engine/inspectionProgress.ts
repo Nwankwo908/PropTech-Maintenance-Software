@@ -28,7 +28,11 @@ import {
   type LifecycleStep,
 } from "./lifecyclePolicy.ts"
 import { LIFECYCLE_GRAPH_EVENTS } from "./lifecycleWorkflowTemplates.ts"
-import { patchMoveOutChecklist, readMoveOutChecklist } from "./moveOutChecklist.ts"
+import {
+  checklistToMetadata as moveOutChecklistToMetadata,
+  patchMoveOutChecklist,
+  readMoveOutChecklist,
+} from "./moveOutChecklist.ts"
 import {
   getWorkflowRunById,
   linkConversationToWorkflowRun,
@@ -486,7 +490,7 @@ async function advanceParentMoveOutOnInspectionComplete(
     currentStep: "turnover_in_progress",
     metadata: {
       ...prevMeta,
-      checklist: checklistToMetadata(checklist),
+      checklist: moveOutChecklistToMetadata(checklist),
       milestones: { ...milestones, inspection_completed: now },
       step_state: {
         ...readLifecycleStepState(parent),

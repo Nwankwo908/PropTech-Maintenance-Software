@@ -18,17 +18,17 @@ import {
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
 import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage'
 
-function lazyNamed<Props>(
-  importer: () => Promise<Record<string, ComponentType<Props>>>,
+function lazyNamed(
+  importer: () => Promise<Record<string, unknown>>,
   exportName: string,
 ) {
   return lazy(async () => {
     const mod = await importer()
     const Comp = mod[exportName]
-    if (!Comp) {
+    if (typeof Comp !== 'function') {
       throw new Error(`lazyNamed: missing export "${exportName}"`)
     }
-    return { default: Comp }
+    return { default: Comp as ComponentType<Record<string, unknown>> }
   })
 }
 

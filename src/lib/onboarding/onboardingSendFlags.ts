@@ -4,6 +4,7 @@
  * extraction ids differ from `users.id` after import.
  */
 export function residentOnboardingFlagMatchKeys(row: {
+  sendOnboardingOnComplete?: boolean
   id?: string
   fullName?: string
   name?: string
@@ -27,6 +28,7 @@ export function residentOnboardingFlagMatchKeys(row: {
 }
 
 export function vendorOnboardingFlagMatchKeys(row: {
+  sendOnboardingOnComplete?: boolean
   id?: string
   name?: string
   phone?: string
@@ -44,10 +46,13 @@ export function vendorOnboardingFlagMatchKeys(row: {
   return keys
 }
 
-export function applyOnboardingSendFlags<T extends { sendOnboardingOnComplete?: boolean }>(
+export function applyOnboardingSendFlags<
+  T extends { sendOnboardingOnComplete?: boolean },
+  S extends { sendOnboardingOnComplete?: boolean },
+>(
   roster: T[],
-  sources: Array<{ sendOnboardingOnComplete?: boolean }>,
-  keysFor: (row: T | (typeof sources)[number]) => string[],
+  sources: S[],
+  keysFor: (row: T | S) => string[],
 ): T[] {
   const flagByKey = new Map<string, boolean>()
   for (const row of sources) {

@@ -18,7 +18,7 @@ export async function extractPdfPageTexts(
 ): Promise<string[]> {
   if (!isPdfFileName(file.name, file.type)) return []
   const data = new Uint8Array(await file.arrayBuffer()).slice()
-  const pdf = await getDocument({ data, disableWorker: false }).promise
+  const pdf = await getDocument({ data }).promise
   const pageCount = Math.min(pdf.numPages, maxPages)
   const texts: string[] = []
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
@@ -47,7 +47,7 @@ export async function renderPdfFileToJpegDataUrls(
   if (typeof document === 'undefined') return []
 
   const data = new Uint8Array(await file.arrayBuffer()).slice()
-  const pdf = await getDocument({ data, disableWorker: false }).promise
+  const pdf = await getDocument({ data }).promise
   const pageCount = pdf.numPages
   const requested = (options?.pageNumbers ?? []).filter(
     (page) => Number.isInteger(page) && page >= 1 && page <= pageCount,

@@ -681,7 +681,7 @@ export async function activateUnitsFromResidentAssignments(params?: {
       .eq('landlord_id', landlordId)
 
     if (updateError) {
-      errors.push(`${unit.unit_label}: ${updateError.message}`)
+      errors.push(`${unit.unitLabel}: ${updateError.message}`)
       continue
     }
 
@@ -698,7 +698,7 @@ export async function activateUnitsFromResidentAssignments(params?: {
       landlordId,
       unitId: unit.id,
       residentId: resident.id,
-      unitLabel: unit.unit_label,
+      unitLabel: unit.unitLabel,
       building: unit.building,
       source,
       moveInDate: moveIn,
@@ -739,7 +739,7 @@ export async function activateUnitsFromResidentAssignments(params?: {
         residentId: resident.id,
       })
       if (!vacated.ok) {
-        errors.push(`${unit.unit_label}: ${vacated.error}`)
+        errors.push(`${unit.unitLabel}: ${vacated.error}`)
         continue
       }
       unit.status = 'vacant'
@@ -853,7 +853,6 @@ export async function syncAssignedUnitOccupancyFromResidentStatus(params: {
         status: row.status,
       })),
       {
-        id: params.residentId,
         unit: params.unitLabel,
         building: params.building,
         occupancyUnitId: params.unitId,

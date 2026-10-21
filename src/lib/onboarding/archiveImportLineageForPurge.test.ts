@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { LIMITED_ALPHA_2_LANDLORD_ID } from '@shared/landlordCapabilities'
 import {
   archiveImportLineageTicketsForHardDelete,

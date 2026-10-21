@@ -21,6 +21,7 @@ describe('residentQualifiesForUnitActivation', () => {
       residentHasLeaseDatesForActivation({
         id: 'res-1',
         unit: '4B',
+        building: 'Oak Apartments',
         leaseStart: '2024-01-01',
         leaseEnd: '',
       }),
@@ -68,6 +69,7 @@ describe('residentQualifiesForUnitActivation', () => {
       residentQualifiesForUnitActivation({
         id: 'res-1',
         unit: '4B',
+        building: 'Oak Apartments',
         activationStatus: 'activated',
         status: 'past_resident',
       }),
@@ -76,6 +78,7 @@ describe('residentQualifiesForUnitActivation', () => {
       residentQualifiesForUnitActivation({
         id: 'res-1',
         unit: '',
+        building: 'Oak Apartments',
         activationStatus: 'activated',
         leaseStart: '2024-01-01',
         leaseEnd: '2025-01-01',
@@ -151,6 +154,7 @@ describe('pickCanonicalUnitForResident', () => {
       residentQualifiesForUnitActivation({
         id: 'res-1',
         unit: '',
+        building: '78 Maple Ave',
         occupancyUnitId: 'u-maple-2',
         activationStatus: 'activated',
       }),

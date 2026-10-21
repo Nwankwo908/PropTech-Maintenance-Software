@@ -2,7 +2,9 @@
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.vitest.tsbuildinfo",
-    "types": ["vite/client", "vitest/globals"]
+    "types": ["vite/client", "vitest/globals", "google.maps"],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
   },
   "include": ["src", "shared"],
   "exclude": [
@@ -10,6 +12,10 @@
     "node_modules",
     "dist",
     "**/*_test.ts",
-    "**/*_test.tsx"
+    "**/*_test.tsx",
+    "**/* 2.ts",
+    "**/* 2.tsx",
+    "**/* 2.mjs",
+    "**/* 2.js"
   ]
 }

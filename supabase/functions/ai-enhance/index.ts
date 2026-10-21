@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std/http/server.ts";
-// @ts-expect-error Deno runtime resolves npm specifiers for Edge Functions.
 import OpenAI from "npm:openai";
 
 const corsHeaders: Record<string, string> = {

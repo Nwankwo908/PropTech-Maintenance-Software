@@ -40,8 +40,8 @@ describe('launchAskUloFromSearch', () => {
           this.store.delete(k)
         },
       },
-      dispatchEvent(event: Event) {
-        event.preventDefault()
+      dispatchEvent(_event: Event) {
+        _event.preventDefault()
         return false
       },
       CustomEvent: globalThis.CustomEvent,
@@ -80,7 +80,7 @@ describe('launchAskUloFromSearch', () => {
           this.store.delete(k)
         },
       },
-      dispatchEvent(event: Event) {
+      dispatchEvent(_event: Event) {
         // Default: not canceled — hard navigation fallback.
         return true
       },

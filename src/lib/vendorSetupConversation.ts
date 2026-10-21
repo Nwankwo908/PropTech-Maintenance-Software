@@ -230,7 +230,7 @@ function readVendorSetupInbox(landlordId: string = getActiveLandlordId()): Vendo
   const scoped = readJson<VendorSetupInboxEntry[]>(inboxStorageKey(landlordId)) ?? []
   // Onboarding accounts (Alpha + New Landlord): never bleed demo threads from legacy global keys.
   if (isOnboardingLandlordAccount(landlordId)) {
-    return stripLegacyVerbalQuoteAuditItems(scoped)
+    return scoped
   }
   const legacyGlobal = readJson<VendorSetupInboxEntry[]>(INBOX_STORAGE_KEY) ?? []
   const legacyPricing = readJson<VendorSetupInboxEntry[]>('ulo.vendorPricingInbox') ?? []
@@ -238,7 +238,7 @@ function readVendorSetupInbox(landlordId: string = getActiveLandlordId()): Vendo
   for (const row of [...legacyPricing, ...legacyGlobal, ...scoped]) {
     byId.set(row.conversationId, row)
   }
-  return stripLegacyVerbalQuoteAuditItems([...byId.values()])
+  return [...byId.values()]
 }
 
 function writeVendorSetupInbox(
@@ -456,7 +456,7 @@ export function filterVendorSetupTranscriptByChannel(
   transcript: MonitoringTranscriptItem[],
   channel: VendorOutreachChannel,
 ): MonitoringTranscriptItem[] {
-  return transcript.flatMap((item) => {
+  return transcript.flatMap((item): MonitoringTranscriptItem[] => {
     if (item.type === 'delivery_event') {
       if (item.channel === 'grouped') {
         const body = channel === 'sms' ? item.smsBody : item.emailBody

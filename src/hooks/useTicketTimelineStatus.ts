@@ -34,7 +34,7 @@ export function useTicketTimelineStatus(
     }
 
     let cancelled = false
-    let intervalId: ReturnType<typeof setInterval> | undefined
+    let intervalId: number | undefined
 
     async function poll() {
       try {

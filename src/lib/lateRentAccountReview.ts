@@ -175,7 +175,7 @@ function isLateRentChargeSettled(row: AdminRentCollectionRow): boolean {
 }
 
 function buildOnTimeHistoryInsight(
-  row: AdminRentCollectionRow,
+  _row: AdminRentCollectionRow,
   resident?: LateRentResidentContext | null,
 ): LateRentInsightCard {
   const months = monthsOnTime(resident?.moveInDate)

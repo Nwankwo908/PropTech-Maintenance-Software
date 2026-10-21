@@ -306,7 +306,12 @@ function pushRow(
   rows: PropertyHistoryRow[],
   partial: Omit<
     PropertyHistoryRow,
-    'dateLabel' | 'occupancyLabel' | 'paymentStatusLabel' | 'mediaLabel' | 'mediaCount'
+    | 'dateLabel'
+    | 'occupancyLabel'
+    | 'paymentStatusLabel'
+    | 'mediaLabel'
+    | 'mediaCount'
+    | 'mediaPaths'
   > & {
     mediaPaths?: string[]
     paymentTimestampMs?: number

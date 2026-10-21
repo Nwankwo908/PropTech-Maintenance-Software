@@ -650,13 +650,13 @@ export async function loadResidentSendTiming(
     if (inferred) {
       propertyTimeZone = inferred
       if (propertyId) {
-        await supabase
-          .from("properties")
-          .update({ timezone: inferred })
-          .eq("id", propertyId)
-          .is("timezone", null)
-          .then(() => {})
-          .catch(() => {})
+        void Promise.resolve(
+          supabase
+            .from("properties")
+            .update({ timezone: inferred })
+            .eq("id", propertyId)
+            .is("timezone", null),
+        ).then(() => {}, () => {})
       }
     }
   }

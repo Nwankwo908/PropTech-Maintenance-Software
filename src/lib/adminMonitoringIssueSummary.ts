@@ -3,11 +3,6 @@
  * Issue wording via shared generateIssueSummary (same as titles / SMS confirms).
  */
 import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
-import {
-  extractAdminIssueNounPhrase,
-  stripTenantMessageFiller,
-  type AdminIssueExtraction,
-} from '@shared/maintenance/issueNounPhrase.ts'
 
 export {
   extractAdminIssueNounPhrase,

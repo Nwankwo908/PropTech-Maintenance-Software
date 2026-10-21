@@ -1017,10 +1017,11 @@ export function AdminCommunicationDashboard() {
           unitId: linked.unitId,
         })
       }
-      if (conversationBackfills.length > 0) {
+      if (conversationBackfills.length > 0 && supabase) {
+        const client = supabase
         void Promise.all(
           conversationBackfills.map((entry) =>
-            supabase
+            client
               .from('sms_conversations')
               .update({
                 resident_id: entry.residentId,
@@ -1514,9 +1515,9 @@ export function AdminCommunicationDashboard() {
 
   const selectedCount = selectedIds.size
   const allFilteredSelected =
-    filtered.length > 0 && filtered.every((conversation) => selectedIds.has(conversation.id))
-    visibleThreads.length > 0 &&
-    visibleThreads.every((conversation) => selectedIds.has(conversation.id))
+    (filtered.length > 0 && filtered.every((conversation) => selectedIds.has(conversation.id))) ||
+    (visibleThreads.length > 0 &&
+      visibleThreads.every((conversation) => selectedIds.has(conversation.id)))
   const someFilteredSelected =
     visibleThreads.some((conversation) => selectedIds.has(conversation.id)) &&
     !allFilteredSelected

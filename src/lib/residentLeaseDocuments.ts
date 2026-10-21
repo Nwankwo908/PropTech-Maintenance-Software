@@ -370,9 +370,9 @@ export async function uploadResidentLeaseDocuments(params: {
 
     const completed: OnboardingUploadedDocument = {
       ...draft,
-      uploadStatus: 'complete',
+      uploadStatus: 'ready_for_review',
       uploadProgress: 100,
-      extractionStatus: 'complete',
+      extractionStatus: 'ready_for_review',
       storageBucket: stored.storageBucket,
       storagePath: stored.storagePath,
       contentType: file.type || null,

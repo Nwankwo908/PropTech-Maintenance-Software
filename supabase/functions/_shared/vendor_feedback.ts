@@ -241,6 +241,11 @@ export async function requestVendorFeedback(
     residentId: input.residentId ?? undefined,
   })
 
+  if (!identity) {
+    console.warn("[vendor-feedback] skip — could not resolve SMS identity", input.ticketId)
+    return
+  }
+
   const { conversationId } = await findOrCreateConversation(supabase, {
     landlordId: input.landlordId,
     smsNumberId: smsNumber.id,

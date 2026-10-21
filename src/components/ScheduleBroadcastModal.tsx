@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 
 export type ScheduleAudience = 'all' | 'building' | 'units'
 
@@ -77,6 +77,11 @@ export function ScheduleBroadcastModal({
     }
   }
 
+  const [scheduleCheckNowMs, setScheduleCheckNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    setScheduleCheckNowMs(Date.now())
+  }, [date, time])
+
   if (!open) return null
 
   const scheduleValid = Boolean(date.trim() && time.trim())
@@ -84,7 +89,7 @@ export function ScheduleBroadcastModal({
   const scheduleTooSoon =
     scheduledAtPreview instanceof Date &&
     !Number.isNaN(scheduledAtPreview.getTime()) &&
-    scheduledAtPreview.getTime() <= Date.now() + 60_000
+    scheduledAtPreview.getTime() <= scheduleCheckNowMs + 60_000
 
   function applyDateTime(d: Date, hour: number, minute: number) {
     const next = new Date(d)

@@ -354,7 +354,7 @@ export async function sendLandlordOnboardingWelcome(
     } else {
       const provider = getSMSProviderForSend({
         landlordId,
-        lineProvider: line.provider,
+        lineProvider: line!.provider,
       })
       for (const to of phones) {
         const send = await provider.sendMessage({ to, body: smsBody, from })

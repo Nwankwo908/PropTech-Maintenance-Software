@@ -28,6 +28,7 @@ const LA1 = 'de300000-0000-4000-8000-000000000003'
 const LA2 = 'de300000-0000-4000-8000-000000000004'
 const LA1_EMAIL = 'limitedalpha1@ulohome.io'
 const LA2_EMAIL = 'limitedalpha2@ulohome.io'
+void LA1 // retained for optional INTEGRATION_INCLUDE_LA1 cross-tenant probe
 /** Non-routable test phones — never real customer numbers. */
 const INTEGRATION_RESIDENT_PHONE = '+15555550101'
 const INTEGRATION_VENDOR_PHONE = '+15555550102'

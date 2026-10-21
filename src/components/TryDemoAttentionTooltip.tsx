@@ -547,7 +547,9 @@ export function TryDemoAttentionTooltip({
   /** One scrollIntoView per Residents/Vendors tip step (avoid 0×0 tbody loops). */
   const tableRowsScrolledKeyRef = useRef<string | number | null>(null)
   const sideRef = useRef(side)
-  sideRef.current = side
+  useEffect(() => {
+    sideRef.current = side
+  }, [side])
   const extraKey = (extraTargetIds ?? []).join('|')
   const tracksAskUloShell =
     targetId === TRY_DEMO_SPOTLIGHT_ASK_ULO_PANEL_ID ||
@@ -1264,7 +1266,9 @@ export function TryDemoAttentionTooltip({
 
   const primaryHole = holes[0] ?? null
   const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
   // No close icon: any press outside the tip card ends the tour. Scrolling still works.
   // Register while active, not only when shown — an invisible tip (target never
   // rendered) must not trap clicks, or the host keeps routing back to its step.

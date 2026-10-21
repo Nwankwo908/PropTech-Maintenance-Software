@@ -103,11 +103,33 @@ export type WorkflowRunRow = {
 
 export type WorkflowExecutionContext = {
   homeCheck?: import("../homeCheck/sms.ts").HomeCheckSmsAction
+  /** Lifecycle engine payloads when advancing an existing workflow run. */
+  moveIn?: {
+    action: string
+    register?: unknown
+    smsBody?: string
+  }
+  moveOut?: {
+    action: string
+    sourceWorkflowRunId?: string | null
+    smsBody?: string
+    scheduledAt?: string | null
+    unitId?: string | null
+    unitLabel?: string | null
+    building?: string | null
+  }
+  inspection?: {
+    action: string
+    smsBody?: string
+    outcome?: string | null
+    notes?: string | null
+  }
+  vendorOnboarding?: Record<string, unknown>
   trigger: WorkflowTriggerType
   landlordId: string
   runId?: string | null
   activeRun?: WorkflowRunRow | null
-  sms?: WorkflowContext
+  sms?: WorkflowContext | null
   cron?: {
     templateId: WorkflowTemplateId
     noticeDays?: number

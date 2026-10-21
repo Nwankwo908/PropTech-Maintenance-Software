@@ -5,7 +5,7 @@ import {
   findRelevantInsurancePages,
 } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 import { parseAndMapTypedExtract } from '@shared/onboarding/typedDocumentExtract/parseAndMap'
-import { formatInsurancePartyName, parseCoverageLimit, parseMoney } from '@shared/onboarding/typedDocumentExtract/parse'
+import { formatInsurancePartyName, parseCoverageLimit } from '@shared/onboarding/typedDocumentExtract/parse'
 import {
   DWELLING_POLICY_GROUND_TRUTH,
   DWELLING_POLICY_NESTED_FIXTURE,

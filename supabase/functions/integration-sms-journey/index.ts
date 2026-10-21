@@ -2,16 +2,19 @@
  * Integration-only: real SMS delivery on Limited Alpha 2 designated test phones.
  * Gated by ADMIN_REASSIGN_SECRET. Never targets phones outside the allowlist.
  *
- * Designated handsets (LA2 live ops SMS):
- *   +15715028158 — tenant (John Doe / portal tester)
- *   +19737358072 — landlord ops (used as vendor handset for this journey)
+ * Designated handsets (LA2 live ops SMS — dedicated; do not share with LA1):
+ *   +19088843069 — tenant / dedicated LA2 test handset
+ *   +14708880274 — vendor handset
  *
  * Strict checks (default):
  *   - Outbound must reach Twilio terminal status `delivered` (via status callback / API)
  *   - Vendor YES must arrive as a real Twilio inbound (MessageSid SM…) — no inject unless
  *     injectVendorYes=true is explicitly set
  */
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  createClient,
+  type SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
@@ -32,8 +35,8 @@ const corsHeaders = adminEdgeCorsHeaders
 const LA2 = "de300000-0000-4000-8000-000000000004"
 
 const ALLOWED_PHONES = new Set([
-  "+15715028158",
-  "+19737358072",
+  "+19088843069",
+  "+14708880274",
 ])
 
 const TERMINAL_OK = new Set(["delivered"])
@@ -83,7 +86,7 @@ async function fetchTwilioMessageStatus(
 }
 
 async function waitForDelivered(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   sid: string,
   waitMs: number,
 ): Promise<{ status: string; source: "db" | "twilio_api"; error?: string }> {
@@ -246,8 +249,8 @@ Deno.serve(async (req) => {
     })
   }
 
-  const tenantPhone = allowPhone(String(body.tenantPhone ?? "+15715028158"))
-  const vendorPhone = allowPhone(String(body.vendorPhone ?? "+19737358072"))
+  const tenantPhone = allowPhone(String(body.tenantPhone ?? "+19088843069"))
+  const vendorPhone = allowPhone(String(body.vendorPhone ?? "+14708880274"))
   if (!tenantPhone || !vendorPhone) {
     return json({
       error: "Phones must be designated LA2 test handsets",

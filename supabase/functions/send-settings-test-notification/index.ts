@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  createClient,
+  type SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
@@ -33,7 +36,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 async function resolveAccountPhoneForSettingsTest(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   landlordId: string,
   requested: string,
 ): Promise<string | null> {

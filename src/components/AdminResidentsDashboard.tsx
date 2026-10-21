@@ -925,7 +925,7 @@ export function AdminResidentsDashboard() {
     if (!editingResident?.unit.trim()) return options
     const currentKey = initialUnitOptionKeyForResident(
       editingResident.unit,
-      editingResident.building,
+      editingResident.building ?? '',
       inventoryUnits,
     )
     if (currentKey && !options.some((option) => option.value === currentKey)) {
@@ -941,7 +941,7 @@ export function AdminResidentsDashboard() {
     if (!editingResident?.unit.trim()) return ''
     return initialUnitOptionKeyForResident(
       editingResident.unit,
-      editingResident.building,
+      editingResident.building ?? '',
       inventoryUnits,
     )
   }, [editingResident, inventoryUnits])
@@ -1417,14 +1417,12 @@ export function AdminResidentsDashboard() {
 
     let sent = 0
     let failed = 0
-    let skipped = 0
     let lastError: string | undefined
 
     if (firstSendIds.length > 0) {
       const result = await sendTenantActivationSms({ residentIds: firstSendIds })
       sent += result.sent ?? 0
       failed += result.failed ?? 0
-      skipped += result.skipped ?? 0
       if (result.error) lastError = result.error
     }
 
@@ -1435,7 +1433,6 @@ export function AdminResidentsDashboard() {
       })
       sent += result.sent ?? 0
       failed += result.failed ?? 0
-      skipped += result.skipped ?? 0
       if (result.error) lastError = result.error
     }
 
@@ -1474,9 +1471,20 @@ export function AdminResidentsDashboard() {
     })
   }
 
+  const [bannerClockMs, setBannerClockMs] = useState(() => Date.now())
+  const onboardingBannerExpiresAt =
+    residentsBanner?.kind === 'onboarding_started' ? residentsBanner.expiresAt : null
+  useEffect(() => {
+    if (onboardingBannerExpiresAt == null) return
+    const tick = () => setBannerClockMs(Date.now())
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [onboardingBannerExpiresAt])
+
   const showOnboardingStartedBanner =
     residentsBanner?.kind === 'onboarding_started' &&
-    residentsBanner.expiresAt > Date.now()
+    residentsBanner.expiresAt > bannerClockMs
   const showUnactivatedReminderBanner =
     !loading && unactivatedResidentCount > 0 && !showOnboardingStartedBanner
   const showResidentsErrorBanner =

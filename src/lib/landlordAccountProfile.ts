@@ -204,7 +204,7 @@ export async function fetchLandlordAccountProfile(
         : null,
     marketplacePreference: asTrimmed(onboarding?.marketplace_preference) || null,
     notificationChannel: asTrimmed(onboarding?.notification_channel) || null,
-    smsConsentAcceptedAt: account.smsConsentAcceptedAt,
+    smsConsentAcceptedAt: account.smsConsentAcceptedAt ?? null,
   }
 
   const approvalRules = draft.approvalRules as { notificationChannel?: string } | undefined

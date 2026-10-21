@@ -42,7 +42,14 @@ export type VendorServiceArea = {
 }
 
 export type VendorCapacity = {
-  status: 'pending' | 'docs_submitted' | 'active' | 'paused' | 'suspended' | 'banned'
+  status:
+    | 'not_started'
+    | 'pending'
+    | 'docs_submitted'
+    | 'active'
+    | 'paused'
+    | 'suspended'
+    | 'banned'
   label: string
   detail: string
   matchable: boolean

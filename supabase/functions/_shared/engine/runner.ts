@@ -8,6 +8,7 @@ import type {
   WorkflowEngineResult,
   WorkflowExecutionContext,
   WorkflowRunRow,
+  WorkflowTemplateId,
   WorkflowTriggerType,
 } from "./types.ts"
 
@@ -52,7 +53,7 @@ export async function runWorkflowEngine(
   })
 
   stages.push("route")
-  const template = getWorkflowTemplate(classified.templateId)
+  const template = getWorkflowTemplate(classified.templateId as WorkflowTemplateId)
   await logWorkflowStage(supabase, {
     stage: "route",
     ctx,

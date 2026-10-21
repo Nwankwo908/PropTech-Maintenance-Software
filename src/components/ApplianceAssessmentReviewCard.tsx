@@ -33,31 +33,50 @@ export function ApplianceAssessmentReviewCard({
     [photos],
   )
 
-  const tableRows = useMemo(
-    () =>
-      photos.filter((photo) => !isInspectionReportPhoto(photo)).flatMap((photo) => {
-        const extracting = photo.status === 'queued' || photo.status === 'analyzing'
-        const results = visionResultsFromInspectionPhoto(photo)
-        if (extracting && results.length === 0) {
-          return [
-            {
-              id: photo.id,
-              previewUrl: photo.previewUrl,
-              extracting: true as const,
-              extractComplete: false,
-              editable: false,
-            },
-          ]
-        }
-        return results.map((result, index) => ({
+  type TableRow =
+    | {
+      id: string
+      previewUrl: string | null | undefined
+      extracting: true
+      extractComplete: boolean
+      editable: boolean
+      result?: undefined
+    }
+    | {
+      id: string
+      result: ApplianceVisionResult
+      previewUrl: string | null | undefined
+      editable: boolean
+      extracting?: undefined
+      extractComplete?: undefined
+    }
+
+  const tableRows = useMemo((): TableRow[] => {
+    const rows: TableRow[] = []
+    for (const photo of photos.filter((p) => !isInspectionReportPhoto(p))) {
+      const extracting = photo.status === 'queued' || photo.status === 'analyzing'
+      const results = visionResultsFromInspectionPhoto(photo)
+      if (extracting && results.length === 0) {
+        rows.push({
+          id: photo.id,
+          previewUrl: photo.previewUrl,
+          extracting: true,
+          extractComplete: false,
+          editable: false,
+        })
+        continue
+      }
+      results.forEach((result, index) => {
+        rows.push({
           id: index === 0 ? photo.id : `${photo.id}:${index}`,
           result,
           previewUrl: index === 0 ? photo.previewUrl : null,
           editable: photo.status === 'needs_review' && index === 0,
-        }))
-      }),
-    [photos],
-  )
+        })
+      })
+    }
+    return rows
+  }, [photos])
 
   const [drafts, setDrafts] = useState<Record<string, ApplianceVisionResult>>({})
   const [checkedIds, setCheckedIds] = useState<string[]>([])

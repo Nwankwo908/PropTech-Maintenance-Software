@@ -374,7 +374,7 @@ async function ensureTwilioMessagingWebhooksOnce(): Promise<void> {
   }
   const row = parsed.incoming_phone_numbers?.[0]
   const sid = row?.sid?.trim()
-  if (!sid) {
+  if (!row || !sid) {
     console.warn("[TwilioProvider] TWILIO_FROM_NUMBER is not on this Twilio account", { from })
     return
   }

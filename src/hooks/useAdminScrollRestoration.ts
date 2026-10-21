@@ -35,7 +35,9 @@ export function useAdminScrollRestoration(scrollEl: HTMLElement | null): void {
   const prevKeyRef = useRef(key)
   const lastLayoutKeyRef = useRef(key)
   const scrollElRef = useRef(scrollEl)
-  scrollElRef.current = scrollEl
+  useEffect(() => {
+    scrollElRef.current = scrollEl
+  }, [scrollEl])
 
   // Save previous key's position before key changes.
   useEffect(() => {
@@ -58,14 +60,16 @@ export function useAdminScrollRestoration(scrollEl: HTMLElement | null): void {
   // Restore only on browser back/forward. Fresh PUSH into a new list key starts at top.
   // REPLACE (filter typing) and same-key PUSH (panel open) leave scroll alone.
   useLayoutEffect(() => {
-    const el = scrollEl
+    const el = scrollElRef.current
     if (!el) return
     const keyChanged = lastLayoutKeyRef.current !== key
     lastLayoutKeyRef.current = key
 
     if (navType === 'POP') {
       const stored = readStored(key)
-      if (stored != null) el.scrollTop = stored
+      if (stored != null) {
+        el.scrollTop = stored
+      }
       return
     }
 
@@ -76,7 +80,7 @@ export function useAdminScrollRestoration(scrollEl: HTMLElement | null): void {
 
   // Continuously checkpoint while scrolling so refresh / abrupt leave still works.
   useEffect(() => {
-    const el = scrollEl
+    const el = scrollElRef.current
     if (!el) return
     let frame = 0
     const onScroll = () => {

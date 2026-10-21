@@ -332,7 +332,7 @@ async function alertStaffNeedsAdminCycle(
   try {
     const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
     const from = sender?.phone_number?.trim()
-    if (!from) return
+    if (!from || !sender) return
     const provider = getSMSProviderForSend({
       landlordId: params.landlordId,
       lineProvider: sender.provider,
@@ -501,7 +501,6 @@ async function processMaintenanceAutoReassign(
     .toLowerCase()
   if (workStatus === "accepted" || workStatus === "in_progress") {
     return {
-      status: "ok",
       templateId: "maintenance_request",
       route: workflowRouteForTemplate("maintenance_request"),
       metadata: {

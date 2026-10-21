@@ -178,6 +178,7 @@ export function buildVendorNegotiationBrief(
             id: 'ai-empty',
             sender: 'ai',
             aiLabel: 'Ulo · Private',
+            timeLabel: '',
             body: hasAssignedVendor
               ? 'No texts on this vendor job thread yet. Send a message below — it goes out as SMS to the assigned vendor.'
               : 'This work order has no assigned vendor yet. Assign a vendor before messaging.',
@@ -189,6 +190,7 @@ export function buildVendorNegotiationBrief(
       id: 'ai-guidance',
       sender: 'ai',
       aiLabel: 'AI suggestion · Private',
+      timeLabel: '',
       body: `Quote on file is ${formatEmergencyCurrency(quoteAmount)}. A counter near ${formatEmergencyCurrency(targetPrice)} leaves room to close if the scope is unchanged.`,
     })
   }

@@ -116,7 +116,7 @@ export function mergeOrganizationForm(input: {
   const savedWorkspace = input.accountSettings.workspace ?? {}
   const address = parseRegisteredAddress(input.landlordRow?.registered_address)
 
-  let next: OrganizationSettingsForm = {
+  const next: OrganizationSettingsForm = {
     ...DEFAULT_ORGANIZATION_SETTINGS,
     ...(input.legacyLocal ?? {}),
     ...(input.persisted ?? {}),
@@ -133,16 +133,16 @@ export function mergeOrganizationForm(input: {
     const contactName =
       asTrimmed(input.landlordRow.contact_name) || asTrimmed(account.contactName)
     next.contactName = contactName
-    next.legalName = storedLandlordCompanyName(input.landlordRow.name, contactName)
-    next.displayName = usableOnboardingCompanyName(input.landlordRow.display_name)
+    next.legalName = storedLandlordCompanyName(asTrimmed(input.landlordRow.name), contactName)
+    next.displayName = usableOnboardingCompanyName(asTrimmed(input.landlordRow.display_name))
     next.about = asTrimmed(input.landlordRow.about)
   } else {
     const contactName = asTrimmed(account.contactName)
     if (contactName) next.contactName = contactName
     next.legalName =
-      usableOnboardingCompanyName(account.companyName) ||
+      usableOnboardingCompanyName(asTrimmed(account.companyName)) ||
       storedLandlordCompanyName(next.legalName, contactName)
-    next.displayName = usableOnboardingCompanyName(next.displayName)
+    next.displayName = usableOnboardingCompanyName(asTrimmed(next.displayName))
   }
   const email = resolveLandlordSupportEmail({
     accountSetupEmail: asTrimmed(account.email),

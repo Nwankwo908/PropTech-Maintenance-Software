@@ -231,7 +231,7 @@ async function sendVendorSms(
     provider: channel.provider,
     source: params.source,
   })
-  return sent.messageId
+  return sent.messageId ?? null
 }
 
 async function notifyOpsExpiry(
@@ -602,7 +602,7 @@ export async function checkVendorComplianceExpiry(
   const companyCache = new Map<string, string | null>()
 
   for (const raw of rows ?? []) {
-    const row = raw as Record<string, unknown>
+    const row = raw as unknown as Record<string, unknown>
     const verificationId = typeof row.id === "string" ? row.id : ""
     const lid = typeof row.landlord_id === "string" ? row.landlord_id : ""
     const vendorId = typeof row.vendor_id === "string" ? row.vendor_id : ""

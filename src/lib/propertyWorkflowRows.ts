@@ -23,8 +23,6 @@ import {
   isInspectionWorkflow,
   qualifiesForUrgentReview,
 } from '@/lib/inspectionWorkflow'
-import { normalizeBuildingKey } from '@/lib/propertyHealth'
-
 export type PropertyWorkflowTicket = {
   id: string
   issueCategory: string | null

@@ -6,6 +6,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { findActiveWorkflowRun } from "../engine/workflowRuns.ts"
+import type { WorkflowRunStatus } from "../engine/types.ts"
 import { resolveRentPaymentLink } from "../engine/rentCollectionPayment.ts"
 import { startMoveOutWorkflow } from "../engine/startWorkflow.ts"
 import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
@@ -323,9 +324,10 @@ async function loadOpenTickets(
   }
 
   const push = (row: Record<string, unknown> | null | undefined) => {
-    const id = typeof row?.id === "string" ? row.id : ""
+    if (!row) return
+    const id = typeof row.id === "string" ? row.id : ""
     if (!id || seen.has(id)) return
-    if (!ownedByResident(row as Record<string, unknown>)) return
+    if (!ownedByResident(row)) return
     seen.add(id)
     rows.push({
       id,
@@ -645,7 +647,7 @@ async function loadLatestRentRun(
   return {
     id: String(data.id),
     template_id: "rent_collection" as const,
-    status: String(data.status ?? ""),
+    status: String(data.status ?? "") as WorkflowRunStatus,
     metadata: data.metadata && typeof data.metadata === "object"
       ? data.metadata as Record<string, unknown>
       : {},

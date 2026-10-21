@@ -144,9 +144,9 @@ export function buildInspectionScopedAttentionCopy(input: {
     workflowData: input.workflowData,
   })
   const context = formatLocationContextLabel({
-    propertyLabel: input.propertyLabel,
-    unitLabel: input.unitLabel,
-    residentName: input.residentName,
+    propertyLabel: input.propertyLabel ?? null,
+    unitLabel: input.unitLabel ?? null,
+    residentName: input.residentName ?? null,
   })
   if (!ctx) {
     return { meta: input.fallbackMeta, context }

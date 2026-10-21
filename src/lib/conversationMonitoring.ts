@@ -747,49 +747,6 @@ export function buildAdminMonitoringSummary(input: {
   })
 }
 
-function buildDemoAcFailureTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
-  const anchor = ctx.messages[0]?.createdAtMs ?? ctx.createdAtMs
-  const tenant = ctx.residentName || 'Tenant'
-  const fname = firstName(tenant)
-  const tLater = anchor + 3 * 60_000
-
-  return [
-    {
-      type: 'message',
-      sender: 'tenant',
-      senderName: tenant,
-      body: "Hi — my AC stopped working this morning and it's getting really warm in here. Can someone come today?",
-      timestampMs: anchor,
-    },
-    {
-      type: 'tool_action',
-      label: 'classified → Maintenance · Urgent (heat advisory active)',
-      timestampMs: anchor,
-    },
-    {
-      type: 'message',
-      sender: 'ulo',
-      senderName: 'Ulo AI',
-      body: `Hi ${fname} — sorry about that. I'm pulling up your unit now and checking today's dispatch schedule. One quick question: are you home this morning if a tech needs access?`,
-      timestampMs: anchor,
-    },
-    {
-      type: 'message',
-      sender: 'tenant',
-      senderName: tenant,
-      body: `Yes, I'm home — ${ctx.unitLabel || 'my unit'}. It's getting warmer by the minute.`,
-      timestampMs: tLater,
-    },
-    {
-      type: 'message',
-      sender: 'ulo',
-      senderName: 'Ulo AI',
-      body: "Got it. I've classified this as urgent (heat advisory in your zip). Rapid Plumb HVAC is our fastest option — ETA 11:30a. I'll text you when they're en route.",
-      timestampMs: tLater,
-    },
-  ]
-}
-
 function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
   const items: MonitoringTranscriptItem[] = []
   let sawFeedbackAsk = false
@@ -865,9 +822,12 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
       !sawFeedbackAsk
     ) {
       // Rating exists in DB but ask copy wasn't in this window — still label it.
-      items[items.length - 1] = {
-        ...items[items.length - 1],
-        body: formatResidentFeedbackPreview(ctx.residentFeedbackRating),
+      const lastItem = items[items.length - 1]
+      if (lastItem?.type === 'message') {
+        items[items.length - 1] = {
+          ...lastItem,
+          body: formatResidentFeedbackPreview(ctx.residentFeedbackRating),
+        }
       }
       items.push({
         type: 'tool_action',
@@ -1564,13 +1524,6 @@ function formatMoveInDateLabel(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })
 }
 
-function parseMoveInDateMs(iso: string | null | undefined, fallbackMs: number): number {
-  if (!iso?.trim()) return fallbackMs
-  const value = iso.trim()
-  const parsed = new Date(value.includes('T') ? value : `${value.slice(0, 10)}T12:00:00`)
-  return Number.isFinite(parsed.getTime()) ? parsed.getTime() : fallbackMs
-}
-
 /** Short coordination SMS sequence — not a long conversational thread. */
 function buildSyntheticMoveOutThread(input: MoveOutUloThreadInput): ConversationMonitoringDetail {
   const tenant = input.residentName || 'Resident'
@@ -2005,29 +1958,6 @@ async function buildSyntheticWorkOrderThreadWithEvents(
 
   if (workflowMessages.length === 0) {
     return base
-  }
-
-  const ctx: ConversationContext = {
-    id: input.conversationId || `work-order-${input.workflowRunId}`,
-    conversationType: 'resident_intake',
-    status: 'in_progress',
-    residentId: input.residentId?.trim() || '',
-    residentName: input.residentName,
-    vendorId: '',
-    vendorName: input.vendorName || '',
-    building: input.propertyLabel,
-    unitLabel: input.unitLabel,
-    ticketDescription: input.description,
-    ticketUrgency: input.urgency,
-    ticketCategory: input.issueCategory,
-    maintenanceRequestId: input.maintenanceRequestId || '',
-    createdAtMs: input.startedAtMs,
-    updatedAtMs: Date.now(),
-    messages: [],
-    pendingEstimateDecision: null,
-    residentFeedbackRating: null,
-    awaitingResidentFeedback: false,
-    adminTakeoverActive: false,
   }
 
   const transcript = buildWorkOrderSyntheticTranscript(input, workflowMessages)

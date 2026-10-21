@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId } from 'react'
 
 type MarkUnitVacantModalProps = {
   open: boolean

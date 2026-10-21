@@ -90,14 +90,15 @@ export type RentCollectionState = {
   amount_due?: number
   billing_period?: string
   rent_due_date?: string
-  unit_label?: string
+  unit_label?: string | null
+  building?: string | null
+  payment_link?: string | null
+  payment_provider?: string | null
   outreach_sent_at?: string
   sms_sent?: boolean
   email_sent?: boolean
   route_channels?: string[]
-  payment_link?: string
   payment_requested?: boolean
-  payment_provider?: string
   rent_classification?: RentCollectionClassification
   classified_at?: string
   classification_source?: string
@@ -618,7 +619,7 @@ async function processRentDueTrigger(
             landlord_receipt_ask_status: routed.landlordReceiptAskStatus ??
               existing.metadata?.landlord_receipt_ask_status,
             route_channels: routed.channels,
-            payment_link: routed.paymentLink,
+            payment_link: routed.paymentLink ?? undefined,
           },
           pipelineStage: "act",
           eventMessage: routed.smsSent || routed.emailSent
@@ -684,7 +685,7 @@ async function processRentDueTrigger(
         amount_due: amountDue,
         billing_period: billingPeriod,
         rent_due_date: rentDueDate,
-        unit_label: resident.unit,
+        unit_label: resident.unit ?? undefined,
         reminder_days_sent: [],
         ...classificationMeta,
       }
@@ -702,7 +703,7 @@ async function processRentDueTrigger(
           rent_due_date: rentDueDate,
           rent_due_day: residentRentDueDay,
           due_at: dueAt,
-          unit_label: resident.unit,
+          unit_label: resident.unit ?? undefined,
           building: resident.building,
           classified_intent: "payment_reminder",
           preferred_language: operational.preferredLanguage,
@@ -787,16 +788,16 @@ async function processRentDueTrigger(
             email_sent: routed.emailSent,
             quiet_hours_deferred_until: routed.quietHoursDeferredUntil,
             route_channels: routed.channels,
-            payment_link: routed.paymentLink,
+            payment_link: routed.paymentLink ?? undefined,
             payment_requested: routed.paymentRequested,
-            payment_provider: routed.provider,
+            payment_provider: routed.provider ?? undefined,
             landlord_receipt_ask_status: routed.landlordReceiptAskStatus,
           },
           landlord_receipt_ask_status: routed.landlordReceiptAskStatus,
           route_channels: routed.channels,
-          payment_link: routed.paymentLink,
+          payment_link: routed.paymentLink ?? undefined,
           payment_requested: routed.paymentRequested,
-          payment_provider: routed.provider,
+          payment_provider: routed.provider ?? undefined,
         },
         pipelineStage: "act",
         eventMessage: routed.paymentLink

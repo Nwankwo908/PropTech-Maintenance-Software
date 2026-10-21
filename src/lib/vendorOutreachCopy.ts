@@ -34,7 +34,7 @@ export function formatVendorOutreachArea(locationLabel: string): string {
   if (!raw) return 'your area'
 
   const withoutUnit = raw.replace(/\s*·\s*unit\s+[\w-]+/i, '').trim()
-  let property = (withoutUnit.split('·')[0] ?? withoutUnit).trim()
+  const property = (withoutUnit.split('·')[0] ?? withoutUnit).trim()
 
   if (!property) return 'your area'
 

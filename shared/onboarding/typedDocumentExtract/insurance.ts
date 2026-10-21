@@ -86,7 +86,7 @@ export function validateInsuranceCertificateExtract(
     }
     return true
   })
-  let effective = extract.effective_date
+  const effective = extract.effective_date
   if (!effective && extract.certificate_date) {
     warnings.push('Certificate date is present but was not used as the policy effective date.')
   }

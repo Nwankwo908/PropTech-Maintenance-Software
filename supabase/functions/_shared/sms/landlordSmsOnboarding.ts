@@ -83,7 +83,7 @@ export async function findActiveLandlordMainNumber(
     throw new Error("Failed to look up landlord SMS number")
   }
 
-  const rows = (data as LandlordSmsNumberRow[] | null) ?? []
+  const rows = (data as unknown as LandlordSmsNumberRow[] | null) ?? []
   const owned =
     rows.find(
       (row) =>
@@ -133,7 +133,7 @@ async function findActiveNumberByPhoneAndProvider(
       .limit(1)
       .maybeSingle()
 
-    if (scoped) return scoped as LandlordSmsNumberRow
+    if (scoped) return scoped as unknown as LandlordSmsNumberRow
   }
 
   const { data: shared } = await supabase

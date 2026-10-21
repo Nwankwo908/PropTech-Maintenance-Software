@@ -38,6 +38,7 @@ export async function analyzeHomeCheckEquipmentPair(
       water ? 'water_heater' : 'hvac',
       'photo',
       label.storage_path,
+      null,
       {
         purpose: 'label',
         referenceImages: [{

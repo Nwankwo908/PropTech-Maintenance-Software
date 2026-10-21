@@ -15,10 +15,7 @@ import {
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
-import {
-  collectOnboardingImportTicketIds,
-  ONBOARDING_IMPORT_SOURCE,
-} from './purgeImportOps'
+import { collectOnboardingImportTicketIds } from './purgeImportOps'
 
 export type HardDeleteRiskTicket = {
   id: string

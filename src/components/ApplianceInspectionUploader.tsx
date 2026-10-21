@@ -28,8 +28,6 @@ import {
 import {
   INSPECTION_SESSION_CHANGED_EVENT,
   inspectionPhotosForDisplay,
-  isInspectionReportAsset,
-  isInspectionReportPhoto,
   notifyInspectionSessionChanged,
 } from '@/lib/inspectionSession'
 import type {
@@ -401,11 +399,11 @@ export function ApplianceInspectionUploader({
     }
     if (jobs.length === 0) return
     const paired: LocalJob[] = []
-    const photos = jobs.filter((job) => job.mode === 'photo')
+    const photoJobs = jobs.filter((job) => job.mode === 'photo')
     const documents = jobs.filter((job) => job.mode === 'document')
-    for (let i = 0; i < photos.length; i += 2) {
-      const equipment = photos[i]!
-      const label = photos[i + 1]
+    for (let i = 0; i < photoJobs.length; i += 2) {
+      const equipment = photoJobs[i]!
+      const label = photoJobs[i + 1]
       if (label) equipment.nameplateFile = label.file
       paired.push(equipment)
     }

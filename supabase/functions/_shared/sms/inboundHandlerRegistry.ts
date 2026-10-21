@@ -142,6 +142,10 @@ async function tryScheduleConfirmHandler(
     }
   }
 
+  if (!("action" in result)) {
+    return { handled: false }
+  }
+
   return {
     handled: true,
     workflowRoute: "tenant_schedule_confirm",
@@ -184,6 +188,10 @@ async function tryEstimateDecisionHandler(
         skipGenericFallback: true,
       },
     }
+  }
+
+  if (!("action" in result)) {
+    return { handled: false }
   }
 
   return {

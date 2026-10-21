@@ -164,8 +164,8 @@ serve(async (req) => {
     }
 
     return jsonResponse({
-      ok: true,
       ...result,
+      ok: result.ok ?? true,
       maintenanceRequestId: ticketId,
       workflowRunId: workflowRunId,
     })

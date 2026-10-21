@@ -286,7 +286,7 @@ function skipReasonForResident(
   if (params.automaticRetry) {
     if (activation !== "delivery_failed") return "not_eligible"
     const attempts = Math.max(0, Math.floor(Number(row.activation_attempt_count) || 0))
-    if (attempts >= MAX_ACTIVATION_ATTEMPTS || activation === "action_required") {
+    if (attempts >= MAX_ACTIVATION_ATTEMPTS) {
       return "max_attempts"
     }
     if (storedPhone && currentPhone && storedPhone !== currentPhone) {
@@ -824,7 +824,7 @@ export async function processTenantActivationRetries(
       legacyQuery = legacyQuery.eq("landlord_id", landlordId.trim())
     }
     const legacy = await legacyQuery.limit(500)
-    data = legacy.data
+    data = legacy.data as typeof data
     error = legacy.error
   }
   if (error) {

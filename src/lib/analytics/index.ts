@@ -13,7 +13,6 @@ import {
   sanitizeAnalyticsProperties,
   sanitizeEventName,
   sanitizePagePath,
-  type AnalyticsProperties,
 } from './sanitize'
 
 function swallow(run: () => void): void {

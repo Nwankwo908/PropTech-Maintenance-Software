@@ -514,7 +514,8 @@ export function AdminPropertiesDashboard() {
     void loadProperties()
   }, [loadProperties])
 
-  const now = lastUpdated?.getTime() ?? Date.now()
+  const [propertiesFallbackNowMs] = useState(() => Date.now())
+  const now = lastUpdated?.getTime() ?? propertiesFallbackNowMs
   const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
 
   const healthReport = useMemo(() => {

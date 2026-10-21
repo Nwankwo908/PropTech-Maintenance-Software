@@ -5,7 +5,7 @@
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client"],
+    "types": ["vite/client", "google.maps"],
     "skipLibCheck": true,
 
     /* Bundler mode */
@@ -35,6 +35,12 @@
     "node_modules",
     "dist",
     "**/*_test.ts",
-    "**/*_test.tsx"
+    "**/*_test.tsx",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/* 2.ts",
+    "**/* 2.tsx",
+    "**/* 2.mjs",
+    "**/* 2.js"
   ]
 }

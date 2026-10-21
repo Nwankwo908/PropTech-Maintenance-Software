@@ -1,7 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   DEFAULT_COMMUNICATION_STYLE,
-  normalizeCommunicationStyle,
   type CommunicationStyle,
 } from '@/lib/communicationStyle'
 import {

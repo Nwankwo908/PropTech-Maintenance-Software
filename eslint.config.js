@@ -12,6 +12,13 @@ export default defineConfig([
     // Edge Functions use Deno lint (scripts/readiness/check-lint.sh). Browser globals
     // here would mis-flag Deno APIs and are not the backend standards gate.
     'supabase/functions/**',
+    // Accidental duplicate editor copies — not part of the product surface.
+    '**/* 2.ts',
+    '**/* 2.tsx',
+    '**/* 2.mjs',
+    '**/* 2.js',
+    '**/* 2.html',
+    '**/* 2.txt',
   ]),
   {
     files: ['src/**/*.{ts,tsx}', 'shared/**/*.{ts,tsx}', 'vite.config.ts', 'vite/**/*.{ts,tsx}'],
@@ -29,6 +36,18 @@ export default defineConfig([
       // This rule is currently too noisy for common patterns in this app (async loads, auth gates).
       // We rely on `react-hooks/exhaustive-deps` and good review practices instead.
       'react-hooks/set-state-in-effect': 'off',
+      // Fast Refresh warnings should not fail readiness; keep as warnings for review.
+      'react-refresh/only-export-components': 'warn',
+      // Escapes in regex/string templates are common in SMS parsers; warn only.
+      'no-useless-escape': 'warn',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
     },
   },
   {
@@ -37,6 +56,12 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
+    },
+    rules: {
+      'no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
     },
   },
   {

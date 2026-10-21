@@ -90,6 +90,9 @@ describe('stripStartIncludingRentReminders', () => {
       rentReminderCadence: '5, 3, 1 days before',
       now: new Date(2026, 8, 11),
     })
+    expect(stripStartIncludingRentReminders(events, '2026-09-12', '5, 3, 1 days before')).toBe(
+      '2026-09-26',
+    )
   })
 
   it('does not open the strip in a month that has already passed', () => {

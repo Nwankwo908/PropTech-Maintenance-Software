@@ -430,14 +430,6 @@ function ticketCompletionPhotoPaths(ticket: Record<string, unknown> | null): str
   return completion.map((entry) => asString(entry)).filter(Boolean)
 }
 
-function ticketMediaPaths(ticket: Record<string, unknown> | null): string[] {
-  const photos = ticket?.photo_paths
-  const fromPhotos = Array.isArray(photos)
-    ? photos.map((entry) => asString(entry)).filter(Boolean)
-    : []
-  return [...fromPhotos, ...ticketCompletionPhotoPaths(ticket)]
-}
-
 /**
  * Work-phase label for the third repair-progress step.
  * Uses saved schedule when present; otherwise reflects work underway.

@@ -69,7 +69,7 @@ export function useLandingSmoothScroll() {
     running.current = false
   }, [])
 
-  const tick = useCallback(() => {
+  const tick = useCallback(function tickFrame() {
     const next = currentY.current + (targetY.current - currentY.current) * EASE
     if (Math.abs(targetY.current - next) < SETTLE_PX) {
       currentY.current = targetY.current
@@ -80,7 +80,7 @@ export function useLandingSmoothScroll() {
     }
     currentY.current = next
     window.scrollTo(0, currentY.current)
-    raf.current = requestAnimationFrame(tick)
+    raf.current = requestAnimationFrame(tickFrame)
   }, [])
 
   const start = useCallback(() => {

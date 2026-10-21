@@ -34,8 +34,6 @@ import {
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { archiveWorkOrders } from '@/api/deleteWorkOrder'
-
 type UrgencyUi = 'urgent' | 'normal' | 'low'
 
 type StatusUi =
@@ -1553,7 +1551,7 @@ export function AdminRequestManagementDashboard() {
             const next: AdminTicketRow = {
               ...r,
               vendor: nextVendor,
-              assignedVendorId: reassignResult.assigned_vendor_id,
+              assignedVendorId: reassignResult.vendorId,
               vendorWorkStatus: 'pending_accept',
             }
             if (assignedAtIso != null) next.assignedAtIso = assignedAtIso

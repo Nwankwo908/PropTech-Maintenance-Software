@@ -62,6 +62,7 @@ function tradeLabel(trade: VendorTrade): string {
     flooring: "flooring",
     general: "general maintenance",
     hvac: "HVAC",
+    inspection: "inspection",
     landscaping: "landscaping",
     locksmith: "locksmith",
     masonry: "masonry",

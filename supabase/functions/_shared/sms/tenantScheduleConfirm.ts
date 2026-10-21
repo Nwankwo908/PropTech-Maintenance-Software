@@ -526,7 +526,7 @@ async function notifyLandlordOpsSms(
   if (!from) return
   const provider = getSMSProviderForSend({
     landlordId,
-    lineProvider: sender.provider,
+    lineProvider: sender!.provider,
   })
   for (const to of phones) {
     await provider.sendMessage({ to, body, from })

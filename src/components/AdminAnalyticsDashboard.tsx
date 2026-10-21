@@ -380,8 +380,10 @@ export function AdminAnalyticsDashboard() {
     }
   }
 
+  const [analyticsAsOfMs] = useState(() => Date.now())
+
   const analytics = useMemo(() => {
-    const now = Date.now()
+    const now = analyticsAsOfMs
     const year = new Date().getFullYear()
     const startOfYear = new Date(year, 0, 1).getTime()
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
@@ -501,7 +503,7 @@ export function AdminAnalyticsDashboard() {
       overdueOpenCount: overdueOpen.length,
       pendingInvoices,
     }
-  }, [tickets, recognizedSpend, pendingInvoices, pmComplianceData])
+  }, [analyticsAsOfMs, tickets, recognizedSpend, pendingInvoices, pmComplianceData])
 
   const updatedCaption = lastUpdated ? formatUpdatedAt(lastUpdated) : 'Live portfolio metrics'
 

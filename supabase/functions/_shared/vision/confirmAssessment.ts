@@ -217,7 +217,7 @@ export async function confirmInspectionAssessment(
         model: match.model,
         estimated_age_years:
           match.estimated_age_years != null ? Number(match.estimated_age_years) : null,
-        detection_source: match.detection_source,
+        detection_source: match.detection_source ?? null,
         metadata:
           match.metadata && typeof match.metadata === "object"
             ? (match.metadata as Record<string, unknown>)

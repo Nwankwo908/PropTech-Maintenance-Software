@@ -153,7 +153,7 @@ export async function processNoShowIncidents(
   }
 
   for (const raw of tickets ?? []) {
-    const ticket = raw as Record<string, unknown>
+    const ticket = raw as unknown as Record<string, unknown>
     const ticketId = typeof ticket.id === "string" ? ticket.id : ""
     const lid = typeof ticket.landlord_id === "string" ? ticket.landlord_id : ""
     const vendorId = typeof ticket.assigned_vendor_id === "string"

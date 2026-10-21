@@ -751,6 +751,7 @@ export function buildWorkflowKanbanCard(
       : null
 
   const progress = groupItems ? inspectionGroupProgress(groupItems) : null
+  const workflowEscalated = row.status === 'escalated'
   const stage = isStandaloneInspectionNotice
     ? 'new_intake'
     : deriveWorkflowKanbanStage(row, metadata)
@@ -799,13 +800,13 @@ export function buildWorkflowKanbanCard(
           null,
     stage,
     critical:
-      row.status === 'escalated' ||
+      workflowEscalated ||
       isStalePendingAcceptNeedsAdminVendor({
         vendorWorkStatus: row.vendorWorkStatus,
         assignedVendorId: row.assignedVendorId,
         autoReassignLastOutcome: row.autoReassignLastOutcome,
         workflowNeedsAdminVendor:
-          row.status === 'escalated' &&
+          workflowEscalated &&
           isMaintenanceAdminVendorEscalationReason(row.escalationReason),
       }),
     initials: deriveInitials(row),

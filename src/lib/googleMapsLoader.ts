@@ -4,7 +4,6 @@
 
 declare global {
   interface Window {
-    google?: typeof google
     __uloGoogleMapsPromise?: Promise<typeof google>
     __uloGoogleMapsReady?: () => void
     gm_authFailure?: () => void
@@ -54,12 +53,19 @@ export function loadGoogleMapsApi(apiKey: string): Promise<typeof google> {
 
   const scriptPromise = new Promise<typeof google>((resolve, reject) => {
     let settled = false
-    let pollTimer: number | undefined
-    let timeoutTimer: number | undefined
+
+    const pollTimer = window.setInterval(() => {
+      if (isGoogleMapsReady()) finishOk()
+    }, POLL_MS)
+
+    const timeoutTimer = window.setTimeout(() => {
+      if (isGoogleMapsReady()) finishOk()
+      else finishErr('Google Maps timed out')
+    }, LOAD_TIMEOUT_MS)
 
     const cleanup = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer)
-      if (timeoutTimer != null) window.clearTimeout(timeoutTimer)
+      window.clearInterval(pollTimer)
+      window.clearTimeout(timeoutTimer)
     }
 
     const finishOk = () => {
@@ -85,15 +91,6 @@ export function loadGoogleMapsApi(apiKey: string): Promise<typeof google> {
     }
 
     window.__uloGoogleMapsReady = () => finishOk()
-
-    pollTimer = window.setInterval(() => {
-      if (isGoogleMapsReady()) finishOk()
-    }, POLL_MS)
-
-    timeoutTimer = window.setTimeout(() => {
-      if (isGoogleMapsReady()) finishOk()
-      else finishErr('Google Maps timed out')
-    }, LOAD_TIMEOUT_MS)
 
     const existing = document.querySelector<HTMLScriptElement>('script[data-ulo-google-maps]')
     if (existing) {

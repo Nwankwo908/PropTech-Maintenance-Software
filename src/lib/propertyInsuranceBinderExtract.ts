@@ -157,12 +157,12 @@ export function mapPortfolioInsuranceToPropertyFields(
       }
     : null
 
-  if (fromDwelling && dwellingHasPolicyFields(dwelling)) return fromDwelling
+  if (fromDwelling && dwelling && dwellingHasPolicyFields(dwelling)) return fromDwelling
   if (kind === 'insurance_certificate' && fromCoi && coi && coiHasPolicyFields(coi)) return fromCoi
   if (fromDwelling && (fromDwelling.carrier || fromDwelling.policyNumber || fromDwelling.coverageStartDate)) {
     return fromDwelling
   }
-  if (fromCoi && coiHasPolicyFields(coi!)) return fromCoi
+  if (fromCoi && coi && coiHasPolicyFields(coi)) return fromCoi
 
   const carrier = fromRoleFacts(payload, 'insurance_carrier')
   if (carrier) {

@@ -319,7 +319,7 @@ export async function notifyLandlordActivationUndeliverable(
         } else {
           const provider = getSMSProviderForSend({
             landlordId,
-            lineProvider: sender.provider,
+            lineProvider: sender!.provider,
           })
           for (const to of phones) {
             const send = await provider.sendMessage({ to, body: smsBody, from })

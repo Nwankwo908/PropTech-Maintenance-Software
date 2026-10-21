@@ -7,7 +7,7 @@ import { createUploadedDocumentFromFile, runDocumentProcessing, type OnboardingU
 import { normalizeLeaseScan } from '@shared/onboarding/leaseScan'
 import { leaseFixture } from '@shared/onboarding/leaseScan.fixtures'
 
-const payload = () => ({ account: {}, properties: [], units: [], residents: [], vendors: [], leases: [], maintenanceIssues: [], financialRecords: [], imageLabels: [], warnings: [], leaseReview: normalizeLeaseScan(leaseFixture(), ['']).review })
+const payload = () => ({ account: {}, properties: [], units: [], residents: [], vendors: [], leases: [], maintenanceIssues: [], financialRecords: [], imageLabels: [], warnings: [] as string[], leaseReview: normalizeLeaseScan(leaseFixture(), ['']).review })
 it('keeps a finished lease ready to continue when a detail still needs review', async () => {
   const file = new File(['%PDF fixture'], 'lease.pdf', { type: 'application/pdf' })
   const updates: OnboardingUploadedDocument[] = [], extracted = payload()
