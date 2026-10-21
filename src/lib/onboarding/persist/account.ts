@@ -288,8 +288,10 @@ export async function persistLandlordCommunicationStyle(
     step?: string
     source?: string
   },
-): Promise<void> {
-  if (!supabase) return
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) {
+    return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
+  }
   const communicationStyle = normalizeOnboardingApprovalRules({
     communication_style: style,
   }).communicationStyle
@@ -298,21 +300,28 @@ export async function persistLandlordCommunicationStyle(
     .update({ communication_style: communicationStyle })
     .eq('id', landlordId)
   if (error) {
-    console.warn('[landlordOnboarding] persist communication style', error.message)
-    return
+    return {
+      ok: false,
+      error: getErrorMessage(error, 'Could not save communication style.'),
+    }
   }
-  const { recordActivityLog } = await import('@/lib/recordActivityLog')
-  await recordActivityLog({
-    landlordId,
-    eventType: options?.eventType ?? 'landlord.communication_style_updated',
-    source: options?.source ?? 'admin_ui',
-    actorType: 'landlord',
-    metadata: {
-      message: `Communication style set to ${communicationStyle}.`,
-      communication_style: communicationStyle,
-      step: options?.step ?? 'settings',
-    },
-  })
+  try {
+    const { recordActivityLog } = await import('@/lib/recordActivityLog')
+    await recordActivityLog({
+      landlordId,
+      eventType: options?.eventType ?? 'landlord.communication_style_updated',
+      source: options?.source ?? 'admin_ui',
+      actorType: 'landlord',
+      metadata: {
+        message: `Communication style set to ${communicationStyle}.`,
+        communication_style: communicationStyle,
+        step: options?.step ?? 'settings',
+      },
+    })
+  } catch (err) {
+    console.warn('[landlordOnboarding] communication style activity log failed', err)
+  }
+  return { ok: true }
 }
 
 

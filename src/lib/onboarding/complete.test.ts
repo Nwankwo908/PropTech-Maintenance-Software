@@ -174,7 +174,7 @@ describe('completeOnboarding', () => {
     activateUnitsFromResidentAssignments.mockResolvedValue(undefined)
     persistLandlordAccountProfile.mockResolvedValue({ ok: true })
     persistLandlordDefaultRentDueDay.mockResolvedValue({ ok: true })
-    persistLandlordCommunicationStyle.mockResolvedValue(undefined)
+    persistLandlordCommunicationStyle.mockResolvedValue({ ok: true })
     persistOnboardingProperties.mockImplementation(async (properties) => ({
       ok: true,
       properties,
@@ -208,6 +208,7 @@ describe('completeOnboarding', () => {
       sampleResident({ id: 'res-phone', phone: '+12025550111' }),
       sampleResident({ id: 'res-no-phone', phone: '', fullName: 'No Phone' }),
     ]
+    fetchOnboardingResidents.mockResolvedValue(residents)
     const vendors = [
       sampleVendor({
         id: 'vendor-both',
@@ -237,6 +238,10 @@ describe('completeOnboarding', () => {
     expect(saved.landlordId).toBe(TEST_LANDLORD_ID)
 
     expect(persistOnboardingProperties).toHaveBeenCalled()
+    expect(persistLandlordAccountProfile).toHaveBeenCalledWith(
+      TEST_LANDLORD_ID,
+      state.accountSetup,
+    )
     expect(persistLandlordDefaultRentDueDay).toHaveBeenCalledWith(TEST_LANDLORD_ID, 1)
     expect(importOnboardingResidentsFromExtraction).toHaveBeenCalled()
     expect(activateUnitsFromResidentAssignments).toHaveBeenCalledWith(
@@ -248,8 +253,11 @@ describe('completeOnboarding', () => {
     const persistOrder = persistOnboardingProperties.mock.invocationCallOrder[0] ?? 0
     const residentOrder = importOnboardingResidentsFromExtraction.mock.invocationCallOrder[0] ?? 0
     const activateOrder = activateUnitsFromResidentAssignments.mock.invocationCallOrder[0] ?? 0
+    const profileOrder = persistLandlordAccountProfile.mock.invocationCallOrder[0] ?? 0
+    const completedOrder = saveLandlordOnboardingConfirmed.mock.invocationCallOrder[0] ?? 0
     expect(persistOrder).toBeLessThan(residentOrder)
     expect(residentOrder).toBeLessThan(activateOrder)
+    expect(profileOrder).toBeLessThan(completedOrder)
 
     expect(sendLandlordOnboardingWelcome).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -275,11 +283,13 @@ describe('completeOnboarding', () => {
 
   it('still finishes setup when activity log fails', async () => {
     recordActivityLog.mockRejectedValue(new Error('log failed'))
+    const residents = [sampleResident()]
+    fetchOnboardingResidents.mockResolvedValue(residents)
 
     const result = await completeOnboarding(
       validOnboardingState(),
       [sampleVendor()],
-      [sampleResident()],
+      residents,
     )
 
     expect(result.ok).toBe(true)
@@ -304,7 +314,9 @@ describe('completeOnboarding', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Could not save properties/)
     expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
+    expect(persistLandlordAccountProfile).not.toHaveBeenCalled()
     expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+    expect(sendTenantWelcomeSms).not.toHaveBeenCalled()
   })
 
   it('fails closed when resident persist is partial', async () => {
@@ -318,6 +330,85 @@ describe('completeOnboarding', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Could not save all residents/)
+    expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
+    expect(persistLandlordAccountProfile).not.toHaveBeenCalled()
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when communication style persist fails before completion', async () => {
+    const residents = [sampleResident()]
+    fetchOnboardingResidents.mockResolvedValue(residents)
+    persistLandlordCommunicationStyle.mockResolvedValueOnce({
+      ok: false,
+      error: 'Could not save communication style.',
+    })
+
+    const result = await completeOnboarding(
+      validOnboardingState(),
+      [sampleVendor()],
+      residents,
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/communication/i)
+    expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when account profile persist fails before completion', async () => {
+    const residents = [sampleResident()]
+    fetchOnboardingResidents.mockResolvedValue(residents)
+    persistLandlordAccountProfile.mockResolvedValueOnce({
+      ok: false,
+      error: 'Could not save account profile.',
+    })
+
+    const result = await completeOnboarding(
+      validOnboardingState(),
+      [sampleVendor()],
+      residents,
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/account profile/i)
+    expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+    expect(sendTenantWelcomeSms).not.toHaveBeenCalled()
+    expect(recordActivityLog).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when final completion status save fails', async () => {
+    const residents = [sampleResident()]
+    fetchOnboardingResidents.mockResolvedValue(residents)
+    saveLandlordOnboardingConfirmed.mockResolvedValueOnce({
+      ok: false,
+      error: 'Could not confirm setup completion.',
+    })
+
+    const result = await completeOnboarding(
+      validOnboardingState(),
+      [sampleVendor()],
+      residents,
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/confirm setup completion/i)
+    expect(persistLandlordAccountProfile).toHaveBeenCalled()
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+    expect(recordActivityLog).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when reviewed residents are missing from canonical inventory', async () => {
+    fetchOnboardingResidents.mockResolvedValue([])
+
+    const result = await completeOnboarding(
+      validOnboardingState(),
+      [sampleVendor()],
+      [sampleResident({ id: 'res-missing', fullName: 'Ghost Tenant' })],
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/Could not verify/)
     expect(saveLandlordOnboardingConfirmed).not.toHaveBeenCalled()
     expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
   })

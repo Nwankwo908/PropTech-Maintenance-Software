@@ -215,6 +215,45 @@ export async function completeOnboarding(
     }
   }
 
+  // Prove resident inventory against the reviewed roster (identity, not counts alone).
+  if (residents.length > 0) {
+    const persistedResidents = await fetchOnboardingResidents(scope.landlordId)
+    const unmatched = residents.filter((target) => {
+      if (
+        persistedResidents.some(
+          (row) =>
+            row.id === target.id ||
+            onboardingResidentIdentityMatch(
+              {
+                id: row.id,
+                fullName: row.fullName,
+                unit: row.unit,
+                building: row.building,
+                phone: row.phone,
+              },
+              {
+                id: target.id,
+                fullName: target.fullName,
+                unit: target.unit,
+                building: target.building,
+                phone: target.phone,
+              },
+            ),
+        )
+      ) {
+        return false
+      }
+      return true
+    })
+    if (unmatched.length > 0) {
+      return {
+        ok: false,
+        error: `Could not verify ${unmatched.length} resident${unmatched.length === 1 ? '' : 's'} in the portfolio. Setup was not completed.`,
+        properties,
+      }
+    }
+  }
+
   // Tenant assigned to a unit with lease dates — or tenant SMS onboarding complete —
   // activates that unit. No separate Activate Unit click.
   try {
@@ -223,7 +262,88 @@ export async function completeOnboarding(
       source: 'onboarding_complete',
     })
   } catch (err) {
-    console.warn('[landlordOnboarding] unit activation from residents failed', err)
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Could not activate units from lease assignments. Setup was not completed.',
+      properties,
+    }
+  }
+
+  // Required account / approval settings must land before completed status.
+  // Do not flip onboarding_status or fire welcomes if these fail.
+  try {
+    const profile = await persistLandlordAccountProfile(scope.landlordId, state.accountSetup)
+    if (!profile.ok) {
+      return {
+        ok: false,
+        error: profile.error || 'Could not save account profile. Setup was not completed.',
+        properties,
+      }
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Could not save account profile. Setup was not completed.',
+      properties,
+    }
+  }
+
+  try {
+    const defaultRentDueDay = mostCommonRentDueDay(residents)
+    const rentDue = await persistLandlordDefaultRentDueDay(scope.landlordId, defaultRentDueDay)
+    if (!rentDue.ok) {
+      return {
+        ok: false,
+        error: rentDue.error || 'Could not save rent due day. Setup was not completed.',
+        properties,
+      }
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Could not save rent due day. Setup was not completed.',
+      properties,
+    }
+  }
+
+  const rules = normalizeOnboardingApprovalRules(state.approvalRules)
+  try {
+    const styleSaved = await persistLandlordCommunicationStyle(
+      scope.landlordId,
+      rules.communicationStyle,
+      {
+        eventType: 'landlord.communication_style_selected',
+        step: 'approval',
+        source: 'onboarding',
+      },
+    )
+    if (!styleSaved.ok) {
+      return {
+        ok: false,
+        error:
+          styleSaved.error ||
+          'Could not save approval communication settings. Setup was not completed.',
+        properties,
+      }
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Could not save approval communication settings. Setup was not completed.',
+      properties,
+    }
   }
 
   const completed: LandlordOnboardingState = {
@@ -248,36 +368,6 @@ export async function completeOnboarding(
     property_count: metrics.properties,
     unit_count: metrics.units,
   })
-
-  try {
-    const profile = await persistLandlordAccountProfile(scope.landlordId, state.accountSetup)
-    if (!profile.ok) {
-      console.warn('[landlordOnboarding] account profile persist failed', profile.error)
-    }
-  } catch (err) {
-    console.warn('[landlordOnboarding] account profile persist failed', err)
-  }
-
-  try {
-    const defaultRentDueDay = mostCommonRentDueDay(residents)
-    const rentDue = await persistLandlordDefaultRentDueDay(scope.landlordId, defaultRentDueDay)
-    if (!rentDue.ok) {
-      console.warn('[landlordOnboarding] default rent due day persist failed', rentDue.error)
-    }
-  } catch (err) {
-    console.warn('[landlordOnboarding] default rent due day persist failed', err)
-  }
-
-  const rules = normalizeOnboardingApprovalRules(state.approvalRules)
-  try {
-    await persistLandlordCommunicationStyle(scope.landlordId, rules.communicationStyle, {
-      eventType: 'landlord.communication_style_selected',
-      step: 'approval',
-      source: 'onboarding',
-    })
-  } catch (err) {
-    console.warn('[landlordOnboarding] communication style persist failed', err)
-  }
 
   // Landlord welcome is sent once on complete. Tenant welcome SMS / vendor
   // verification invites only for rows with Onboarding switch enabled.
