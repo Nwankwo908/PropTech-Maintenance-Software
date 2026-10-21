@@ -35,8 +35,14 @@ describe('vendorTradeMatchesForDispatch', () => {
     expect(vendorTradeMatchesForDispatch('handyman', 'pest')).toBe(false)
     expect(vendorTradeMatchesForDispatch(null, 'pest_control')).toBe(false)
     expect(vendorTradeMatchesForDispatch('', 'pest_control')).toBe(false)
+    expect(vendorTradeMatchesForDispatch('plumbing', 'pest_control')).toBe(
+      false,
+    )
+    expect(vendorTradeMatchesForDispatch('hvac', 'pest')).toBe(false)
     expect(vendorTradeMatchesForDispatch('pest_control', 'pest_control')).toBe(
       true,
     )
+    expect(vendorTradeMatchesForDispatch('pest', 'pest_control')).toBe(true)
+    expect(vendorTradeMatchesForDispatch('pest_control', 'pest')).toBe(true)
   })
 })

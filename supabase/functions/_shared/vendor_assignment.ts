@@ -298,8 +298,10 @@ export type PickVendorForAssignmentOptions = {
 
 /**
  * Pick Active vendors whose trade matches the ticket, or Active general /
- * handyman vendors when no specialist is available.
- * A different specialist trade (e.g. plumber for an oven) is never used.
+ * handyman vendors for non-pest tickets when no specialist is available.
+ * Pest jobs require an explicit pest-control specialist — generalists are
+ * never offered. A different specialist trade (e.g. plumber for an oven) is
+ * never used.
  *
  * Within a tier: preferred vendors first, then lowest active job count, then
  * fairness on `last_assigned_at` / `created_at`. Across tiers, preferred

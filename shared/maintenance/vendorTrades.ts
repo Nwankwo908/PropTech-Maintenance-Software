@@ -257,12 +257,18 @@ export function vendorTradeMatchesFlexible(
 
 /**
  * Auto-dispatch match: same specific trade, or an Active general / handyman
- * for any ticket. A plumber still must not take an oven (or similar).
+ * for non-pest tickets. Pest control requires an explicit pest specialist —
+ * never general / handyman, blank, or an unrelated trade. A plumber still
+ * must not take an oven (or similar).
  */
 export function vendorTradeMatchesForDispatch(
   vendorCategory: string | null | undefined,
   issueCategory: string | null | undefined,
 ): boolean {
+  // Pest restriction before any generalist fallback.
+  if (isPestControlIssue(issueCategory)) {
+    return vendorTradeMatchesFlexible(vendorCategory, issueCategory)
+  }
   if (isGeneralistTrade(vendorCategory)) return true
   const issueTrade = normalizeVendorTrade(issueCategory, { fallbackOther: false })
   if (!issueTrade || issueTrade === 'other' || issueTrade === 'general') return false
