@@ -26,6 +26,7 @@ import { findActiveLandlordMainNumber } from "../_shared/sms/landlordSmsOnboardi
 import { getSMSProviderForSend } from "../_shared/sms/providerFactory.ts"
 import { readTwilioConfig } from "../_shared/sms/TwilioProvider.ts"
 import { uloAppUrl } from "../_shared/uloAppUrl.ts"
+import { notifyLandlordNeedsAttention } from "../_shared/landlordAttentionNotify.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 const LA2 = "de300000-0000-4000-8000-000000000004"
@@ -137,11 +138,84 @@ Deno.serve(async (req) => {
     injectVendorYes?: boolean
     waitForInboundMs?: number
     waitForDeliveryMs?: number
+    landlordId?: string
+    ticketId?: string
+    propertyId?: string
+    marker?: string
+    scenario?: string
   }
   try {
     body = await req.json()
   } catch {
     return json({ error: "Expected JSON" }, 400)
+  }
+
+  // --- Emergency attention alert (LA2 only; idempotent) ---
+  if (
+    body.action === "emergency_attention" ||
+    body.scenario === "emergency_attention"
+  ) {
+    const landlordId = String(body.landlordId || "").trim()
+    const ticketId = String(body.ticketId || "").trim()
+    const propertyId = String(body.propertyId || "").trim()
+    if (landlordId !== LA2) {
+      return json({ error: "emergency_attention is Limited Alpha 2 only" }, 403)
+    }
+    if (!ticketId || !propertyId) {
+      return json({ error: "ticketId and propertyId required" }, 400)
+    }
+    const { data: ticket } = await supabase
+      .from("maintenance_requests")
+      .select(
+        "id,landlord_id,property_id,issue_type,priority,description,unit,resident_name",
+      )
+      .eq("id", ticketId)
+      .eq("landlord_id", LA2)
+      .maybeSingle()
+    if (!ticket?.id) {
+      return json({ error: "LA2 ticket not found" }, 404)
+    }
+    if (ticket.property_id !== propertyId) {
+      return json({ error: "propertyId does not match ticket" }, 400)
+    }
+    const issueType = String(ticket.issue_type || "").toLowerCase()
+    if (issueType !== "flooding" && !/flood/i.test(String(ticket.description || ""))) {
+      return json({ error: "Ticket is not a flooding emergency fixture" }, 400)
+    }
+    const idempotencyKey = `integration:emergency:${ticketId}`
+    const unitLabel = typeof ticket.unit === "string" && ticket.unit.trim()
+      ? ticket.unit.trim()
+      : null
+    const result = await notifyLandlordNeedsAttention(supabase, {
+      landlordId: LA2,
+      kind: "workflow_escalated",
+      idempotencyKey,
+      headline: "Emergency flooding reported",
+      detail:
+        String(ticket.description || "").slice(0, 280) ||
+        "Flooding reported — needs immediate attention.",
+      locationLine: unitLabel ? `Unit ${unitLabel}` : null,
+      whyLine: "A flooding emergency was reported and needs a responsible person right away.",
+      propertyId,
+      maintenanceRequestId: ticketId,
+      omitWorkOrderRef: false,
+    })
+    const smsSent = Array.isArray(result.smsSent) ? result.smsSent : []
+    return json({
+      ok: !result.skipped || result.reason === "already_sent",
+      skipped: result.skipped === true,
+      idempotent: result.reason === "already_sent",
+      reason: result.reason ?? null,
+      messageSid: smsSent[0] ?? null,
+      to: null,
+      smsSent,
+      emailSent: result.emailSent ?? [],
+      errors: result.errors ?? [],
+      ticketId,
+      propertyId,
+      issueType: ticket.issue_type,
+      priority: ticket.priority,
+    })
   }
 
   // --- Delivery status check for known SIDs (no new sends) ---

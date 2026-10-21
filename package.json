@@ -22,9 +22,11 @@
     "check:connected-workflows": "bash scripts/readiness/check-connected-workflows.sh",
     "check:readiness": "bash scripts/readiness/run-all.sh",
     "verify:account-privacy": "node scripts/integration-verification/verify-account-privacy.mjs",
-    "verify:configure-test-access": "node scripts/integration-verification/configure-test-access.mjs",
+    "verify:configure-test-access": "node scripts/integration-verification/configure-test-access.mjs --la2-only",
     "verify:maintenance-workflow": "node scripts/integration-verification/verify-maintenance-workflow.mjs",
-    "verify:sms-journey": "node scripts/integration-verification/verify-sms-journey.mjs"
+    "verify:sms-journey": "node scripts/integration-verification/verify-sms-journey.mjs",
+    "verify:emergency-alert": "node scripts/integration-verification/verify-emergency-alert.mjs",
+    "verify:onboarding-askulo": "node scripts/integration-verification/verify-onboarding-askulo.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",
