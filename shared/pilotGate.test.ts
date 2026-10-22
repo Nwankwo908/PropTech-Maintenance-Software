@@ -18,7 +18,9 @@ describe('pilotGate', () => {
     expect(result.blockedBy.some((g) => g.id === 'approvals')).toBe(true)
     expect(isPilotWorkflowAllowed('onboarding')).toBe(true)
     expect(isPilotWorkflowAllowed('scheduling')).toBe(true)
+    // Unknown ≠ hard-disabled: soft mode still allows; not verified for pilot claim.
     expect(isPilotWorkflowAllowed('home_checks')).toBe(false)
+    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(true)
     expect(isPilotWorkflowAllowed('rent_payment_ledger')).toBe(false)
   })
 
@@ -32,14 +34,13 @@ describe('pilotGate', () => {
     expect(assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '1' }).ok).toBe(false)
   })
 
-  it('fail-closes excluded workflows only when PILOT_STRICT is on', () => {
+  it('fail-closes unknown/excluded workflows only when PILOT_STRICT is on', () => {
     expect(pilotStrictModeEnabled({ PILOT_STRICT: '1' })).toBe(true)
-    // Home Checks is hard-disabled for pilot — always closed.
-    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(false)
+    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(true)
     const blocked = assertPilotAllows('home_checks', { PILOT_STRICT: '1' })
     expect(blocked.ok).toBe(false)
     if (!blocked.ok) {
-      expect(blocked.status).toBe('excluded')
+      expect(blocked.status).toBe('unknown')
       expect(blocked.reason.length).toBeGreaterThan(0)
     }
   })

@@ -85,19 +85,18 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'lease_imports',
     label: 'Lease imports',
-    status: 'excluded',
+    status: 'unknown',
     reason:
-      'Pilot-scoped out: fixture extract exists, but live multi-lease / rent-roll precedence and hard-copy quality gates are not re-proven for this pilot.',
+      'Unit/fixture extraction coverage incomplete; live Gemini extract / multi-lease rent-roll precedence not re-proven on this checkout.',
     coreSafety: false,
   },
   {
     id: 'home_checks',
     label: 'Home Checks',
-    status: 'excluded',
+    status: 'unknown',
     reason:
-      'Pilot-scoped out: requires READINESS_HOME_CHECK_DATABASE_URL + upload fixtures; SQL/browser gates blocked.',
+      'Requires READINESS_HOME_CHECK_DATABASE_URL + upload fixtures; SQL/browser readiness subchecks blocked/not_run — still to verify for pilot inclusion (not hard-disabled).',
     coreSafety: false,
-    hardDisable: true,
   },
   {
     id: 'vendor_assignment',
@@ -132,9 +131,9 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'ask_ulo_priorities',
     label: 'Ask ULO priorities',
-    status: 'excluded',
+    status: 'unknown',
     reason:
-      'Pilot-scoped out: routing unit-covered; cross-system retrieval + action binding not proven for this pilot.',
+      'Routing to executive_briefing unit-covered; cross-system retrieval + action binding not proven.',
     coreSafety: false,
   },
 ] as const

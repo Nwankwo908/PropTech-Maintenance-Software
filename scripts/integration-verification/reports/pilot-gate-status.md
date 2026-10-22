@@ -1,13 +1,11 @@
 # Pilot gate status (coding-task evidence)
 
-**Decision: NOT PILOT-READY** — landlord handset **approvals** still unverified.
+**Decision: NOT PILOT-READY** — landlord handset **approvals** still unverified; lease / Ask Ulo / Home Checks remain open verification work (not scoped out).
 
 | Field | Value |
 | --- | --- |
 | Generated | 2026-10-22 |
-| Head commit (SMS/cap fix) | `5f3e506` (+ follow-up pilot exclusion commit) |
-| Blocker audit | `.readiness/integration/pilot-remaining-blockers.json` |
-| Note | LA1 unused. Rent/payments hard-disabled for this pilot. |
+| Note | LA1 unused. Only rent/payments is authorized hard-excluded for this pilot. |
 
 ## Core-safety inventory (`shared/pilotGate.ts`)
 
@@ -17,18 +15,19 @@
 | SMS identity → action | **verified** | Fresh handset YES …3069 → LA2 |
 | Vendor assignment | **verified** | Handset YES + schedule …0274; ticket accepted |
 | Approvals | **unknown** | Still open — inject-only late approval; no Twilio APPROVE inbound |
-| Rent & payments | **excluded** + **hardDisable** | Checkout/invoice pay refuse even without `PILOT_STRICT` |
+| Rent & payments | **excluded** + **hardDisable** | Authorized pilot exclusion; checkout/invoice pay refuse |
 
-## Pilot-scoped exclusions (gaps)
+## Open verification (not excluded from product)
 
 | Workflow | Status |
 |---|---|
-| Lease imports | **excluded** (fixture extract only; live multi-lease gap) |
-| Ask ULO priorities | **excluded** (routing only; action binding gap) |
-| Home Checks | **excluded** + **hardDisable** (SQL/browser prerequisites) |
+| Lease imports | **unknown** — complete and verify |
+| Ask ULO priorities | **unknown** — complete and verify |
+| Home Checks | **unknown** — complete and verify (not hard-disabled) |
 
 ## Still required before pilot-ready
 
 1. Prove landlord estimate **APPROVE/DECLINE** from a real handset (Twilio SM… inbound).
-2. Keep rent/payments disabled for Limited Alpha pilot (already hard-gated).
-3. Do not treat UNKNOWN/EXCLUDED as passed.
+2. Close verification for lease imports, Ask Ulo priorities, and Home Checks (do not scope them out).
+3. Keep rent/payments disabled for Limited Alpha pilot (authorized).
+4. Do not treat UNKNOWN as passed.

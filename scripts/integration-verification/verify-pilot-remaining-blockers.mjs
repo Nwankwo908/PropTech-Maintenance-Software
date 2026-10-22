@@ -96,15 +96,15 @@ add(
 const leaseExtract = liveAi?.results?.find((r) => r.id === 'lease_extract')
 add(
   'lease_imports_gap',
-  'excluded',
-  'Fixture extract passed historically; pilot scopes out live multi-lease / rent-roll precedence re-proof',
+  'unverified',
+  'Still to verify for pilot inclusion — fixture extract exists; live multi-lease / rent-roll precedence not re-proven',
   { leaseExtractStatus: leaseExtract?.status ?? null, liveAiOverall: liveAi?.overall ?? null },
 )
 
 add(
   'ask_ulo_priorities_gap',
-  'excluded',
-  'Routing unit-covered; cross-system retrieval + action binding not proven for pilot',
+  'unverified',
+  'Still to verify for pilot inclusion — routing unit-covered; cross-system retrieval + action binding not proven',
   { liveAiOverall: liveAi?.overall ?? null },
 )
 
@@ -113,8 +113,8 @@ const homeBlocked =
   /home_check_sql=blocked/.test(JSON.stringify(connected ?? {}))
 add(
   'home_checks_gap',
-  'excluded',
-  'Home Check SQL/browser prerequisites blocked/not_run in readiness connected-workflows',
+  'unverified',
+  'Still to verify for pilot inclusion — Home Check SQL/browser prerequisites blocked/not_run (feature not hard-disabled)',
   { homeBlocked, connectedStatus: connected?.status ?? null },
 )
 
@@ -177,9 +177,9 @@ const payload = {
   summary: {
     vendorAssignment: vendorOk ? 'verified_by_handset_evidence' : 'not_verified',
     approvals: approvalsStillOpen ? 'still_open' : 'verified',
-    leaseImports: 'excluded_pilot_gap',
-    askUloPriorities: 'excluded_pilot_gap',
-    homeChecks: 'excluded_pilot_gap',
+    leaseImports: 'unverified_open',
+    askUloPriorities: 'unverified_open',
+    homeChecks: 'unverified_open',
     rentPayments: 'hard_disabled_in_pilotGate',
   },
   overall: criticalFailed ? 'failed' : approvalsStillOpen ? 'blocked' : 'passed',

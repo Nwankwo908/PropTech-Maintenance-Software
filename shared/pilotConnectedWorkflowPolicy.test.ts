@@ -30,6 +30,8 @@ describe('pilot connected-workflow policy (unit-level supporting evidence)', () 
     // Rent/payments hard-disabled for pilot regardless of PILOT_STRICT.
     expect(assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '0' }).ok).toBe(false)
     expect(assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '1' }).ok).toBe(false)
-    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(false)
+    // Home Checks stays in verification backlog (unknown) — not hard-disabled.
+    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(true)
+    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '1' }).ok).toBe(false)
   })
 })
