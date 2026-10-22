@@ -3,6 +3,7 @@ import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
 import { normalizeSmsPhone } from '../sms/inbound_db.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import {
+  formatHomeCheckLocation,
   type HomeCheckAnswers,
   type HomeCheckTarget,
   nearestHomeCheckVendors,
@@ -225,7 +226,7 @@ export async function actHomeCheckSms(
         reply:
           `Start your inspection with INSPECT Property / Unit. To ask the tenant, send INSPECT TENANT Property / Unit (or CHECK Property / Unit). For a contractor, send INSPECT CONTRACTOR Property / Unit | job-window-end. Duplicate unit labels require the property. Available: ${
             targets.slice(0, 8).map((row) =>
-              `${row.propertyName}${row.unitLabel ? ` / ${row.unitLabel}` : ''}`
+              formatHomeCheckLocation(row.propertyName, row.unitLabel)
             )
               .join('; ')
           }${targets.length > 8 ? '; see Property Intelligence for the full list' : ''}`,

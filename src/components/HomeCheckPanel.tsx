@@ -203,7 +203,7 @@ export function HomeCheckPanel(
           <option value=''>{building} · shared property equipment</option>
           {targets.map((target) => (
             <option key={target.unitId} value={target.unitId!}>
-              {building} / {target.unitLabel}
+              {formatHomeCheckLocation(building, target.unitLabel)}
             </option>
           ))}
         </select>
@@ -239,8 +239,11 @@ export function HomeCheckPanel(
       {role === 'tenant' && (
         <p className='text-sm text-[#64748b]'>
           Your request authorizes Ulo to text the selected unit’s tenant. Give them a heads-up
-          first. One reminder after 48 hours, then stop. You can also text CHECK {building} /{' '}
-          {unitId ? targets.find((target) => target.unitId === unitId)?.unitLabel : 'Unit'} to Ulo.
+          first. One reminder after 48 hours, then stop. You can also text CHECK{' '}
+          {formatHomeCheckLocation(
+            building,
+            unitId ? targets.find((target) => target.unitId === unitId)?.unitLabel : null,
+          )} to Ulo.
         </p>
       )}
       {role === 'contractor' && (
