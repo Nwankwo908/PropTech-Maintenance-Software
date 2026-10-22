@@ -8,6 +8,7 @@ import {
   normalizeSmsPhone,
   resolveInboundSmsNumber,
   maintenanceRequestIdIfSameLandlord,
+  phoneHasNonDemoRosterBinding,
   resolveLandlordIdForSharedTwilioInbound,
   resolveOpenMaintenanceRequestId,
 } from "./inbound_db.ts"
@@ -55,22 +56,47 @@ export {
 const UNMATCHED_SHARED_DID_ACK =
   "Thanks for texting. We couldn't match this number to a property account. Please contact your property manager directly."
 
+const AMBIGUOUS_SHARED_DID_ACK =
+  "Thanks for texting. We found more than one property account for this number, so we did not take action. Please contact your property manager directly or reply with the property address."
+
 /** Best-effort Twilio ack with no landlord conversation / identity write. */
-async function ackUnmatchedSharedDidInbound(
+async function ackSharedDidWithoutAccountWrite(
   inbound: InboundSMSMessage,
+  body: string,
+  logLabel: string,
 ): Promise<void> {
   try {
     const result = await getSMSProviderFor(inbound.provider).sendMessage({
       to: inbound.from,
       from: inbound.to,
-      body: UNMATCHED_SHARED_DID_ACK,
+      body,
     })
     if ("error" in result && result.error) {
-      console.warn("[sms-inbound] unmatched shared DID ack failed", result.error)
+      console.warn(`[sms-inbound] ${logLabel} failed`, result.error)
     }
   } catch (err) {
-    console.warn("[sms-inbound] unmatched shared DID ack threw", err)
+    console.warn(`[sms-inbound] ${logLabel} threw`, err)
   }
+}
+
+async function ackUnmatchedSharedDidInbound(
+  inbound: InboundSMSMessage,
+): Promise<void> {
+  await ackSharedDidWithoutAccountWrite(
+    inbound,
+    UNMATCHED_SHARED_DID_ACK,
+    "unmatched shared DID ack",
+  )
+}
+
+async function ackAmbiguousSharedDidInbound(
+  inbound: InboundSMSMessage,
+): Promise<void> {
+  await ackSharedDidWithoutAccountWrite(
+    inbound,
+    AMBIGUOUS_SHARED_DID_ACK,
+    "ambiguous shared DID ack",
+  )
 }
 
 async function saveInboundMessage(
@@ -292,6 +318,27 @@ export async function processInboundSms(
           didOwnerLandlordId: smsNumber.landlord_id,
         },
       )
+
+      // Demo preview must never override a real portfolio roster binding.
+      const hasNonDemoRoster = await phoneHasNonDemoRosterBinding(
+        supabase,
+        inbound.from,
+      )
+      if (hasNonDemoRoster) {
+        console.info(
+          "[sms-inbound] shared DID ambiguous with non-demo roster — clarifying",
+          { from: inbound.from, to: inbound.to },
+        )
+        await ackAmbiguousSharedDidInbound(inbound)
+        return {
+          ok: true,
+          unmatchedSharedDid: true,
+          ambiguousSharedDid: true,
+          conversationId: null,
+          messageId: null,
+        }
+      }
+
       const tryDemo = await resolveTryDemoUnmatchedInbound(supabase, inbound.from)
       if (tryDemo.action === "silence") {
         console.info(

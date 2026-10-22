@@ -22,6 +22,8 @@ export type ProcessInboundSmsResult =
       messageId: null
       /** Try-demo sample recipient (landlord/resident/vendor) — no unmatched ack SMS. */
       tryDemoSilence?: true
+      /** Phone matches multiple non-demo accounts — clarify, no Demo hijack. */
+      ambiguousSharedDid?: true
     }
   | {
       ok: true
