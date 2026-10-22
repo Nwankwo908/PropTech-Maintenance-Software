@@ -54,9 +54,9 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'sms_identity_action',
     label: 'SMS identity → reply → action',
-    status: 'unknown',
+    status: 'verified',
     reason:
-      'LA2 outbounds delivered; physical handset YES (Twilio inbound SM…) still unverified — inject does not count.',
+      'Fresh LA2 handset YES (Twilio SM…) on …3069 routed to LA2 resident conversation with sms_clarify action; Demo reply-cap no longer drops non-Demo traffic. Evidence: .readiness/integration/sms-identity-routing-tenant-fresh-ai.json.',
     coreSafety: true,
   },
   {

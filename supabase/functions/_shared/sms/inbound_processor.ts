@@ -44,6 +44,7 @@ import { parseHomeCheckCommand } from "../../../../shared/homeCheck.ts"
 import { runWorkflowEngine } from "../engine/runner.ts"
 import { tryStartHqsLetterIntakeFromInbound } from "./hqsInspectionLetterInbound.ts"
 import { tryLandlordCantProcessInbound } from "./landlordInboundCantProcess.ts"
+import { DEMO_LANDLORD_ID } from "../../../../shared/admin/landlordAccess.ts"
 import { isLimitedAlphaTwilioSmsNumber } from "../../../../shared/landlordCapabilities.ts"
 import { getSMSProviderFor } from "./providerFactory.ts"
 import { resolveTryDemoUnmatchedInbound, shouldSilenceTryDemoResidentAfterCap } from "./tryDemoSilence.ts"
@@ -381,12 +382,16 @@ export async function processInboundSms(
       landlordId = resolvedLandlordId
     }
 
-    // Identity may already exist after the first try-demo resident turn —
-    // still enforce the 3-reply Ulo cap on later messages.
-    if (await shouldSilenceTryDemoResidentAfterCap(supabase, inbound.from)) {
+    // Try Demo resident reply-cap applies only while the message is attributed
+    // to Demo. A prior Try Demo on this handset must not drop traffic that
+    // resolved to a real portfolio (e.g. LA2 after recent outbound).
+    if (
+      landlordId === DEMO_LANDLORD_ID &&
+      (await shouldSilenceTryDemoResidentAfterCap(supabase, inbound.from))
+    ) {
       console.info(
         "[sms-inbound] try-demo resident — Ulo reply cap reached",
-        { from: inbound.from, to: inbound.to },
+        { from: inbound.from, to: inbound.to, landlordId },
       )
       return {
         ok: true,

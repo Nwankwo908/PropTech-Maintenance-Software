@@ -11,8 +11,10 @@ describe('pilotGate', () => {
   it('keeps overall pilot not ready while core safety is unverified', () => {
     const result = evaluatePilotReadiness()
     expect(result.ready).toBe(false)
-    expect(result.blockedBy.some((g) => g.id === 'sms_identity_action')).toBe(true)
+    expect(result.blockedBy.some((g) => g.id === 'sms_identity_action')).toBe(false)
     expect(result.blockedBy.some((g) => g.id === 'rent_payment_ledger')).toBe(true)
+    expect(result.blockedBy.some((g) => g.id === 'vendor_assignment')).toBe(true)
+    expect(result.blockedBy.some((g) => g.id === 'approvals')).toBe(true)
     expect(isPilotWorkflowAllowed('onboarding')).toBe(true)
     expect(isPilotWorkflowAllowed('scheduling')).toBe(true)
     expect(isPilotWorkflowAllowed('home_checks')).toBe(false)
@@ -35,7 +37,10 @@ describe('pilotGate', () => {
     expect(gate.status).toBe('verified')
   })
 
-  it('keeps SMS identity core unknown until handset YES is proven', () => {
-    expect(pilotWorkflowGate('sms_identity_action').status).toBe('unknown')
+  it('marks SMS identity verified after fresh LA2 handset YES proof', () => {
+    const gate = pilotWorkflowGate('sms_identity_action')
+    expect(gate.coreSafety).toBe(true)
+    expect(gate.status).toBe('verified')
+    expect(isPilotWorkflowAllowed('sms_identity_action')).toBe(true)
   })
 })

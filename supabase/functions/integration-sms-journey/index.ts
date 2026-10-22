@@ -17,6 +17,7 @@ import {
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
+import { setAdminConversationTakeover } from "../_shared/sms/adminConversationControl.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { buildVendorJobAssignmentSms } from "../_shared/vendor_outreach_copy.ts"
 import { processInboundSms } from "../_shared/sms/inbound_processor.ts"
@@ -221,6 +222,100 @@ Deno.serve(async (req) => {
     })
   }
 
+  // --- Send one allowlisted outbound without admin takeover (handset probes) ---
+  if (body.action === "send_allowlisted_sms") {
+    const to = allowPhone(String(body.tenantPhone || body.vendorPhone || ""))
+    if (!to) {
+      return json({ error: "allowlisted tenantPhone or vendorPhone required" }, 400)
+    }
+    const messageBody = String(body.marker || "").trim()
+    if (!messageBody || messageBody.length < 8) {
+      return json({ error: "marker (message body) required" }, 400)
+    }
+    const line = await findActiveLandlordMainNumber(supabase, LA2)
+    if (!line?.id || !line.phone_number) {
+      return json({ error: "LA2 SMS line missing" }, 500)
+    }
+    const uloPhone = normalizeSmsPhone(String(line.phone_number)) || String(line.phone_number)
+    const isTenant = to === "+19088843069"
+    const { data: resident } = isTenant
+      ? await supabase
+        .from("users")
+        .select("id")
+        .eq("landlord_id", LA2)
+        .eq("phone", to)
+        .maybeSingle()
+      : { data: null }
+    const { data: vendor } = !isTenant
+      ? await supabase
+        .from("vendors")
+        .select("id")
+        .eq("landlord_id", LA2)
+        .eq("phone", to)
+        .maybeSingle()
+      : { data: null }
+    const identity = await upsertSmsIdentityForPhone(supabase, {
+      landlordId: LA2,
+      phone: to,
+      identityType: isTenant ? "resident" : "vendor",
+      residentId: resident?.id ?? null,
+      vendorId: vendor?.id ?? null,
+    })
+    if (!identity) return json({ error: "identity upsert failed" }, 500)
+    const found = await findOrCreateConversation(supabase, {
+      landlordId: LA2,
+      smsNumberId: line.id,
+      externalPhone: to,
+      identity,
+      maintenanceRequestId: null,
+      conversationStatus: "open",
+    })
+    // Ensure admin takeover is off for a normal inbound AI path.
+    await setAdminConversationTakeover(supabase, {
+      conversationId: found.conversationId,
+      landlordId: LA2,
+      active: false,
+    })
+
+    const provider = getSMSProviderForSend()
+    const send = await provider.sendMessage({
+      to,
+      from: uloPhone,
+      body: messageBody,
+    })
+    if (send.error) return json({ error: send.error }, 502)
+    const sid = send.providerMessageSid || send.messageId || null
+    const { data: msgRow } = await supabase
+      .from("sms_messages")
+      .insert({
+        conversation_id: found.conversationId,
+        landlord_id: LA2,
+        direction: "outbound",
+        from_number: uloPhone,
+        to_number: to,
+        body: messageBody,
+        media_urls: [],
+        provider: "twilio",
+        provider_message_sid: sid,
+        provider_status: send.status || "queued",
+        raw_payload: { source: "integration_send_allowlisted_sms" },
+      })
+      .select("id, created_at, provider_message_sid, provider_status")
+      .maybeSingle()
+
+    return json({
+      ok: true,
+      conversationId: found.conversationId,
+      messageId: msgRow?.id ?? null,
+      providerMessageSid: sid,
+      providerStatus: msgRow?.provider_status ?? send.status ?? null,
+      createdAt: msgRow?.created_at ?? null,
+      from: uloPhone,
+      to,
+      adminTakeoverActive: false,
+    })
+  }
+
   // --- Delivery status check for known SIDs (no new sends) ---
   if (body.action === "check_delivery") {
     const sids = (body.sids || []).map((s) => String(s).trim()).filter(Boolean)
@@ -246,6 +341,150 @@ Deno.serve(async (req) => {
     return json({
       ok: results.every((r) => r.delivered),
       results,
+    })
+  }
+
+  // --- Replay a real Twilio inbound SID through processInboundSms (allowlisted only) ---
+  if (body.action === "replay_twilio_inbound") {
+    const sid = String((body as { sid?: string }).sid || "").trim()
+    if (!isTwilioHandsetSid(sid)) {
+      return json({ error: "sid must be a Twilio SM… MessageSid" }, 400)
+    }
+    const cfg = readTwilioConfig()
+    if ("error" in cfg) return json({ error: cfg.error }, 500)
+    const auth = btoa(`${cfg.accountSid}:${cfg.authToken}`)
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${cfg.accountSid}/Messages/${sid}.json`,
+      { headers: { Authorization: `Basic ${auth}` } },
+    )
+    const raw = await res.text()
+    if (!res.ok) {
+      return json({ error: "Twilio fetch failed", detail: raw.slice(0, 400) }, 502)
+    }
+    let msg: Record<string, unknown>
+    try {
+      msg = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      return json({ error: "invalid Twilio JSON" }, 502)
+    }
+    const from = allowPhone(String(msg.from || ""))
+    const to = normalizeSmsPhone(String(msg.to || ""))
+    if (!from) {
+      return json({
+        error: "Message From is not an allowlisted handset",
+        from: msg.from ?? null,
+      }, 403)
+    }
+    if (!to) return json({ error: "Message To is missing" }, 422)
+
+    const { data: existing } = await supabase
+      .from("sms_messages")
+      .select("id,landlord_id,conversation_id,body,created_at,direction")
+      .eq("provider_message_sid", sid)
+      .maybeSingle()
+
+    let processResult: unknown = null
+    let processError: string | null = null
+    if (!existing) {
+      try {
+        processResult = await processInboundSms(supabase, {
+          provider: "twilio",
+          providerMessageSid: sid,
+          messageId: sid,
+          from,
+          to,
+          body: String(msg.body ?? ""),
+          mediaUrls: [],
+          rawPayload: {
+            integration_replay: true,
+            twilio_status: msg.status ?? null,
+            twilio_date_sent: msg.date_sent ?? null,
+            twilio_error_code: msg.error_code ?? null,
+          },
+        })
+      } catch (e) {
+        processError = e instanceof Error ? e.message : String(e)
+      }
+    }
+
+    const { data: after } = await supabase
+      .from("sms_messages")
+      .select(
+        "id,landlord_id,conversation_id,body,created_at,direction,from_number,to_number,provider_message_sid",
+      )
+      .eq("provider_message_sid", sid)
+      .maybeSingle()
+
+    return json({
+      ok: Boolean(after) && after?.landlord_id === LA2 && !processError,
+      sid,
+      twilio: {
+        from: msg.from,
+        to: msg.to,
+        body: msg.body,
+        status: msg.status,
+        direction: msg.direction,
+        date_sent: msg.date_sent,
+        error_code: msg.error_code,
+        error_message: msg.error_message,
+      },
+      alreadyInDb: Boolean(existing),
+      existing,
+      processResult,
+      processError,
+      saved: after,
+      routedToLa2: after?.landlord_id === LA2,
+      routedToDemo: after?.landlord_id === "de300000-0000-4000-8000-000000000001",
+    })
+  }
+
+  // --- List recent Twilio messages for an allowlisted handset (no new sends) ---
+  if (body.action === "list_twilio_messages") {
+    const phone = allowPhone(String(body.tenantPhone || body.vendorPhone || ""))
+    if (!phone) return json({ error: "allowlisted tenantPhone or vendorPhone required" }, 400)
+    const cfg = readTwilioConfig()
+    if ("error" in cfg) return json({ error: cfg.error }, 500)
+    const dateSentAfter = String(body.marker || "2026-10-22").trim() || "2026-10-22"
+    const auth = btoa(`${cfg.accountSid}:${cfg.authToken}`)
+    const base =
+      `https://api.twilio.com/2010-04-01/Accounts/${cfg.accountSid}/Messages.json`
+    const qs = (params: Record<string, string>) =>
+      new URLSearchParams({ PageSize: "50", DateSentAfter: dateSentAfter, ...params })
+    const pull = async (params: Record<string, string>) => {
+      const res = await fetch(`${base}?${qs(params)}`, {
+        headers: { Authorization: `Basic ${auth}` },
+      })
+      const raw = await res.text()
+      if (!res.ok) {
+        return { ok: false as const, error: raw.slice(0, 400), messages: [] as unknown[] }
+      }
+      try {
+        const j = JSON.parse(raw) as { messages?: Array<Record<string, unknown>> }
+        return { ok: true as const, messages: j.messages || [] }
+      } catch {
+        return { ok: false as const, error: "invalid Twilio JSON", messages: [] as unknown[] }
+      }
+    }
+    const fromHandset = await pull({ From: phone })
+    const toHandset = await pull({ To: phone })
+    const slim = (m: Record<string, unknown>) => ({
+      sid: m.sid,
+      from: m.from,
+      to: m.to,
+      body: m.body,
+      status: m.status,
+      direction: m.direction,
+      date_sent: m.date_sent,
+      error_code: m.error_code,
+    })
+    return json({
+      ok: fromHandset.ok && toHandset.ok,
+      phone,
+      dateSentAfter,
+      fromHandsetError: fromHandset.ok ? null : fromHandset.error,
+      toHandsetError: toHandset.ok ? null : toHandset.error,
+      fromHandset: (fromHandset.messages as Array<Record<string, unknown>>).map(slim),
+      toHandset: (toHandset.messages as Array<Record<string, unknown>>).map(slim),
     })
   }
 
