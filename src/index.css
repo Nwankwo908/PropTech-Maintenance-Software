@@ -1437,69 +1437,74 @@
     .landing-how-it-works-inset {
       padding-left: calc(3.5rem + 270px + 3.75rem + 3.5rem) !important;
     }
-
-    .landing-how-it-works-feature-nav {
-      gap: 10.9609375rem !important;
-    }
   }
 
-  /*
-   * How It Works feature rows: descriptions are in-flow, so gap is real space
-   * between items. 15% more than the original lg:gap-16 (4rem) title-to-title
-   * rhythm, including the ~2.2rem icon/title row.
-   */
-  @media (min-width: 1024px) {
-    .landing-how-it-works-feature-nav {
-      gap: calc(4rem + (4rem + 2.1875rem) * 0.15) !important;
-    }
+  /* How It Works feature rows: fixed 24px title-to-title spacing (descriptions are out of flow). */
+  .landing-how-it-works-feature-nav {
+    gap: 24px !important;
+  }
 
+  @media (min-width: 1024px) {
     .landing-how-it-works-feature-item {
       padding-top: calc(0.25rem * 1.15);
       padding-bottom: calc(0.25rem * 1.15);
     }
   }
 
-  @media (min-width: 4046px) and (max-width: 4146px) and (min-height: 2254px) and (max-height: 2354px),
-    (min-width: 5070px) and (max-width: 5170px) and (min-height: 2830px) and (max-height: 2930px) {
-    .landing-how-it-works-feature-nav {
-      gap: 5.52rem !important;
-    }
-  }
-
-  @media (min-width: 7630px) and (max-width: 7730px) and (min-height: 4270px) and (max-height: 4370px) {
-    .landing-how-it-works-feature-nav {
-      gap: 10.9609375rem !important;
-    }
-  }
-
-  /* Keep How It Works list + previews inside the mint card (override 96rem / 100vw frames). */
+  /*
+   * How It Works: mint outer stage (padding) + white inner panel (nav + preview).
+   * Row layouts: left nav 40% / right preview 60%. Preview height is fixed.
+   */
   .landing-how-it-works-stage {
     box-sizing: border-box;
-    width: fit-content;
+    width: 100%;
     max-width: 100%;
     min-width: 0;
     margin-inline: auto;
-    overflow: hidden;
+    overflow: visible;
+    /* One stop per corner: TL, TR, BR, BL */
+    background-color: #c0c7e0;
+    background-image:
+      radial-gradient(ellipse 100% 100% at 0% 0%, #c0c7e0 0%, transparent 55%),
+      radial-gradient(ellipse 100% 100% at 100% 0%, #b1dff1 0%, transparent 55%),
+      radial-gradient(ellipse 100% 100% at 100% 100%, #c68ec6 0%, transparent 55%),
+      radial-gradient(ellipse 100% 100% at 0% 100%, #84cbbb 0%, transparent 55%);
+  }
+
+  .landing-how-it-works-panel {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    background: #ffffff;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+  }
+
+  .landing-how-it-works-stage .landing-how-it-works-feature-nav {
+    box-sizing: border-box;
+    min-width: 0;
+    align-self: center;
+    justify-self: start;
+    text-align: left;
   }
 
   .landing-how-it-works-stage .landing-how-it-works-preview {
     box-sizing: border-box !important;
-    width: auto !important;
-    max-width: min(42rem, 100%) !important;
+    width: 100% !important;
+    max-width: 100% !important;
     min-width: 0 !important;
-    height: auto !important;
-    min-height: 0 !important;
-    flex: 0 1 auto !important;
+    height: min(36rem, 62vh) !important;
+    min-height: min(36rem, 62vh) !important;
     overflow: hidden !important;
   }
 
   .landing-how-it-works-stage .landing-how-it-works-preview-frame {
     box-sizing: border-box !important;
     position: relative !important;
-    width: auto !important;
+    width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
-    height: auto !important;
+    height: 100% !important;
     overflow: hidden !important;
     transform: none !important;
     translate: none !important;
@@ -1507,12 +1512,12 @@
   }
 
   .landing-how-it-works-stage .landing-how-it-works-preview-inner {
-    position: relative !important;
-    inset: auto !important;
+    position: absolute !important;
+    inset: 0 !important;
     display: flex !important;
-    width: auto !important;
+    width: 100% !important;
     max-width: 100% !important;
-    height: auto !important;
+    height: 100% !important;
     align-items: center !important;
     justify-content: center !important;
     transform: none !important;
@@ -1521,14 +1526,34 @@
 
   .landing-how-it-works-stage .landing-how-it-works-preview-img {
     display: block !important;
-    width: auto !important;
+    width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
-    height: auto !important;
-    max-height: min(36rem, 62vh) !important;
+    height: 100% !important;
+    max-height: 100% !important;
     object-fit: contain !important;
     object-position: center center !important;
     margin: 0 !important;
+  }
+
+  /* Stacked (narrow): full-width columns. Side-by-side: 40% / 60%. */
+  @media (min-width: 1024px) {
+    .landing-how-it-works-panel {
+      display: grid !important;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) !important;
+      align-items: center;
+    }
+
+    .landing-how-it-works-stage .landing-how-it-works-feature-nav,
+    .landing-how-it-works-stage .landing-how-it-works-preview {
+      width: 100% !important;
+      max-width: none !important;
+    }
+
+    .landing-how-it-works-stage .landing-how-it-works-feature-nav {
+      align-self: center;
+      justify-self: start;
+    }
   }
 
   .landing-property-dashboard-shot {
