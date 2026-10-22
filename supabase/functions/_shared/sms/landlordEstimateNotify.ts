@@ -454,6 +454,12 @@ async function setAwaitingEstimateDecision(
     .eq("id", params.conversationId)
 }
 
+/**
+ * Deliver estimate-approval SMS to each ops phone on that phone's own thread,
+ * and set `awaiting_estimate_decision` on every recipient conversation.
+ * Replies from a backup handset must not miss the pending ask because state
+ * only lived on the primary ops thread.
+ */
 async function deliverEstimateSmsToPhones(
   supabase: SupabaseClient,
   params: {
@@ -462,7 +468,12 @@ async function deliverEstimateSmsToPhones(
     phones: string[]
     fromNumber: string | null
     lineProvider: string | null
+    /** Shared Twilio / carrier line id for findOrCreateConversation. */
+    smsNumberId: string | null
+    /** Primary notify conversation (fallback when per-phone create fails). */
     conversationId: string | null
+    actionToken: string
+    ticketId: string
   },
 ): Promise<void> {
   const provider = getSMSProviderForSend({
@@ -470,12 +481,53 @@ async function deliverEstimateSmsToPhones(
     lineProvider: params.lineProvider,
   })
   let attemptBase = params.notification.sms_attempt_count || 0
+  const ticketId = params.ticketId.trim() || params.notification.ticket_id
+  const actionToken = params.actionToken.trim()
 
   for (const phone of params.phones) {
     attemptBase += 1
     let deliveryStatus: EstimateNotifyDeliveryStatus = "no_response"
     let failureReason: string | null = null
     let sid: string | null = null
+    let phoneConversationId = params.conversationId
+
+    if (params.smsNumberId) {
+      try {
+        const identity = await upsertSmsIdentityForPhone(supabase, {
+          landlordId: params.notification.landlord_id,
+          phone,
+          identityType: "landlord",
+        })
+        if (identity) {
+          const created = await findOrCreateConversation(supabase, {
+            landlordId: params.notification.landlord_id,
+            smsNumberId: params.smsNumberId,
+            externalPhone: phone,
+            identity,
+            maintenanceRequestId: ticketId || undefined,
+            conversationStatus: "open",
+          })
+          if (created.conversationId) {
+            phoneConversationId = created.conversationId
+            if (actionToken) {
+              await setAwaitingEstimateDecision(supabase, {
+                conversationId: created.conversationId,
+                estimateId: params.notification.estimate_id,
+                actionToken,
+                ticketId,
+              })
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(
+          "[estimate-notify] per-phone awaiting/conversation failed",
+          phone,
+          e instanceof Error ? e.message : String(e),
+        )
+      }
+    }
+
     try {
       const sendResult = await provider.sendMessage({
         to: phone,
@@ -509,7 +561,7 @@ async function deliverEstimateSmsToPhones(
       failureReason,
       providerMessageSid: sid,
       attemptNumber: attemptBase,
-      conversationId: params.conversationId,
+      conversationId: phoneConversationId,
     })
 
     await supabase
@@ -522,10 +574,10 @@ async function deliverEstimateSmsToPhones(
       })
       .eq("id", params.notification.id)
 
-    if (deliveryStatus === "sent" && sid && params.conversationId) {
-      // Best-effort: attach a real carrier SID copy (state-only row already exists).
+    if (deliveryStatus === "sent" && sid && phoneConversationId) {
+      // Mirror onto the recipient's thread (not only the primary ops thread).
       await supabase.from("sms_messages").insert({
-        conversation_id: params.conversationId,
+        conversation_id: phoneConversationId,
         landlord_id: params.notification.landlord_id,
         direction: "outbound",
         from_number: normalizeSmsPhone(params.fromNumber ?? ""),
@@ -682,8 +734,9 @@ export async function notifyLandlordEstimatePending(
   const smsBody = buildLandlordEstimateApprovalSms({
     vendorName: params.vendorName,
     workOrderRef: wo,
+    // Do not pass bare unit as locationLabel — "1" looks like a reply choice.
     unit: params.unit,
-    locationLabel: params.unit?.trim() || null,
+    locationLabel: null,
     totalCost: params.totalCost,
     partsCost: params.partsCost,
     laborCost: params.laborCost,
@@ -722,7 +775,10 @@ export async function notifyLandlordEstimatePending(
       phones,
       fromNumber: line.phone_number,
       lineProvider: line.provider,
+      smsNumberId: line.id,
       conversationId,
+      actionToken: params.actionToken,
+      ticketId: params.ticketId,
     })
   } else if (notification) {
     await recordNotifyAttempt(supabase, {
@@ -911,6 +967,11 @@ export async function processLandlordEstimateNotifyRetries(
       await markEstimateNotificationDecided(supabase, row.estimate_id as string)
       continue
     }
+    const retryActionToken =
+      typeof estimate.landlord_action_token === "string"
+        ? estimate.landlord_action_token.trim()
+        : ""
+    if (!retryActionToken) continue
 
     const lastAt = row.last_sms_attempt_at
       ? new Date(String(row.last_sms_attempt_at)).getTime()
@@ -951,8 +1012,11 @@ export async function processLandlordEstimateNotifyRetries(
       phones,
       fromNumber: line.phone_number,
       lineProvider: line.provider,
+      smsNumberId: line.id,
       conversationId:
         typeof row.conversation_id === "string" ? row.conversation_id : null,
+      actionToken: retryActionToken,
+      ticketId: String(row.ticket_id || ""),
     })
     retried += 1
 
@@ -1301,7 +1365,12 @@ export async function sendLandlordEstimateDisambiguationSms(
     phones,
     fromNumber: line.phone_number,
     lineProvider: line.provider,
+    smsNumberId: line.id,
     conversationId: params.conversationId,
+    // Disambiguation SMS is not a single-estimate ask; awaiting is set on the
+    // reply thread separately. Empty token skips per-phone estimate awaiting.
+    actionToken: "",
+    ticketId: params.options[0]?.ticketId || notification.ticket_id,
   })
 
   const { data: recentAttempts } = await supabase

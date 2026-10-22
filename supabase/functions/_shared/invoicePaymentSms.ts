@@ -191,6 +191,16 @@ export async function tryHandleInvoicePaymentInbound(
   const preference = parseInvoicePaymentReply(params.body)
   if (!preference) return { handled: false }
 
+  // Do not steal numbered replies while an estimate approval is outstanding.
+  const { data: pendingEstimate } = await supabase
+    .from("maintenance_estimates")
+    .select("id")
+    .eq("landlord_id", params.landlordId)
+    .eq("status", "pending_approval")
+    .limit(1)
+    .maybeSingle()
+  if (pendingEstimate?.id) return { handled: false }
+
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { data: recent } = await supabase
     .from("operations_graph_events")
@@ -201,6 +211,8 @@ export async function tryHandleInvoicePaymentInbound(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
+
+  if (!recent) return { handled: false }
 
   const ticketId =
     typeof recent?.maintenance_request_id === "string"
@@ -230,13 +242,14 @@ export async function tryHandleInvoicePaymentInbound(
     console.error("[invoice-payment-sms] preference graph", e)
   }
 
+  // Preference only — do not claim a charge or transfer was started.
   const ack =
     preference === "card"
-      ? "Got it — we'll process card payment for this invoice."
+      ? "Got it — card selected. Open the invoice in the admin dashboard to complete payment when you're ready."
       : preference === "bnpl"
-      ? "Got it — BNPL / pay-later selected. We'll send financing next steps."
+      ? "Got it — pay-later noted. Open the invoice in the admin dashboard for financing next steps."
       : preference === "ach"
-      ? "Got it — ACH / bank payment selected. We'll follow up with transfer details."
+      ? "Got it — bank / ACH noted. Open the invoice in the admin dashboard to finish the transfer details."
       : "Got it — open the admin dashboard to review and pay this invoice."
 
   return { handled: true, replyBody: ack }

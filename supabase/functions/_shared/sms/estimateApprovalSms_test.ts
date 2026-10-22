@@ -1,6 +1,22 @@
 /// <reference lib="deno.ns" />
-import { assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts"
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "https://deno.land/std@0.224.0/assert/mod.ts"
 import { buildLandlordEstimateApprovalSms } from "./estimateApprovalSms.ts"
+import { landlordAskSummaryLine } from "./landlordAskSms.ts"
+
+Deno.test("landlord ask summary omits bare unit-only location", () => {
+  assertEquals(landlordAskSummaryLine({ locationLabel: "1" }), "")
+  assertEquals(landlordAskSummaryLine({ unit: "1" }), "")
+  assertEquals(
+    landlordAskSummaryLine({
+      locationLabel: "14 Maple Ave",
+      issueHeadline: "leak",
+    }),
+    "14 Maple Ave · leak",
+  )
+})
 
 Deno.test("landlord estimate SMS asks for APPROVE or DECLINE", () => {
   const body = buildLandlordEstimateApprovalSms({

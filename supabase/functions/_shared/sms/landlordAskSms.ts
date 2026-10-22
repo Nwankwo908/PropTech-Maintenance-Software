@@ -14,6 +14,20 @@ export function landlordAskOpening(
   return first ? `Hi ${first} — ${why}` : `Hi — ${why}`
 }
 
+/**
+ * True when a "location" token is only a bare unit number (e.g. "1", "Unit 2").
+ * Those must not stand alone in landlord asks — they look like reply choices.
+ */
+export function isBareUnitOnlyLocationLabel(
+  value: string | null | undefined,
+): boolean {
+  const raw = (value ?? "").trim()
+  if (!raw) return false
+  if (/^unit\s*[\w-]+$/i.test(raw)) return true
+  if (/^#?\d{1,4}[A-Za-z]?$/i.test(raw)) return true
+  return false
+}
+
 /** Property / unit · issue category (or headline). */
 export function landlordAskSummaryLine(input: {
   locationLabel?: string | null
@@ -23,13 +37,15 @@ export function landlordAskSummaryLine(input: {
   issueHeadline?: string | null
   tradeLabel?: string | null
 }): string {
-  const loc =
+  const rawLoc =
     input.locationLabel?.trim() ||
     formatLocationWithOptionalUnit({
       unitLabel: input.unit,
       propertyType: input.propertyType,
     }) ||
     ""
+  // Never emit a lone unit token as the summary — "1" reads as a menu choice.
+  const loc = isBareUnitOnlyLocationLabel(rawLoc) ? "" : rawLoc
   const category =
     input.issueHeadline?.trim() ||
     input.issueCategory?.trim() ||

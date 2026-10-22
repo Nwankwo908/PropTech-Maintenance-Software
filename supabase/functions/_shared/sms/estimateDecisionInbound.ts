@@ -4,8 +4,11 @@
  *
  * Resolution order:
  * 1. Thread `awaiting_estimate_decision` (or numbered disambiguation reply)
- * 2. Account-level pending estimates for the phone-resolved landlord
- * 3. Status-specific reply when the estimate was already decided elsewhere
+ * 2. Same-landlord ops threads that still hold `awaiting_estimate_decision`
+ *    (backup handset replies must see the ask set on every notified phone)
+ * 3. Account-level pending estimates — disambiguate when more than one;
+ *    never silent-pick when threads disagree
+ * 4. Status-specific reply when the estimate was already decided elsewhere
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { decideMaintenanceEstimate } from "../maintenanceEstimates.ts"
@@ -191,6 +194,70 @@ async function clearAwaitingEstimateDecision(
     .eq("id", conversationId)
 }
 
+/** Clear pending estimate ask on every landlord ops thread that still holds it. */
+async function clearAwaitingEstimateDecisionAcrossLandlordThreads(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    estimateId: string
+    excludeConversationId?: string | null
+  },
+): Promise<void> {
+  const { data: threads } = await supabase
+    .from("sms_conversations")
+    .select("id, intake_state")
+    .eq("landlord_id", params.landlordId)
+    .eq("conversation_type", "landlord_update")
+    .limit(40)
+  for (const thread of threads ?? []) {
+    if (
+      params.excludeConversationId &&
+      thread.id === params.excludeConversationId
+    ) {
+      continue
+    }
+    const intake =
+      thread.intake_state && typeof thread.intake_state === "object"
+        ? (thread.intake_state as Record<string, unknown>)
+        : {}
+    const awaiting = readAwaitingEstimateDecision(intake)
+    if (!awaiting || awaiting.estimateId !== params.estimateId) continue
+    await clearAwaitingEstimateDecision(supabase, thread.id as string, intake)
+  }
+}
+
+/**
+ * Find a single pending ask still stored on any landlord ops thread.
+ * Returns null when none or when threads disagree (caller must disambiguate).
+ */
+async function findCrossThreadAwaitingEstimateDecision(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<AwaitingEstimateDecision | null | "ambiguous"> {
+  const { data: threads } = await supabase
+    .from("sms_conversations")
+    .select("id, intake_state")
+    .eq("landlord_id", landlordId)
+    .eq("conversation_type", "landlord_update")
+    .limit(40)
+  const found: AwaitingEstimateDecision[] = []
+  const seen = new Set<string>()
+  for (const thread of threads ?? []) {
+    const intake =
+      thread.intake_state && typeof thread.intake_state === "object"
+        ? (thread.intake_state as Record<string, unknown>)
+        : {}
+    const awaiting = readAwaitingEstimateDecision(intake)
+    if (!awaiting?.estimateId) continue
+    if (seen.has(awaiting.estimateId)) continue
+    seen.add(awaiting.estimateId)
+    found.push(awaiting)
+  }
+  if (found.length === 0) return null
+  if (found.length > 1) return "ambiguous"
+  return found[0]!
+}
+
 export function canHandleEstimateDecisionInbound(input: {
   identityType: string
   conversationType?: string | null
@@ -305,6 +372,11 @@ async function applyDecision(
     params.conversationId,
     params.priorIntake,
   )
+  await clearAwaitingEstimateDecisionAcrossLandlordThreads(supabase, {
+    landlordId: params.landlordId,
+    estimateId: params.estimateId,
+    excludeConversationId: params.conversationId,
+  })
 
   if (params.ticketId) {
     const { data: vendorThreads } = await supabase
@@ -461,8 +533,8 @@ export async function tryHandleEstimateDecisionInbound(
   }
 
   const awaitingEarly = readAwaitingEstimateDecision(priorIntake)
-  const action = parseEstimateDecisionKeyword(params.body)
-  if (!action) {
+  const parsedAction = parseEstimateDecisionKeyword(params.body)
+  if (!parsedAction) {
     // Pending ask + unparseable reply: restate the decision — never fall through
     // to the generic unknown-contact maintenance greeting.
     if (awaitingEarly) {
@@ -479,6 +551,8 @@ export async function tryHandleEstimateDecisionInbound(
     }
     return { handled: false }
   }
+
+  const action: EstimateDecisionKeyword = parsedAction
 
   // Resolve landlord via the same account/ops phone helper used elsewhere.
   let landlordId = params.landlordId
@@ -576,76 +650,140 @@ export async function tryHandleEstimateDecisionInbound(
     }
   }
 
-  // Account-level pending lookup when thread has no pending state.
+  // Cross-thread / account-level when this reply thread has no pending ask.
+  // Backup handsets often reply on a different conversation than the primary
+  // ops notify thread — prefer an ask already stored on any landlord thread.
   if (!awaiting) {
-    const pending = await listPendingEstimatesForLandlord(supabase, landlordId)
-    if (pending.length === 1) {
-      const only = pending[0]!
-      awaiting = {
-        estimateId: only.estimateId,
-        actionToken: only.actionToken,
-        ticketId: only.ticketId,
-      }
-    } else if (pending.length > 1) {
-      await supabase
-        .from("sms_conversations")
-        .update({
-          updated_at: new Date().toISOString(),
-          intake_state: {
-            ...priorIntake,
-            awaiting_estimate_disambiguation: {
-              action,
-              options: pending.map((o) => ({
-                estimate_id: o.estimateId,
-                action_token: o.actionToken,
-                ticket_id: o.ticketId,
-              })),
-            },
-          },
-        })
-        .eq("id", params.conversationId)
-
-      const { sent, body } = await sendLandlordEstimateDisambiguationSms(
-        supabase,
-        {
-          landlordId,
-          conversationId: params.conversationId,
-          options: pending,
-        },
-      )
-      return {
-        handled: true,
-        action,
-        estimateId: pending[0]!.estimateId,
-        status: action === "approve" ? "approved" : "rejected",
-        replyBody: sent
-          ? body
-          : `${body}\n\n(We couldn't deliver that text reliably — reply with the number anyway, or use the approval link in your email.)`,
-      }
+    const cross = await findCrossThreadAwaitingEstimateDecision(
+      supabase,
+      landlordId,
+    )
+    if (cross && cross !== "ambiguous") {
+      awaiting = cross
     } else {
-      // No pending — check latest decided estimate for a status-specific reply.
-      const { data: latest } = await supabase
-        .from("maintenance_estimates")
-        .select("id, status")
-        .eq("landlord_id", landlordId)
-        .in("status", ["approved", "rejected", "superseded", "expired", "withdrawn"])
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (latest?.id) {
-        const terminal = replyForEstimateTerminalStatus(String(latest.status))
-        if (terminal) {
-          return {
-            handled: true,
-            action,
-            estimateId: latest.id as string,
-            status: action === "approve" ? "approved" : "rejected",
-            already: true,
-            replyBody: terminal,
-          }
+      const pending = await listPendingEstimatesForLandlord(supabase, landlordId)
+
+      async function disambiguate(
+        options: PendingLandlordEstimate[],
+      ): Promise<EstimateDecisionInboundResult> {
+        await supabase
+          .from("sms_conversations")
+          .update({
+            updated_at: new Date().toISOString(),
+            intake_state: {
+              ...priorIntake,
+              awaiting_estimate_disambiguation: {
+                action,
+                options: options.map((o) => ({
+                  estimate_id: o.estimateId,
+                  action_token: o.actionToken,
+                  ticket_id: o.ticketId,
+                })),
+              },
+            },
+          })
+          .eq("id", params.conversationId)
+
+        const { sent, body } = await sendLandlordEstimateDisambiguationSms(
+          supabase,
+          {
+            landlordId,
+            conversationId: params.conversationId,
+            options,
+          },
+        )
+        return {
+          handled: true,
+          action,
+          estimateId: options[0]!.estimateId,
+          status: action === "approve" ? "approved" : "rejected",
+          replyBody: sent
+            ? body
+            : `${body}\n\n(We couldn't deliver that text reliably — reply with the number anyway, or use the approval link in your email.)`,
         }
       }
-      return { handled: false }
+
+      if (cross === "ambiguous") {
+        // Threads disagree — never silent-pick. Prefer DB pending list; else rebuild.
+        let options = pending.length > 1 ? pending : []
+        if (options.length < 2) {
+          const { data: threads } = await supabase
+            .from("sms_conversations")
+            .select("intake_state")
+            .eq("landlord_id", landlordId)
+            .eq("conversation_type", "landlord_update")
+            .limit(40)
+          const byId = new Map<string, PendingLandlordEstimate>()
+          for (const thread of threads ?? []) {
+            const intake =
+              thread.intake_state && typeof thread.intake_state === "object"
+                ? (thread.intake_state as Record<string, unknown>)
+                : {}
+            const a = readAwaitingEstimateDecision(intake)
+            if (!a?.estimateId || !a.actionToken) continue
+            if (byId.has(a.estimateId)) continue
+            byId.set(a.estimateId, {
+              estimateId: a.estimateId,
+              actionToken: a.actionToken,
+              ticketId: a.ticketId || "",
+              totalCost: 0,
+              unit: "",
+              propertyLabel: "",
+              submittedAt: null,
+              status: "pending_approval",
+            })
+          }
+          options = [...byId.values()]
+        }
+        if (options.length > 1) return await disambiguate(options)
+        if (options.length === 1) {
+          awaiting = {
+            estimateId: options[0]!.estimateId,
+            actionToken: options[0]!.actionToken,
+            ticketId: options[0]!.ticketId,
+          }
+        }
+      } else if (pending.length > 1) {
+        return await disambiguate(pending)
+      } else if (pending.length === 1) {
+        const only = pending[0]!
+        awaiting = {
+          estimateId: only.estimateId,
+          actionToken: only.actionToken,
+          ticketId: only.ticketId,
+        }
+      }
+
+      if (!awaiting) {
+        const { data: latest } = await supabase
+          .from("maintenance_estimates")
+          .select("id, status")
+          .eq("landlord_id", landlordId)
+          .in("status", [
+            "approved",
+            "rejected",
+            "superseded",
+            "expired",
+            "withdrawn",
+          ])
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (latest?.id) {
+          const terminal = replyForEstimateTerminalStatus(String(latest.status))
+          if (terminal) {
+            return {
+              handled: true,
+              action,
+              estimateId: latest.id as string,
+              status: action === "approve" ? "approved" : "rejected",
+              already: true,
+              replyBody: terminal,
+            }
+          }
+        }
+        return { handled: false }
+      }
     }
   }
 

@@ -127,14 +127,36 @@ export async function trySendAutoReply(
           source: params.source,
         },
       })
+      let loopIsLandlordThread = false
+      try {
+        const { data: loopConv } = await supabase
+          .from("sms_conversations")
+          .select("conversation_type")
+          .eq("id", params.conversationId)
+          .maybeSingle()
+        const ctype = String(loopConv?.conversation_type || "")
+        loopIsLandlordThread =
+          ctype === "landlord_update" ||
+          params.workflowRoute === "landlord_estimate_decision" ||
+          params.workflowRoute === "invoice_payment" ||
+          params.source.includes("estimate_decision") ||
+          params.source.includes("invoice_payment")
+      } catch {
+        loopIsLandlordThread = false
+      }
       void notifyLandlordNeedsAttention(supabase, {
         landlordId: params.landlordId,
         kind: "workflow_escalated",
         headline: "Automated SMS replies were looping",
-        detail:
-          "Ulo stopped repeating the same reply. A teammate should follow up with the resident.",
-        whyLine: "The resident kept getting the same automated message.",
-        nextSteps: ["Follow up with the resident by text"],
+        detail: loopIsLandlordThread
+          ? "Ulo stopped repeating the same reply on a property-team text thread. Check the latest approval or payment ask before texting again."
+          : "Ulo stopped repeating the same reply. A teammate should follow up with the resident.",
+        whyLine: loopIsLandlordThread
+          ? "The same automated reply kept going out on this property-team thread."
+          : "The resident kept getting the same automated message.",
+        nextSteps: loopIsLandlordThread
+          ? ["Review the latest text on this thread", "Reply with the correct APPROVE / DECLINE or payment choice"]
+          : ["Follow up with the resident by text"],
         idempotencyKey: `sms-loop:${params.conversationId}:${Date.now()}`,
       })
       try {
