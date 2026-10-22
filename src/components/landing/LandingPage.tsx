@@ -933,9 +933,17 @@ export function LandingPage() {
                   alt="Ulo property operations dashboard"
                   width={1317}
                   height={1115}
-                  className="block h-full w-full object-cover object-top [mask-image:linear-gradient(to_bottom,black_0%,black_55%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,black_55%,transparent_100%)] [mask-size:100%_100%] [-webkit-mask-size:100%_100%] [mask-repeat:no-repeat] [-webkit-mask-repeat:no-repeat]"
+                  className="block h-full w-full object-cover object-top [mask-image:linear-gradient(to_bottom,#000_40%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_bottom,#000_40%,transparent_100%)]"
                   loading="lazy"
                   decoding="async"
+                />
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[60%]"
+                  style={{
+                    background:
+                      'linear-gradient(to bottom, rgba(240,253,244,0) 0%, rgba(240,253,244,0.7) 50%, #f0fdf4 85%, #f0fdf4 100%)',
+                  }}
                 />
               </div>
             </div>
