@@ -27,6 +27,7 @@
     "verify:configure-test-access": "node scripts/integration-verification/configure-test-access.mjs --la2-only",
     "verify:maintenance-workflow": "node scripts/integration-verification/verify-maintenance-workflow.mjs",
     "verify:sms-journey": "node scripts/integration-verification/verify-sms-journey.mjs",
+    "verify:pilot-remaining-blockers": "node scripts/integration-verification/verify-pilot-remaining-blockers.mjs",
     "verify:emergency-alert": "node scripts/integration-verification/verify-emergency-alert.mjs",
     "verify:onboarding-askulo": "node scripts/integration-verification/verify-onboarding-askulo.mjs",
     "verify:failure-recovery": "node scripts/integration-verification/verify-failure-recovery.mjs",

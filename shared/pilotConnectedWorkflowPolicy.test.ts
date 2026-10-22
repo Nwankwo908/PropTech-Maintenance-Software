@@ -26,7 +26,10 @@ describe('pilot connected-workflow policy (unit-level supporting evidence)', () 
   it('blocks overall pilot readiness while core safety is unverified', () => {
     const readiness = evaluatePilotReadiness()
     expect(readiness.ready).toBe(false)
+    expect(readiness.blockedBy.some((g) => g.id === 'approvals')).toBe(true)
+    // Rent/payments hard-disabled for pilot regardless of PILOT_STRICT.
+    expect(assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '0' }).ok).toBe(false)
     expect(assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '1' }).ok).toBe(false)
-    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '1' }).ok).toBe(false)
+    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(false)
   })
 })

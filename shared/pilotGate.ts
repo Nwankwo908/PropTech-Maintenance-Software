@@ -6,11 +6,13 @@
  * Status values:
  * - verified: isolated/mocked success+failure+recovery coverage exists for the
  *   workflow on this checkout (see scripts/integration-verification reports).
- * - excluded: must not be offered / committed in pilot until verified.
+ * - excluded: must not be offered / committed in pilot until verified (or
+ *   deliberately scoped out of this pilot).
  * - unknown: no durable connected-workflow proof — treat as blocked for pilot
  *   readiness claims (do not silently pass).
  *
  * Overall pilot readiness stays blocked while any *core* row is unknown/excluded.
+ * Hard-disabled rows always fail closed at entry points (even without PILOT_STRICT).
  */
 
 export type PilotWorkflowId =
@@ -36,6 +38,11 @@ export type PilotWorkflowGate = {
   reason: string
   /** Core safety: if any of these are not verified, overall pilot is blocked. */
   coreSafety: boolean
+  /**
+   * When true, entry points must refuse even if PILOT_STRICT is off.
+   * Use for features deliberately disabled for this pilot (e.g. rent/payments).
+   */
+  hardDisable?: boolean
 }
 
 /**
@@ -61,11 +68,12 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   },
   {
     id: 'rent_payment_ledger',
-    label: 'Rent/payment → ledger → balance',
+    label: 'Rent & payments (Stripe / ledger)',
     status: 'excluded',
     reason:
-      'Stripe Checkout / webhook ledger reconciliation not verified in an isolated sandbox on this checkout.',
-    coreSafety: true,
+      'Explicitly excluded from Limited Alpha pilot. Rent Checkout, invoice pay, and money-movement entry points are hard-disabled.',
+    coreSafety: false,
+    hardDisable: true,
   },
   {
     id: 'onboarding',
@@ -77,23 +85,26 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'lease_imports',
     label: 'Lease imports',
-    status: 'unknown',
-    reason: 'Unit/fixture extraction coverage incomplete; live Gemini extract not run.',
+    status: 'excluded',
+    reason:
+      'Pilot-scoped out: fixture extract exists, but live multi-lease / rent-roll precedence and hard-copy quality gates are not re-proven for this pilot.',
     coreSafety: false,
   },
   {
     id: 'home_checks',
     label: 'Home Checks',
     status: 'excluded',
-    reason: 'Requires READINESS_HOME_CHECK_DATABASE_URL + upload fixtures; SQL/browser gates blocked.',
+    reason:
+      'Pilot-scoped out: requires READINESS_HOME_CHECK_DATABASE_URL + upload fixtures; SQL/browser gates blocked.',
     coreSafety: false,
+    hardDisable: true,
   },
   {
     id: 'vendor_assignment',
     label: 'Vendor assignment',
-    status: 'unknown',
+    status: 'verified',
     reason:
-      'LA2 DB assign→accept→schedule→complete passed on non-routable phones; carrier handset accept still unverified.',
+      'LA2 real-handset assign→YES accept→schedule reply (…0274) with ticket accepted; evidence .readiness/integration/sms-identity-routing-handset.json.',
     coreSafety: true,
   },
   {
@@ -107,7 +118,8 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
     id: 'approvals',
     label: 'Approvals',
     status: 'unknown',
-    reason: 'Handset/late approval not proven; DB status progression is not SMS approval proof.',
+    reason:
+      'Landlord estimate APPROVE/DECLINE from a real handset is not proven (prior late-approval run used inject only).',
     coreSafety: true,
   },
   {
@@ -120,9 +132,9 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'ask_ulo_priorities',
     label: 'Ask ULO priorities',
-    status: 'unknown',
+    status: 'excluded',
     reason:
-      'Routing to executive_briefing unit-covered; cross-system retrieval + action binding not proven.',
+      'Pilot-scoped out: routing unit-covered; cross-system retrieval + action binding not proven for this pilot.',
     coreSafety: false,
   },
 ] as const
@@ -143,7 +155,9 @@ export function pilotWorkflowGate(id: PilotWorkflowId): PilotWorkflowGate {
 
 /** True when the workflow may be offered / committed in pilot. */
 export function isPilotWorkflowAllowed(id: PilotWorkflowId): boolean {
-  return pilotWorkflowGate(id).status === 'verified'
+  const gate = pilotWorkflowGate(id)
+  if (gate.hardDisable) return false
+  return gate.status === 'verified'
 }
 
 /**
@@ -151,7 +165,7 @@ export function isPilotWorkflowAllowed(id: PilotWorkflowId): boolean {
  * Cosmetic UI flags must not override this.
  */
 export function evaluatePilotReadiness(): {
-  ready: false
+  ready: boolean
   blockedBy: PilotWorkflowGate[]
   allowed: PilotWorkflowId[]
   excludedOrUnknown: PilotWorkflowId[]
@@ -160,9 +174,9 @@ export function evaluatePilotReadiness(): {
     (g) => g.coreSafety && g.status !== 'verified',
   )
   return {
-    ready: false,
+    ready: blockedBy.length === 0,
     blockedBy,
-    allowed: PILOT_WORKFLOW_GATES.filter((g) => g.status === 'verified').map((g) => g.id),
+    allowed: PILOT_WORKFLOW_GATES.filter((g) => isPilotWorkflowAllowed(g.id)).map((g) => g.id),
     excludedOrUnknown: PILOT_WORKFLOW_GATES.filter((g) => g.status !== 'verified').map(
       (g) => g.id,
     ),
@@ -186,7 +200,11 @@ export function assertPilotAllows(
   env?: { get?: (key: string) => string | undefined } | Record<string, string | undefined>,
 ): { ok: true } | { ok: false; status: PilotWorkflowStatus; reason: string } {
   const gate = pilotWorkflowGate(id)
-  if (gate.status === 'verified') return { ok: true }
+  if (gate.status === 'verified' && !gate.hardDisable) return { ok: true }
+  // Hard-disabled workflows always fail closed (pilot product exclusion).
+  if (gate.hardDisable) {
+    return { ok: false, status: gate.status, reason: gate.reason }
+  }
   if (!pilotStrictModeEnabled(env ?? {})) {
     // Soft mode: allow code paths to run in Limited Alpha, but readiness stays blocked.
     return { ok: true }

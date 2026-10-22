@@ -60,7 +60,7 @@ serve(async (req) => {
     return jsonResponse(
       {
         error:
-          "Rent checkout is excluded from this pilot until ledger reconciliation is verified.",
+          "Rent payments are excluded from this pilot. Online rent checkout is disabled.",
         pilot: { status: pilotGate.status, reason: pilotGate.reason },
       },
       503,

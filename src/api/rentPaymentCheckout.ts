@@ -57,7 +57,7 @@ export async function createRentPaymentCheckout(params: {
   })
   if (!pilotGate.ok) {
     throw new Error(
-      'Rent checkout is excluded from this pilot until ledger reconciliation is verified.',
+      'Rent payments are excluded from this pilot. Online rent checkout is disabled.',
     )
   }
   const json = await invokeRentPaymentCheckout({
@@ -78,6 +78,14 @@ export async function createRentPaymentCheckout(params: {
 export async function completeRentPaymentCheckout(params: {
   sessionId: string
 }): Promise<RentCheckoutCompleteResult> {
+  const pilotGate = assertPilotAllows('rent_payment_ledger', {
+    VITE_PILOT_STRICT: import.meta.env.VITE_PILOT_STRICT,
+  })
+  if (!pilotGate.ok) {
+    throw new Error(
+      'Rent payments are excluded from this pilot. Online rent checkout is disabled.',
+    )
+  }
   const json = await invokeRentPaymentCheckout({
     action: 'complete',
     sessionId: params.sessionId,

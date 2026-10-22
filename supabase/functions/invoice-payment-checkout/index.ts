@@ -22,6 +22,7 @@ import {
   recordInvoicePaymentFailedActivity,
 } from "../_shared/paymentActivityEvents.ts"
 import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
+import { assertPilotAllows } from "../../../shared/pilotGate.ts"
 import {
   applicationFeeCents,
   isStripeConfigured,
@@ -159,6 +160,17 @@ serve(async (req) => {
   const adminAuth = requireAdminReassignAuth(req, "[invoice-payment-checkout]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
+  const pilotGate = assertPilotAllows("rent_payment_ledger", Deno.env)
+  if (!pilotGate.ok) {
+    return jsonResponse(
+      {
+        error:
+          "Payments are excluded from this pilot. Invoice checkout is disabled.",
+        pilot: { status: pilotGate.status, reason: pilotGate.reason },
+      },
+      503,
+    )
+  }
 
   let body: Record<string, unknown>
   try {

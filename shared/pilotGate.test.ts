@@ -12,17 +12,30 @@ describe('pilotGate', () => {
     const result = evaluatePilotReadiness()
     expect(result.ready).toBe(false)
     expect(result.blockedBy.some((g) => g.id === 'sms_identity_action')).toBe(false)
-    expect(result.blockedBy.some((g) => g.id === 'rent_payment_ledger')).toBe(true)
-    expect(result.blockedBy.some((g) => g.id === 'vendor_assignment')).toBe(true)
+    expect(result.blockedBy.some((g) => g.id === 'vendor_assignment')).toBe(false)
+    // Rent is hard-excluded from this pilot (not a core blocker once scoped out).
+    expect(result.blockedBy.some((g) => g.id === 'rent_payment_ledger')).toBe(false)
     expect(result.blockedBy.some((g) => g.id === 'approvals')).toBe(true)
     expect(isPilotWorkflowAllowed('onboarding')).toBe(true)
     expect(isPilotWorkflowAllowed('scheduling')).toBe(true)
     expect(isPilotWorkflowAllowed('home_checks')).toBe(false)
+    expect(isPilotWorkflowAllowed('rent_payment_ledger')).toBe(false)
+  })
+
+  it('hard-disables rent/payments even when PILOT_STRICT is off', () => {
+    const soft = assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '0' })
+    expect(soft.ok).toBe(false)
+    if (!soft.ok) {
+      expect(soft.status).toBe('excluded')
+      expect(soft.reason.toLowerCase()).toContain('excluded')
+    }
+    expect(assertPilotAllows('rent_payment_ledger', { PILOT_STRICT: '1' }).ok).toBe(false)
   })
 
   it('fail-closes excluded workflows only when PILOT_STRICT is on', () => {
     expect(pilotStrictModeEnabled({ PILOT_STRICT: '1' })).toBe(true)
-    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(true)
+    // Home Checks is hard-disabled for pilot — always closed.
+    expect(assertPilotAllows('home_checks', { PILOT_STRICT: '0' }).ok).toBe(false)
     const blocked = assertPilotAllows('home_checks', { PILOT_STRICT: '1' })
     expect(blocked.ok).toBe(false)
     if (!blocked.ok) {
@@ -42,5 +55,12 @@ describe('pilotGate', () => {
     expect(gate.coreSafety).toBe(true)
     expect(gate.status).toBe('verified')
     expect(isPilotWorkflowAllowed('sms_identity_action')).toBe(true)
+  })
+
+  it('marks vendor assignment verified after real-handset accept', () => {
+    const gate = pilotWorkflowGate('vendor_assignment')
+    expect(gate.coreSafety).toBe(true)
+    expect(gate.status).toBe('verified')
+    expect(isPilotWorkflowAllowed('vendor_assignment')).toBe(true)
   })
 })
