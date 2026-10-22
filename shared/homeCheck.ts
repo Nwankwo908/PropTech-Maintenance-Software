@@ -137,6 +137,17 @@ type VisionResult = {
   condition: { rating: string; summary: string }
   overallConfidence?: number
 }
+/** Heating slot accepts the furnace, boiler, heat pump, or indoor air handler. A cooling-only condenser does not. */
+export function isHeatingSystemResult(result: {
+  category?: string
+  identifiedItem?: { type?: string }
+} | null): boolean {
+  if (!result) return false
+  if (result.category === 'boiler') return true
+  if (result.category !== 'hvac') return false
+  return /furnace|boiler|heat pump|heating|air handler|indoor/i.test(result.identifiedItem?.type || '')
+}
+
 export function homeCheckAsset(input: {
   system: HomeCheckSystem
   role: HomeCheckRole
@@ -150,9 +161,7 @@ export function homeCheckAsset(input: {
     result &&
       (input.system === 'water_heater'
         ? result.category === 'water_heater'
-        : result.category === 'boiler' ||
-          (result.category === 'hvac' &&
-            /furnace|boiler|heat pump|heating/i.test(result.identifiedItem.type)))
+        : isHeatingSystemResult(result))
       ? result
       : null
   const label = matches(input.label)

@@ -361,7 +361,7 @@ export function HomeCheckPanel(
                     {asset.verified ? 'Landlord confirmed' : 'Unverified'}
                   </p>
                   {!asset.verified && <EquipmentLabelNotice quality={asset.labelReadability} />}
-                  {!asset.verified && asset.labelReadability?.retakeRequested && (
+                  {!asset.verified && (
                     <button
                       type='button'
                       className='mt-2 text-sm font-medium text-[#186179]'

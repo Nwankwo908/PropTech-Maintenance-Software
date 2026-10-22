@@ -90,6 +90,7 @@ export const APPLIANCE_VISION_JSON_SCHEMA = {
   required: [
     "category",
     "identifiedItem",
+    "manufactureDate",
     "estimatedAge",
     "condition",
     "deficiencies",
@@ -129,6 +130,15 @@ export const APPLIANCE_VISION_JSON_SCHEMA = {
           enum: ["gas", "oil", "electric", "propane", "unknown"],
         },
         btuOutput: { type: ["number", "null"] },
+      },
+    },
+    manufactureDate: {
+      type: "object",
+      additionalProperties: false,
+      required: ["year", "month"],
+      properties: {
+        year: { type: ["number", "null"] },
+        month: { type: ["number", "null"] },
       },
     },
     estimatedAge: {

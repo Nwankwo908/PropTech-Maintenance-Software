@@ -23,6 +23,14 @@ const reading = {
   labelReadability: readable,
 }
 describe('Equipment label evidence', () => {
+  it('drops a model that has no digit, such as a button label', () => {
+    const result = guardEquipmentLabel({
+      ...reading,
+      identifiedItem: { ...reading.identifiedItem, modelNumber: 'Smart', serialNumber: undefined },
+    })
+    expect(result.identifiedItem.modelNumber).toBeUndefined()
+    expect(result.labelReadability?.retakeRequested).toBe(true)
+  })
   it('retains readable IDs and estimates without silently changing characters', () => {
     const result = guardEquipmentLabel(reading)
     expect(result.identifiedItem.serialNumber).toBe('AB081234')

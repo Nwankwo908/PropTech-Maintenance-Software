@@ -25,8 +25,8 @@ begin
   exception when not_null_violation then rejected := true; end;
   if not rejected or (select count(*) from public.maintenance_requests) <> before_tickets then raise exception 'Failed capability creation left orphan tickets'; end if;
   insert into public.property_inspection_assessments(id, landlord_id, property_id, building) values(assessment, landlord, property, 'Scope test property'), (other_assessment, landlord, property, 'Scope test property');
-  insert into public.maintenance_requests(id, landlord_id, property_id, unit_id, resident_name, email, unit, priority, description)
-    values(ticket, landlord, property, v_unit, 'Home Check', '', '12A', 'Normal', 'Observation only');
+  insert into public.maintenance_requests(id, landlord_id, property_id, unit_id, resident_name, email, unit, priority, urgency, description)
+    values(ticket, landlord, property, v_unit, 'Home Check', '', '12A', 'Normal', 'normal', 'Observation only');
   insert into public.workflow_runs(id, template_id, landlord_id, trigger_type, entity_type, entity_id, property_id, unit_id, status)
     values(run, 'home_check', landlord, 'home_check', 'maintenance_request', ticket, property, v_unit, 'active');
   insert into public.home_checks(id, reference, landlord_id, property_id, unit_id, ticket_id, workflow_run_id, assessment_id, role, property_label, unit_label, token_hash, expires_at, authorized_by)

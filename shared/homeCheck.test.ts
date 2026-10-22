@@ -159,6 +159,32 @@ describe('Home Check asset evidence', () => {
       answers,
     })
     expect(wrong.fields.make.value).toBeNull()
+    const handler = {
+      ...label,
+      category: 'hvac',
+      identifiedItem: {
+        type: 'air handler',
+        brand: 'ICP',
+        modelNumber: 'END4X42L17A1',
+        serialNumber: 'X132753655',
+      },
+      estimatedAge: {
+        value: 13,
+        confidence: 'high' as const,
+        basis: 'Manufacture date July 2013. Age is 13 years as of October 22, 2026.',
+      },
+    }
+    const kept = homeCheckAsset({
+      system: 'heating',
+      role: 'landlord',
+      label: handler,
+      whole: handler,
+      labelPhotoId: 'label',
+      wholePhotoId: 'whole',
+      answers,
+    })
+    expect(kept.fields.model.value).toBe('END4X42L17A1')
+    expect(kept.fields.approximateAge.value).toBe(13)
     const ac = {
       ...label,
       category: 'hvac',

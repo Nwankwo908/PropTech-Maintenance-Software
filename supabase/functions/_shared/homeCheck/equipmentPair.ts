@@ -1,5 +1,5 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
-import type { HomeCheckSlot } from '../../../../shared/homeCheck.ts'
+import { isHeatingSystemResult, type HomeCheckSlot } from '../../../../shared/homeCheck.ts'
 import type { ApplianceVisionResult } from '../vision/types.ts'
 import { analyzeInspectionPhotoRow } from '../vision/analyzeInspectionPhoto.ts'
 import { inspectionBytesToBase64 } from '../vision/ingestInspectionUpload.ts'
@@ -53,9 +53,9 @@ export async function analyzeHomeCheckEquipmentPair(
     const reading = result.ai_result as ApplianceVisionResult | null
     if (
       reading && reading.category !== 'unknown' &&
-      !(water ? reading.category === 'water_heater' : reading.category === 'boiler' ||
-        (reading.category === 'hvac' &&
-          /furnace|boiler|heating|heat pump/i.test(reading.identifiedItem?.type || '')))
+      !(water
+        ? reading.category === 'water_heater'
+        : isHeatingSystemResult(reading))
     ) {
       result.ai_result = {
         ...reading,

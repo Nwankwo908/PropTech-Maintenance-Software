@@ -185,6 +185,10 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
                 : ""
   const ageConfidence = asConfidence(age.confidence)
   const overallConfidence = asOverallConfidence(o.overallConfidence ?? o.overall_confidence, ageConfidence)
+  const dateRaw = o.manufactureDate ?? o.manufacture_date
+  const date = dateRaw && typeof dateRaw === "object" ? (dateRaw as Record<string, unknown>) : null
+  const manufactureYear = date ? asNumberOrNull(date.year) : null
+  const manufactureMonth = date ? asNumberOrNull(date.month) : null
 
   return {
     ...(normalizeLabelReadability(o.labelReadability) ? { labelReadability: normalizeLabelReadability(o.labelReadability) } : {}),
@@ -204,6 +208,14 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
       ...(category === "boiler" && fuelType ? { fuelType } : {}),
       ...(category === "boiler" && btuOutput != null ? { btuOutput } : {}),
     },
+    ...(manufactureYear != null || manufactureMonth != null
+      ? {
+          manufactureDate: {
+            year: manufactureYear != null ? Math.round(manufactureYear) : null,
+            month: manufactureMonth != null ? Math.round(manufactureMonth) : null,
+          },
+        }
+      : {}),
     estimatedAge: {
       value: asNumberOrNull(age.value),
       confidence: ageConfidence,

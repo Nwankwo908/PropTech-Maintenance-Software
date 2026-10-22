@@ -83,6 +83,7 @@ describe('Scoped paired equipment photos', () => {
       'water_heater',
       'photo',
       'scope/label.jpg',
+      null,
       {
         purpose: 'label',
         referenceImages: [{ purpose: 'overview', imageBase64: 'Ag==', mediaType: 'image/jpeg' }],
@@ -115,6 +116,29 @@ describe('Scoped paired equipment photos', () => {
       ),
     ).toBeNull()
     expect(db.updates).toContainEqual(expect.objectContaining({ status: 'error' }))
+  })
+  it('keeps an indoor HVAC label on the heating slots', async () => {
+    const heating = [
+      { slot: 'heating_label', inspection_photo_id: 'label', storage_path: 'scope/label.jpg' },
+      { slot: 'heating_whole', inspection_photo_id: 'whole', storage_path: 'scope/whole.jpg' },
+    ]
+    const db = client(heating)
+    const reading = {
+      category: 'hvac',
+      identifiedItem: { type: 'indoor unit', modelNumber: 'END4X42L17A1', serialNumber: 'X132753655' },
+      estimatedAge: { value: 13, confidence: 'high', basis: 'Manufacture date July 2013.' },
+    }
+    await analyzeHomeCheckEquipmentPair(
+      db as never,
+      'check',
+      'heating_label',
+      vi.fn(async () => ({ status: 'needs_review', ai_result: reading })),
+    )
+    expect(db.updates).toContainEqual(expect.objectContaining({
+      ai_result: expect.objectContaining({
+        identifiedItem: expect.objectContaining({ modelNumber: 'END4X42L17A1' }),
+      }),
+    }))
   })
   it('requests the right system when a furnace photo is sent to the water heater slots', async () => {
     const db = client()

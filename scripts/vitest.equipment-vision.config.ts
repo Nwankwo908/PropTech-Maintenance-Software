@@ -5,6 +5,7 @@ export default defineConfig({
     environment: 'node',
     include: [
       'shared/vision/equipmentLabel.test.ts',
+      'shared/vision/equipmentAge.test.ts',
       'supabase/functions/_shared/vision/providers/equipment.test.ts',
       'supabase/functions/_shared/homeCheck/equipmentPair.test.ts',
       'shared/homeCheck.test.ts',

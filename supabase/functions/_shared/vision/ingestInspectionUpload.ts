@@ -30,7 +30,14 @@ export function inspectionBytesToBase64(bytes: Uint8Array): string {
 }
 
 export function buildingStorageKey(building: string): string {
-  return building.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 80)
+  const key = building
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80)
+  return key || "property"
 }
 
 export type InspectionUploadResult = {

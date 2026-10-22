@@ -3,6 +3,7 @@ import { createGeminiVisionProvider } from './gemini.ts'
 import { createOpenAiVisionProvider } from './openai.ts'
 import { withEquipmentBackup } from './equipmentFallback.ts'
 import { equipmentResult } from './equipmentRequest.ts'
+import { ageYearsFromManufactureDate } from '../../../../../shared/vision/equipmentAge.ts'
 
 const raw = {
   category: 'water_heater',
@@ -47,6 +48,25 @@ const openaiResponse = (value: unknown = raw) =>
       choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }],
     }),
   )
+describe('Equipment age from a printed manufacture date', () => {
+  it('replaces a stale model age when the basis quotes March 2019', () => {
+    const result = equipmentResult({
+      ...raw,
+      identifiedItem: { ...raw.identifiedItem, serialNumber: '' },
+      estimatedAge: {
+        value: 4,
+        confidence: 'high',
+        basis: 'Manufacture date is clearly visible as 03/2019.',
+      },
+    })
+    expect(result.estimatedAge.value).toBe(
+      ageYearsFromManufactureDate({ year: 2019, month: 3 }, new Date())?.value,
+    )
+    expect(result.estimatedAge.value).not.toBe(4)
+    expect(result.estimatedAge.basis).toContain('March 2019')
+  })
+})
+
 describe('Gemini and gpt-4o-mini equipment adapters', () => {
   it('uses Gemini 3.8 Flash with two labeled image inputs and strict evidence schema', async () => {
     const fetchImpl = vi.fn(async () => geminiResponse())

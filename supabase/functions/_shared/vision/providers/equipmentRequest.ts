@@ -1,6 +1,7 @@
 import { INSPECTION_VISION_SYSTEM_PROMPT } from '../prompt.ts'
 import { normalizeApplianceVisionResult } from '../normalize.ts'
 import type { ApplianceVisionResult, EquipmentPhotoContext } from '../types.ts'
+import { applyEquipmentManufactureAge } from '../../../../../shared/vision/equipmentAge.ts'
 import {
   guardEquipmentLabel,
   type ManufacturerSerialRule,
@@ -48,7 +49,7 @@ Photo purpose: ${
   }. When two photos are supplied, use the close-up data plate for label text and the whole appliance for visible condition. Do not assume an unrelated label belongs to the appliance. If they conflict, request a retake.
 Return labelReadability with status readable / uncertain / unreadable / not_visible, modelConfidence and serialConfidence (0–100), uncertainCharacters [{field: modelNumber or serialNumber, index: zero-based character index, alternatives: e.g. ["0","O"] or ["8","B"]}], readings {modelNumber,serialNumber}, retakeRequested, retakeMessage and formatWarnings.
 Copy only characters you can actually read. Keep ambiguous characters flagged; do not choose one just to fill a field. If the data plate is blurry, obscured or reflecting flash, omit unreadable model/serial numbers and request: "Label unreadable, please send a closer photo without flash." Never infer a model or serial from the appliance's appearance or a likely catalog match.
-For a whole-appliance photo without a visible label, use not_visible. For manufacture-date estimates, name the basis and confidence; leave age null if the serial or date is unreadable. A model's visual guess is not a verified manufacture date.`
+For a whole-appliance photo without a visible label, use not_visible. If a manufacture month and year are printed, copy them into manufactureDate and quote that date in estimatedAge.basis. Leave month null when only a year is readable, and leave both null when the date is missing or unclear. Do not calculate estimatedAge.value. A visual guess is not a verified manufacture date.`
 }
 
 export function equipmentResult(
@@ -63,12 +64,16 @@ export function equipmentResult(
   if (!input.identifiedItem || !input.estimatedAge || !input.condition || !input.labelReadability) {
     throw new Error('Equipment reading omitted required evidence.')
   }
+  const ageRaw = input.estimatedAge
+  const sourceBasis = ageRaw && typeof ageRaw === 'object' && typeof (ageRaw as { basis?: unknown }).basis === 'string'
+    ? (ageRaw as { basis: string }).basis
+    : ''
   const result = guardEquipmentLabel(normalizeApplianceVisionResult(raw), rules)
   if (context?.purpose === 'overview' && result.labelReadability?.status === 'not_visible') {
     result.labelReadability.retakeRequested = false
     delete result.labelReadability.retakeMessage
   }
-  return result
+  return applyEquipmentManufactureAge(result, new Date(), sourceBasis)
 }
 
 export async function equipmentFetch(

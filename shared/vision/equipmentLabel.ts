@@ -153,7 +153,9 @@ export function guardEquipmentLabel<T extends LabelResult>(
     const value = item[field]
     const uncertain = quality.uncertainCharacters.filter((char) => char.field === field)
     const confidence = field === 'modelNumber' ? quality.modelConfidence : quality.serialConfidence
-    const modelUnreadable = field === 'modelNumber' && hasLabelPlaceholder(value || '')
+    const modelUnreadable = field === 'modelNumber' && (
+      hasLabelPlaceholder(value || '') || Boolean(value && !/\d/.test(value))
+    )
     const blocked = modelUnreadable || ['unreadable', 'not_visible'].includes(quality.status) ||
       (quality.status === 'uncertain' && quality.uncertainCharacters.length === 0) ||
       uncertain.length > 0 || confidence < 85 ||

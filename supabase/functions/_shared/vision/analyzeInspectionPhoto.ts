@@ -124,9 +124,15 @@ export async function analyzeInspectionPhotoRow(
     }
     const latencyMs = Date.now() - started
     const providerName = result.extractionTrace?.selectedProvider || provider.name
-    const providerLabel = dibPass
-      ? buildHybridVisionProviderLabel(providerName)
+    // The photo row only allows gemini, gpt4o, or claude. The attempt trace keeps the real model.
+    const storedProvider = providerName === "openai" || providerName.startsWith("gpt-")
+      ? "gpt4o"
+      : providerName === "gemini" || providerName.startsWith("gemini-")
+      ? "gemini"
       : providerName
+    const providerLabel = dibPass
+      ? buildHybridVisionProviderLabel(storedProvider)
+      : storedProvider
     const { data, error } = await supabase
       .from("property_inspection_photos")
       .update({

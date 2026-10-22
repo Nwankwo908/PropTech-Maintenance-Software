@@ -31,6 +31,10 @@ export type ApplianceVisionResult = {
     fuelType?: "gas" | "oil" | "electric" | "propane" | "unknown"
     btuOutput?: number | null
   }
+  manufactureDate?: {
+    year: number | null
+    month: number | null
+  }
   estimatedAge: {
     value: number | null
     confidence: AgeConfidence
