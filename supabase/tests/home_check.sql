@@ -11,7 +11,7 @@ declare
   photos uuid[] := array[gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid()];
   wrong_photo uuid := gen_random_uuid(); warning_ticket uuid; rejected boolean; persisted boolean;
   payload jsonb; slot text; i integer;
-  created_check uuid := gen_random_uuid(); input jsonb; before_tickets integer; review_asset uuid;
+  created_check uuid := gen_random_uuid(); input jsonb; before_tickets integer; review_asset uuid; heating_asset uuid; expected_age integer;
 begin
   insert into public.landlords(id, name) values(landlord, 'Home Check test'), (other_landlord, 'Other test landlord');
   insert into public.properties(id, landlord_id, name) values(property, landlord, 'Scope test property');
@@ -95,6 +95,14 @@ begin
   perform public.persist_home_check_assets(v_check_id, photos, '[]');
   if (select count(*) from public.unit_assets where home_check_id = v_check_id and metadata->>'verificationStatus' = 'confirmed') <> 2 then raise exception 'Slow upload reset confirmed records'; end if;
   if exists(select 1 from public.unit_assets where home_check_id = v_check_id and metadata->>'ageBasis' <> 'ai_estimated') then raise exception 'Estimated serial age promoted to fact'; end if;
+  select id into heating_asset from public.unit_assets where home_check_id = v_check_id and home_check_system = 'heating';
+  perform public.confirm_home_check_label_review(v_check_id, landlord, jsonb_build_array(jsonb_build_object('assetId', heating_asset, 'manufactureYear', 2013, 'manufactureMonth', 7)));
+  expected_age := extract(year from timezone('utc', now()))::integer - 2013 - case when extract(month from timezone('utc', now()))::integer > 7 then 0 when extract(month from timezone('utc', now()))::integer = 7 then null::integer else 1 end;
+  if (select estimated_age_years from public.unit_assets where id = heating_asset) is distinct from expected_age then raise exception 'Manufacture date did not recompute equipment age'; end if;
+  if (select metadata#>>'{homeCheck,fields,approximateAge,source}' from public.unit_assets where id = heating_asset) <> 'landlord' then raise exception 'Corrected manufacture date lost landlord source'; end if;
+  if (select metadata->>'ageBasis' from public.unit_assets where id = heating_asset) <> 'landlord_plate' then raise exception 'Plate date was stored as an AI estimate'; end if;
+  if (select metadata->>'ageBasis' from public.unit_assets where id = review_asset) <> 'ai_estimated' then raise exception 'A date correction changed the other asset'; end if;
+  if (select count(*) from public.home_check_events where home_check_events.check_id = v_check_id and event_type = 'landlord_confirmed') <> 1 then raise exception 'Date correction duplicated confirmation'; end if;
   rejected := false;
   begin perform public.record_home_check_photo(v_check_id, 'water_heater_label', photos[1], 'new.jpg', 'link');
   exception when raise_exception then rejected := true; end;

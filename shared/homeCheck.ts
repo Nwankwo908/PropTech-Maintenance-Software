@@ -48,6 +48,7 @@ export type HomeCheckAsset = {
   extractionTrace?: EquipmentExtractionTrace
   system: HomeCheckSystem
   verified: boolean
+  manufactureDate?: { year: number | null; month: number | null }
   fields: Record<
     | 'make'
     | 'model'
@@ -133,6 +134,7 @@ type VisionResult = {
   extractionTrace?: EquipmentExtractionTrace
   category: string
   identifiedItem: { type: string; brand?: string; modelNumber?: string; serialNumber?: string }
+  manufactureDate?: { year: number | null; month: number | null }
   estimatedAge: { value: number | null; confidence: 'low' | 'medium' | 'high'; basis: string }
   condition: { rating: string; summary: string }
   overallConfidence?: number
@@ -189,6 +191,10 @@ export function homeCheckAsset(input: {
     labelReadability: label?.labelReadability || input.label?.labelReadability,
     extractionTrace: label?.extractionTrace || input.label?.extractionTrace,
     verified: false,
+    ...(label?.manufactureDate &&
+      (label.manufactureDate.year != null || label.manufactureDate.month != null)
+      ? { manufactureDate: label.manufactureDate }
+      : {}),
     fields: {
       make: field(
         label?.identifiedItem.brand || null,

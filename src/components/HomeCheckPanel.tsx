@@ -23,7 +23,7 @@ export function HomeCheckPanel(
   const [link, setLink] = useState('')
   const [copied, setCopied] = useState(false)
   const [labelEdits, setLabelEdits] = useState<
-    Record<string, { modelNumber: string; serialNumber: string }>
+    Record<string, { modelNumber: string; serialNumber: string; manufactureMonth: string; manufactureYear: string }>
   >({})
   const refresh = useCallback(async () => {
     if (!scope || !supabase) return
@@ -116,7 +116,18 @@ export function HomeCheckPanel(
       const record = list?.checks.find((check) => check.id === id)
       const labelCorrections = record?.assets.filter((asset) =>
         labelEdits[asset.id]
-      ).map((asset) => ({ assetId: asset.id, ...labelEdits[asset.id] })) || []
+      ).map((asset) => {
+        const edits = labelEdits[asset.id]
+        const year = edits.manufactureYear.trim()
+        const month = edits.manufactureMonth.trim()
+        return {
+          assetId: asset.id,
+          modelNumber: edits.modelNumber,
+          serialNumber: edits.serialNumber,
+          manufactureYear: year ? Number(year) : null,
+          manufactureMonth: month ? Number(month) : null,
+        }
+      }) || []
       await homeCheckRequest({ action: 'confirm', id, labelCorrections })
       await refresh()
       notifyAssetRegistryChanged(building)
@@ -372,6 +383,12 @@ export function HomeCheckPanel(
                             {
                               modelNumber: String(asset.fields.model.value || ''),
                               serialNumber: String(asset.fields.serial.value || ''),
+                              manufactureMonth: asset.manufactureDate?.month
+                                ? String(asset.manufactureDate.month)
+                                : '',
+                              manufactureYear: asset.manufactureDate?.year
+                                ? String(asset.manufactureDate.year)
+                                : '',
                             },
                         }))}
                     >
@@ -398,6 +415,44 @@ export function HomeCheckPanel(
                             }))}
                         />
                       </label>
+                      <label className='block text-xs'>
+                        Manufacture month
+                        <select
+                          className='mt-1 w-full rounded border p-2'
+                          value={labelEdits[asset.id].manufactureMonth}
+                          onChange={(event) =>
+                            setLabelEdits((previous) => ({
+                              ...previous,
+                              [asset.id]: {
+                                ...previous[asset.id],
+                                manufactureMonth: event.target.value,
+                              },
+                            }))}
+                        >
+                          <option value=''>Month unknown</option>
+                          {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((name, index) => (
+                            <option key={name} value={String(index + 1)}>{name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className='block text-xs'>
+                        Manufacture year<input
+                          className='mt-1 w-full rounded border p-2'
+                          inputMode='numeric'
+                          value={labelEdits[asset.id].manufactureYear}
+                          onChange={(event) =>
+                            setLabelEdits((previous) => ({
+                              ...previous,
+                              [asset.id]: {
+                                ...previous[asset.id],
+                                manufactureYear: event.target.value,
+                              },
+                            }))}
+                        />
+                      </label>
+                      <p className='text-xs text-[#64748b]'>
+                        Age is calculated from the month and year on the plate. Leave either one blank when it is not readable.
+                      </p>
                       <label className='block text-xs'>
                         Verified serial<input
                           className='mt-1 w-full rounded border p-2'

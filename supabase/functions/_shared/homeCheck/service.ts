@@ -21,6 +21,7 @@ import {
 } from '../vision/ingestInspectionUpload.ts'
 import type { ApplianceVisionResult } from '../vision/types.ts'
 import { logPipelineStageEvent, updateWorkflowRun } from '../engine/workflowRuns.ts'
+import { recordActivityLog } from '../graph/recordActivityLog.ts'
 import { startMaintenanceRequestWorkflow } from '../engine/startMaintenanceRequestWorkflow.ts'
 import { uloAppOrigin } from '../uloAppUrl.ts'
 import { findOrCreateConversation, normalizeSmsPhone } from '../sms/inbound_db.ts'
@@ -578,9 +579,26 @@ async function openHomeCheckFollowUp(db: SupabaseClient, check: HomeCheckRow) {
   }
 }
 
-export async function confirmHomeCheck(db: SupabaseClient, id: string, landlordId: string, labelCorrections: Array<{ assetId: string; modelNumber?: string; serialNumber?: string }> = []) {
+export async function confirmHomeCheck(db: SupabaseClient, id: string, landlordId: string, labelCorrections: Array<{ assetId: string; modelNumber?: string; serialNumber?: string; manufactureYear?: number | null; manufactureMonth?: number | null }> = []) {
   await checked(db.rpc('confirm_home_check_label_review', { p_check_id: id, p_landlord_id: landlordId, p_corrections: labelCorrections }))
   const check = await loadHomeCheck(db, id, landlordId)
+  const dated = labelCorrections.filter((correction) => correction.manufactureYear != null || correction.manufactureMonth != null)
+  if (dated.length > 0) {
+    await recordActivityLog(db, {
+      landlordId,
+      eventType: 'home_check.manufacture_date_corrected',
+      source: 'dashboard',
+      actorType: 'landlord',
+      propertyId: check.property_id,
+      unitId: check.unit_id,
+      maintenanceRequestId: check.ticket_id,
+      workflowRunId: check.workflow_run_id,
+      metadata: {
+        message: 'The manufacture date was corrected from the data plate, and the equipment age was recalculated.',
+        checkId: check.id,
+      },
+    }).catch(() => undefined)
+  }
   await updateWorkflowRun(db, check.workflow_run_id, {
     metadata: { landlord_confirmed: true },
     pipelineStage: 'log',

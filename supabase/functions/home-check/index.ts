@@ -151,10 +151,10 @@ Deno.serve(async (req) => {
     if (action === 'confirm') {
       const corrections = body.labelCorrections || []
       if (!Array.isArray(corrections) || corrections.length > 2) return json({ error: 'Invalid label corrections.' }, 400)
-      const validated: Array<{assetId: string; modelNumber?: string; serialNumber?: string}> = []
+      const validated: Array<{assetId: string; modelNumber?: string; serialNumber?: string; manufactureYear?: number | null; manufactureMonth?: number | null}> = []
       for (const correction of corrections) {
         const asset = requireData<{brand: string | null; metadata: Record<string, unknown>}>(await db.from('unit_assets').select('brand, metadata').eq('id', str(correction.assetId)).eq('home_check_id', str(body.id)).eq('landlord_id', landlordId).single())
-        const entry: {assetId: string; modelNumber?: string; serialNumber?: string} = { assetId: str(correction.assetId) }
+        const entry: {assetId: string; modelNumber?: string; serialNumber?: string; manufactureYear?: number | null; manufactureMonth?: number | null} = { assetId: str(correction.assetId) }
         for (const field of ['modelNumber','serialNumber'] as const) {
           if (!(field in correction)) continue
           if (typeof correction[field] !== 'string' || correction[field].length > 80 || hasLabelPlaceholder(correction[field])) return json({ error: 'Enter only label characters you can read.' }, 400)
@@ -163,6 +163,16 @@ Deno.serve(async (req) => {
         if (entry.serialNumber) {
           const warnings = serialFormatWarnings(entry.serialNumber, asset.brand || '', String(asset.metadata.registryAssetType || ''), equipmentSerialFormatRules())
           if (warnings.length) return json({ error: warnings.join(' ') }, 400)
+        }
+        if ('manufactureYear' in correction || 'manufactureMonth' in correction) {
+          const year = correction.manufactureYear == null || correction.manufactureYear === '' ? null : Number(correction.manufactureYear)
+          const month = correction.manufactureMonth == null || correction.manufactureMonth === '' ? null : Number(correction.manufactureMonth)
+          const currentYear = new Date().getUTCFullYear()
+          if ((year != null && (!Number.isInteger(year) || year < 1970 || year > currentYear)) || (month != null && (!Number.isInteger(month) || month < 1 || month > 12))) {
+            return json({ error: 'Enter a manufacture month and year from the data plate.' }, 400)
+          }
+          entry.manufactureYear = year
+          entry.manufactureMonth = month
         }
         validated.push(entry)
       }

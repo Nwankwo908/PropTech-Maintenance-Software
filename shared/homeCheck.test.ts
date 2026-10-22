@@ -185,6 +185,15 @@ describe('Home Check asset evidence', () => {
     })
     expect(kept.fields.model.value).toBe('END4X42L17A1')
     expect(kept.fields.approximateAge.value).toBe(13)
+    expect(homeCheckAsset({
+      system: 'heating',
+      role: 'landlord',
+      label: { ...handler, manufactureDate: { year: 2013, month: 7 } },
+      whole: handler,
+      labelPhotoId: 'label',
+      wholePhotoId: 'whole',
+      answers,
+    }).manufactureDate).toEqual({ year: 2013, month: 7 })
     const ac = {
       ...label,
       category: 'hvac',
