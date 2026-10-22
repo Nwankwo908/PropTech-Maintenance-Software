@@ -2,6 +2,7 @@ import type { LabelReadability } from '@shared/vision/equipmentLabel'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import type {
+  HomeCheckAnswers,
   HomeCheckAsset,
   HomeCheckMetricRow,
   homeCheckMetrics,
@@ -36,6 +37,8 @@ export type HomeCheckSummaryRow = HomeCheckMetricRow & {
   expires_at: string
   assets: Array<HomeCheckAsset & { id: string }>
   photos: Array<{ slot: string; previewUrl: string | null; state?: string }>
+  answers?: HomeCheckAnswers
+  detected_warning?: string | null
 }
 export type HomeCheckVendor = { id: string; name: string; distanceKm: number | null }
 export type HomeCheckOptions = {

@@ -113,6 +113,18 @@ begin
   begin perform public.record_home_check_photo(expired_check, 'water_heater_label', photos[1], 'expired.jpg', 'link');
   exception when raise_exception then rejected := true; end;
   if not rejected then raise exception 'Expired contractor link accepted upload'; end if;
+  perform public.confirm_home_check_label_review(v_check_id, landlord, jsonb_build_array(jsonb_build_object('assetId', heating_asset, 'modelNumber', '', 'serialNumber', '')));
+  if (select metadata#>>'{homeCheck,fields,model,value}' from public.unit_assets where id = heating_asset) is not null then raise exception 'Blank plate text was stored as a model'; end if;
+  if (select metadata#>>'{homeCheck,fields,model,basis}' from public.unit_assets where id = heating_asset) ilike '%supplied this text%' then raise exception 'Unknown model was described as supplied text'; end if;
+  if (select metadata#>>'{homeCheck,fields,serial,source}' from public.unit_assets where id = heating_asset) = 'landlord' and (select metadata#>>'{homeCheck,fields,serial,value}' from public.unit_assets where id = heating_asset) is null then raise exception 'Unknown serial was marked landlord-supplied'; end if;
+  if (select metadata->>'ageBasis' from public.unit_assets where id = heating_asset) <> 'landlord_plate' then raise exception 'Blank model review cleared a real plate date'; end if;
+  update public.home_checks set issue_ticket_id = null, answers = '{"warningSigns":false,"warningDetails":"","lastService":"","lastFilterChange":""}', detected_warning = 'The gas furnace burner is visible' where id = v_check_id;
+  if public.report_home_check_issue(v_check_id) is not null then raise exception 'A no answer with an unsupported equipment mention opened a follow-up'; end if;
+  update public.home_checks set detected_warning = 'There is a gas smell near the furnace' where id = v_check_id;
+  warning_ticket := public.report_home_check_issue(v_check_id);
+  if warning_ticket is null or public.report_home_check_issue(v_check_id) <> warning_ticket then raise exception 'Supported photo finding was missing or duplicated'; end if;
+  if (select description from public.maintenance_requests where id = warning_ticket) not like 'Home Check follow-up.%gas smell%' then raise exception 'Follow-up did not explain the photo finding'; end if;
+  if (select issue_category from public.maintenance_requests where id = warning_ticket) <> 'home_check_warning' then raise exception 'Follow-up was classified as an ordinary repair'; end if;
   if has_function_privilege('anon', 'public.record_home_check_photo(uuid,text,uuid,text,text)', 'execute') or has_function_privilege('authenticated', 'public.confirm_home_check(uuid,uuid)', 'execute') then raise exception 'Public RPC grants bypass token/landlord guards'; end if;
   raise notice 'Home Check scope, completion, audit, stale writes, confirmation, follow-up, expiration and RPC grants passed';
 end $$;

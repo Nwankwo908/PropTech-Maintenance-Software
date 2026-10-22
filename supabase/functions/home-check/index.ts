@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
     if (action === 'list') {
       const checks = requireData(
         await db.from('home_checks').select(
-          'id, reference, role, property_label, unit_label, status, created_at, sent_at, opened_at, completed_at, confirmed_at, labels_readable, answers, issue_ticket_id, expires_at',
+          'id, reference, role, property_label, unit_label, status, created_at, sent_at, opened_at, completed_at, confirmed_at, labels_readable, answers, detected_warning, issue_ticket_id, expires_at',
         ).eq('landlord_id', landlordId).eq('property_id', str(body.propertyId)).order(
           'created_at',
           { ascending: false },

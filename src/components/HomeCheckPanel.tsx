@@ -5,7 +5,14 @@ import { type HomeCheckList, type HomeCheckOptions, homeCheckRequest } from '@/a
 import { supabase } from '@/lib/supabase'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import { notifyInspectionSessionChanged } from '@/lib/inspectionSession'
-import { HOME_CHECK_PHOTOS, type HomeCheckRole } from '@shared/homeCheck'
+import {
+  formatHomeCheckLocation,
+  HOME_CHECK_PHOTOS,
+  homeCheckAssetStatusLabel,
+  homeCheckFieldBasis,
+  homeCheckFollowUpExplanation,
+  type HomeCheckRole,
+} from '@shared/homeCheck'
 import { assertPilotAllows, pilotWorkflowGate } from '@shared/pilotGate'
 
 export function HomeCheckPanel(
@@ -336,8 +343,7 @@ export function HomeCheckPanel(
           {list.checks.map((check) => (
             <article key={check.id} className='space-y-2 rounded border border-[#e2e8f0] p-3'>
               <p className='text-sm font-semibold'>
-                {check.property_label}
-                {check.unit_label ? ` / ${check.unit_label}` : ''} · {check.role} ·{' '}
+                {formatHomeCheckLocation(check.property_label, check.unit_label)} · {check.role} ·{' '}
                 {check.reference}
               </p>
               <p className='text-xs text-[#64748b]'>
@@ -369,9 +375,11 @@ export function HomeCheckPanel(
                 <div key={asset.id}>
                   <p className='text-sm font-medium'>
                     {asset.system === 'water_heater' ? 'Water heater' : 'Heating system'} ·{' '}
-                    {asset.verified ? 'Landlord confirmed' : 'Unverified'}
+                    {homeCheckAssetStatusLabel(asset)}
                   </p>
-                  {!asset.verified && <EquipmentLabelNotice quality={asset.labelReadability} />}
+                  {homeCheckAssetStatusLabel(asset) !== 'Details verified' && (
+                    <EquipmentLabelNotice quality={asset.labelReadability} />
+                  )}
                   {!asset.verified && (
                     <button
                       type='button'
@@ -488,10 +496,14 @@ export function HomeCheckPanel(
                             ? 'Unknown'
                             : name === 'approximateAge'
                             ? `About ${field.value} years (estimate)`
-                            : field.value} · {field.source === 'photo_text'
-                            ? `Photo from ${field.capturedBy}`
-                            : field.source} · {field.confidence}{' '}
-                          confidence{field.basis ? ` · ${field.basis}` : ''}
+                            : field.value}
+                          {field.value == null
+                            ? (homeCheckFieldBasis(field) ? ` · ${homeCheckFieldBasis(field)}` : ' · Not verified')
+                            : ` · ${field.source === 'photo_text'
+                              ? `Photo from ${field.capturedBy}`
+                              : field.source} · ${field.confidence} confidence${
+                              homeCheckFieldBasis(field) ? ` · ${homeCheckFieldBasis(field)}` : ''
+                            }`}
                         </dd>
                       </div>
                     ))}
@@ -500,8 +512,11 @@ export function HomeCheckPanel(
               ))}
               {check.issue_ticket_id && (
                 <p className='text-sm text-amber-700'>
-                  Warning signs created a linked reactive ticket. Landlord approval is required
-                  before paid work.
+                  {homeCheckFollowUpExplanation({
+                    warningSigns: check.answers?.warningSigns,
+                    warningDetails: check.answers?.warningDetails,
+                    detectedWarning: check.detected_warning,
+                  })}
                 </p>
               )}
               {check.completed_at && !check.confirmed_at && (

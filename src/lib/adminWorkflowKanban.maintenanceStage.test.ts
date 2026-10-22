@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveMaintenanceKanbanStage } from './adminWorkflowKanban'
+import { deriveMaintenanceKanbanStage, deriveWorkflowKanbanStage } from './adminWorkflowKanban'
 import type { AdminWorkflowRow } from './adminWorkflows'
 
 function row(partial: Partial<AdminWorkflowRow>): AdminWorkflowRow {
@@ -60,6 +60,22 @@ describe('deriveMaintenanceKanbanStage', () => {
         }),
       ),
     ).toBe('assigned')
+  })
+
+  it('keeps a finished Home Check out of repair dispatch when no vendor is assigned', () => {
+    expect(
+      deriveWorkflowKanbanStage(
+        row({
+          templateId: 'home_check',
+          templateName: 'Home Check',
+          status: 'completed',
+          currentStep: 'four_photos_received',
+          vendorWorkStatus: 'unassigned',
+          issueDescription:
+            'Home Check: four photos of the water heater and furnace or boiler. Observation only; no repairs or paid work authorized.',
+        }),
+      ),
+    ).toBe('completed')
   })
 
   it('only puts repairs in Completed when vendor work is finished', () => {

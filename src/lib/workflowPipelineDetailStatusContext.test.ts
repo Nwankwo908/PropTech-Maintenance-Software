@@ -113,4 +113,30 @@ describe('buildMaintenanceOverviewStatusContext', () => {
       }),
     ).toMatch(/unresponsive/i)
   })
+
+  it('does not say an observation or unapproved Home Check follow-up is matching a vendor', () => {
+    expect(buildMaintenanceOverviewStatusContext({
+      vendorWorkStatus: 'unassigned',
+      vendorName: null,
+      stageLabel: 'New Intake',
+      lastEventMessage: null,
+      escalationReason: null,
+      runStatus: 'completed',
+      scheduledAt: null,
+      scheduleConfirmedAt: null,
+      holdVendorDispatch: true,
+    })).toBe('Observation only. No vendor is being contacted.')
+    expect(buildMaintenanceOverviewStatusContext({
+      vendorWorkStatus: 'unassigned',
+      vendorName: null,
+      stageLabel: 'New Intake',
+      lastEventMessage: null,
+      escalationReason: null,
+      runStatus: 'active',
+      scheduledAt: null,
+      scheduleConfirmedAt: null,
+      issueCategory: 'home_check_warning',
+      holdVendorDispatch: true,
+    })).toBe('Review this follow-up before any paid work. No vendor is being contacted.')
+  })
 })

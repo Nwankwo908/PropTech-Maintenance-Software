@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
   HOME_CHECK_PHOTOS,
+  formatHomeCheckLocation,
   homeCheckAsset,
+  homeCheckAssetStatusLabel,
   homeCheckComplete,
+  homeCheckFieldBasis,
+  homeCheckFollowUpReason,
   homeCheckMetrics,
   homeCheckSummary,
+  homeCheckWorkOrderTitle,
   nearestHomeCheckVendors,
   parseHomeCheckCommand,
   parseHomeCheckPhotoReply,
   resolveHomeCheckTarget,
+  supportedHomeCheckPhotoWarning,
 } from './homeCheck'
 
 const answers = {
@@ -290,5 +296,56 @@ describe('Home Check routing and outcomes', () => {
     })
     expect(metrics[1]).toMatchObject({ completed: 0, issueShare: null })
     expect(metrics[2]).toMatchObject({ sent: 0, averageMinutes: null })
+  })
+})
+
+describe('Home Check review, follow-up, and single-family wording', () => {
+  it('omits the stored Home label and keeps a real unit', () => {
+    expect(formatHomeCheckLocation('123 Main', 'Home')).toBe('123 Main')
+    expect(formatHomeCheckLocation('Birch', '12A')).toBe('Birch · Unit 12A')
+  })
+
+  it('does not call unknown plate fields verified after the review is saved', () => {
+    const unknown = {
+      verified: true,
+      fields: { model: { value: null }, serial: { value: null } },
+    }
+    const verified = {
+      verified: true,
+      fields: { model: { value: 'END4X42L17A1' }, serial: { value: 'X132753655' } },
+    }
+    expect(homeCheckAssetStatusLabel({ verified: false, fields: unknown.fields })).toBe('Unverified')
+    expect(homeCheckAssetStatusLabel(unknown)).toBe('Review confirmed · details unknown')
+    expect(homeCheckAssetStatusLabel(verified)).toBe('Details verified')
+    expect(homeCheckFieldBasis({
+      value: null,
+      basis: 'Landlord checked the data plate and supplied this text.',
+    })).toBeNull()
+    expect(homeCheckFieldBasis({
+      value: null,
+      basis: 'The manufacture date is unclear, so age stays unknown.',
+    })).toBe('The manufacture date is unclear, so age stays unknown.')
+  })
+
+  it('opens a follow-up for a reported problem or a supported photo finding only', () => {
+    expect(supportedHomeCheckPhotoWarning('The gas furnace burner is visible')).toBeNull()
+    expect(supportedHomeCheckPhotoWarning('There is a gas smell near the furnace')).toMatch(/gas smell/)
+    expect(homeCheckFollowUpReason({
+      warningSigns: false,
+      detectedWarning: 'The gas furnace burner is visible',
+    })).toBeNull()
+    expect(homeCheckFollowUpReason({
+      warningSigns: false,
+      detectedWarning: 'There is a gas smell near the furnace',
+    })).toMatch(/gas smell/)
+    expect(homeCheckFollowUpReason({
+      warningSigns: true,
+      warningDetails: 'Odd noise from the furnace',
+    })).toMatch(/Odd noise/)
+    expect(homeCheckWorkOrderTitle(
+      'Home Check: four photos of the water heater and furnace or boiler. Observation only; no repairs or paid work authorized.',
+    )).toBe('Home Check')
+    expect(homeCheckWorkOrderTitle('Home Check follow-up. A photo showed a gas smell.', 'home_check_warning'))
+      .toBe('Home Check follow-up')
   })
 })

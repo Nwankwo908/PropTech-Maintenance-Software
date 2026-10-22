@@ -241,7 +241,7 @@ export const WORKFLOW_GROUP_TITLES: Record<WorkflowTemplateGroupId, string> = {
   inspection: 'Inspections',
 }
 
-const MAINTENANCE_TEMPLATE_IDS = new Set(['maintenance_request', 'maintenance_intake', 'home_check'])
+const MAINTENANCE_TEMPLATE_IDS = new Set(['maintenance_request', 'maintenance_intake'])
 
 /** Ticket id on a maintenance run: entity id, or intake metadata when the run is still conversation-keyed. */
 export function maintenanceTicketIdFromWorkflowRun(run: {
@@ -349,7 +349,11 @@ export function workflowTemplateGroupId(templateId: string): WorkflowTemplateGro
   if (templateId === 'rent_collection') return 'rent_collection'
   if (templateId === 'move_in') return 'move_in'
   if (templateId === 'move_out') return 'move_out'
-  if (templateId === 'inspection' || templateId === 'inspection_notice_task') {
+  if (
+    templateId === 'inspection' ||
+    templateId === 'inspection_notice_task' ||
+    templateId === 'home_check'
+  ) {
     return 'inspection'
   }
   return null

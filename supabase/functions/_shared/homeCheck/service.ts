@@ -5,10 +5,12 @@ import {
   type HomeCheckAnswers,
   type HomeCheckAsset,
   homeCheckAsset,
+  formatHomeCheckLocation,
   homeCheckReference,
   type HomeCheckRole,
   type HomeCheckSlot,
   homeCheckSummary,
+  supportedHomeCheckPhotoWarning,
 } from '../../../../shared/homeCheck.ts'
 import {
   generateInspectionCaptureToken,
@@ -98,7 +100,7 @@ export async function homeCheckEvent(
   )
 }
 export const checkLocation = (check: Pick<HomeCheckRow, 'property_label' | 'unit_label'>) =>
-  `${check.property_label}${check.unit_label ? ` / ${check.unit_label}` : ''}`
+  formatHomeCheckLocation(check.property_label, check.unit_label)
 
 export async function sendHomeCheckSms(
   db: SupabaseClient,
@@ -524,16 +526,20 @@ export async function uploadHomeCheckPhoto(
   const result = await analyzeHomeCheckEquipmentPair(db, check.id, input.slot)
   const current = await loadHomeCheck(db, check.id)
   const assets = await rebuildHomeCheckAssets(db, current)
-  const warnings = result?.deficiencies.filter((item) =>
-    item.severity === 'safety_hazard' ||
-    (item.severity === 'repair_recommended' &&
-      /leak|gas|smoke|burn|scorch/i.test(item.description))
-  ) || []
-  if (warnings.length) {
+  const rejectedPair = Boolean(
+    result?.labelReadability?.retakeRequested &&
+      /do not match/i.test(result.labelReadability.retakeMessage || ''),
+  )
+  const photoWarning = rejectedPair
+    ? null
+    : supportedHomeCheckPhotoWarning(
+      (result?.deficiencies || []).filter((item) =>
+        item.severity === 'safety_hazard' || item.severity === 'repair_recommended'
+      ).map((item) => item.description).join('; '),
+    )
+  if (photoWarning) {
     await checked(
-      db.from('home_checks').update({
-        detected_warning: warnings.map((item) => item.description).join('; ').slice(0, 2000),
-      }).eq('id', check.id),
+      db.from('home_checks').update({ detected_warning: photoWarning }).eq('id', check.id),
     )
     await openHomeCheckFollowUp(db, await loadHomeCheck(db, check.id))
   }
@@ -549,8 +555,14 @@ export async function saveHomeCheckAnswers(
   if (check.confirmed_at || Date.parse(check.expires_at) <= Date.now()) {
     throw new Error('This Home Check has ended.')
   }
+  const keepPhotoWarning = answers.warningSigns === false
+    ? supportedHomeCheckPhotoWarning(check.detected_warning)
+    : check.detected_warning
   await checked(
-    db.from('home_checks').update({ answers }).eq('id', check.id).is('confirmed_at', null),
+    db.from('home_checks').update({
+      answers,
+      detected_warning: keepPhotoWarning,
+    }).eq('id', check.id).is('confirmed_at', null),
   )
   const current = await loadHomeCheck(db, check.id)
   await openHomeCheckFollowUp(db, current)
@@ -560,9 +572,10 @@ export async function saveHomeCheckAnswers(
 }
 
 async function openHomeCheckFollowUp(db: SupabaseClient, check: HomeCheckRow) {
+  const alreadyOpen = check.issue_ticket_id
   const { data: issueId, error } = await db.rpc('report_home_check_issue', { p_check_id: check.id })
   if (error) throw new Error(error.message)
-  if (issueId) {
+  if (issueId && issueId !== alreadyOpen) {
     await startMaintenanceRequestWorkflow(db, {
       landlordId: check.landlord_id,
       ticketId: issueId,

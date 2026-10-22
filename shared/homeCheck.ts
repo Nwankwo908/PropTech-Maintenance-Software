@@ -1,4 +1,5 @@
 import type { EquipmentExtractionTrace, LabelReadability } from './vision/equipmentLabel.ts'
+import { formatLocationWithOptionalUnit } from './properties/unitLabelDisplay.ts'
 /** Home Check contract shared by the dashboard, capture page and SMS workflow. */
 export const HOME_CHECK_PHOTOS = [
   {
@@ -252,6 +253,94 @@ export function homeCheckAsset(input: {
       ),
     },
   }
+}
+
+/** Property only for single-family (including the stored "Home" label); "Property · Unit N" otherwise. */
+export function formatHomeCheckLocation(
+  propertyLabel: string,
+  unitLabel?: string | null,
+): string {
+  return formatLocationWithOptionalUnit({ propertyLabel, unitLabel })
+}
+
+const SUPPORTED_PHOTO_WARNING =
+  /\b(?:leaks?|leaking|leaked|gas\s+smell|smells?\s+of\s+gas|smelling\s+of\s+gas|smoke|scorch(?:ed|ing|es)?|burning|burned|burns|open\s+flame)\b/i
+
+/** A photo finding may open a follow-up only when it states one of these problems. */
+export function supportedHomeCheckPhotoWarning(text: string | null | undefined): string | null {
+  const trimmed = text?.replace(/\s+/g, ' ').trim() ?? ''
+  if (!trimmed || !SUPPORTED_PHOTO_WARNING.test(trimmed)) return null
+  return trimmed.slice(0, 500)
+}
+
+export function homeCheckFollowUpReason(input: {
+  warningSigns: boolean | null
+  warningDetails?: string | null
+  detectedWarning?: string | null
+}): string | null {
+  if (input.warningSigns === true) {
+    const detail = input.warningDetails?.trim()
+    return detail
+      ? `The check reported: ${detail}`
+      : 'The check reported a leak, odd noise, or smell.'
+  }
+  const photo = supportedHomeCheckPhotoWarning(input.detectedWarning)
+  if (!photo) return null
+  return `A photo showed: ${photo}`
+}
+
+export function homeCheckFollowUpExplanation(input: {
+  warningSigns?: boolean | null
+  warningDetails?: string | null
+  detectedWarning?: string | null
+}): string {
+  const reason = homeCheckFollowUpReason({
+    warningSigns: input.warningSigns ?? null,
+    warningDetails: input.warningDetails,
+    detectedWarning: input.detectedWarning,
+  })
+  if (reason) {
+    return `Follow-up opened because ${reason.charAt(0).toLowerCase()}${reason.slice(1)}. It is on Active Tasks. No vendor is contacted until paid work is approved.`
+  }
+  return 'Follow-up opened for review. It is on Active Tasks. No vendor is contacted until paid work is approved.'
+}
+
+/** Review saved is not the same as a readable plate. Unknown model and serial stay unknown. */
+export function homeCheckAssetStatusLabel(asset: {
+  verified: boolean
+  fields: { model: { value: string | number | null }; serial: { value: string | number | null } }
+}): string {
+  if (!asset.verified) return 'Unverified'
+  const hasPlateText = [asset.fields.model.value, asset.fields.serial.value].some((value) =>
+    value != null && String(value).trim() !== ''
+  )
+  return hasPlateText ? 'Details verified' : 'Review confirmed · details unknown'
+}
+
+/** Hide a basis that claims the landlord supplied text when the value is still empty. */
+export function homeCheckFieldBasis(field: {
+  value: string | number | null
+  basis?: string
+}): string | null {
+  const basis = field.basis?.trim() || ''
+  if (!basis) return null
+  const empty = field.value == null || String(field.value).trim() === ''
+  if (empty && /supplied this text/i.test(basis)) return null
+  return basis
+}
+
+/** Observation and follow-up tickets keep their own titles instead of a trade inferred from the photo list. */
+export function homeCheckWorkOrderTitle(
+  description: string | null | undefined,
+  issueCategory?: string | null,
+): string | null {
+  if (issueCategory === 'home_check_warning' || /home check follow-up/i.test(description || '')) {
+    return 'Home Check follow-up'
+  }
+  if (/home check/i.test(description || '') && /observation only/i.test(description || '')) {
+    return 'Home Check'
+  }
+  return null
 }
 
 export function homeCheckSummary(assets: HomeCheckAsset[], answers: HomeCheckAnswers): string {

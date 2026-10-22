@@ -31,6 +31,17 @@ describe('summarizeWorkOrderCardBlurb', () => {
     )
   })
 
+  it('does not turn a Home Check observation into a plumbing repair title', () => {
+    expect(summarizeWorkOrderCardBlurb(
+      'Home Check: four photos of the water heater and furnace or boiler. Observation only; no repairs or paid work authorized.',
+      'general',
+    )).toBe('Home Check')
+    expect(summarizeWorkOrderCardBlurb(
+      'Home Check follow-up. A photo showed a gas smell.',
+      'home_check_warning',
+    )).toBe('Home Check follow-up')
+  })
+
   it('falls back when there is no description', () => {
     expect(summarizeWorkOrderCardBlurb(null, 'plumbing')).toBe('Plumbing Repair Needed')
     expect(summarizeWorkOrderCardBlurb('', null)).toBe('Maintenance Repair Needed')

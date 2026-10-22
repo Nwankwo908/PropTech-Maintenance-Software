@@ -18,6 +18,11 @@ import {
   type WorkflowKanbanStageId,
 } from '@/lib/adminWorkflowKanban'
 import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
+import { homeCheckWorkOrderTitle } from '@shared/homeCheck'
+import {
+  formatBareUnitLabel,
+  formatLocationWithOptionalUnit,
+} from '@shared/properties/unitLabelDisplay'
 import {
   formatLandlordEscalationReason,
   isMaintenanceAdminVendorEscalationReason,
@@ -317,11 +322,18 @@ export function buildMaintenanceOverviewStatusContext(input: {
   scheduledAt: string | null
   scheduleConfirmedAt: string | null
   issueCategory?: string | null
+  /** Observation or unapproved Home Check follow-up: do not say a vendor is being matched. */
+  holdVendorDispatch?: boolean
   /** Ticket is blocked on landlord YES / 1 / 2 vendor pick. */
   awaitingLandlordChoice?: boolean
   /** Sticky needs_admin + still-assigned pending_accept (display-only signal). */
   stalePendingAcceptNeedsAdmin?: boolean
 }): string {
+  if (input.holdVendorDispatch) {
+    return input.issueCategory === 'home_check_warning'
+      ? 'Review this follow-up before any paid work. No vendor is being contacted.'
+      : 'Observation only. No vendor is being contacted.'
+  }
   const vendor = input.vendorName?.trim() || 'the vendor'
   const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
   const visit = formatVisitLabel(input.scheduledAt, input.scheduleConfirmedAt)
@@ -483,7 +495,11 @@ export function buildMaintenanceRepairNextAction(input: {
   awaitingLandlordChoice?: boolean
   stalePendingAcceptNeedsAdmin?: boolean
   hasCompletionPhotos?: boolean
+  holdVendorDispatch?: boolean
 }): string {
+  if (input.holdVendorDispatch) {
+    return 'Review the Home Check before contacting a vendor.'
+  }
   const vendor = input.vendorName?.trim() || null
   const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
 
@@ -830,16 +846,17 @@ async function buildPropertyBlock(
   const entryCode = accessProfile?.gateCode || accessProfile?.lockboxCode || ''
   const accessRows = accessProfile ? propertyAccessDisplayRows(accessProfile) : []
   const street = record ? propertyRecordToAddressLine(record) : null
-  const locationLine =
-    propertyLabel && unit
-      ? `${propertyLabel} · Unit ${unit}`
-      : propertyLabel || (unit ? `Unit ${unit}` : '')
+  const locationLine = formatLocationWithOptionalUnit({
+    propertyLabel,
+    unitLabel: unit,
+    propertyType: record?.propertyType,
+  })
 
   return {
     property: dash(record?.name || propertyLabel),
     building: dash(propertyLabel),
     address: dash(street || locationLine),
-    unit: dash(unit),
+    unit: dash(formatBareUnitLabel(unit, record?.propertyType)),
     manager: dash(record?.managerName || accessProfile?.superintendentContact),
     access: dash(accessText),
     entryCode: dash(entryCode),
@@ -1613,7 +1630,7 @@ export async function fetchWorkflowPipelineDetail(
       overviewFields: [
         { label: 'Type', value: 'Tenant notice inspection' },
         { label: 'Property', value: row.propertyLabel || '—' },
-        { label: 'Unit', value: row.unitLabel || '—' },
+        { label: 'Unit', value: formatBareUnitLabel(row.unitLabel) || '—' },
         {
           label: 'Inspection date',
           value: formatDueLabel(dateIso),
@@ -1671,7 +1688,15 @@ export async function fetchWorkflowPipelineDetail(
       )
     : undefined
 
-  const title = isMoveOut
+  const homeCheckTitle = row.templateId === 'home_check'
+    ? 'Home Check'
+    : homeCheckWorkOrderTitle(
+      asString(ticket?.description),
+      asString(ticket?.issue_category) || row.issueCategory,
+    )
+  const title = homeCheckTitle
+    ? homeCheckTitle
+    : isMoveOut
     ? moveOutPipelineTitle()
     : row.inspectionReportId &&
         row.inspectionGroupItems &&
@@ -1705,7 +1730,7 @@ export async function fetchWorkflowPipelineDetail(
       : null
 
   const rawTicketDescription = asString(ticket?.description)
-  const structuredMaintenance = isMaintenance && rawTicketDescription
+  const structuredMaintenance = isMaintenance && rawTicketDescription && !homeCheckTitle
     ? extractStructuredIssueDetails(rawTicketDescription, {
         category: asString(ticket?.issue_category) || row.templateType || 'general',
         format: 'summary',
@@ -1728,7 +1753,11 @@ export async function fetchWorkflowPipelineDetail(
     rawTicketDescription.trim() ||
     ''
 
-  const description = isMoveOut
+  const description = homeCheckTitle === 'Home Check'
+    ? 'Observation only. Photos of the water heater and heating system are saved here. This does not request a repair.'
+    : homeCheckTitle === 'Home Check follow-up'
+    ? rawTicketDescription.trim() || 'Home Check follow-up. Review this before any paid work.'
+    : isMoveOut
     ? 'Ulo is coordinating move-out with the resident — instructions, inspection, keys, and deposit review stay in one SMS thread.'
     : issueDescription ||
       lastEventPlain ||
@@ -1755,7 +1784,8 @@ export async function fetchWorkflowPipelineDetail(
       row.status === 'escalated' &&
       isMaintenanceAdminVendorEscalationReason(row.escalationReason),
   })
-  const statusContext = isMaintenance
+  const holdVendorDispatch = Boolean(homeCheckTitle)
+  const statusContext = isMaintenance || holdVendorDispatch
     ? buildMaintenanceOverviewStatusContext({
         vendorWorkStatus,
         vendorName: enrichment.vendorName,
@@ -1765,7 +1795,8 @@ export async function fetchWorkflowPipelineDetail(
         runStatus: row.status,
         scheduledAt,
         scheduleConfirmedAt,
-        issueCategory,
+        issueCategory: homeCheckTitle === 'Home Check follow-up' ? 'home_check_warning' : issueCategory,
+        holdVendorDispatch,
         awaitingLandlordChoice,
         stalePendingAcceptNeedsAdmin,
       })
@@ -1779,7 +1810,7 @@ export async function fetchWorkflowPipelineDetail(
 
   const lifecyclePipeline = deriveLifecyclePipeline(row, metadata)
   const hasCompletionPhotos = ticketCompletionPhotoPaths(ticket).length > 0
-  const maintenanceProgressSteps = isMaintenance
+  const maintenanceProgressSteps = isMaintenance && !holdVendorDispatch
     ? buildMaintenanceRepairProgressSteps({
         kanbanStage: card.stage,
         vendorWorkStatus,
@@ -1787,7 +1818,9 @@ export async function fetchWorkflowPipelineDetail(
         hasCompletionPhotos,
       })
     : null
-  const progressNextAction = isMaintenance
+  const progressNextAction = holdVendorDispatch
+    ? 'Review the Home Check before contacting a vendor.'
+    : isMaintenance
     ? buildMaintenanceRepairNextAction({
         vendorWorkStatus,
         vendorName: enrichment.vendorName,
@@ -1885,7 +1918,13 @@ export async function fetchWorkflowPipelineDetail(
     priorityLabel: priority?.label ?? null,
     priorityClassName: priority?.className ?? null,
     createdLine: formatCreatedLine(row.startedAt),
-    locationLine: [row.propertyLabel, row.unitLabel ? `Unit ${row.unitLabel}` : null, residentName || null]
+    locationLine: [
+      formatLocationWithOptionalUnit({
+        propertyLabel: row.propertyLabel,
+        unitLabel: row.unitLabel,
+      }),
+      residentName && !/^home check/i.test(residentName) ? residentName : null,
+    ]
       .filter(Boolean)
       .join(' · '),
     description,
@@ -1897,7 +1936,7 @@ export async function fetchWorkflowPipelineDetail(
       ? [
           { label: 'Resident', value: residentName || '—' },
           { label: 'Property', value: row.propertyLabel || '—' },
-          { label: 'Unit', value: row.unitLabel || '—' },
+          { label: 'Unit', value: formatBareUnitLabel(row.unitLabel) || '—' },
           { label: 'Move-out date', value: moveOutDateLabel ?? '—' },
           {
             label: 'Current stage',
@@ -1910,7 +1949,7 @@ export async function fetchWorkflowPipelineDetail(
       : [
           { label: 'Resident', value: residentName || '—' },
           { label: 'Property', value: row.propertyLabel || '—' },
-          { label: 'Unit', value: row.unitLabel || asString(ticket?.unit) || '—' },
+          { label: 'Unit', value: formatBareUnitLabel(row.unitLabel || asString(ticket?.unit)) || '—' },
           { label: 'Vendor', value: enrichment.vendorName || '—' },
           {
             label: 'Status',

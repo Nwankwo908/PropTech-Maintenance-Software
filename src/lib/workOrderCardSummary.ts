@@ -1,5 +1,6 @@
 import { looksLikeStatusInquiry } from '@/lib/smartIntelligence/helpers'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
+import { homeCheckWorkOrderTitle } from '@shared/homeCheck'
 
 const FILLER = new Set([
   'a',
@@ -128,6 +129,8 @@ export function summarizeWorkOrderCardBlurb(
   description: string | null | undefined,
   issueCategory: string | null | undefined,
 ): string {
+  const homeCheckTitle = homeCheckWorkOrderTitle(description, issueCategory)
+  if (homeCheckTitle) return homeCheckTitle
   const trade = formatVendorTradeLabel(issueCategory, { emptyLabel: '' }).trim() || null
   const line = firstLine(description)
   const usable = line && !looksLikeStatusInquiry(line) ? line : ''

@@ -669,6 +669,12 @@ export function deriveWorkflowKanbanStage(
   if (row.templateId === 'move_out') {
     return deriveMoveOutKanbanStage(row, metadata)
   }
+  if (row.templateId === 'home_check') {
+    if (row.status === 'cancelled' || row.status === 'completed') return 'completed'
+    const step = (row.currentStep ?? '').toLowerCase()
+    if (step === 'four_photos_received' || step === 'landlord_confirmed') return 'completed'
+    return 'new_intake'
+  }
   if (row.templateId === 'inspection') {
     return deriveInspectionKanbanStage(row)
   }
