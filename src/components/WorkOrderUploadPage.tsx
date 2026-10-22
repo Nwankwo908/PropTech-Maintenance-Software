@@ -81,9 +81,9 @@ export function WorkOrderUploadPage() {
     setBusy(true)
     setError(null)
     try {
-      const result = await uploadCompletionPhotos(t, pendingFiles)
+      await uploadCompletionPhotos(t, pendingFiles)
       setPendingFiles([])
-      setSuccess(result.message)
+      setSuccess('Photo was sent successfully')
       const job = await resolveCompletionJob(t)
       setCtx(job)
     } catch (err) {

@@ -122,6 +122,8 @@ type JobPageCopy = {
   submitInvoiceTitle: string
   submitInvoiceBody: string
   submitInvoice: string
+  /** Shown on job detail after completion photos are on the job. */
+  photoSentSuccess: string
   waitingPaymentTitle: string
   waitingPaymentBody: string
   jobCompleteTitle: string
@@ -202,9 +204,10 @@ export const JOB_PAGE_COPY: Record<JobPageLang, JobPageCopy> = {
     addPhotosTitle: 'Add completion photos',
     addPhotosBody: 'Upload photos or videos of the finished work before you submit an invoice.',
     addPhotosCta: 'Add photos or videos',
-    submitInvoiceTitle: 'Submit invoice',
+    submitInvoiceTitle: 'Ready for your invoice',
     submitInvoiceBody: 'Completion photos are in. Send your invoice for review.',
     submitInvoice: 'Submit invoice',
+    photoSentSuccess: 'Photo was sent successfully',
     waitingPaymentTitle: 'Waiting for payment',
     waitingPaymentBody:
       'Your invoice was submitted. The property team will review it and process payment.',
@@ -289,9 +292,10 @@ export const JOB_PAGE_COPY: Record<JobPageLang, JobPageCopy> = {
     addPhotosBody:
       'Suba fotos o videos del trabajo terminado antes de enviar la factura.',
     addPhotosCta: 'Agregar fotos o videos',
-    submitInvoiceTitle: 'Enviar factura',
+    submitInvoiceTitle: 'Listo para su factura',
     submitInvoiceBody: 'Las fotos ya están. Envíe su factura para revisión.',
     submitInvoice: 'Enviar factura',
+    photoSentSuccess: 'La foto se envió correctamente',
     waitingPaymentTitle: 'Esperando el pago',
     waitingPaymentBody:
       'Su factura fue enviada. El equipo de la propiedad la revisará y procesará el pago.',

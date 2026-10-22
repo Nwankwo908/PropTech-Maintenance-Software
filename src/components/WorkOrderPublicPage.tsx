@@ -332,8 +332,15 @@ function WorkOrderPublicPageInner() {
     onStartWork: () => void runStatusAction('in_progress'),
   })
 
-  const stickyCta = primaryAction
+  // Mobile sticky CTA. For submit_invoice, keep the single CTA in the next-step
+  // card only — sticky + card both saying "Submit invoice" felt duplicated.
+  const stickyCta =
+    primaryAction && nextStep.kind !== 'submit_invoice' ? primaryAction : null
   const hasSticky = Boolean(stickyCta)
+  const showPhotoSentBanner =
+    job.completionPhotosUploaded &&
+    nextStep.kind !== 'job_complete' &&
+    nextStep.kind !== 'declined'
 
   return (
     <div
@@ -388,6 +395,7 @@ function WorkOrderPublicPageInner() {
                 primaryAction={primaryAction}
                 actionError={actionError}
                 hidePrimaryInCard={hasSticky}
+                photoSentSuccess={showPhotoSentBanner}
                 onRetry={() => {
                   if (nextStep.kind === 'accept') void runStatusAction('accept')
                   else if (nextStep.kind === 'start_work') void runStatusAction('in_progress')
@@ -530,6 +538,7 @@ function WorkOrderPublicPageInner() {
               primaryAction={primaryAction}
               actionError={actionError}
               hidePrimaryInCard={false}
+              photoSentSuccess={showPhotoSentBanner}
               onRetry={() => {
                 if (nextStep.kind === 'accept') void runStatusAction('accept')
                 else if (nextStep.kind === 'start_work') void runStatusAction('in_progress')
@@ -680,6 +689,7 @@ function NextStepCard({
   primaryAction,
   actionError,
   hidePrimaryInCard,
+  photoSentSuccess,
   onRetry,
 }: {
   copy: JobPageCopyBundle
@@ -688,10 +698,21 @@ function NextStepCard({
   primaryAction: PrimaryAction | null
   actionError: string | null
   hidePrimaryInCard: boolean
+  /** Completion photos are on the job — confirm receipt to the vendor. */
+  photoSentSuccess: boolean
   onRetry: () => void
 }) {
   return (
     <section className={`${CARD} flex flex-col gap-5 shadow-sm`}>
+      {photoSentSuccess ? (
+        <div
+          role="status"
+          className="rounded-[8px] border border-[#a7f3d0] bg-[#ecfdf5] px-3 py-3 text-[14px] font-medium leading-5 text-[#065f46]"
+        >
+          {copy.photoSentSuccess}
+        </div>
+      ) : null}
+
       <div>
         <p className={SECTION_LABEL}>{copy.yourNextStep}</p>
         <h2 className="mt-2 text-[22px] font-bold leading-tight text-[#111827]">
