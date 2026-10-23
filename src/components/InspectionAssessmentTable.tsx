@@ -232,7 +232,7 @@ export function InspectionAssessmentTable({
                     value={result.category}
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
-                      onChangeRow(row.id, {
+                      onChangeRow?.(row.id, {
                         ...result,
                         category: e.target.value as VisionCategory,
                       })
@@ -284,7 +284,7 @@ export function InspectionAssessmentTable({
                       placeholder="Unknown"
                       value={result.identifiedItem.brand ?? ''}
                       onChange={(e) =>
-                        onChangeRow(
+                        onChangeRow?.(
                           row.id,
                           patchIdentified(result, {
                             brand: e.target.value || undefined,
@@ -299,7 +299,7 @@ export function InspectionAssessmentTable({
                       placeholder="-"
                       value={result.identifiedItem.modelNumber ?? ''}
                       onChange={(e) =>
-                        onChangeRow(
+                        onChangeRow?.(
                           row.id,
                           patchIdentified(result, {
                             modelNumber: e.target.value || undefined,
@@ -323,7 +323,7 @@ export function InspectionAssessmentTable({
                     value={result.condition.summary}
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
-                      onChangeRow(row.id, {
+                      onChangeRow?.(row.id, {
                         ...result,
                         condition: { ...result.condition, summary: e.target.value },
                       })
@@ -371,7 +371,7 @@ export function InspectionAssessmentTable({
                     value={result.condition.rating}
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
-                      onChangeRow(row.id, {
+                      onChangeRow?.(row.id, {
                         ...result,
                         condition: {
                           ...result.condition,
