@@ -26,6 +26,7 @@ import {
   appendOutboundContext,
   CONFIRM_TTL_MS,
   createIdleScheduleState,
+  extendScheduleTtlForActivity,
   persistVendorScheduleFsm,
   readVendorScheduleFsm,
   reduceScheduleFsm,
@@ -188,7 +189,7 @@ async function loadVendorConversationId(
 export async function setVendorAwaitingAvailability(
   supabase: SupabaseClient,
   params: { conversationId: string; ticketId: string },
-): Promise<void> {
+): Promise<{ ok: boolean }> {
   const { data: convo } = await supabase
     .from("sms_conversations")
     .select("intake_state")
@@ -208,12 +209,13 @@ export async function setVendorAwaitingAvailability(
     dueAt: urgency.dueAt,
     createdAt: urgency.createdAt,
   })
-  await persistVendorScheduleFsm(supabase, {
+  const saved = await persistVendorScheduleFsm(supabase, {
     conversationId: params.conversationId,
     ticketId: params.ticketId,
     next: transition.state,
     expectedRevision: prev?.revision,
   })
+  return { ok: saved.ok }
 }
 
 /**
@@ -286,6 +288,39 @@ export async function beginTenantConfirmForProposedWindow(
     conversationId: ask.conversationId,
     error: ask.error,
   }
+}
+
+/**
+ * Estimate submit, a portal action, or inbound vendor SMS keeps the open
+ * schedule timer from expiring while the vendor is still on the thread.
+ */
+export async function touchVendorScheduleTtl(
+  supabase: SupabaseClient,
+  params: { ticketId: string; vendorId: string; at?: string },
+): Promise<void> {
+  const conversationId = await loadVendorConversationId(supabase, {
+    vendorId: params.vendorId,
+    ticketId: params.ticketId,
+  })
+  if (!conversationId) return
+  const { data: convo } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", conversationId)
+    .maybeSingle()
+  const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
+  const prev = readVendorScheduleFsm(intake)
+  if (!prev) return
+  if (prev.ticketId && prev.ticketId !== params.ticketId) return
+  const at = params.at ?? new Date().toISOString()
+  const next = extendScheduleTtlForActivity(prev, at)
+  if (next === prev) return
+  await persistVendorScheduleFsm(supabase, {
+    conversationId,
+    ticketId: params.ticketId,
+    next,
+    expectedRevision: prev.revision,
+  })
 }
 
 /**

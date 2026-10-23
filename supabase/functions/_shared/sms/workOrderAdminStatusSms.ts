@@ -50,6 +50,15 @@ export function resolveEstimateScheduleKickoff(input: {
   /** Window already on the ticket (probe seed or prior propose). */
   proposedWindowText?: string | null
   proposedScheduledAt?: string | null
+  /** Window still held on the schedule FSM, even if the ticket column is empty. */
+  fsmPendingWindowText?: string | null
+  fsmPendingScheduledAt?: string | null
+  /** Parseable window from the vendor's last inbound in the past 24h. */
+  recentInboundWindowText?: string | null
+  recentInboundScheduledAt?: string | null
+  /** When an availability ask already went out, don't send another within 10 minutes. */
+  lastAvailabilityAskAt?: string | null
+  now?: Date
 }): EstimateScheduleKickoff {
   if (!input.approved) return { kind: "none" }
   if (input.vendorDecision !== "accepted") return { kind: "none" }
@@ -65,12 +74,20 @@ export function resolveEstimateScheduleKickoff(input: {
     return { kind: "none" }
   }
 
-  const windowText = input.proposedWindowText?.trim() || ""
+  const ticketWindow = input.proposedWindowText?.trim() || ""
+  const fsmWindow = sameTicket ? (input.fsmPendingWindowText?.trim() || "") : ""
+  const inboundWindow = input.recentInboundWindowText?.trim() || ""
+  const windowText = ticketWindow || fsmWindow || inboundWindow
   if (windowText) {
+    const scheduledAt = ticketWindow
+      ? input.proposedScheduledAt?.trim() || null
+      : fsmWindow
+      ? input.fsmPendingScheduledAt?.trim() || null
+      : input.recentInboundScheduledAt?.trim() || null
     return {
       kind: "confirm_tenant",
       windowText,
-      scheduledAt: input.proposedScheduledAt?.trim() || null,
+      scheduledAt,
     }
   }
 
@@ -78,6 +95,11 @@ export function resolveEstimateScheduleKickoff(input: {
     sameTicket &&
     (step === "awaiting_availability" || step === "awaiting_confirmation")
   ) {
+    return { kind: "none" }
+  }
+  const askedAt = Date.parse(input.lastAvailabilityAskAt ?? "")
+  const nowMs = (input.now ?? new Date()).getTime()
+  if (Number.isFinite(askedAt) && nowMs - askedAt >= 0 && nowMs - askedAt < 10 * 60 * 1000) {
     return { kind: "none" }
   }
   return { kind: "ask_vendor" }

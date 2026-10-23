@@ -23,7 +23,16 @@ import {
   VENDOR_WO_CLARIFICATION_KEY,
 } from "../../sms/vendorWorkOrderClarification.ts"
 import { resolveVendorAvailability } from "../../vendor_availability_parse.ts"
-import { confirmVendorSchedule } from "../../vendor_job_schedule.ts"
+import {
+  beginVendorAvailabilityAsk,
+  confirmVendorSchedule,
+  setVendorAwaitingAvailability,
+} from "../../vendor_job_schedule.ts"
+import {
+  planAcceptedVendorIdleTurn,
+  vendorHasAcceptedJob,
+  visitIsLocked,
+} from "../../sms/acceptedVendorSchedule.ts"
 import { closeOpenAsksForTicket } from "../../closeOpenAsksForTicket.ts"
 import {
   buildVendorScheduleAlreadyAdvancedSms,
@@ -38,6 +47,7 @@ import {
   appendOutboundContext,
   createIdleScheduleState,
   formatScheduleContextForPrompt,
+  isScheduleExpired,
   persistVendorScheduleFsm,
   readVendorScheduleFsm,
   reduceScheduleFsm,
@@ -469,7 +479,7 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
 
     const { data: ticketStatusRow } = await supabase
       .from("maintenance_requests")
-      .select("vendor_work_status, landlord_id, urgency, severity, due_at, created_at")
+      .select("vendor_work_status, landlord_id, urgency, severity, due_at, created_at, schedule_confirmed_at")
       .eq("id", ticketId)
       .maybeSingle()
     const ticketWorkStatus =
@@ -495,11 +505,19 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           : null,
     }
 
+    const visitLocked = visitIsLocked({
+      scheduleConfirmedAt:
+        typeof ticketStatusRow?.schedule_confirmed_at === "string"
+          ? ticketStatusRow.schedule_confirmed_at
+          : null,
+      scheduleStep: isStaleScheduleForTicket(prev, ticketId) ? null : prev?.step,
+    })
+    const alreadyOnJob = vendorHasAcceptedJob(ticketWorkStatus)
+    const schedulingClosed = ticketStatusBlocksScheduleAsks(ticketWorkStatus) &&
+      !(ticketWorkStatus.trim().toLowerCase() === "in_progress" && !visitLocked)
+
     // Ticket already past scheduling — never start/continue a resident confirm ask.
-    if (
-      ticketStatusBlocksScheduleAsks(ticketWorkStatus) &&
-      !parsedAction
-    ) {
+    if (schedulingClosed && !parsedAction) {
       if (prevInScheduleSteps) {
         await closeOpenAsksForTicket(
           supabase,
@@ -582,6 +600,108 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         currentTicketId: ticketId,
         step: prev?.step,
       })
+    }
+
+    // An expired open thread must not swallow a time the vendor just sent.
+    if (
+      alreadyOnJob &&
+      !visitLocked &&
+      schedulePrev &&
+      isScheduleExpired(schedulePrev, new Date(inboundAt))
+    ) {
+      inScheduleFlow = false
+    }
+
+    if (
+      ticketId &&
+      !inScheduleFlow &&
+      alreadyOnJob &&
+      !visitLocked &&
+      parsedAction !== "decline"
+    ) {
+      const availabilityBody = stripWorkOrderRefFromSms(effectiveBody) || effectiveBody
+      let availabilityResolved = false
+      if (parsedAction !== "accept" && availabilityBody.length >= 3) {
+        const peeked = await resolveVendorAvailability(availabilityBody, {
+          conversationContext: schedulePrev
+            ? formatScheduleContextForPrompt(schedulePrev)
+            : undefined,
+          clarifyAttempts: schedulePrev?.clarifyAttempts ?? 0,
+          timeZone: scheduleTimeZone,
+          now: new Date(inboundAt),
+          allowLlm: false,
+        })
+        availabilityResolved = peeked.status === "resolved" ||
+          peeked.status === "needs_confirmation"
+      }
+      const idlePlan = planAcceptedVendorIdleTurn({
+        inScheduleFlow: false,
+        parsedAction,
+        vendorWorkStatus: ticketWorkStatus,
+        visitLocked: false,
+        availabilityResolved,
+      })
+      if (idlePlan.kind === "restart_availability" || idlePlan.kind === "ask_window") {
+        if (idlePlan.kind === "restart_availability") {
+          const ask = await beginVendorAvailabilityAsk(supabase, {
+            ticketId,
+            vendorId,
+            conversationId: sms.conversationId,
+          })
+          let fsmReady = Boolean(ask.conversationId)
+          if (!fsmReady) {
+            const seeded = await setVendorAwaitingAvailability(supabase, {
+              conversationId: sms.conversationId,
+              ticketId,
+            })
+            fsmReady = seeded.ok
+          }
+          replyHint = ask.sentSms || !fsmReady
+            ? undefined
+            : buildVendorAvailabilityAskSms(workOrderRef)
+        } else {
+          const seeded = await setVendorAwaitingAvailability(supabase, {
+            conversationId: sms.conversationId,
+            ticketId,
+          })
+          replyHint = seeded.ok
+            ? buildVendorAvailabilityAskSms(workOrderRef)
+            : undefined
+        }
+        await recordVendorRepliedEvent(supabase, {
+          landlordId: ctx.landlordId,
+          vendorId,
+          conversationId: sms.conversationId,
+          messageId: sms.messageId,
+          maintenanceRequestId: ticketId,
+          bodyPreview: sms.inbound.body,
+          parsedAction,
+          transition,
+        })
+        return {
+          templateId: "vendor_job_response",
+          route: workflowRouteForTemplate("vendor_job_response"),
+          replyHint,
+          metadata: {
+            vendorId,
+            maintenanceRequestId: ticketId,
+            parsedAction,
+            scheduleStep: "awaiting_availability",
+            boundBy: ticketBind.boundBy,
+            resumedFromClarification,
+            effectiveBodyPreview: effectiveBody.slice(0, 160),
+            bodyPreview: sms.inbound.body.slice(0, 160),
+            skipGenericAutoReply: true,
+          },
+        }
+      }
+      if (idlePlan.kind === "seed_window") {
+        schedulePrev = withScheduleTicketUrgency(
+          createIdleScheduleState(ticketId),
+          ticketUrgencySnap,
+        )
+        inScheduleFlow = true
+      }
     }
 
     if (inScheduleFlow && schedulePrev && parsedAction !== "decline") {
@@ -901,10 +1021,10 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
             : undefined
       } else if (parsedAction === "decline") {
         replyHint = buildVendorSmsDeclineReply()
-      } else if (parsedAction === "accept") {
+      } else if (parsedAction === "accept" && !(alreadyOnJob && !visitLocked)) {
         replyHint = buildVendorSmsAcceptReply(workOrderRef)
       }
-    } else if (ticketId && !inScheduleFlow) {
+    } else if (ticketId && !inScheduleFlow && !alreadyOnJob) {
       replyHint = buildVendorSmsReplyPrompt(workOrderRef)
     }
 

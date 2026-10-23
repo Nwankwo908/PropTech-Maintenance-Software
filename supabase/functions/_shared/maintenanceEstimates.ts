@@ -10,6 +10,12 @@ import {
   resolveVendorJobConversationId,
 } from "./sms/maintenanceEstimateInbox.ts"
 import {
+  latestAvailabilityAskAt,
+  latestInboundWithin,
+  RECENT_VENDOR_WINDOW_MS,
+} from "./sms/acceptedVendorSchedule.ts"
+import { resolveVendorAvailability } from "./vendor_availability_parse.ts"
+import {
   buildEstimateDecisionStatusSms,
   resolveEstimateScheduleKickoff,
   vendorJobDecisionFromWorkStatus,
@@ -25,6 +31,7 @@ import {
 import {
   beginTenantConfirmForProposedWindow,
   setVendorAwaitingAvailability,
+  touchVendorScheduleTtl,
 } from "./vendor_job_schedule.ts"
 import { readVendorScheduleFsm } from "./vendor_schedule_fsm.ts"
 
@@ -118,6 +125,7 @@ async function notifyVendorEstimateDecision(
   let scheduleStep: string | null = null
   let scheduleTicketId: string | null = null
   let scheduleConversationId: string | null = null
+  let fsm: ReturnType<typeof readVendorScheduleFsm> = null
   if (landlordId) {
     scheduleConversationId = await resolveVendorJobConversationId(supabase, {
       landlordId,
@@ -131,7 +139,7 @@ async function notifyVendorEstimateDecision(
         .select("intake_state")
         .eq("id", scheduleConversationId)
         .maybeSingle()
-      const fsm = readVendorScheduleFsm(
+      fsm = readVendorScheduleFsm(
         (convo?.intake_state as Record<string, unknown> | null) ?? null,
       )
       scheduleStep = fsm?.step ?? null
@@ -145,6 +153,66 @@ async function notifyVendorEstimateDecision(
       : ""
   const proposedScheduledAt =
     typeof ticket?.scheduled_at === "string" ? ticket.scheduled_at : null
+  const fsmWindow =
+    fsm && (!fsm.ticketId || fsm.ticketId === params.ticketId)
+      ? (fsm.pendingWindowText?.trim() || "")
+      : ""
+  const fsmScheduledAt =
+    typeof fsm?.pendingScheduledAt === "string" ? fsm.pendingScheduledAt : null
+
+  const now = new Date()
+  let recentInboundWindowText: string | null = null
+  let recentInboundScheduledAt: string | null = null
+  let lastAvailabilityAskAt: string | null = null
+  if (scheduleConversationId && !proposedWindow && !fsmWindow) {
+    const since = new Date(now.getTime() - RECENT_VENDOR_WINDOW_MS).toISOString()
+    const { data: messages } = await supabase
+      .from("sms_messages")
+      .select("body, direction, created_at")
+      .eq("conversation_id", scheduleConversationId)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(30)
+    const rows = (messages ?? []).map((row) => ({
+      direction: typeof row.direction === "string" ? row.direction : "",
+      body: typeof row.body === "string" ? row.body : "",
+      createdAt: typeof row.created_at === "string" ? row.created_at : "",
+    }))
+    lastAvailabilityAskAt = latestAvailabilityAskAt(rows, now.getTime())
+    const inbound = latestInboundWithin(rows, now.getTime())
+    if (inbound) {
+      try {
+        const resolved = await resolveVendorAvailability(inbound.body, {
+          allowLlm: false,
+          now,
+        })
+        if (resolved.status === "resolved" || resolved.status === "needs_confirmation") {
+          recentInboundWindowText = resolved.value.windowLabel
+          recentInboundScheduledAt = resolved.value.scheduledAt
+        }
+      } catch (e) {
+        console.error("[maintenance-estimates] recent vendor window", e)
+      }
+    }
+  } else if (scheduleConversationId) {
+    const since = new Date(now.getTime() - 10 * 60 * 1000).toISOString()
+    const { data: messages } = await supabase
+      .from("sms_messages")
+      .select("body, direction, created_at")
+      .eq("conversation_id", scheduleConversationId)
+      .eq("direction", "outbound")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(10)
+    lastAvailabilityAskAt = latestAvailabilityAskAt(
+      (messages ?? []).map((row) => ({
+        direction: typeof row.direction === "string" ? row.direction : "",
+        body: typeof row.body === "string" ? row.body : "",
+        createdAt: typeof row.created_at === "string" ? row.created_at : "",
+      })),
+      now.getTime(),
+    )
+  }
 
   const kickoff = resolveEstimateScheduleKickoff({
     approved: params.approved,
@@ -158,6 +226,12 @@ async function notifyVendorEstimateDecision(
     ticketId: params.ticketId,
     proposedWindowText: proposedWindow || null,
     proposedScheduledAt,
+    fsmPendingWindowText: fsmWindow || null,
+    fsmPendingScheduledAt: fsmScheduledAt,
+    recentInboundWindowText,
+    recentInboundScheduledAt,
+    lastAvailabilityAskAt,
+    now,
   })
 
   const token =
@@ -411,6 +485,15 @@ export async function submitMaintenanceEstimate(
     })
   } catch (e) {
     console.error("[maintenance-estimates] landlord notify", e)
+  }
+
+  try {
+    await touchVendorScheduleTtl(supabase, {
+      ticketId: params.ticketId,
+      vendorId: params.vendorId,
+    })
+  } catch (e) {
+    console.error("[maintenance-estimates] schedule ttl", e)
   }
 
   try {

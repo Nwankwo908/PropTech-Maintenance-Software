@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { notifyResidentInProgress } from "../submit-maintenance-request/resident_notify.ts"
 import { resumeMaintenanceWorkflowAfterVendorAccepted } from "../_shared/maintenance_admin_escalation.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
-import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
+import { beginVendorAvailabilityAsk, touchVendorScheduleTtl } from "../_shared/vendor_job_schedule.ts"
 import { closeOpenAsksForTicket } from "../_shared/closeOpenAsksForTicket.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromJobActionToken } from "../_shared/vendorJobActionToken.ts"
@@ -483,6 +483,17 @@ serve(async (req) => {
     })
   } catch (e) {
     console.error("[vendor-update-job-status] graph event", e)
+  }
+
+  if (vendorIdMatched && step.next !== "declined") {
+    try {
+      await touchVendorScheduleTtl(supabase, {
+        ticketId,
+        vendorId: vendorIdMatched,
+      })
+    } catch (e) {
+      console.error("[vendor-update-job-status] schedule ttl", e)
+    }
   }
 
   if (step.next === "declined") {

@@ -61,6 +61,8 @@ export type VendorScheduleFsmState = {
   severity?: string | null
   dueAt?: string | null
   createdAt?: string | null
+  /** Last estimate, portal action, or inbound SMS that should keep the timer alive. */
+  lastVendorActivityAt?: string | null
   contextWindow: ScheduleContextTurn[]
   recentOutboundNorm: string[]
 }
@@ -129,6 +131,9 @@ export type ScheduleFsmEvent =
   | {
     type: "TTL_CHECK"
     at: string
+    /** Accepted vendors should be asked for a time, not to accept the job again. */
+    vendorAccepted?: boolean
+    workOrderRef?: string
   }
 
 export type ScheduleFsmEffect =
@@ -277,9 +282,46 @@ export function isScheduleExpired(
   now = new Date(),
 ): boolean {
   if (!state || state.step === "idle" || state.step === "scheduled") return false
+  const activity = state.lastVendorActivityAt
+  if (activity) {
+    const act = new Date(activity).getTime()
+    if (!Number.isNaN(act) && now.getTime() < act + SCHEDULE_TTL_MS) return false
+  }
   const exp = new Date(state.expiresAt).getTime()
   return !Number.isNaN(exp) && now.getTime() > exp
 }
+
+/** Estimate, portal, or inbound SMS keeps an open schedule thread from timing out. */
+export function extendScheduleTtlForActivity(
+  state: VendorScheduleFsmState,
+  at: string,
+  ttlMs = SCHEDULE_TTL_MS,
+): VendorScheduleFsmState {
+  if (state.step === "idle" || state.step === "scheduled") return state
+  const activityMs = new Date(at).getTime()
+  if (Number.isNaN(activityMs)) return state
+  const nextExpMs = activityMs + ttlMs
+  const expMs = new Date(state.expiresAt).getTime()
+  const alreadyCovers = !Number.isNaN(expMs) && expMs >= nextExpMs &&
+    state.lastVendorActivityAt === at
+  if (alreadyCovers) return state
+  return {
+    ...state,
+    lastVendorActivityAt: at,
+    expiresAt: new Date(
+      Math.max(Number.isNaN(expMs) ? 0 : expMs, nextExpMs),
+    ).toISOString(),
+    revision: state.revision + 1,
+  }
+}
+
+export function acceptedVendorScheduleTimeoutPrompt(workOrderRef?: string | null): string {
+  const wo = workOrderRef?.trim() || "this job"
+  return `Still need a time for ${wo}. Reply with a day and arrival window (e.g. Wed 9am–12pm).`
+}
+
+const PENDING_VENDOR_TIMEOUT_PROMPT =
+  "That scheduling thread timed out. Reply YES if you still want the job and we will ask for your earliest availability again."
 
 function enterStep(
   state: VendorScheduleFsmState,
@@ -361,7 +403,7 @@ export function reduceScheduleFsm(
   prev: VendorScheduleFsmState | null,
   event: ScheduleFsmEvent,
 ): ScheduleTransition {
-  const base = prev ?? createIdleScheduleState(
+  let base = prev ?? createIdleScheduleState(
     event.type === "JOB_ACCEPTED" ? event.ticketId : "",
   )
 
@@ -387,8 +429,7 @@ export function reduceScheduleFsm(
       state: cleared,
       effect: {
         kind: "expired",
-        prompt:
-          "That scheduling thread timed out. Reply YES if you still want the job and we will ask for your earliest availability again.",
+        prompt: PENDING_VENDOR_TIMEOUT_PROMPT,
       },
       suppressReply: false,
     }
@@ -445,11 +486,17 @@ export function reduceScheduleFsm(
       state: cleared,
       effect: {
         kind: "expired",
-        prompt:
-          "That scheduling thread timed out. Reply YES if you still want the job and we will ask for your earliest availability again.",
+        prompt: event.vendorAccepted
+          ? acceptedVendorScheduleTimeoutPrompt(event.workOrderRef)
+          : PENDING_VENDOR_TIMEOUT_PROMPT,
       },
       suppressReply: false,
     }
+  }
+
+  // Inbound SMS and other vendor turns keep an open thread from going stale.
+  if (event.type !== "JOB_ACCEPTED") {
+    base = extendScheduleTtlForActivity(base, event.at)
   }
 
   // Duplicate inbound SID — ignore.
@@ -896,6 +943,9 @@ export function parseVendorScheduleFsm(
       ? obj.createdAt
       : obj.createdAt === null
       ? null
+      : undefined,
+    lastVendorActivityAt: typeof obj.lastVendorActivityAt === "string"
+      ? obj.lastVendorActivityAt
       : undefined,
     contextWindow,
     recentOutboundNorm,

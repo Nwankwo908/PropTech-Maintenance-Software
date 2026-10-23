@@ -13,6 +13,7 @@ import {
   shouldSendAutomatedMessage,
 } from "./shouldSendAutomatedMessage.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
+import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { shouldYieldToRecentStallFollowUp } from "../../../shared/ops/maintenanceStallFollowUp.ts"
 import {
   appendOutboundContext,
@@ -185,7 +186,12 @@ export async function processScheduleFsmTtlChecks(
       continue
     }
 
-    const transition = reduceScheduleFsm(prev, { type: "TTL_CHECK", at })
+    const transition = reduceScheduleFsm(prev, {
+      type: "TTL_CHECK",
+      at,
+      vendorAccepted: workStatus?.trim().toLowerCase() === "accepted",
+      workOrderRef: ticketId ? formatWorkOrderRef(ticketId) : undefined,
+    })
     if (transition.effect.kind === "noop") {
       skipped++
       continue
