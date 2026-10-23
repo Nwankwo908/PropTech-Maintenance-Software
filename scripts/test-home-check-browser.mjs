@@ -26,6 +26,7 @@ const calls = []
 const replacements = new Set()
 let showReview = false
 let confirmed = false
+let confirmedCorrections = []
 const retakeMessage = 'Label unreadable, please send a closer photo without flash.'
 const reviewAssets = ['water_heater', 'heating_system'].map((system, index) => ({
   id: `asset-${index}`,
@@ -105,7 +106,26 @@ await page.route('**/*', async (route) => {
               completed_at: new Date().toISOString(),
               confirmed_at: confirmed ? new Date().toISOString() : null,
               labels_readable: false,
-              assets: reviewAssets.map((asset) => ({ ...asset, verified: confirmed })),
+              assets: reviewAssets.map((asset) => {
+                const correction = confirmedCorrections.find((item) => item.assetId === asset.id)
+                return {
+                  ...asset,
+                  verified: confirmed,
+                  ...(correction
+                    ? {
+                      manufactureDate: {
+                        year: correction.manufactureYear ?? null,
+                        month: correction.manufactureMonth ?? null,
+                      },
+                      fields: {
+                        ...asset.fields,
+                        model: { ...asset.fields.model, value: correction.modelNumber },
+                        serial: { ...asset.fields.serial, value: correction.serialNumber },
+                      },
+                    }
+                    : {}),
+                }
+              }),
               photos: slots.map((slot) => ({ slot, state: 'needs_review', previewUrl: null })),
             }]
             : [],
@@ -121,6 +141,7 @@ await page.route('**/*', async (route) => {
         serialNumber: 'AB01234',
       }])
       confirmed = true
+      confirmedCorrections = body.labelCorrections
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) })
     }
     if (body.action === 'start') {
@@ -238,11 +259,12 @@ try {
   await page.getByRole('button', { name: 'Confirm asset records' }).waitFor()
   assert(await page.getByRole('button', { name: 'Confirm asset records' }).isDisabled())
   await page.getByText(retakeMessage, { exact: true }).waitFor()
-  await page.getByRole('button', { name: 'I checked the data plate', exact: false }).click()
-  await page.getByLabel('Verified model', { exact: true }).fill('XE40')
-  await page.getByLabel('Verified serial', { exact: true }).fill('AB01234')
+  await page.getByRole('checkbox', { name: 'Select Water heater', exact: true }).check()
+  await page.getByRole('button', { name: 'Edit selected (1)', exact: true }).click()
+  await page.getByLabel('Model', { exact: true }).fill('XE40')
+  await page.getByLabel('Serial number', { exact: true }).fill('AB01234')
   await page.getByRole('button', { name: 'Confirm asset records' }).click()
-  await page.getByText('Landlord confirmed', { exact: false }).first().waitFor()
+  await page.getByText('Details verified', { exact: false }).first().waitFor()
   for (const participant of ['tenant', 'contractor', 'landlord']) {
     role = participant
     await page.goto(`${base}/c/${participant}?role=wrong#${token}`)

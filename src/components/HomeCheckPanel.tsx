@@ -1,4 +1,4 @@
-import { EquipmentLabelNotice } from './EquipmentLabelNotice'
+import { InspectionAssessmentTable } from './InspectionAssessmentTable'
 import { EQUIPMENT_PHOTO_TIPS } from '@shared/vision/equipmentLabel'
 import { useCallback, useEffect, useState } from 'react'
 import { type HomeCheckList, type HomeCheckOptions, homeCheckRequest } from '@/api/homeCheck'
@@ -6,14 +6,66 @@ import { supabase } from '@/lib/supabase'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import { notifyInspectionSessionChanged } from '@/lib/inspectionSession'
 import {
+  HOME_CHECK_MONTHS,
+  homeCheckAssetPreview,
+  homeCheckLabelCorrection,
+  homeCheckLabelDraft,
+  homeCheckReviewLabels,
+  homeCheckReviewResult,
+  type HomeCheckLabelDraft,
+} from '@/lib/homeCheckReview'
+import {
   formatHomeCheckLocation,
   HOME_CHECK_PHOTOS,
-  homeCheckAssetStatusLabel,
-  homeCheckFieldBasis,
   homeCheckFollowUpExplanation,
   type HomeCheckRole,
 } from '@shared/homeCheck'
 import { assertPilotAllows, pilotWorkflowGate } from '@shared/pilotGate'
+
+type ListedHomeCheck = HomeCheckList['checks'][number] & {
+  completed_at?: string | null
+  confirmed_at?: string | null
+  labels_readable?: boolean | null
+  issue_ticket_id?: string | null
+}
+
+const PLATE_INPUT =
+  'w-auto bg-transparent px-0 py-0.5 text-[13px] text-[#68717a] outline-none placeholder:text-[#94a3b8]'
+
+function ManufactureDateFields(
+  { draft, onChange }: { draft: HomeCheckLabelDraft; onChange: (next: HomeCheckLabelDraft) => void },
+) {
+  return (
+    <div className='mt-1 space-y-1'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <select
+          aria-label='Manufacture month'
+          value={draft.manufactureMonth}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => onChange({ ...draft, manufactureMonth: event.target.value })}
+          className={PLATE_INPUT}
+        >
+          <option value=''>Month unknown</option>
+          {HOME_CHECK_MONTHS.map((name, index) => (
+            <option key={name} value={String(index + 1)}>{name}</option>
+          ))}
+        </select>
+        <input
+          aria-label='Manufacture year'
+          inputMode='numeric'
+          placeholder='Year'
+          value={draft.manufactureYear}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => onChange({ ...draft, manufactureYear: event.target.value })}
+          className={`${PLATE_INPUT} w-16`}
+        />
+      </div>
+      <p className='text-[12px] leading-4 text-[#64748b]'>
+        Age is calculated from the month and year on the plate. Leave either one blank when it is not readable.
+      </p>
+    </div>
+  )
+}
 
 export function HomeCheckPanel(
   { building, propertyId }: { building: string; propertyId?: string | null },
@@ -29,9 +81,8 @@ export function HomeCheckPanel(
   const [busy, setBusy] = useState(false)
   const [link, setLink] = useState('')
   const [copied, setCopied] = useState(false)
-  const [labelEdits, setLabelEdits] = useState<
-    Record<string, { modelNumber: string; serialNumber: string; manufactureMonth: string; manufactureYear: string }>
-  >({})
+  const [labelEdits, setLabelEdits] = useState<Record<string, HomeCheckLabelDraft>>({})
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
   const refresh = useCallback(async () => {
     if (!scope || !supabase) return
     const result = await homeCheckRequest<HomeCheckList>({ action: 'list', propertyId: scope })
@@ -123,18 +174,7 @@ export function HomeCheckPanel(
       const record = list?.checks.find((check) => check.id === id)
       const labelCorrections = record?.assets.filter((asset) =>
         labelEdits[asset.id]
-      ).map((asset) => {
-        const edits = labelEdits[asset.id]
-        const year = edits.manufactureYear.trim()
-        const month = edits.manufactureMonth.trim()
-        return {
-          assetId: asset.id,
-          modelNumber: edits.modelNumber,
-          serialNumber: edits.serialNumber,
-          manufactureYear: year ? Number(year) : null,
-          manufactureMonth: month ? Number(month) : null,
-        }
-      }) || []
+      ).map((asset) => homeCheckLabelCorrection(asset.id, labelEdits[asset.id])) || []
       await homeCheckRequest({ action: 'confirm', id, labelCorrections })
       await refresh()
       notifyAssetRegistryChanged(building)
@@ -187,8 +227,8 @@ export function HomeCheckPanel(
         <li>6. Last service and last filter change, if known</li>
       </ol>
       <p className='text-xs text-[#64748b]'>
-        Each field includes source and confidence. Age stays an estimate. Records stay unverified
-        until you confirm. Observation only; no repairs authorized.
+        Records stay unverified until you confirm them. Age stays an estimate. Observation only;
+        no repairs authorized.
       </p>
       <label className='block text-sm font-medium'>
         Property / unit<select
@@ -341,204 +381,121 @@ export function HomeCheckPanel(
         </div>
       )}
       {!!list?.checks.length && (
-        <div className='space-y-3'>
-          <h4 className='font-semibold'>Home Check records</h4>
-          {list.checks.map((check) => (
-            <article key={check.id} className='space-y-2 rounded border border-[#e2e8f0] p-3'>
-              <p className='text-sm font-semibold'>
-                {formatHomeCheckLocation(check.property_label, check.unit_label)} · {check.role} ·{' '}
-                {check.reference}
-              </p>
-              <p className='text-xs text-[#64748b]'>
-                {check.status} ·{' '}
-                {check.labels_readable ? 'Labels readable' : 'Label details need review'}
-              </p>
-              <div className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
-                {check.photos.map((photo) => (
-                  <figure key={photo.slot}>
-                    {photo.previewUrl && (
-                      <a href={photo.previewUrl} target='_blank' rel='noreferrer'>
-                        <img
-                          src={photo.previewUrl}
-                          alt={HOME_CHECK_PHOTOS.find((item) =>
-                            item.slot === photo.slot
-                          )?.title ||
-                            'Equipment photo'}
-                          className='aspect-square w-full rounded object-cover'
-                        />
-                      </a>
-                    )}
-                    <figcaption className='mt-1 text-xs text-[#64748b]'>
-                      {HOME_CHECK_PHOTOS.find((item) => item.slot === photo.slot)?.title}
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
-              {check.assets.map((asset) => (
-                <div key={asset.id}>
-                  <p className='text-sm font-medium'>
-                    {asset.system === 'water_heater' ? 'Water heater' : 'Heating system'} ·{' '}
-                    {homeCheckAssetStatusLabel(asset)}
-                  </p>
-                  {homeCheckAssetStatusLabel(asset) !== 'Details verified' && (
-                    <EquipmentLabelNotice quality={asset.labelReadability} />
-                  )}
-                  {!asset.verified && (
-                    <button
-                      type='button'
-                      className='mt-2 text-sm font-medium text-[#186179]'
-                      onClick={() =>
-                        setLabelEdits((previous) => ({
-                          ...previous,
-                          [asset.id]: previous[asset.id] ||
-                            {
-                              modelNumber: String(asset.fields.model.value || ''),
-                              serialNumber: String(asset.fields.serial.value || ''),
-                              manufactureMonth: asset.manufactureDate?.month
-                                ? String(asset.manufactureDate.month)
-                                : '',
-                              manufactureYear: asset.manufactureDate?.year
-                                ? String(asset.manufactureDate.year)
-                                : '',
-                            },
-                        }))}
-                    >
-                      I checked the data plate — enter label text
-                    </button>
-                  )}
-                  {labelEdits[asset.id] && !asset.verified && (
-                    <div className='mt-2 space-y-2'>
-                      <p className='text-xs text-[#64748b]'>
-                        Use only characters you can read in the photo. Leave unknown fields blank.
-                        Your corrections are recorded with you as the source.
-                      </p>
-                      <label className='block text-xs'>
-                        Verified model<input
-                          className='mt-1 w-full rounded border p-2'
-                          value={labelEdits[asset.id].modelNumber}
-                          onChange={(event) =>
-                            setLabelEdits((previous) => ({
-                              ...previous,
-                              [asset.id]: {
-                                ...previous[asset.id],
-                                modelNumber: event.target.value,
-                              },
-                            }))}
-                        />
-                      </label>
-                      <label className='block text-xs'>
-                        Manufacture month
-                        <select
-                          className='mt-1 w-full rounded border p-2'
-                          value={labelEdits[asset.id].manufactureMonth}
-                          onChange={(event) =>
-                            setLabelEdits((previous) => ({
-                              ...previous,
-                              [asset.id]: {
-                                ...previous[asset.id],
-                                manufactureMonth: event.target.value,
-                              },
-                            }))}
-                        >
-                          <option value=''>Month unknown</option>
-                          {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((name, index) => (
-                            <option key={name} value={String(index + 1)}>{name}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className='block text-xs'>
-                        Manufacture year<input
-                          className='mt-1 w-full rounded border p-2'
-                          inputMode='numeric'
-                          value={labelEdits[asset.id].manufactureYear}
-                          onChange={(event) =>
-                            setLabelEdits((previous) => ({
-                              ...previous,
-                              [asset.id]: {
-                                ...previous[asset.id],
-                                manufactureYear: event.target.value,
-                              },
-                            }))}
-                        />
-                      </label>
-                      <p className='text-xs text-[#64748b]'>
-                        Age is calculated from the month and year on the plate. Leave either one blank when it is not readable.
-                      </p>
-                      <label className='block text-xs'>
-                        Verified serial<input
-                          className='mt-1 w-full rounded border p-2'
-                          value={labelEdits[asset.id].serialNumber}
-                          onChange={(event) =>
-                            setLabelEdits((previous) => ({
-                              ...previous,
-                              [asset.id]: {
-                                ...previous[asset.id],
-                                serialNumber: event.target.value,
-                              },
-                            }))}
-                        />
-                      </label>
+        <div className='space-y-4'>
+          {list.checks.map((check) => {
+            const record = check as ListedHomeCheck
+            const canReview = Boolean(record.completed_at && !record.confirmed_at && record.assets.length)
+            const selectedHere = record.assets.filter((asset) =>
+              selectedAssetIds.includes(asset.id) && !asset.verified
+            )
+            const confirmBlocked = busy || record.assets.length !== 2 || record.photos.some((photo) =>
+              photo.state === 'queued' || photo.state === 'analyzing'
+            ) || record.assets.some((asset) =>
+              asset.labelReadability?.retakeRequested && !labelEdits[asset.id]
+            )
+            return (
+              <section key={record.id} aria-label={`${record.reference} results`}>
+                <div className='mb-3 flex flex-wrap items-center justify-between gap-3'>
+                  <div>
+                    <p className='text-[13px] font-semibold text-[#334155]'>Assets from Home Check</p>
+                    <p className='text-[12px] text-[#64748b]'>
+                      {formatHomeCheckLocation(record.property_label, record.unit_label)} · {record.reference}
+                      {record.labels_readable ? ' · Labels readable' : record.assets.length
+                        ? ' · Label details need review'
+                        : ` · ${record.status}`}
+                    </p>
+                  </div>
+                  {canReview && (
+                    <div className='flex flex-wrap gap-2'>
+                      <button
+                        type='button'
+                        disabled={selectedHere.length === 0 || busy}
+                        onClick={() => {
+                          setLabelEdits((previous) => {
+                            const next = { ...previous }
+                            for (const asset of selectedHere) {
+                              if (!next[asset.id]) next[asset.id] = homeCheckLabelDraft(asset)
+                            }
+                            return next
+                          })
+                        }}
+                        className='rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-[13px] font-semibold text-[#334155] disabled:opacity-40'
+                      >
+                        Edit selected{selectedHere.length ? ` (${selectedHere.length})` : ''}
+                      </button>
+                      <button
+                        type='button'
+                        disabled={confirmBlocked}
+                        onClick={() => void confirm(record.id)}
+                        className='rounded-[10px] bg-[#186179] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40'
+                      >
+                        Confirm asset records
+                      </button>
                     </div>
                   )}
-                  <dl className='mt-1 grid gap-1 text-xs'>
-                    {Object.entries(asset.fields).map(([name, field]) => (
-                      <div key={name}>
-                        <dt className='inline font-medium'>
-                          {({
-                            make: 'Make',
-                            model: 'Model',
-                            serial: 'Serial',
-                            approximateAge: 'Approximate age',
-                            condition: 'Visible condition',
-                            lastService: 'Last service',
-                            lastFilterChange: 'Last filter change',
-                          } as Record<string, string>)[name]}:
-                        </dt>
-                        <dd className='inline'>
-                          {field.value == null
-                            ? 'Unknown'
-                            : name === 'approximateAge'
-                            ? `About ${field.value} years (estimate)`
-                            : field.value}
-                          {field.value == null
-                            ? (homeCheckFieldBasis(field) ? ` · ${homeCheckFieldBasis(field)}` : ' · Not verified')
-                            : ` · ${field.source === 'photo_text'
-                              ? `Photo from ${field.capturedBy}`
-                              : field.source} · ${field.confidence} confidence${
-                              homeCheckFieldBasis(field) ? ` · ${homeCheckFieldBasis(field)}` : ''
-                            }`}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
                 </div>
-              ))}
-              {check.issue_ticket_id && (
-                <p className='text-sm text-amber-700'>
-                  {homeCheckFollowUpExplanation({
-                    warningSigns: check.answers?.warningSigns,
-                    warningDetails: check.answers?.warningDetails,
-                    detectedWarning: check.detected_warning,
-                  })}
-                </p>
-              )}
-              {check.completed_at && !check.confirmed_at && (
-                <button
-                  type='button'
-                  disabled={busy || check.assets.length !== 2 || check.photos.some((photo) =>
-                    photo.state === 'queued' || photo.state === 'analyzing'
-                  ) || check.assets.some((asset) =>
-                    asset.labelReadability?.retakeRequested && !labelEdits[asset.id]
-                  )}
-                  onClick={() =>
-                    void confirm(check.id)}
-                  className='rounded border border-[#186179] px-3 py-1 text-sm text-[#186179]'
-                >
-                  Confirm asset records
-                </button>
-              )}
-            </article>
-          ))}
+                {record.assets.length > 0 && (
+                  <InspectionAssessmentTable
+                    rows={record.assets.map((asset) => {
+                      const draft = !asset.verified ? labelEdits[asset.id] : undefined
+                      const labels = homeCheckReviewLabels(asset)
+                      const result = homeCheckReviewResult(asset, draft)
+                      return {
+                        id: asset.id,
+                        previewUrl: homeCheckAssetPreview(asset.system, record.photos),
+                        editable: Boolean(draft),
+                        labelFieldsOnly: true,
+                        categoryLabel: labels.categoryLabel,
+                        conditionLabel: labels.conditionLabel,
+                        actionLabel: labels.actionLabel,
+                        result: labels.actionLabel === 'Details verified'
+                          ? { ...result, labelReadability: undefined }
+                          : result,
+                        descriptionExtra: draft
+                          ? (
+                            <ManufactureDateFields
+                              draft={draft}
+                              onChange={(next) =>
+                                setLabelEdits((previous) => ({ ...previous, [asset.id]: next }))}
+                            />
+                          )
+                          : (
+                            <p className='mt-1 text-[12px] leading-4 text-[#64748b]'>
+                              {labels.manufactureLabel}
+                            </p>
+                          ),
+                      }
+                    })}
+                    checkedIds={canReview ? selectedAssetIds : undefined}
+                    onCheckedIdsChange={canReview ? setSelectedAssetIds : undefined}
+                    onChangeRow={(id, result) => {
+                      setLabelEdits((previous) => {
+                        const current = previous[id]
+                        if (!current) return previous
+                        return {
+                          ...previous,
+                          [id]: {
+                            ...current,
+                            modelNumber: result.identifiedItem.modelNumber ?? '',
+                            serialNumber: result.identifiedItem.serialNumber ?? '',
+                          },
+                        }
+                      })
+                    }}
+                  />
+                )}
+                {record.issue_ticket_id && (
+                  <p className='mt-3 text-sm text-[#92400e]'>
+                    {homeCheckFollowUpExplanation({
+                      warningSigns: record.answers?.warningSigns,
+                      warningDetails: record.answers?.warningDetails,
+                      detectedWarning: record.detected_warning,
+                    })}
+                  </p>
+                )}
+              </section>
+            )
+          })}
         </div>
       )}
       {list && (

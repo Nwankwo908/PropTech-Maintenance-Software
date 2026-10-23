@@ -1,4 +1,5 @@
 import { EquipmentLabelNotice } from './EquipmentLabelNotice'
+import type { ReactNode } from 'react'
 import type { ApplianceVisionResult, ConditionRating, VisionCategory } from '@/lib/vision/types'
 import { InspectionPhotoExtractProgress } from '@/components/InspectionPhotoExtractProgress'
 import {
@@ -74,6 +75,12 @@ export type InspectionAssessmentTableRow = {
   extracting?: boolean
   extractComplete?: boolean
   editable?: boolean
+  /** Home Check edits the data plate only: model, serial, and manufacture date. */
+  labelFieldsOnly?: boolean
+  categoryLabel?: string
+  conditionLabel?: string
+  actionLabel?: string
+  descriptionExtra?: ReactNode
 }
 
 type InspectionAssessmentTableProps = {
@@ -166,6 +173,10 @@ export function InspectionAssessmentTable({
           const { result, editable, previewUrl, extracting, extractComplete } = row
           const serial = result ? assessmentSerial(result) : ''
           const missingSerial = !serial
+          const labelEdit = Boolean(editable && row.labelFieldsOnly && onChangeRow && result)
+          const fullEdit = Boolean(editable && !row.labelFieldsOnly && onChangeRow && result)
+          const categoryLabel = row.categoryLabel || (result ? assessmentCategoryLabel(result.category) : row.id)
+          const actionLabel = row.actionLabel || (result ? assessmentActionLabel(result) : '')
           const zebra = index % 2 === 1 ? 'bg-[#f5f8f7]' : 'bg-white'
           const canSelect = Boolean(onSelectRow) && !editable && !extracting
           return (
@@ -191,7 +202,7 @@ export function InspectionAssessmentTable({
               {selectable ? (
                 <RowCheckbox
                   checked={checked.has(row.id)}
-                  label={`Select ${result?.identifiedItem.type || row.id}`}
+                  label={`Select ${categoryLabel}`}
                   onChecked={(value) => {
                     const next = new Set(checked)
                     if (value) next.add(row.id)
@@ -215,7 +226,7 @@ export function InspectionAssessmentTable({
                     —
                   </span>
                 )}
-                {extracting ? null : editable && onChangeRow && result ? (
+                {extracting ? null : fullEdit && result ? (
                   <select
                     aria-label="Category"
                     value={result.category}
@@ -235,7 +246,7 @@ export function InspectionAssessmentTable({
                     ))}
                   </select>
                 ) : result ? (
-                  <p className="min-w-0 break-words">{assessmentCategoryLabel(result.category)}</p>
+                  <p className="min-w-0 break-words">{categoryLabel}</p>
                 ) : null}
               </div>
               {extracting ? (
@@ -248,7 +259,25 @@ export function InspectionAssessmentTable({
               ) : result ? (
                 <>
               <div className="flex min-w-0 items-center overflow-hidden font-medium text-[#68717a]">
-                {editable && onChangeRow ? (
+                {labelEdit && result ? (
+                  <div className="flex min-w-0 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
+                    <p className="min-w-0 break-words">{result.identifiedItem.brand?.trim() || 'Unknown'}</p>
+                    <input
+                      aria-label="Model"
+                      placeholder="-"
+                      value={result.identifiedItem.modelNumber ?? ''}
+                      onChange={(e) =>
+                        onChangeRow?.(
+                          row.id,
+                          patchIdentified(result, {
+                            modelNumber: e.target.value || undefined,
+                          }),
+                        )
+                      }
+                      className={`${CELL} font-medium text-[#68717a] placeholder:text-[#68717a]`}
+                    />
+                  </div>
+                ) : fullEdit && result ? (
                   <div className="flex min-w-0 items-baseline gap-1" onClick={(e) => e.stopPropagation()}>
                     <input
                       aria-label="Brand"
@@ -284,8 +313,10 @@ export function InspectionAssessmentTable({
                   <p className="min-w-0 break-words">{assessmentBrandModel(result)}</p>
                 )}
               </div>
-              <div className="flex min-w-0 items-center overflow-hidden font-medium text-[#68717a]">
-                {editable && onChangeRow ? (
+              <div className={`flex min-w-0 font-medium text-[#68717a] ${
+                row.descriptionExtra ? 'flex-col items-stretch justify-center gap-1' : 'items-center overflow-hidden'
+              }`}>
+                {fullEdit && result ? (
                   <textarea
                     aria-label="Description"
                     rows={2}
@@ -300,7 +331,10 @@ export function InspectionAssessmentTable({
                     className={`${CELL} resize-none font-medium text-[#68717a]`}
                   />
                 ) : (
-                  <p className="min-w-0 break-words">{assessmentDescription(result)}</p>
+                  <div className="min-w-0">
+                    <p className="break-words">{assessmentDescription(result)}</p>
+                    {row.descriptionExtra}
+                  </div>
                 )}
               </div>
               <div
@@ -308,14 +342,14 @@ export function InspectionAssessmentTable({
                   missingSerial ? 'text-[#a03e3e]' : 'text-[#1a1d20]'
                 }`}
               >
-                {editable && onChangeRow ? (
+                {(fullEdit || labelEdit) && result ? (
                   <input
                     aria-label="Serial number"
                     value={serial}
                     placeholder="-"
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
-                      onChangeRow(
+                      onChangeRow?.(
                         row.id,
                         patchIdentified(result, {
                           serialNumber: e.target.value || undefined,
@@ -331,7 +365,7 @@ export function InspectionAssessmentTable({
                 )}
               </div>
               <div className="flex min-w-0 items-center justify-end overflow-hidden font-medium text-[#68717a]">
-                {editable && onChangeRow ? (
+                {fullEdit && result ? (
                   <select
                     aria-label="Condition"
                     value={result.condition.rating}
@@ -355,21 +389,21 @@ export function InspectionAssessmentTable({
                   </select>
                 ) : (
                   <p className="min-w-0 break-words text-right">
-                    {assessmentConditionLabel(result.condition.rating)}
+                    {row.conditionLabel || assessmentConditionLabel(result.condition.rating)}
                   </p>
                 )}
               </div>
               <div className="flex min-w-0 items-center justify-end overflow-hidden font-medium text-[#68717a]">
                 <p
                   className={`min-w-0 break-words text-right ${
-                    assessmentActionLabel(result) === 'Safety hazard'
+                    actionLabel === 'Safety hazard'
                       ? 'font-semibold text-[#a03e3e]'
-                      : assessmentActionLabel(result) === 'Repair recommended'
+                      : actionLabel === 'Repair recommended'
                         ? 'text-[#b45309]'
                         : ''
                   }`}
                 >
-                  {assessmentActionLabel(result)}
+                  {actionLabel}
                 </p>
               </div>
               <div className="flex min-w-0 items-center justify-end gap-1 overflow-hidden font-medium text-[#68717a]">
@@ -378,7 +412,11 @@ export function InspectionAssessmentTable({
               </div>
                 </>
               ) : null}
-              {result?.labelReadability && <div className="col-span-7"><EquipmentLabelNotice quality={result.labelReadability} /></div>}
+              {result?.labelReadability && (
+                <div className="col-span-full">
+                  <EquipmentLabelNotice quality={result.labelReadability} />
+                </div>
+              )}
             </div>
           )
         })}
