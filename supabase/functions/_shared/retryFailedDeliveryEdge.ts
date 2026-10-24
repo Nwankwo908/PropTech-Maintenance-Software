@@ -114,13 +114,13 @@ async function loadDeliveryLog(
     }
   }
 
-  const recipientOptedOut = await recipientOptedOut(
+  const optedOutRecipient = await recipientOptedOut(
     supabase,
     data.landlord_id,
     email,
     phone,
   )
-  return toLog(data, input.source, recipientOptedOut)
+  return toLog(data, input.source, optedOutRecipient)
 }
 
 function toLog(

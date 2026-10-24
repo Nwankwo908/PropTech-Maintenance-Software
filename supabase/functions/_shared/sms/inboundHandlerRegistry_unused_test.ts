@@ -18,6 +18,7 @@ const REGISTRY_SOURCE_URL = new URL(
 const ADAPTER_ID_FROM_FN: Record<string, string> = {
   tryComplianceStopHelpHandler: "compliance_stop_help",
   tryLandlordPickBatchHandler: "landlord_pick_batch",
+  tryStaffReplyHandler: "staff_reply",
   tryScheduleConfirmHandler: "schedule_confirm",
   tryEstimateDecisionHandler: "estimate_decision",
   tryLandlordVendorChoiceHandler: "landlord_vendor_choice",
