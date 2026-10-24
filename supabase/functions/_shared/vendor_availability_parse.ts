@@ -398,6 +398,13 @@ function calendarDateYmd(date: Date, timeZone: string): string {
   return `${z.year}-${pad2(z.month)}-${pad2(z.day)}`
 }
 
+/** en-US time formatting. ICU in Deno 2.1 inserts U+202F before AM/PM; SMS copy uses a normal space. */
+function formatEnUs(date: Date, options: Intl.DateTimeFormatOptions): string {
+  return new Intl.DateTimeFormat("en-US", options)
+    .format(date)
+    .replace(/[\u202f\u00a0]/g, " ")
+}
+
 export function formatArrivalWindowLabel(
   startIso: string,
   endIso: string | null,
@@ -405,27 +412,27 @@ export function formatArrivalWindowLabel(
 ): string {
   const start = new Date(startIso)
   if (Number.isNaN(start.getTime())) return "that time"
-  const day = new Intl.DateTimeFormat("en-US", {
+  const day = formatEnUs(start, {
     timeZone,
     weekday: "long",
     month: "short",
     day: "numeric",
-  }).format(start)
-  const startTime = new Intl.DateTimeFormat("en-US", {
+  })
+  const startTime = formatEnUs(start, {
     timeZone,
     hour: "numeric",
     minute: "2-digit",
-  }).format(start)
+  })
   if (!endIso) return `${day} at ${startTime}`
   const end = new Date(endIso)
   if (Number.isNaN(end.getTime())) return `${day} at ${startTime}`
   const duration = end.getTime() - start.getTime()
   if (duration <= 15 * 60 * 1000) return `${day} at ${startTime}`
-  const endTime = new Intl.DateTimeFormat("en-US", {
+  const endTime = formatEnUs(end, {
     timeZone,
     hour: "numeric",
     minute: "2-digit",
-  }).format(end)
+  })
   return `${day} between ${startTime} and ${endTime}`
 }
 

@@ -6,7 +6,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "======== deno check (parse module + requester TZ tests) ========"
-deno check --no-lock \
+# Same config as the behavior gate. Deno 2.1.4 otherwise looks for npm:unpdf
+# in node_modules, which the connected-workflows job does not install.
+deno check --config supabase/functions/deno.json --no-lock \
   supabase/functions/_shared/vendor_availability_parse.ts \
   supabase/functions/_shared/vendor_availability_requester_timezone_test.ts
 
@@ -15,7 +17,7 @@ FAILED=0
 
 for zone in "${ZONES[@]}"; do
   echo "======== TZ=${zone} ========"
-  if ! TZ="$zone" deno test --no-check --no-lock --allow-env --allow-read \
+  if ! TZ="$zone" deno test --config supabase/functions/deno.json --no-check --no-lock --allow-env --allow-read \
     supabase/functions/_shared/vendor_availability_requester_timezone_test.ts \
     --filter 'tomorrow 4:30pm' \
     supabase/functions/_shared/scheduleAskGuards_test.ts; then
