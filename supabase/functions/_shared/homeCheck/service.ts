@@ -6,6 +6,7 @@ import {
   type HomeCheckAsset,
   homeCheckAsset,
   formatHomeCheckLocation,
+  homeCheckReceivedSlots,
   homeCheckReference,
   type HomeCheckRole,
   type HomeCheckSlot,
@@ -197,7 +198,7 @@ export async function publicHomeCheck(db: SupabaseClient, check: HomeCheckRow) {
     role: check.role,
     location: checkLocation(check),
     expiresAt: check.expires_at,
-    slots: photos.map((photo) => photo.slot),
+      slots: homeCheckReceivedSlots(photos.map((photo) => photo.slot)),
     feedback: photos.filter((photo) => photo.slot.endsWith('_label')).map((photo) => {
       const row = rows.find((row) => row.id === photo.inspection_photo_id)
       const quality = (row?.ai_result as ApplianceVisionResult | null)?.labelReadability

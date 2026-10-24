@@ -7,6 +7,7 @@ import {
   HOME_CHECK_PHOTOS,
   type HomeCheckAnswers,
   homeCheckComplete,
+  homeCheckReceivedCount,
   type HomeCheckSlot,
 } from '@shared/homeCheck'
 
@@ -111,7 +112,7 @@ function HomeCheckCaptureForm({ checkId, token }: { checkId: string; token: stri
         {check && (
           <>
             <p className='text-sm font-medium'>
-              {check.slots.length} of 4 photos received · Link expires{' '}
+              {homeCheckReceivedCount(check.slots)} of 4 photos received · Link expires{' '}
               {new Date(check.expiresAt).toLocaleString()}
             </p>
             <ol className='space-y-4'>

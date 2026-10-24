@@ -66,8 +66,16 @@ export function isHomeCheckSlot(value: unknown): value is HomeCheckSlot {
   return HOME_CHECK_PHOTOS.some((photo) => photo.slot === value)
 }
 
+export function homeCheckReceivedSlots(slots: readonly string[]): HomeCheckSlot[] {
+  return HOME_CHECK_PHOTOS.map((photo) => photo.slot).filter((slot) => slots.includes(slot))
+}
+
+export function homeCheckReceivedCount(slots: readonly string[]): number {
+  return homeCheckReceivedSlots(slots).length
+}
+
 export function homeCheckComplete(slots: readonly string[]): boolean {
-  return HOME_CHECK_PHOTOS.every((photo) => slots.includes(photo.slot))
+  return homeCheckReceivedCount(slots) === HOME_CHECK_PHOTOS.length
 }
 
 /** Explicit commands prevent property names and short replies being guessed as scope. */

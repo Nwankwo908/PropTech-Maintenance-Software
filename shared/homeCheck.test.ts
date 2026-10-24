@@ -5,6 +5,7 @@ import {
   homeCheckAsset,
   homeCheckAssetStatusLabel,
   homeCheckComplete,
+  homeCheckReceivedCount,
   homeCheckFieldBasis,
   homeCheckFollowUpReason,
   homeCheckMetrics,
@@ -44,6 +45,8 @@ const whole = { ...label, condition: { rating: 'fair', summary: 'Visible rust ar
 describe('Home Check scope and completion', () => {
   it('requires the four distinct photo slots rather than four arbitrary photos', () => {
     expect(homeCheckComplete(Array(4).fill('water_heater_label'))).toBe(false)
+    expect(homeCheckReceivedCount(Array(4).fill('water_heater_label'))).toBe(1)
+    expect(homeCheckReceivedCount(['water_heater_label', 'not_a_slot', 'heating_label'])).toBe(2)
     expect(homeCheckComplete(HOME_CHECK_PHOTOS.map((photo) => photo.slot))).toBe(true)
     expect(homeCheckComplete(HOME_CHECK_PHOTOS.slice(0, 3).map((photo) => photo.slot))).toBe(false)
   })
