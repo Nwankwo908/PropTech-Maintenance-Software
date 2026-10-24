@@ -18,6 +18,43 @@ type ConversationRow = {
   maintenance_request_id: string | null
 }
 
+type AppliedStatus = {
+  found?: boolean
+  applied?: boolean
+  stale?: boolean
+  event_created?: boolean
+  id?: string
+  conversation_id?: string
+  landlord_id?: string
+  direction?: string
+  provider_status?: string | null
+  previous_status?: string | null
+}
+
+/**
+ * queued < sending < sent < delivered/undelivered/failed < read.
+ * Twilio's delivered, undelivered, and failed are final and share one rank,
+ * so the first of those statuses stands. A later delivered after failed is stale.
+ */
+export function smsProviderStatusRank(status: string | null | undefined): number {
+  switch ((status ?? "").trim().toLowerCase()) {
+    case "queued":
+      return 1
+    case "sending":
+      return 2
+    case "sent":
+      return 3
+    case "delivered":
+    case "undelivered":
+    case "failed":
+      return 4
+    case "read":
+      return 5
+    default:
+      return 0
+  }
+}
+
 function isFailedDeliveryStatus(status: string): boolean {
   const normalized = status.trim().toLowerCase()
   return normalized === "failed" || normalized === "undelivered"
@@ -52,6 +89,7 @@ async function recordDeliveryGraphEvent(
     statusUpdate: SMSStatusUpdate
     conversation: ConversationRow | null
     eventType: "sms.delivery_failed" | "sms.delivered"
+    previousStatus: string | null
   },
 ): Promise<void> {
   await logGraphEvent(supabase, {
@@ -69,7 +107,7 @@ async function recordDeliveryGraphEvent(
       provider: params.statusUpdate.provider,
       provider_message_sid: params.statusUpdate.providerMessageSid,
       provider_status: params.statusUpdate.status,
-      previous_provider_status: params.message.provider_status,
+      previous_provider_status: params.previousStatus,
       direction: params.message.direction,
       error_code: params.statusUpdate.errorCode ?? null,
       from: params.statusUpdate.from ?? null,
@@ -82,19 +120,19 @@ export async function processSmsStatusUpdate(
   supabase: SupabaseClient,
   statusUpdate: SMSStatusUpdate,
 ): Promise<{ ok: true; messageId?: string; graphEvent?: string }> {
-  const { data: message, error: lookupErr } = await supabase
-    .from("sms_messages")
-    .select("id, conversation_id, landlord_id, provider_status, direction")
-    .eq("provider", statusUpdate.provider)
-    .eq("provider_message_sid", statusUpdate.providerMessageSid)
-    .maybeSingle()
+  const { data, error } = await supabase.rpc("apply_sms_provider_status", {
+    p_provider: statusUpdate.provider,
+    p_provider_message_sid: statusUpdate.providerMessageSid,
+    p_status: statusUpdate.status,
+  })
 
-  if (lookupErr) {
-    console.error("[sms-status-callback] sms_messages lookup", lookupErr.message)
-    throw new Error("Message lookup failed")
+  if (error) {
+    console.error("[sms-status-callback] status apply", error.message)
+    throw new Error("Message update failed")
   }
 
-  if (!message?.id) {
+  const applied = (data ?? null) as AppliedStatus | null
+  if (!applied?.found || !applied.id) {
     console.warn("[sms-status-callback] unknown provider_message_sid", {
       provider: statusUpdate.provider,
       providerMessageSid: statusUpdate.providerMessageSid,
@@ -103,40 +141,40 @@ export async function processSmsStatusUpdate(
     return { ok: true }
   }
 
-  const row = message as SmsMessageRow
-  const previousStatus = row.provider_status
-
-  const { error: updateErr } = await supabase
-    .from("sms_messages")
-    .update({ provider_status: statusUpdate.status })
-    .eq("id", row.id)
-
-  if (updateErr) {
-    console.error("[sms-status-callback] sms_messages update", updateErr.message)
-    throw new Error("Message update failed")
+  if (!applied.applied) {
+    console.info("[sms-status-callback] stale_callback", {
+      messageId: applied.id,
+      providerMessageSid: statusUpdate.providerMessageSid,
+      incoming: statusUpdate.status,
+      current: applied.provider_status ?? null,
+    })
+    return { ok: true, messageId: applied.id }
   }
 
+  if (!applied.event_created) return { ok: true, messageId: applied.id }
+
+  const row: SmsMessageRow = {
+    id: applied.id,
+    conversation_id: applied.conversation_id ?? "",
+    landlord_id: applied.landlord_id ?? "",
+    provider_status: applied.provider_status ?? statusUpdate.status,
+    direction: applied.direction ?? "",
+  }
   const failedNow = isFailedDeliveryStatus(statusUpdate.status)
   const deliveredNow = isDeliveredStatus(statusUpdate.status)
-  const failedBefore = previousStatus
-    ? isFailedDeliveryStatus(previousStatus)
-    : false
-  const deliveredBefore = previousStatus
-    ? isDeliveredStatus(previousStatus)
-    : false
-
   if (!failedNow && !deliveredNow) {
     return { ok: true, messageId: row.id }
   }
 
   const conversation = await loadConversationContext(supabase, row.conversation_id)
 
-  if (failedNow && !failedBefore) {
+  if (failedNow) {
     await recordDeliveryGraphEvent(supabase, {
       message: row,
       statusUpdate,
       conversation,
       eventType: "sms.delivery_failed",
+      previousStatus: applied.previous_status ?? null,
     })
 
     if (row.direction === "outbound") {
@@ -164,15 +202,12 @@ export async function processSmsStatusUpdate(
     return { ok: true, messageId: row.id, graphEvent: "sms.delivery_failed" }
   }
 
-  if (deliveredNow && !deliveredBefore) {
-    await recordDeliveryGraphEvent(supabase, {
-      message: row,
-      statusUpdate,
-      conversation,
-      eventType: "sms.delivered",
-    })
-    return { ok: true, messageId: row.id, graphEvent: "sms.delivered" }
-  }
-
-  return { ok: true, messageId: row.id }
+  await recordDeliveryGraphEvent(supabase, {
+    message: row,
+    statusUpdate,
+    conversation,
+    eventType: "sms.delivered",
+    previousStatus: applied.previous_status ?? null,
+  })
+  return { ok: true, messageId: row.id, graphEvent: "sms.delivered" }
 }
