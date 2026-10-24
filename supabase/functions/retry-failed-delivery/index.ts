@@ -1,10 +1,6 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
-  isFictionalWelcomePhone,
-  isReservedWelcomeEmail,
-} from "../../../shared/onboarding/landlordWelcomeDelivery.ts"
-import {
   notifyResident,
   type ResidentNotifyEvent,
   normalizePhoneFlexible,
@@ -23,6 +19,23 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+}
+
+function isReservedTestEmail(email: string | null | undefined): boolean {
+  const normalized = (email ?? "").trim().toLowerCase()
+  const at = normalized.lastIndexOf("@")
+  if (at <= 0) return false
+  const domain = normalized.slice(at + 1)
+  return domain === "example.com" || domain.endsWith(".example.com")
+}
+
+/** NANP 555-0100 through 555-0199 cannot receive SMS. */
+function isFictionalTestPhone(phone: string | null | undefined): boolean {
+  const digits = (phone ?? "").replace(/\D/g, "")
+  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits
+  if (national.length !== 10) return false
+  const line = national.slice(6)
+  return national.slice(3, 6) === "555" && line >= "0100" && line <= "0199"
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -126,8 +139,8 @@ async function retryResidentDelivery(
   const residentEmail = typeof ticket.email === "string" ? ticket.email.trim() : ""
   const residentPhone = typeof ticket.resident_phone === "string" ? ticket.resident_phone : ""
   if (
-    (channel === "email" && isReservedWelcomeEmail(residentEmail)) ||
-    (channel === "sms" && isFictionalWelcomePhone(residentPhone))
+    (channel === "email" && isReservedTestEmail(residentEmail)) ||
+    (channel === "sms" && isFictionalTestPhone(residentPhone))
   ) {
     console.info("[retry-failed-delivery] dry-run reserved recipient")
     return { ok: true }
@@ -195,7 +208,7 @@ async function retryVendorDelivery(
   if (channel === "email") {
     const to = typeof vendor.email === "string" ? vendor.email.trim() : ""
     if (!to) throw new Error("Vendor has no email for retry")
-    if (isReservedWelcomeEmail(to)) {
+    if (isReservedTestEmail(to)) {
       console.info("[retry-failed-delivery] dry-run reserved recipient")
       return { ok: true }
     }
@@ -214,7 +227,7 @@ async function retryVendorDelivery(
       typeof vendor.phone === "string" ? vendor.phone : null,
     )
     if (!to) throw new Error("Vendor has no valid phone for SMS retry")
-    if (isFictionalWelcomePhone(to)) {
+    if (isFictionalTestPhone(to)) {
       console.info("[retry-failed-delivery] dry-run reserved recipient")
       return { ok: true }
     }
@@ -294,7 +307,7 @@ async function retryBroadcastDelivery(
 
   if (channel === "email") {
     if (!recipientEmail) throw new Error("Broadcast recipient email missing for retry")
-    if (isReservedWelcomeEmail(recipientEmail)) {
+    if (isReservedTestEmail(recipientEmail)) {
       console.info("[retry-failed-delivery] dry-run reserved recipient")
       return { ok: true }
     }
@@ -308,7 +321,7 @@ async function retryBroadcastDelivery(
     else providerMessageId = result.id
   } else {
     if (!recipientPhone) throw new Error("Broadcast recipient phone missing for SMS retry")
-    if (isFictionalWelcomePhone(recipientPhone)) {
+    if (isFictionalTestPhone(recipientPhone)) {
       console.info("[retry-failed-delivery] dry-run reserved recipient")
       return { ok: true }
     }
