@@ -11,6 +11,7 @@ import { getSMSProviderForSend } from "./providerFactory.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 import { resolveSmsIntakeNumber } from "../../../../shared/landlordCapabilities.ts"
 import { landlordPortfolioLabel } from "../../../../shared/landlordPortfolioLabel.ts"
+import { planLandlordWelcomeDelivery } from "../../../../shared/onboarding/landlordWelcomeDelivery.ts"
 
 export type LandlordOnboardingWelcomeParams = {
   landlordId: string
@@ -241,6 +242,8 @@ type PriorWelcome = {
   exists: boolean
   smsSent: string[]
   emailSent: string[]
+  smsSkipped: string[]
+  emailSkipped: string[]
 }
 
 async function loadPriorWelcome(
@@ -254,26 +257,33 @@ async function loadPriorWelcome(
     .in("event_type", [
       "landlord.onboarding_welcome_sent",
       "landlord.onboarding_welcome_email_sent",
+      "landlord.onboarding_welcome_skipped",
     ])
     .order("created_at", { ascending: false })
     .limit(20)
 
   if (error) {
     console.warn("[landlord-onboarding-welcome] idempotency lookup", error.message)
-    return { exists: false, smsSent: [], emailSent: [] }
+    return { exists: false, smsSent: [], emailSent: [], smsSkipped: [], emailSkipped: [] }
   }
 
   const smsSent = new Set<string>()
   const emailSent = new Set<string>()
+  const smsSkipped = new Set<string>()
+  const emailSkipped = new Set<string>()
   for (const row of data ?? []) {
     const metadata = (row as { metadata?: Record<string, unknown> }).metadata ?? {}
     for (const item of stringListFromMeta(metadata.sms_sent)) smsSent.add(item)
     for (const item of stringListFromMeta(metadata.email_sent)) emailSent.add(item)
+    for (const item of stringListFromMeta(metadata.sms_skipped)) smsSkipped.add(item)
+    for (const item of stringListFromMeta(metadata.email_skipped)) emailSkipped.add(item)
   }
   return {
     exists: (data ?? []).length > 0,
     smsSent: [...smsSent],
     emailSent: [...emailSent],
+    smsSkipped: [...smsSkipped],
+    emailSkipped: [...emailSkipped],
   }
 }
 
@@ -294,15 +304,52 @@ export async function sendLandlordOnboardingWelcome(
   }
 
   const prior = await loadPriorWelcome(supabase, landlordId)
-  const skipSms = prior.smsSent.length > 0
-  const skipEmail = prior.emailSent.length > 0 && !params.forceEmail
-  if (skipSms && skipEmail) {
+  const welcomePhones = await loadWelcomePhones(supabase, landlordId)
+  const welcomeEmails = await loadWelcomeEmails(supabase, landlordId, params.email)
+  const plan = planLandlordWelcomeDelivery({
+    phones: welcomePhones,
+    emails: welcomeEmails,
+    priorSmsSent: prior.smsSent,
+    priorEmailSent: prior.emailSent,
+    priorSmsSkipped: prior.smsSkipped,
+    priorEmailSkipped: prior.emailSkipped,
+    forceEmail: params.forceEmail,
+  })
+  const nothingNew =
+    plan.smsToSend.length === 0 &&
+    plan.emailToSend.length === 0 &&
+    plan.smsSkipped.length === 0 &&
+    plan.emailSkipped.length === 0
+  if (nothingNew && (prior.smsSent.length > 0 || prior.emailSent.length > 0)) {
     return {
       ok: true,
       skipped: true,
       reason: "already_sent",
       smsSent: prior.smsSent,
       emailSent: prior.emailSent,
+      errors: [],
+    }
+  }
+  if (
+    nothingNew &&
+    (prior.smsSkipped.length > 0 || prior.emailSkipped.length > 0)
+  ) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "undeliverable_contact",
+      smsSent: [],
+      emailSent: [],
+      errors: [],
+    }
+  }
+  if (nothingNew) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "no_contact_info",
+      smsSent: [],
+      emailSent: [],
       errors: [],
     }
   }
@@ -344,7 +391,7 @@ export async function sendLandlordOnboardingWelcome(
   const smsSent: string[] = []
   const emailSent: string[] = []
 
-  const phones = skipSms ? [] : await loadWelcomePhones(supabase, landlordId)
+  const phones = plan.smsToSend
   if (phones.length > 0) {
     // Same Alpha-aware shared Twilio DID path as tenant welcome / vendor invite.
     const line = await resolveOutboundLandlordSmsLine(supabase, landlordId)
@@ -367,11 +414,8 @@ export async function sendLandlordOnboardingWelcome(
     }
   }
 
-  const welcomeEmails = skipEmail
-    ? []
-    : await loadWelcomeEmails(supabase, landlordId, params.email)
-  if (welcomeEmails.length > 0) {
-    for (const to of welcomeEmails) {
+  if (plan.emailToSend.length > 0) {
+    for (const to of plan.emailToSend) {
       const mail = await sendResendEmail(
         to,
         emailCopy.subject,
@@ -387,32 +431,54 @@ export async function sendLandlordOnboardingWelcome(
   }
 
   if (smsSent.length === 0 && emailSent.length === 0) {
+    const undeliverable =
+      errors.length === 0 &&
+      (plan.smsSkipped.length > 0 || plan.emailSkipped.length > 0)
+    if (undeliverable) {
+      try {
+        await recordActivityLog(supabase, {
+          landlordId,
+          eventType: "landlord.onboarding_welcome_skipped",
+          source: "automation",
+          actorType: "system",
+          metadata: {
+            message:
+              "Setup welcome was not sent because the contact details cannot receive messages.",
+            sms_skipped: plan.smsSkipped,
+            email_skipped: plan.emailSkipped,
+          },
+        })
+      } catch (err) {
+        console.warn("[landlord-onboarding-welcome] skip log failed", err)
+      }
+    }
     return {
-      ok: false,
-      skipped: false,
-      reason: phones.length === 0 && welcomeEmails.length === 0
-        ? (prior.exists ? "already_sent" : "no_contact_info")
-        : "delivery_failed",
+      ok: undeliverable,
+      skipped: undeliverable,
+      reason: undeliverable ? "undeliverable_contact" : "delivery_failed",
       smsSent,
       emailSent,
       errors,
     }
   }
 
+  const emailOnly = smsSent.length === 0
   try {
     await recordActivityLog(supabase, {
       landlordId,
-      eventType: skipSms && !skipEmail
+      eventType: emailOnly
         ? "landlord.onboarding_welcome_email_sent"
         : "landlord.onboarding_welcome_sent",
       source: "automation",
       actorType: "system",
       metadata: {
-        message: skipSms && !skipEmail
+        message: emailOnly
           ? "Welcome email sent after setup was completed."
           : "Welcome message sent after setup was completed.",
         sms_sent: smsSent,
         email_sent: emailSent,
+        sms_skipped: plan.smsSkipped,
+        email_skipped: plan.emailSkipped,
         sms_intake_number: smsIntakeDisplay,
         company_name: companyName,
       },

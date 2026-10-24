@@ -23,6 +23,7 @@ import {
 import { isUniqueViolation } from '@/lib/errorMessage'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
 import { leaseUnitOrDefault } from '@/lib/onboarding/leaseUnit'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
@@ -144,6 +145,7 @@ export function resolveImportedResidentUnit(
   hasMatchedLease: boolean,
   propertyType?: string | null,
 ): string {
+  if (isSingleFamilyPropertyType(propertyType)) return ''
   const fromResident = asTrimmed(residentUnit)
   if (fromResident) return fromResident
   if (hasMatchedLease) return leaseUnitOrDefault(matchedLeaseUnit, propertyType)

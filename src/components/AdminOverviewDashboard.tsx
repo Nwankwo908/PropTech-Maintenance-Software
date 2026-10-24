@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   postDiscoverExternalVendors,
   resolveDiscoverExternalVendorsUrl,
@@ -39,8 +39,6 @@ import {
   TRY_DEMO_SPOTLIGHT_PORTFOLIO_ID,
   TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID,
 } from '@/lib/tryDemoAttentionGuide'
-import { SETUP_SUCCESS_ITEMS } from '@/lib/setupSuccessChecklist'
-import { setupCheckboxGuideLinkState, markSetupSuccessCheckboxGuidePending } from '@/lib/setupSuccessGuide'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
@@ -656,35 +654,24 @@ function KpiCard({
   )
 
   const valueBlock = (
-    <div
-      className={[
-        'relative flex min-h-20 min-w-0 flex-1 gap-3',
-        chart ? 'items-center justify-end' : 'items-end justify-start',
-      ].join(' ')}
-    >
+    <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
       {chart ? (
-        <div
-          className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3"
-        >
-          {chart}
-        </div>
+        <div className="pointer-events-none -ml-2 sm:-ml-3">{chart}</div>
       ) : valueNote ? (
-        <div className="min-w-0 w-full self-center text-left">{valueNote}</div>
+        <div className="min-w-0 w-full text-left">{valueNote}</div>
       ) : value ? (
         <p className="min-w-0 whitespace-nowrap text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
           {value}
         </p>
       ) : null}
+      {deltaChip}
     </div>
   )
 
   const captionRow = (
-    <div className="mt-auto flex min-w-0 items-center gap-2">
-      <p className="min-w-0 truncate whitespace-nowrap text-left text-[12px] leading-4 text-[#6a7282]">
-        {caption}
-      </p>
-      {deltaChip}
-    </div>
+    <p className="mt-auto min-w-0 truncate whitespace-nowrap text-left text-[12px] leading-4 text-[#6a7282]">
+      {caption}
+    </p>
   )
 
   // Icon width (2.1rem) + gap-1.5 so value/caption share the title text’s left edge.
@@ -3384,74 +3371,6 @@ export function AdminOverviewDashboard() {
         <div className="rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           {error}
         </div>
-      ) : null}
-
-      {!loading && units.length === 0 && tickets.length === 0 ? (
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[18px] font-semibold leading-7 text-[#0a0a0a]">
-            Welcome to Ulo — let’s get your portfolio set up
-          </h2>
-          <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-            Data will appear once activity begins. Work through these steps to
-            bring your first property online.
-          </p>
-          <ol className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            {[
-              {
-                step: '1',
-                title: 'Add a property',
-                desc: 'Register your first building and units.',
-                to: '/admin/properties?add=1',
-              },
-              {
-                step: '2',
-                title: 'Import residents',
-                desc: 'Add residents so Ulo can reach them.',
-                to: '/admin/residents',
-              },
-              {
-                step: '3',
-                title: 'Add vendors',
-                desc: 'Plumbing, HVAC, electrical, and more.',
-                to: '/admin/vendors',
-              },
-              {
-                step: '4',
-                title: 'Connect channels',
-                desc: 'Set up SMS and email communication.',
-                to: '/admin/settings/operations/notifications',
-              },
-              {
-                step: '5',
-                title: 'First request',
-                desc: 'Submit a test maintenance request.',
-                to: SETUP_SUCCESS_ITEMS.find((item) => item.id === 'test_request')!.to,
-                state: setupCheckboxGuideLinkState('test_request'),
-              },
-            ].map((item) => (
-              <li key={item.step}>
-                <Link
-                  to={item.to}
-                  state={'state' in item ? item.state : undefined}
-                  onClick={() => {
-                    if (item.step === '5') markSetupSuccessCheckboxGuidePending('test_request')
-                  }}
-                  className="sa-card flex h-full flex-col gap-1 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4 hover:border-[#101828]/30 hover:bg-white"
-                >
-                  <span className="flex size-6 items-center justify-center rounded-full bg-[#101828] text-[12px] font-semibold text-white">
-                    {item.step}
-                  </span>
-                  <span className="mt-1 text-[14px] font-semibold text-[#101828]">
-                    {item.title}
-                  </span>
-                  <span className="text-[12px] leading-4 text-[#6a7282]">
-                    {item.desc}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ol>
-        </section>
       ) : null}
 
       <section

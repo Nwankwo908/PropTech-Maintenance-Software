@@ -14,6 +14,7 @@ import { getErrorMessage } from '@/lib/errorMessage'
 import { activateUnit, markUnitVacant } from '@/api/unitVacancy'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import type { PropertyUnitOccupancyStatus } from '@/lib/propertyUnitRows'
 import {
@@ -47,6 +48,16 @@ export function residentHasLeaseDatesForActivation(resident: UnitActivationResid
   const moveIn = (resident.moveInDate ?? resident.leaseStart ?? '').trim()
   const leaseEnd = (resident.leaseEndDate ?? resident.leaseEnd ?? '').trim()
   return Boolean(moveIn && leaseEnd)
+}
+
+export function shouldOccupySingleFamilyProperty(
+  propertyType: string | null | undefined,
+  resident: UnitActivationResident,
+): boolean {
+  if (!isSingleFamilyPropertyType(propertyType)) return false
+  if ((resident.status ?? '').trim().toLowerCase() === 'past_resident') return false
+  if (residentHasLeaseDatesForActivation(resident)) return true
+  return residentOccupancyOccupiesUnit((resident.status ?? 'active').trim().toLowerCase())
 }
 
 export function residentQualifiesForUnitActivation(resident: UnitActivationResident): boolean {
@@ -160,6 +171,68 @@ async function ensureOccupancy(params: {
   if (error) {
     console.warn('[unitActivation] occupancy insert', error.message)
   }
+}
+
+async function ensurePropertyOccupancy(params: {
+  landlordId: string
+  propertyId: string
+  propertyName: string
+  residentId: string
+  moveInDate: string
+  source: string
+}): Promise<boolean> {
+  if (!supabase) return false
+  const { data: existing } = await supabase
+    .from('occupancy')
+    .select('id')
+    .eq('landlord_id', params.landlordId)
+    .eq('property_id', params.propertyId)
+    .eq('resident_id', params.residentId)
+    .eq('status', 'active')
+    .maybeSingle()
+  if (existing?.id) return false
+
+  const { error } = await supabase.from('occupancy').insert({
+    landlord_id: params.landlordId,
+    property_id: params.propertyId,
+    unit_id: null,
+    resident_id: params.residentId,
+    move_in_date: params.moveInDate,
+    status: 'active',
+  })
+  if (error) {
+    console.warn('[unitActivation] property occupancy insert', error.message)
+    return false
+  }
+
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  await recordActivityLog({
+    landlordId: params.landlordId,
+    eventType: 'resident.occupancy_updated',
+    source: params.source,
+    actorType: 'landlord',
+    propertyId: params.propertyId,
+    residentId: params.residentId,
+    metadata: {
+      move_in_date: params.moveInDate,
+      message: `${params.propertyName} is occupied`,
+    },
+  })
+  return true
+}
+
+function propertyForResidentBuilding<T extends { name: string }>(
+  properties: T[],
+  building: string | null | undefined,
+): T | undefined {
+  const trimmed = (building ?? '').trim()
+  if (!trimmed || properties.length === 0) return undefined
+  const exact = properties.find(
+    (property) => normalizeBuildingKey(property.name) === normalizeBuildingKey(trimmed),
+  )
+  if (exact) return exact
+  const overlap = properties.filter((property) => extractedPlacesOverlap(trimmed, property.name))
+  return overlap.length === 1 ? overlap[0] : undefined
 }
 
 async function logUnitActivated(params: {
@@ -629,10 +702,38 @@ export async function activateUnitsFromResidentAssignments(params?: {
     status: string
   }>
 
+  const { data: propertyRows } = await supabase
+    .from('properties')
+    .select('id, name, property_type')
+    .eq('landlord_id', landlordId)
+  const properties = (propertyRows ?? []) as Array<{
+    id: string
+    name: string
+    property_type: string | null
+  }>
+  const singleFamilyResidentIds = new Set<string>()
+  for (const resident of residents) {
+    const property = propertyForResidentBuilding(properties, resident.building)
+    if (!property || !shouldOccupySingleFamilyProperty(property.property_type, resident)) continue
+    singleFamilyResidentIds.add(resident.id)
+    const moveIn =
+      (resident.moveInDate ?? resident.leaseStart ?? '').trim() ||
+      new Date().toISOString().slice(0, 10)
+    await ensurePropertyOccupancy({
+      landlordId,
+      propertyId: property.id,
+      propertyName: property.name,
+      residentId: resident.id,
+      moveInDate: moveIn,
+      source,
+    })
+  }
+
   let activated = 0
   const touchedUnitIds = new Set<string>()
 
   for (const resident of qualified) {
+    if (singleFamilyResidentIds.has(resident.id)) continue
     const unit = pickCanonicalUnitForResident(
       units.map((row) => ({
         id: row.id,

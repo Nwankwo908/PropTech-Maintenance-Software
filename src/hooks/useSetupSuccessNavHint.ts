@@ -2,14 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { loadSetupSuccessProgress } from '@/lib/loadSetupSuccessProgress'
-import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
-import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import {
   clearSetupSuccessCardDismissed,
   SETUP_SUCCESS_COLLAPSED_EVENT,
   SETUP_SUCCESS_NAV_GAIN_FLASH_MS,
   SETUP_SUCCESS_PROGRESS_CHANGED_EVENT,
+  setupSuccessExperienceReady,
   setupSuccessNavPercentGain,
   setupSuccessPercent,
   shouldShowSetupSuccessNavHint,
@@ -19,8 +18,7 @@ import {
 export function useSetupSuccessNavHint() {
   const location = useLocation()
   const landlordId = getActiveLandlordId()
-  const eligible =
-    isLimitedAlphaLandlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
+  const eligible = setupSuccessExperienceReady(landlordId)
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
   const [gainDelta, setGainDelta] = useState(0)
   const gainTimerRef = useRef<number | null>(null)

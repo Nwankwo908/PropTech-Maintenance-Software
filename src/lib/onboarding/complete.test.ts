@@ -281,6 +281,36 @@ describe('completeOnboarding', () => {
     )
   })
 
+  it('does not send a setup welcome to an example.com address or fictional phone', async () => {
+    const base = validOnboardingState()
+    const state = validOnboardingState({
+      accountSetup: {
+        ...base.accountSetup,
+        email: 'lease-import-conflict@example.com',
+        phone: '+12025550102',
+        backupContactEmail: '',
+        backupContactPhone: '',
+      },
+    })
+
+    const result = await completeOnboarding(state, [], [])
+
+    expect(result.ok).toBe(true)
+    expect(sendLandlordOnboardingWelcome).not.toHaveBeenCalled()
+    expect(result.activationWarning).toBe(
+      'Setup finished, but the welcome message was not sent because the email and phone on this account cannot receive messages.',
+    )
+    expect(recordActivityLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'landlord.onboarding_welcome_skipped',
+        metadata: expect.objectContaining({
+          email_skipped: ['lease-import-conflict@example.com'],
+          sms_skipped: ['+12025550102'],
+        }),
+      }),
+    )
+  })
+
   it('still finishes setup when activity log fails', async () => {
     recordActivityLog.mockRejectedValue(new Error('log failed'))
     const residents = [sampleResident()]

@@ -1468,6 +1468,7 @@ async function handleScheduleChange(
 
   let vendorNotified = false
   let previousTimeLabel: string | null = null
+  let vendorNotifyReason: string | null = null
   if (ticket?.id) {
     const { beginTenantInitiatedReschedule } = await import(
       "./vendorRescheduleSms.ts"
@@ -1480,6 +1481,7 @@ async function handleScheduleChange(
     })
     vendorNotified = reschedule.vendorNotified
     previousTimeLabel = reschedule.previousTimeLabel
+    vendorNotifyReason = reschedule.error ?? null
   }
 
   void notifyLandlordNeedsAttention(ctx.supabase, {
@@ -1492,7 +1494,7 @@ async function handleScheduleChange(
       vendorNotified
         ? "Vendor was asked for a new window."
         : ticket
-        ? "Vendor could not be reached automatically."
+        ? `Vendor was not texted (${vendorNotifyReason ?? "unknown"}).`
         : null,
     ]
       .filter(Boolean)
@@ -1515,8 +1517,6 @@ async function handleScheduleChange(
     "sms_schedule_change",
     [
       `Hi ${who},`,
-      "",
-      "This is the property management team.",
       "",
       ticket
         ? vendorNotified

@@ -181,19 +181,22 @@ function samePropertyPlace(
   return leftPlace.toLowerCase() === rightPlace.toLowerCase()
 }
 
-/** Same current lease: matching unit + property. Unassigned people stay ungrouped. */
+/** Same current lease. A unit match is required when either person has one. Single-family co-tenants share the property with no unit. */
 export function shareSameLeasePlace(
   left: Pick<ResidentOccupantRow, 'unit' | 'building' | 'status'>,
   right: Pick<ResidentOccupantRow, 'unit' | 'building' | 'status'>,
 ): boolean {
   if (left.status === 'past_resident' || right.status === 'past_resident') return false
-  const unitKey = normalizeUnitLabel(left.unit)
-  if (!unitKey) return false
-  if (normalizeUnitLabel(right.unit) !== unitKey) return false
+  if (normalizeUnitLabel(left.unit) !== normalizeUnitLabel(right.unit)) return false
+  const leftProperty = normalizeBuildingKey(left.building)
+  const rightProperty = normalizeBuildingKey(right.building)
+  if (!leftProperty || !rightProperty || leftProperty.toLowerCase() === 'portfolio' || rightProperty.toLowerCase() === 'portfolio') {
+    return false
+  }
   return samePropertyPlace(left.building, right.building)
 }
 
-/** One household per property + unit. People without a unit stay on their own row. */
+/** One household per property and unit. Single-family co-tenants with no unit share the property. */
 export function groupResidentsByLeasePlace<T extends ResidentOccupantRow>(residents: T[]): T[][] {
   const current = residents.filter((row) => row.status !== 'past_resident')
   const used = new Set<string>()
@@ -201,13 +204,9 @@ export function groupResidentsByLeasePlace<T extends ResidentOccupantRow>(reside
 
   for (const row of current) {
     if (used.has(row.id)) continue
-    if (!normalizeUnitLabel(row.unit)) {
-      used.add(row.id)
-      groups.push([row])
-      continue
-    }
-
-    const members = current.filter((other) => !used.has(other.id) && shareSameLeasePlace(row, other))
+    const members = current.filter(
+      (other) => !used.has(other.id) && (other.id === row.id || shareSameLeasePlace(row, other)),
+    )
     for (const member of members) used.add(member.id)
     members.sort((a, b) => a.fullName.localeCompare(b.fullName, undefined, { sensitivity: 'base' }))
     groups.push(members)
@@ -225,16 +224,18 @@ export function otherOccupantsOnSamePlace(input: {
   building: string | null | undefined
   residents: ResidentOccupantRow[]
 }): ResidentOtherOccupant[] {
-  const unitKey = normalizeUnitLabel(input.unit)
-  if (!unitKey) return []
-
   const seen = new Set<string>()
   const occupants: ResidentOtherOccupant[] = []
+  const self = {
+    id: input.residentId,
+    fullName: '',
+    unit: input.unit,
+    building: input.building ?? null,
+    status: 'active',
+  }
   for (const row of input.residents) {
     if (row.id === input.residentId) continue
-    if (row.status === 'past_resident') continue
-    if (normalizeUnitLabel(row.unit) !== unitKey) continue
-    if (!samePropertyPlace(row.building, input.building)) continue
+    if (!shareSameLeasePlace(self, row)) continue
     const name = row.fullName.trim()
     if (!name) continue
     const key = row.id.trim() || name.toLowerCase()

@@ -2,11 +2,15 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   buildScheduleConfirmClarifySms,
+  buildTenantLaterSameDayAckSms,
   buildTenantScheduleAskSms,
   buildTenantScheduleDeclinedSms,
+  buildVendorLaterSameDaySms,
   buildVendorTenantNeedsDifferentTimeSms,
   buildVendorWaitingOnTenantSms,
+  dayLabelFromWindow,
   extractTenantSchedulePreferredWindow,
+  isLaterSameDayCounter,
   parseTenantScheduleDecision,
 } from "./tenantScheduleConfirm.ts"
 
@@ -33,6 +37,25 @@ Deno.test("parseTenantScheduleDecision treats No + time as counter-propose", () 
   assertEquals(
     parseTenantScheduleDecision("Can they come Wed 2pm?"),
     "counter_propose",
+  )
+})
+
+Deno.test("later the same day is a counter-proposal with vendor and tenant copy", () => {
+  const body = "No. Can they come later on the same day?"
+  assertEquals(parseTenantScheduleDecision(body), "counter_propose")
+  assertEquals(isLaterSameDayCounter(body), true)
+  const vendor = buildVendorLaterSameDaySms("9–11am Fri")
+  assertEquals(
+    vendor,
+    "The resident can't do 9–11am Fri. Can you come later the same day? Reply with a window.",
+  )
+  const tenant = buildTenantLaterSameDayAckSms({
+    vendorName: "Ecosafe",
+    dayLabel: dayLabelFromWindow("9–11am Fri"),
+  })
+  assertEquals(
+    tenant,
+    "I've asked Ecosafe for a later time on Friday and will text you when they reply.",
   )
 })
 
@@ -94,6 +117,7 @@ Deno.test("tenant ask and vendor waiting copy stay plain-language", () => {
   assertEquals(ask.includes("Reply YES"), true)
   assertEquals(ask.includes("NO with another day/time"), true)
   assertEquals(ask.includes("workflow"), false)
+  assertEquals(ask.includes("This is the property management team."), false)
 
   const waiting = buildVendorWaitingOnTenantSms("Wednesday after 3:00 PM")
   assertEquals(waiting.includes("checking with the resident"), true)

@@ -29,8 +29,6 @@ export type TenantRentReplyParse =
 const PAID_TOKENS = [
   "PAID",
   "SENT",
-  "YES",
-  "Y",
   "PAYMENT SENT",
   "I PAID",
   "IVE PAID",
@@ -188,10 +186,68 @@ export function buildTenantRentAmountAskSms(params: {
  * Resident PAID / PARTIAL / QUESTIONS while landlord rent collection is paused.
  * Do not validate amounts against balance_due (Section 8 / wrong-balance loops).
  */
+const RENT_ASK_WINDOW_MS = 72 * 60 * 60 * 1000
+
+/** Bare YES / Y only. "Today? Yes" is an answer to another question. */
+export function isBareYesRentAffirmation(body: string): boolean {
+  const normalized = body
+    .trim()
+    .toUpperCase()
+    .replace(/[.!]+$/g, "")
+    .replace(/\s+/g, " ")
+  return normalized === "YES" || normalized === "Y"
+}
+
+/**
+ * Outbound rent reminder or PAID / PARTIAL / QUESTIONS prompt.
+ * A scheduling question is not a rent ask.
+ */
+export function looksLikeRentCollectionAsk(body: string): boolean {
+  const text = body.trim().toLowerCase()
+  if (!text || !/\brent\b/.test(text)) return false
+  return (
+    /\bpaid\b/.test(text) ||
+    /\bpartial\b/.test(text) ||
+    /\bquestions\b/.test(text) ||
+    /\bwas due\b/.test(text) ||
+    /how much did you pay/.test(text) ||
+    /payment follow-up/.test(text)
+  )
+}
+
+export function rentAskSentWithinWindow(
+  sentAt: string | null | undefined,
+  now = new Date(),
+  windowMs = RENT_ASK_WINDOW_MS,
+): boolean {
+  const at = Date.parse(sentAt ?? "")
+  if (!Number.isFinite(at)) return false
+  const delta = now.getTime() - at
+  return delta >= 0 && delta <= windowMs
+}
+
+/**
+ * Words that are about rent even when collection is paused.
+ * YES / OK are not rent words.
+ */
+export function isExplicitRentCollectionReply(body: string): boolean {
+  if (isBareYesRentAffirmation(body)) return false
+  const normalized = body
+    .trim()
+    .toUpperCase()
+    .replace(/[.!]+$/g, "")
+    .replace(/\s+/g, " ")
+  if (normalized === "OK" || normalized === "OKAY") return false
+  const parsed = parseTenantRentReply(body)
+  if (parsed?.kind === "paid" || parsed?.kind === "partial" || parsed?.kind === "questions") {
+    return true
+  }
+  if (/\brent\b/i.test(body)) return true
+  return parseMoneyAmountFromSms(body).status === "ok"
+}
+
 export function buildTenantRentCollectionPausedSms(): string {
   return [
-    "This is the property management team.",
-    "",
     "Rent reminders and payment follow-ups are paused right now, so you don't need to reply PAID, PARTIAL, or QUESTIONS for rent.",
     "",
     "If you still need help, text us what you need and someone from the team will follow up.",

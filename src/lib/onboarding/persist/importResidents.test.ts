@@ -72,6 +72,12 @@ describe('resolveImportedResidentUnit', () => {
   it('does not invent a unit when there is no lease match', () => {
     expect(resolveImportedResidentUnit('', '', false)).toBe('')
   })
+
+  it('does not store Unit 1 or Home for a single-family resident', () => {
+    expect(resolveImportedResidentUnit('1', 'Home', true, 'single_family_home')).toBe('')
+    expect(resolveImportedResidentUnit('', '', true, 'single_family_home')).toBe('')
+    expect(resolveImportedResidentUnit('2A', '2A', true, 'single_family')).toBe('')
+  })
 })
 
 describe('resolveImportResidentBuilding', () => {

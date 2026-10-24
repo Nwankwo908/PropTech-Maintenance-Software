@@ -105,6 +105,45 @@ export function resolveEstimateScheduleKickoff(input: {
   return { kind: "ask_vendor" }
 }
 
+/**
+ * Property team recorded a visit the resident and vendor already agreed to.
+ * One confirmation. No new availability ask.
+ */
+export function buildManualVisitTimeVendorSms(input: {
+  vendorName: string
+  workOrderRef: string
+  windowText: string
+  vendorDecision: VendorJobDecisionState
+  jobLink?: string | null
+}): string | null {
+  if (input.vendorDecision === "declined") return null
+  const name = vendorCompanyName(input.vendorName)
+  const wo = input.workOrderRef.trim() || "this work order"
+  const when = input.windowText.trim() || "the time you agreed"
+  const lines = [
+    `Hi ${name},`,
+    "",
+    `Update for work order ${wo}.`,
+    "",
+    `The property team set the visit for ${when}.`,
+  ]
+  if (input.vendorDecision === "pending") {
+    lines.push(
+      "",
+      "Would you like to continue with this job?",
+      "",
+      "Reply YES to accept the work order or NO if you're unable to take it.",
+    )
+  } else {
+    lines.push("", "You can plan on that time.")
+  }
+  const jobLink = input.jobLink?.trim() || ""
+  if (jobLink) {
+    lines.push("", "View details:", jobLink)
+  }
+  return lines.join("\n")
+}
+
 /** @deprecated Prefer resolveEstimateScheduleKickoff */
 export function shouldKickoffScheduleOnEstimateApprove(input: {
   approved: boolean

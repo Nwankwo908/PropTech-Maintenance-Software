@@ -116,3 +116,39 @@ export async function postAdminMoveWorkflowStage(
     assigned_vendor_id: payload.assigned_vendor_id ?? null,
   }
 }
+
+export async function postAdminSetVisitTime(input: {
+  ticketId: string
+  visitDate: string
+  windowText: string
+}): Promise<{ scheduledWindowText: string; vendorTexted: boolean }> {
+  const url = resolveAdminMoveWorkflowStageUrl()
+  const secret = requireAdminEdgeSecret('Set visit time')
+  if (!url) throw new Error('Visit time is not configured (admin Edge URL).')
+  const landlordId = getActiveLandlordId()
+  if (!landlordId) throw new Error('No active landlord selected.')
+
+  const res = await fetchAdminEdgeFunction(url, {
+    method: 'POST',
+    headers: adminEdgeInvokeHeaders(secret),
+    body: JSON.stringify({
+      action: 'set_visit_time',
+      landlordId,
+      ticketId: input.ticketId.trim(),
+      visitDate: input.visitDate.trim(),
+      windowText: input.windowText.trim(),
+    }),
+  })
+  const payload = (await res.json().catch(() => ({}))) as {
+    error?: string
+    scheduled_window_text?: string
+    vendor_texted?: boolean
+  }
+  if (!res.ok) {
+    throw new Error(payload.error ?? `Could not set the visit time (${res.status})`)
+  }
+  return {
+    scheduledWindowText: payload.scheduled_window_text ?? input.windowText,
+    vendorTexted: payload.vendor_texted === true,
+  }
+}

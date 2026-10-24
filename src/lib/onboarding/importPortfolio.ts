@@ -496,6 +496,7 @@ export async function importMockExtraction(
       properties: persistedProperties.map((property) => ({
         id: property.id,
         name: property.name,
+        propertyType: property.propertyType ?? null,
       })),
       onboardingSession: sessionId
         ? {

@@ -79,13 +79,30 @@ export function mapRentRollToPortfolio(extract: RentRollExtract): MappedPortfoli
   for (const row of extract.rows) {
     if (row.skipReason === 'summary_or_total_row') continue
     if (!row.unit) {
-      roleFacts.push({
-        role: 'unit_row_needs_review',
-        label: ROLE_LABELS.unit_row_needs_review,
-        value: row.tenant_names.join(', ') || 'Row has no unit identifier',
-        confidence: row.confidence,
-        needsReview: true,
-      })
+      if (row.tenant_names.length === 0) {
+        roleFacts.push({
+          role: 'unit_row_needs_review',
+          label: ROLE_LABELS.unit_row_needs_review,
+          value: 'Row has no unit identifier',
+          confidence: row.confidence,
+          needsReview: true,
+        })
+        continue
+      }
+      for (const name of row.tenant_names) {
+        residents.push({
+          fullName: name,
+          unit: '',
+          building,
+          phone: '',
+          email: '',
+          leaseStart: row.lease_start ?? '',
+          leaseEnd: row.lease_end ?? '',
+          monthlyRent: formatMoney(row.monthly_rent),
+          rentDueDay: row.rent_due_day != null ? String(row.rent_due_day) : '',
+          confidence: row.confidence,
+        })
+      }
       continue
     }
     units.push({

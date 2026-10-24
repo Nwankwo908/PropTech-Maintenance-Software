@@ -36,6 +36,8 @@ export function leaseUnitOrDefault(
   unit: string | null | undefined,
   propertyType?: string | null,
 ): string {
+  // A single-family home is the property. Do not store Unit 1, Home, or any other unit.
+  if (isSingleFamilyPropertyType(propertyType)) return ''
   return usableLeaseUnit(unit) || defaultLeaseUnitForPropertyType(propertyType)
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { leaseScanToExtract, mergeLeaseScans, normalizeLeaseScan, selectLeaseRecoveryPages } from './leaseScan'
+import { discloseFastTrackPartialScan, FAST_TRACK_LEASE_SCAN_PAGES, leaseScanToExtract, mergeLeaseScans, normalizeLeaseScan, selectLeaseRecoveryPages } from './leaseScan'
 import { leaseFixture } from './leaseScan.fixtures'
 describe('lease evidence and completeness', () => {
   it('accepts explicit zero deposit and distinguishes unreadable from absent terms', () => {
@@ -11,6 +11,29 @@ describe('lease evidence and completeness', () => {
     expect(review.fields.unit.needsReview).toBe(false)
     expect(review.fields.lease_end.needsReview).toBe(true)
     expect(review.needsReview).toBe(true)
+  })
+  it('discloses an opening-page scan without dropping values read on those pages', () => {
+    const raw = leaseFixture([1, 2, 3, 4])
+    raw.fields.unit = { ...raw.fields.unit, value: null, status: 'not_stated', quote: '' }
+    const { review } = normalizeLeaseScan(raw, ['', '', '', ''])
+    const disclosed = discloseFastTrackPartialScan(review, 12, [1, 2, 3, FAST_TRACK_LEASE_SCAN_PAGES])
+    expect(disclosed.pageCount).toBe(12)
+    expect(disclosed.pagesReviewed).toEqual([1, 2, 3, 4])
+    expect(disclosed.coverageComplete).toBe(false)
+    expect(disclosed.fields.monthly_rent.value).toBe(1500)
+    expect(disclosed.fields.monthly_rent.status).toBe('found')
+    expect(disclosed.fields.unit.value).toBeNull()
+    expect(disclosed.fields.unit.status).toBe('unreadable')
+    const saved = leaseScanToExtract(disclosed, normalizeLeaseScan(leaseFixture(), ['']).extract)
+    expect(saved.unit).toBeNull()
+    expect(saved.monthly_rent).toBe(1500)
+  })
+  it('leaves a document that fits in the opening pages fully checked', () => {
+    const { review } = normalizeLeaseScan(leaseFixture([1, 2, 3, 4]), ['', '', '', ''])
+    const disclosed = discloseFastTrackPartialScan(review, FAST_TRACK_LEASE_SCAN_PAGES, [1, 2, 3, 4])
+    expect(disclosed.pageCount).toBe(4)
+    expect(disclosed.coverageComplete).toBe(true)
+    expect(disclosed.fields.unit.status).toBe('found')
   })
   it('requires coverage before claiming a term is absent', () => {
     const raw = leaseFixture()

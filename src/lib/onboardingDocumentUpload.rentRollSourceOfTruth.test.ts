@@ -190,10 +190,13 @@ describe('rent roll vs lease agreement source of truth', () => {
       true,
     )
     expect(review.residents).toHaveLength(1)
-    expect(review.units.some((row) => /B/i.test(row.label))).toBe(true)
+    expect(review.properties[0]?.propertyType).toBe('single_family_home')
+    expect(review.units).toEqual([])
+    expect(review.residents[0]?.unit).toBe('')
+    expect(review.leases[0]?.unit).toBe('')
   })
 
-  it('lease-only with no unit number defaults to unit 1', () => {
+  it('lease-only single-family lease does not invent a unit', () => {
     const review = buildOnboardingExtractionReview([
       uploadedDoc(
         'lease',
@@ -217,10 +220,10 @@ describe('rent roll vs lease agreement source of truth', () => {
     ])
 
     expect(review.residents).toHaveLength(1)
-    expect(review.residents[0]?.unit).toBe('1')
+    expect(review.residents[0]?.unit).toBe('')
     expect(review.residents[0]?.needsReview).toBe(false)
-    expect(review.leases[0]?.unit).toBe('1')
-    expect(review.units.some((row) => row.label === '1')).toBe(true)
+    expect(review.leases[0]?.unit).toBe('')
+    expect(review.units).toEqual([])
   })
 
   it('lease-only copies rent due day onto residents when the lease states it', () => {
@@ -288,11 +291,8 @@ describe('rent roll vs lease agreement source of truth', () => {
       'Alex Rivera',
       'Jordan Rivera',
     ])
-    expect(review.residents.every((row) => row.unit === '1')).toBe(true)
-    // Empty / illegible lease units still default to "1" for inventory, but must
-    // stay flagged for review — do not silently clear uncertainty.
-    expect(review.residents.some((row) => row.needsReview === true)).toBe(true)
-    expect(review.units.some((row) => row.label === '1')).toBe(true)
+    expect(review.residents.every((row) => row.unit === '')).toBe(true)
+    expect(review.units).toEqual([])
   })
 
   it('4 + 7. same tenant on rent roll + lease merges into one enriched resident', () => {
@@ -775,5 +775,60 @@ describe('rent roll vs lease agreement source of truth', () => {
     expect(review.residents[0]?.id).toMatch(/^ext-res-roll-/)
     expect(review.residents[0]?.phone).toContain('973')
     expect(review.residents[0]?.leaseStart).toBe('2024-02-01')
+  })
+
+  it('a signed lease extension replaces the rent and expiration', () => {
+    const person = {
+      fullName: 'Breane Kelsye Meek',
+      unit: '',
+      building: '6421 Fairview Dr',
+      phone: '',
+      email: '',
+      confidence: 80,
+    }
+    const review = buildOnboardingExtractionReview([
+      uploadedDoc(
+        'base',
+        '6421 Fairview Lease.pdf',
+        emptyPayload({
+          residents: [{ ...person, leaseStart: '2023-06-17', leaseEnd: '2025-06-30', monthlyRent: '2100' }],
+          leases: [{
+            residentName: person.fullName,
+            unit: '',
+            building: person.building,
+            leaseStart: '2023-06-17',
+            leaseEnd: '2025-06-30',
+            rentAmount: '2100',
+            securityDeposit: '3000',
+            confidence: 80,
+          }],
+        }),
+        'lease_agreement',
+      ),
+      uploadedDoc(
+        'extension',
+        'Extension Of Residential Lease v2.pdf',
+        emptyPayload({
+          residents: [{ ...person, leaseStart: '2025-06-30', leaseEnd: '2026-07-31', monthlyRent: '2150' }],
+          leases: [{
+            residentName: person.fullName,
+            unit: '',
+            building: person.building,
+            leaseStart: '2025-06-30',
+            leaseEnd: '2026-07-31',
+            rentAmount: '2150',
+            securityDeposit: '',
+            confidence: 80,
+          }],
+        }),
+        'lease_agreement',
+      ),
+    ])
+
+    expect(review.residents).toHaveLength(1)
+    expect(review.residents[0]?.monthlyRent).toBe('2150')
+    expect(review.residents[0]?.leaseStart).toBe('2023-06-17')
+    expect(review.residents[0]?.leaseEnd).toBe('2026-07-31')
+    expect(JSON.stringify(review)).not.toContain('2500')
   })
 })

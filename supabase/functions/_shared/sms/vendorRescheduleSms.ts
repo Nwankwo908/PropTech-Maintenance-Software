@@ -23,6 +23,7 @@ import {
 } from "../vendor_schedule_fsm.ts"
 import {
   findOrCreateConversation,
+  findResidentConversationByPhone,
   upsertSmsIdentityForPhone,
 } from "./inbound_db.ts"
 import { sendInboundAutoReply } from "./inboundReply.ts"
@@ -328,6 +329,51 @@ export function buildVendorResidentConfirmedRescheduleSms(input: {
   newTimeLabel: string
 }): string {
   return `The resident confirmed the new appointment for work order ${input.workOrderRef} at ${input.newTimeLabel}.`
+}
+
+export type VendorTextAttempt = {
+  ok: boolean
+  error?: string
+  conversationId?: string | null
+}
+
+/**
+ * One send, then a single retry. The reason is the second failure (or
+ * no_vendor_phone) so staff handoff can say why the vendor was not texted.
+ */
+export async function deliverVendorTextWithRetry(
+  send: () => Promise<VendorTextAttempt>,
+): Promise<{
+  ok: boolean
+  attempts: number
+  reason: string | null
+  conversationId: string | null
+}> {
+  const first = await send()
+  if (first.ok) {
+    return {
+      ok: true,
+      attempts: 1,
+      reason: null,
+      conversationId: first.conversationId ?? null,
+    }
+  }
+  const second = await send()
+  if (second.ok) {
+    return {
+      ok: true,
+      attempts: 2,
+      reason: null,
+      conversationId: second.conversationId ?? null,
+    }
+  }
+  const reason = second.error?.trim() || first.error?.trim() || "send_failed"
+  return {
+    ok: false,
+    attempts: 2,
+    reason,
+    conversationId: null,
+  }
 }
 
 /** Vendor SMS when the resident can no longer make a confirmed visit. */
@@ -680,14 +726,36 @@ async function notifyResidentReschedule(
   })
   if (!identity) return { ok: false, conversationId: null }
 
-  const { conversationId } = await findOrCreateConversation(supabase, {
+  const existing = await findResidentConversationByPhone(supabase, {
     landlordId: params.landlordId,
     smsNumberId: smsNumber.id,
     externalPhone: phoneE164,
-    identity,
-    maintenanceRequestId: params.ticketId,
-    conversationStatus: "open",
+    residentId: residentId ?? null,
   })
+  let conversationId = existing?.id ?? ""
+  if (!conversationId && residentId) {
+    const { data: byResident } = await supabase
+      .from("sms_conversations")
+      .select("id")
+      .eq("landlord_id", params.landlordId)
+      .eq("resident_id", residentId)
+      .is("vendor_id", null)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    conversationId = typeof byResident?.id === "string" ? byResident.id : ""
+  }
+  if (!conversationId) {
+    const created = await findOrCreateConversation(supabase, {
+      landlordId: params.landlordId,
+      smsNumberId: smsNumber.id,
+      externalPhone: phoneE164,
+      identity,
+      maintenanceRequestId: params.ticketId,
+      conversationStatus: "open",
+    })
+    conversationId = created.conversationId
+  }
 
   const body = buildResidentRescheduleNotifySms({
     unitLabel: params.unitLabel,
@@ -695,27 +763,23 @@ async function notifyResidentReschedule(
     newTimeLabel: params.newTimeLabel,
   })
 
-  const sent = await sendInboundAutoReply(supabase, {
-    conversationId,
-    landlordId: params.landlordId,
-    fromNumber: smsNumber.phone_number,
-    toNumber: phoneE164,
-    body,
-    provider,
-    source: "tenant_reschedule_notify",
-  })
-
-  const { data: conv } = await supabase
+  const { data: conv, error: readErr } = await supabase
     .from("sms_conversations")
     .select("intake_state")
     .eq("id", conversationId)
     .maybeSingle()
+  if (readErr || !conv) {
+    console.error(
+      "[vendor-reschedule] awaiting_schedule_confirmation was not saved on the resident thread",
+      readErr?.message ?? "conversation_missing",
+    )
+    return { ok: false, conversationId }
+  }
   const prior =
-    conv?.intake_state && typeof conv.intake_state === "object"
+    conv.intake_state && typeof conv.intake_state === "object"
       ? (conv.intake_state as Record<string, unknown>)
       : {}
-
-  await supabase
+  const { error: writeErr } = await supabase
     .from("sms_conversations")
     .update({
       updated_at: new Date().toISOString(),
@@ -736,6 +800,23 @@ async function notifyResidentReschedule(
       },
     })
     .eq("id", conversationId)
+  if (writeErr) {
+    console.error(
+      "[vendor-reschedule] awaiting_schedule_confirmation was not saved on the resident thread",
+      writeErr.message,
+    )
+    return { ok: false, conversationId }
+  }
+
+  const sent = await sendInboundAutoReply(supabase, {
+    conversationId,
+    landlordId: params.landlordId,
+    fromNumber: smsNumber.phone_number,
+    toNumber: phoneE164,
+    body,
+    provider,
+    source: "tenant_reschedule_notify",
+  })
 
   const { error: logErr } = await supabase.from("resident_notification_log").insert({
     ticket_id: params.ticketId,
@@ -1328,6 +1409,7 @@ export async function beginTenantInitiatedReschedule(
       ? ticket.assigned_vendor_id.trim()
       : ""
   if (!vendorId) {
+    console.error("[tenant-reschedule] vendorNotified=false", "no_vendor")
     return {
       ok: false,
       vendorNotified: false,
@@ -1376,7 +1458,7 @@ export async function beginTenantInitiatedReschedule(
     .eq("id", params.ticketId)
 
   if (upErr) {
-    console.error("[tenant-reschedule] update failed", upErr.message)
+    console.error("[tenant-reschedule] vendorNotified=false", "update_failed", upErr.message)
     return {
       ok: false,
       vendorNotified: false,
@@ -1402,17 +1484,36 @@ export async function beginTenantInitiatedReschedule(
 
   let vendorNotified = false
   let vendorConversationId: string | null = null
-  if (phone) {
+  let vendorNotifyReason: string | null = null
+  if (!phone) {
+    vendorNotifyReason = "no_vendor_phone"
+    console.error("[tenant-reschedule] vendorNotified=false", vendorNotifyReason)
+  } else {
     const { sendVendorJobAlert } = await import("./vendorSmsRouting.ts")
-    const alert = await sendVendorJobAlert(supabase, {
-      ticketId: params.ticketId,
-      vendorId,
-      vendorPhone: phone,
-      body,
-      landlordId: params.landlordId,
+    const delivery = await deliverVendorTextWithRetry(async () => {
+      const alert = await sendVendorJobAlert(supabase, {
+        ticketId: params.ticketId,
+        vendorId,
+        vendorPhone: phone,
+        body,
+        landlordId: params.landlordId,
+      })
+      return {
+        ok: alert.ok,
+        error: alert.ok ? undefined : alert.error || "send_failed",
+        conversationId: alert.ok ? alert.conversationId : null,
+      }
     })
-    vendorNotified = alert.ok
-    vendorConversationId = alert.ok ? alert.conversationId : null
+    vendorNotified = delivery.ok
+    vendorConversationId = delivery.conversationId
+    if (!delivery.ok) {
+      vendorNotifyReason = delivery.reason ?? "send_failed"
+      console.error(
+        "[tenant-reschedule] vendorNotified=false",
+        vendorNotifyReason,
+        { attempts: delivery.attempts },
+      )
+    }
   }
 
   if (!vendorConversationId) {
@@ -1458,6 +1559,7 @@ export async function beginTenantInitiatedReschedule(
     metadata: {
       previous_time: previousTimeLabel,
       vendor_notified: vendorNotified,
+      vendor_notify_reason: vendorNotifyReason,
       message: `Resident asked to change ${workOrderRef} (${previousTimeLabel}).`,
     },
   })
@@ -1467,5 +1569,6 @@ export async function beginTenantInitiatedReschedule(
     vendorNotified,
     previousTimeLabel,
     vendorId,
+    error: vendorNotifyReason ?? undefined,
   }
 }

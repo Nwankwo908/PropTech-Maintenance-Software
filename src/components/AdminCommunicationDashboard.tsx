@@ -342,7 +342,7 @@ function KpiCard({
       <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
-      <div className="flex items-end justify-between gap-2">
+      <div className="flex flex-col items-start gap-2">
         <p className="text-[36px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[44px]">
           {value}
         </p>

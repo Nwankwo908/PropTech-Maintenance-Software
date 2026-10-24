@@ -44,6 +44,7 @@ type HandlerState = {
   ledger: LedgerRow[]
   users: Record<string, unknown>
   activityEvents: Array<{ eventType: string }>
+  outboundMessages?: Array<{ body: string; created_at: string; direction: string }>
 }
 
 function mockSupabase(state: HandlerState) {
@@ -244,6 +245,9 @@ function mockSupabase(state: HandlerState) {
         }
         if (table === "workflow_runs") {
           return resolve({ data: [state.run], error: null })
+        }
+        if (table === "sms_messages") {
+          return resolve({ data: state.outboundMessages ?? [], error: null })
         }
         return resolve(empty)
       }, reject)
@@ -628,3 +632,24 @@ Deno.test(
     )
   },
 )
+
+Deno.test("rent active + rent ask sent yesterday + YES is still recorded as PAID", async () => {
+  const state = baseState()
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  state.outboundMessages = [{
+    direction: "outbound",
+    created_at: yesterday,
+    body: "Your rent of $1,406.00 was due October 1. Reply PAID, PARTIAL, or QUESTIONS.",
+  }]
+  const result = await handleTenantRentReply(mockSupabase(state), {
+    landlordId: state.landlordId,
+    conversationId: state.residentConversationId,
+    body: "YES",
+    identityType: "resident",
+    residentId: state.residentId,
+  })
+  assertEquals(result.handled, true)
+  if (!result.handled) return
+  assertStringIncludes(result.replyBody, "paid")
+  assertEquals(state.ledger.some((row) => row.event_type.includes("paid") || row.amount != null), true)
+})

@@ -7,7 +7,13 @@
  * as PAID.
  */
 import { isBareYesInvoicePaidReply } from "./invoicePaidConfirmation.ts"
+import {
+  isExplicitRentCollectionReply,
+  looksLikeRentCollectionAsk,
+} from "./tenantRentReplyParse.ts"
 import { matchShortReplyToken } from "./shortReplyTokens.ts"
+
+const RECENT_QUESTION_MS = 24 * 60 * 60 * 1000
 
 export type SpecificYesNoPendingAskId =
   | "ticket_update_confirm"
@@ -104,16 +110,42 @@ export function listSpecificYesNoPendingAsks(
   return out
 }
 
+export function outboundQuestionWithin24h(
+  lastOutbound: { body: string; sentAt: string } | null | undefined,
+  now = new Date(),
+): boolean {
+  const body = lastOutbound?.body?.trim() ?? ""
+  if (!body || looksLikeRentCollectionAsk(body)) return false
+  if (!/\?\s*$/.test(body)) return false
+  const sent = Date.parse(lastOutbound?.sentAt ?? "")
+  if (!Number.isFinite(sent)) return false
+  const delta = now.getTime() - sent
+  return delta >= 0 && delta <= RECENT_QUESTION_MS
+}
+
 /**
- * Blanket rent-reply must not consume a bare YES/NO when a more specific
- * pending ask is open on the same thread.
+ * Blanket rent-reply must not consume a reply that belongs to a more specific
+ * pending ask, or to a question Ulo or the property team just asked.
  */
 export function shouldYieldRentReplyToSpecificPendingAsk(input: {
   intakeState: unknown
   body: string
+  lastOutbound?: { body: string; sentAt: string } | null
+  now?: Date
 }): boolean {
-  if (!isBareYesOrNoShortReply(input.body)) return false
-  return listSpecificYesNoPendingAsks(input.intakeState).length > 0
+  const pending = listSpecificYesNoPendingAsks(input.intakeState).length > 0
+  if (pending && isBareYesOrNoShortReply(input.body)) return true
+  // "Today? Yes" is not a bare YES, but it is still an answer to the open ask.
+  if (pending && /\byes\b/i.test(input.body) && !isBareYesShortReply(input.body)) {
+    return true
+  }
+  if (
+    outboundQuestionWithin24h(input.lastOutbound, input.now) &&
+    !isExplicitRentCollectionReply(input.body)
+  ) {
+    return true
+  }
+  return false
 }
 
 /**

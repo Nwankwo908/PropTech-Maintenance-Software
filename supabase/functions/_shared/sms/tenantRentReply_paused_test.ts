@@ -218,3 +218,26 @@ Deno.test("awaiting amount follow-up while paused: clears ask and does not re-as
   assertEquals(result.replyBody.includes("more than"), false)
   assertEquals(unpausedAsk.includes("more than"), true)
 })
+
+Deno.test("rent paused + no rent ask + Today? Yes does not send a rent ack", async () => {
+  const state: State = {
+    landlordId: "landlord-1",
+    conversationId: "conv-1",
+    residentId: "res-1",
+    runId: "run-1",
+    balanceDue: 1200,
+    rentCollectionPaused: true,
+    intake: {},
+    usersUpdated: null,
+    amountAskCleared: false,
+  }
+  const result = await handleTenantRentReply(mockSupabase(state), {
+    landlordId: state.landlordId,
+    conversationId: state.conversationId,
+    body: "Today? Yes",
+    identityType: "resident",
+    residentId: state.residentId,
+  })
+  assertEquals(result.handled, false)
+  assertEquals(state.usersUpdated, null)
+})

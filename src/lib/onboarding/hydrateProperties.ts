@@ -2,6 +2,7 @@
  * Hydrate onboarding property rows from the canonical properties table.
  */
 import { listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
+import { isSingleFamilyPropertyType } from '@/lib/onboarding/propertyType'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 import { uniqueOnboardingUnitLabels } from './persist/properties'
@@ -15,7 +16,11 @@ export function propertyRecordToOnboardingProperty(row: PropertyRecord): Onboard
     city: row.city ?? '',
     state: row.state ?? '',
     zipCode: row.zipCode ?? '',
-    unitCount: row.unitCount != null && row.unitCount >= 1 ? row.unitCount : 1,
+    unitCount: isSingleFamilyPropertyType(row.propertyType)
+      ? Math.max(0, row.unitCount ?? 0)
+      : row.unitCount != null && row.unitCount >= 1
+        ? row.unitCount
+        : 1,
     propertyType: row.propertyType ?? undefined,
     propertyManagerName: row.managerName ?? undefined,
     propertyManagerPhone: row.managerPhone ?? undefined,
@@ -51,7 +56,12 @@ export async function loadCanonicalOnboardingProperties(
     return {
       ...property,
       unitLabels: unitLabels.length > 0 ? unitLabels : property.unitLabels,
-      unitCount: unitLabels.length > 0 ? unitLabels.length : Math.max(property.unitCount, 1),
+      unitCount:
+        unitLabels.length > 0
+          ? unitLabels.length
+          : isSingleFamilyPropertyType(property.propertyType)
+            ? Math.max(0, property.unitCount)
+            : Math.max(property.unitCount, 1),
     }
   })
 }

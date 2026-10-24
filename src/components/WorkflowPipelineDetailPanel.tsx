@@ -5,6 +5,7 @@ import { WorkflowStageMoveDialogs } from '@/components/workflowKanban/WorkflowSt
 import { useWorkflowStageMove } from '@/components/workflowKanban/useWorkflowStageMove'
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
 import { postAdminReassignVendor, resolveAdminReassignUrl } from '@/api/adminReassignVendor'
+import { postAdminSetVisitTime } from '@/api/adminMoveWorkflowStage'
 import { requireAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import {
   fetchInboxConversationMonitoring,
@@ -475,6 +476,11 @@ export function WorkflowPipelineDetailPanel({
   const [vendorOptions, setVendorOptions] = useState<string[]>([])
   const [vendorSaving, setVendorSaving] = useState(false)
   const [vendorSaveError, setVendorSaveError] = useState<string | null>(null)
+  const [visitDate, setVisitDate] = useState('')
+  const [visitWindow, setVisitWindow] = useState('')
+  const [visitSaving, setVisitSaving] = useState(false)
+  const [visitError, setVisitError] = useState<string | null>(null)
+  const [visitSaved, setVisitSaved] = useState<string | null>(null)
 
   const stageMoveCard = useMemo(
     () => (detail ? detailToStageMoveCard(detail) : null),
@@ -601,6 +607,11 @@ export function WorkflowPipelineDetailPanel({
       setDeleteSaving(false)
       setVendorSaveError(null)
       setVendorSaving(false)
+      setVisitDate('')
+      setVisitWindow('')
+      setVisitSaving(false)
+      setVisitError(null)
+      setVisitSaved(null)
     }
   }, [open])
 
@@ -613,6 +624,10 @@ export function WorkflowPipelineDetailPanel({
     setDeleteConfirmOpen(false)
     setDeleteError(null)
     setVendorSaveError(null)
+    setVisitDate('')
+    setVisitWindow('')
+    setVisitError(null)
+    setVisitSaved(null)
   }, [detail?.runId])
 
   useEffect(() => {
@@ -968,6 +983,73 @@ export function WorkflowPipelineDetailPanel({
                       </li>
                     ))}
                   </ul>
+                </section>
+              ) : null}
+
+              {detail.isMaintenanceWorkflow && detail.maintenanceRequestId ? (
+                <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                  <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Set visit time</h3>
+                  <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                    Save a time you already agreed. Ulo texts the vendor once and stops asking about this visit.
+                  </p>
+                  {visitError ? (
+                    <p className="mt-2 text-[13px] text-[#b52a00]">{visitError}</p>
+                  ) : null}
+                  {visitSaved ? (
+                    <p className="mt-2 text-[13px] text-[#059669]">{visitSaved}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <label className="flex min-w-0 flex-1 flex-col gap-1 text-[12px] font-medium text-[#364153]">
+                      Date
+                      <input
+                        type="date"
+                        aria-label="Visit date"
+                        className={selectClassName}
+                        value={visitDate}
+                        disabled={visitSaving}
+                        onChange={(e) => setVisitDate(e.target.value)}
+                      />
+                    </label>
+                    <label className="flex min-w-0 flex-1 flex-col gap-1 text-[12px] font-medium text-[#364153]">
+                      Window
+                      <input
+                        type="text"
+                        aria-label="Visit window"
+                        placeholder="4–5pm"
+                        className={selectClassName}
+                        value={visitWindow}
+                        disabled={visitSaving}
+                        onChange={(e) => setVisitWindow(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={visitSaving || !visitDate || !visitWindow.trim()}
+                      onClick={() => {
+                        const ticketId = detail.maintenanceRequestId
+                        if (!ticketId) return
+                        setVisitSaving(true)
+                        setVisitError(null)
+                        setVisitSaved(null)
+                        void postAdminSetVisitTime({
+                          ticketId,
+                          visitDate,
+                          windowText: visitWindow,
+                        })
+                          .then((saved) => {
+                            setVisitSaved(`Visit saved for ${saved.scheduledWindowText}.`)
+                            onWorkflowUpdated?.()
+                          })
+                          .catch((err: unknown) => {
+                            setVisitError(err instanceof Error ? err.message : 'Could not set the visit time.')
+                          })
+                          .finally(() => setVisitSaving(false))
+                      }}
+                      className="sa-press inline-flex cursor-pointer items-center rounded-[8px] bg-[#0d0f11] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                    >
+                      {visitSaving ? 'Saving…' : 'Set visit time'}
+                    </button>
+                  </div>
                 </section>
               ) : null}
 

@@ -17,10 +17,7 @@ import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { supabase } from '@/lib/supabase'
 import { trackProductEventOnce } from '@/lib/analytics/productEvents'
-import {
-  isSingleFamilyPropertyType,
-  SINGLE_FAMILY_UNIT_LABEL,
-} from '@shared/properties/propertyType'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { reconcilePropertiesByAddressIdentity } from '@shared/onboarding/addressIdentity'
 import { requireOnboardingLandlord } from '../scope'
 import type { OnboardingProperty } from '../types'
@@ -63,13 +60,11 @@ export function resolveOnboardingUnitLabels(
   property: Pick<OnboardingProperty, 'unitCount' | 'unitLabels' | 'propertyType'>,
   existingLabels: string[] = [],
 ): string[] {
+  if (isSingleFamilyPropertyType(property.propertyType)) return []
   const explicit = uniqueOnboardingUnitLabels(property.unitLabels ?? [])
   if (explicit.length > 0) return explicit
   const existing = uniqueOnboardingUnitLabels(existingLabels)
   if (existing.length > 0) return existing
-  if (isSingleFamilyPropertyType(property.propertyType)) {
-    return [SINGLE_FAMILY_UNIT_LABEL]
-  }
   const count = Number.isFinite(property.unitCount) ? Math.max(0, Math.round(property.unitCount)) : 0
   return generateUnitLabels(count)
 }
@@ -566,8 +561,13 @@ async function persistOnboardingPropertiesViaReconcile(
   const collapsed = reconcilePropertiesByAddressIdentity(properties)
   const desired = collapsed.properties
     .map((property) => {
-      const unitLabels = resolveOnboardingUnitLabels(property, property.unitLabels ?? [])
-      const unitCount = Math.max(property.unitCount || 0, unitLabels.length, 1)
+      const singleFamily = isSingleFamilyPropertyType(property.propertyType)
+      const unitLabels = singleFamily
+        ? []
+        : resolveOnboardingUnitLabels(property, property.unitLabels ?? [])
+      const unitCount = singleFamily
+        ? 0
+        : Math.max(property.unitCount || 0, unitLabels.length, 1)
       return {
         id: property.id,
         name: property.name.trim(),
@@ -631,7 +631,9 @@ async function persistOnboardingPropertiesViaReconcile(
       state: String(row.state ?? ''),
       zipCode: String(row.zipCode ?? ''),
       propertyType: row.propertyType ?? undefined,
-      unitCount: Math.max(Number(row.unitCount) || labels.length || 1, 1),
+      unitCount: isSingleFamilyPropertyType(row.propertyType)
+        ? 0
+        : Math.max(Number(row.unitCount) || labels.length || 1, 1),
       unitLabels: labels.length > 0 ? labels : undefined,
     }
   })
@@ -678,8 +680,11 @@ export async function persistOnboardingProperties(
     const name = property.name.trim()
     if (!name) continue
     const buildingKey = normalizeBuildingKey(name)
-    const unitLabels = resolveOnboardingUnitLabels(property, property.unitLabels ?? [])
-    const unitCount = Math.max(property.unitCount || 0, unitLabels.length, 1)
+    const singleFamily = isSingleFamilyPropertyType(property.propertyType)
+    const unitLabels = singleFamily
+      ? []
+      : resolveOnboardingUnitLabels(property, property.unitLabels ?? [])
+    const unitCount = singleFamily ? 0 : Math.max(property.unitCount || 0, unitLabels.length, 1)
     const ensured = await ensureProperty({
       landlordId: scope.landlordId,
       name,
@@ -708,7 +713,13 @@ export async function persistOnboardingProperties(
     propertyId: propertyIdByBuilding.get(normalizeBuildingKey(unit.building)) ?? null,
   }))
   if (units.length === 0) {
-    return { ok: false, error: 'Each property needs at least one unit.' }
+    const missingMultifamilyUnits = canonicalProperties.some(
+      (property) => !isSingleFamilyPropertyType(property.propertyType),
+    )
+    if (missingMultifamilyUnits) {
+      return { ok: false, error: 'Each property needs at least one unit.' }
+    }
+    return { ok: true, properties: canonicalProperties }
   }
 
   try {

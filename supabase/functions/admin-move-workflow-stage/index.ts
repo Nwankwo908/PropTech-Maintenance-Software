@@ -13,6 +13,7 @@ import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { applyAdminStageMove } from "../_shared/workflowStageMove/applyAdminStageMove.ts"
+import { setManualVisitTime } from "../_shared/sms/setManualVisitTime.ts"
 import type { WorkflowKanbanStageId } from "../../../shared/workflowStageMove/stageMoveRules.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -55,8 +56,44 @@ serve(async (req) => {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
 
+  const action = typeof body.action === "string" ? body.action.trim() : ""
   const landlordId =
     typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+
+  if (action === "set_visit_time") {
+    const ticketId =
+      typeof body.ticketId === "string" ? body.ticketId.trim() : ""
+    const visitDate = typeof body.visitDate === "string" ? body.visitDate.trim() : ""
+    const windowText = typeof body.windowText === "string" ? body.windowText.trim() : ""
+    if (!landlordId || !isUuidShape(landlordId)) {
+      return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+    }
+    if (!ticketId || !isUuidShape(ticketId)) {
+      return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
+    }
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
+    if (!supabaseUrl || !serviceKey) {
+      return jsonResponse({ error: "Server misconfiguration" }, 500)
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const result = await setManualVisitTime(supabase, {
+      landlordId,
+      ticketId,
+      visitDate,
+      windowText,
+    })
+    if (!result.ok) return jsonResponse({ error: result.error }, result.status)
+    return jsonResponse({
+      ok: true,
+      scheduled_at: result.scheduledAt,
+      scheduled_window_text: result.scheduledWindowText,
+      vendor_texted: result.vendorTexted,
+    })
+  }
+
   const runId = typeof body.runId === "string" ? body.runId.trim() : ""
   const ticketId =
     typeof body.ticketId === "string"

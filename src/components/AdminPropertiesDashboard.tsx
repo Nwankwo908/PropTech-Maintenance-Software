@@ -241,13 +241,11 @@ function KpiCard({
         </p>
         {infoContent}
       </div>
-      <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center justify-end' : 'items-end justify-between'}`}>
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
         {chart ? (
-          <div className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3">
-            {chart}
-          </div>
+          <div className="pointer-events-none -ml-2 sm:-ml-3">{chart}</div>
         ) : valueNote ? (
-          <div className="min-w-0 w-full self-center text-left">{valueNote}</div>
+          <div className="min-w-0 w-full text-left">{valueNote}</div>
         ) : value ? (
           <p className="whitespace-nowrap text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
             {value}

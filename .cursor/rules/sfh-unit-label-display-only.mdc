@@ -32,5 +32,6 @@ Use the **live-data-remediation-fk-guard** pattern only — occupancy-first, fai
 ## Do not
 
 - Heal SFH `"1"` rows just because admin UI hides them
-- Invent `"1"` on new SFH lease imports (forward path already fixed)
+- Invent `"1"` or `"Home"` on a single-family import. The property has no unit. Save the resident, lease, and occupancy on the property.
+- Rewrite historical SFH `"1"` rows on Limited Alpha 1 or Limited Alpha 2
 - Show `"Home"` or `"Unit 1"` in tenant/vendor/landlord-facing copy for SFH

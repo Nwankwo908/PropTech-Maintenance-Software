@@ -20,6 +20,7 @@ import {
 import { sendInboundAutoReply } from "./inboundReply.ts"
 import {
   findOrCreateConversation,
+  findResidentConversationByPhone,
   upsertSmsIdentityForPhone,
 } from "./inbound_db.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
@@ -75,12 +76,47 @@ export function buildTenantScheduleAskSms(input: {
   return [
     `Hi ${who},`,
     "",
-    "This is the property management team.",
-    "",
     `${vendor} proposed an arrival window of ${when}. Does that work for you?`,
     "",
     "Reply YES to confirm, or NO with another day/time (e.g. Thu 2–4pm).",
   ].join("\n")
+}
+
+/** "No. Can they come later on the same day?" */
+export function isLaterSameDayCounter(body: string): boolean {
+  return /\blater\b/i.test(body) && /\bsame day\b/i.test(body)
+}
+
+export function dayLabelFromWindow(windowText: string): string {
+  const match = windowText.match(
+    /\b(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i,
+  )
+  if (!match) return "that day"
+  const key = match[1].slice(0, 3).toLowerCase()
+  const days: Record<string, string> = {
+    mon: "Monday",
+    tue: "Tuesday",
+    wed: "Wednesday",
+    thu: "Thursday",
+    fri: "Friday",
+    sat: "Saturday",
+    sun: "Sunday",
+  }
+  return days[key] ?? "that day"
+}
+
+export function buildVendorLaterSameDaySms(windowText: string): string {
+  const when = windowText.trim() || "that time"
+  return `The resident can't do ${when}. Can you come later the same day? Reply with a window.`
+}
+
+export function buildTenantLaterSameDayAckSms(input: {
+  vendorName: string
+  dayLabel: string
+}): string {
+  const vendor = input.vendorName.trim() || "the vendor"
+  const day = input.dayLabel.trim() || "that day"
+  return `I've asked ${vendor} for a later time on ${day} and will text you when they reply.`
 }
 
 export function buildTenantScheduleAcceptedSms(windowText: string): string {
@@ -287,6 +323,89 @@ async function clearAwaitingScheduleConfirmation(
     .eq("id", conversationId)
 }
 
+async function resolveResidentScheduleConversation(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    smsNumberId: string
+    phoneE164: string
+    identity: Parameters<typeof findOrCreateConversation>[1]["identity"]
+    residentId: string | null
+    ticketId: string
+  },
+): Promise<string> {
+  // findOrCreateConversation only matches a few open statuses. A resident who
+  // already has a thread (including a completed reminder thread) must get the
+  // pending ask on THAT conversation, or their YES lands with no schedule flag.
+  const existing = await findResidentConversationByPhone(supabase, {
+    landlordId: params.landlordId,
+    smsNumberId: params.smsNumberId,
+    externalPhone: params.phoneE164,
+    residentId: params.residentId,
+  })
+  if (existing?.id) return existing.id
+
+  if (params.residentId) {
+    const { data } = await supabase
+      .from("sms_conversations")
+      .select("id")
+      .eq("landlord_id", params.landlordId)
+      .eq("resident_id", params.residentId)
+      .is("vendor_id", null)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const id = typeof data?.id === "string" ? data.id : ""
+    if (id) return id
+  }
+
+  const created = await findOrCreateConversation(supabase, {
+    landlordId: params.landlordId,
+    smsNumberId: params.smsNumberId,
+    externalPhone: params.phoneE164,
+    identity: params.identity,
+    maintenanceRequestId: params.ticketId,
+    conversationStatus: "open",
+  })
+  return created.conversationId
+}
+
+async function writeAwaitingScheduleConfirmation(
+  supabase: SupabaseClient,
+  params: {
+    conversationId: string
+    ticketId: string
+    pending: Record<string, unknown>
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { data: conv, error: readErr } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", params.conversationId)
+    .maybeSingle()
+  if (readErr || !conv) {
+    return { ok: false, error: readErr?.message ?? "conversation_missing" }
+  }
+  const prior =
+    conv.intake_state && typeof conv.intake_state === "object"
+      ? (conv.intake_state as Record<string, unknown>)
+      : {}
+  const { error } = await supabase
+    .from("sms_conversations")
+    .update({
+      updated_at: new Date().toISOString(),
+      status: "open",
+      maintenance_request_id: params.ticketId,
+      intake_state: {
+        ...prior,
+        [AWAITING_SCHEDULE_CONFIRM_KEY]: params.pending,
+      },
+    })
+    .eq("id", params.conversationId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
 /** Ask the resident if the vendor's proposed window works. */
 export async function askTenantScheduleConfirmation(
   supabase: SupabaseClient,
@@ -363,13 +482,13 @@ export async function askTenantScheduleConfirmation(
     return { ok: false, conversationId: null, error: "identity_failed" }
   }
 
-  const { conversationId } = await findOrCreateConversation(supabase, {
+  const conversationId = await resolveResidentScheduleConversation(supabase, {
     landlordId,
     smsNumberId: smsNumber.id,
-    externalPhone: phoneE164,
+    phoneE164,
     identity,
-    maintenanceRequestId: params.ticketId,
-    conversationStatus: "open",
+    residentId: residentId ?? null,
+    ticketId: params.ticketId,
   })
 
   const body = buildTenantScheduleAskSms({
@@ -377,6 +496,27 @@ export async function askTenantScheduleConfirmation(
     vendorName,
     windowText: params.windowText,
   })
+
+  const pendingAsk = {
+    ticket_id: params.ticketId,
+    vendor_id: params.vendorId,
+    vendor_conversation_id: params.vendorConversationId,
+    window_text: params.windowText,
+    scheduled_at: params.scheduledAt,
+    kind: "initial" as const,
+  }
+  const wrote = await writeAwaitingScheduleConfirmation(supabase, {
+    conversationId,
+    ticketId: params.ticketId,
+    pending: pendingAsk,
+  })
+  if (!wrote.ok) {
+    console.error(
+      "[tenant-schedule] awaiting_schedule_confirmation was not saved on the resident thread",
+      wrote.error,
+    )
+    return { ok: false, conversationId, error: "intake_write_failed" }
+  }
 
   const sent = await sendInboundAutoReply(supabase, {
     conversationId,
@@ -387,35 +527,6 @@ export async function askTenantScheduleConfirmation(
     provider,
     source: "tenant_schedule_ask",
   })
-
-  const { data: conv } = await supabase
-    .from("sms_conversations")
-    .select("intake_state")
-    .eq("id", conversationId)
-    .maybeSingle()
-  const prior =
-    conv?.intake_state && typeof conv.intake_state === "object"
-      ? (conv.intake_state as Record<string, unknown>)
-      : {}
-
-  await supabase
-    .from("sms_conversations")
-    .update({
-      updated_at: new Date().toISOString(),
-      status: "open",
-      maintenance_request_id: params.ticketId,
-      intake_state: {
-        ...prior,
-        [AWAITING_SCHEDULE_CONFIRM_KEY]: {
-          ticket_id: params.ticketId,
-          vendor_id: params.vendorId,
-          vendor_conversation_id: params.vendorConversationId,
-          window_text: params.windowText,
-          scheduled_at: params.scheduledAt,
-        },
-      },
-    })
-    .eq("id", conversationId)
 
   await logGraphEvent(supabase, {
     landlord_id: landlordId,
@@ -748,6 +859,10 @@ export async function tryHandleTenantScheduleConfirmInbound(
       .eq("id", pending.ticketId)
   }
 
+  const laterSameDay =
+    decision === "counter_propose" && isLaterSameDayCounter(params.body)
+  let laterSameDayReply: string | null = null
+
   if (pending.vendorConversationId) {
     const { data: vendorConv } = await supabase
       .from("sms_conversations")
@@ -765,6 +880,52 @@ export async function tryHandleTenantScheduleConfirmInbound(
       ticketId: pending.ticketId,
       next: reduced.state,
     })
+  }
+
+  if (laterSameDay) {
+    const { data: vendor } = await supabase
+      .from("vendors")
+      .select("name, phone")
+      .eq("id", pending.vendorId)
+      .maybeSingle()
+    const vendorName =
+      typeof vendor?.name === "string" && vendor.name.trim()
+        ? vendor.name.trim()
+        : "the vendor"
+    const phone = typeof vendor?.phone === "string" ? vendor.phone.trim() : ""
+    const { deliverVendorTextWithRetry } = await import("./vendorRescheduleSms.ts")
+    const { sendVendorJobAlert } = await import("./vendorSmsRouting.ts")
+    const vendorBody = buildVendorLaterSameDaySms(pending.windowText)
+    const delivery = await deliverVendorTextWithRetry(async () => {
+      if (!phone) return { ok: false, error: "no_vendor_phone" }
+      const alert = await sendVendorJobAlert(supabase, {
+        ticketId: pending.ticketId,
+        vendorId: pending.vendorId,
+        vendorPhone: phone,
+        body: vendorBody,
+        landlordId: params.landlordId,
+      })
+      return {
+        ok: alert.ok,
+        error: alert.ok ? undefined : alert.error || "send_failed",
+        conversationId: alert.ok ? alert.conversationId : null,
+      }
+    })
+    if (!delivery.ok) {
+      console.error(
+        "[tenant-schedule] vendorNotified=false",
+        delivery.reason,
+        { attempts: delivery.attempts },
+      )
+      laterSameDayReply =
+        "I've passed your request for a later time to the property team. They'll follow up here."
+    } else {
+      laterSameDayReply = buildTenantLaterSameDayAckSms({
+        vendorName,
+        dayLabel: dayLabelFromWindow(pending.windowText),
+      })
+    }
+  } else if (pending.vendorConversationId) {
     await notifyVendorOnThread(supabase, {
       conversationId: pending.vendorConversationId,
       ticketId: pending.ticketId,
@@ -833,6 +994,6 @@ export async function tryHandleTenantScheduleConfirmInbound(
     handled: true,
     action: decision,
     ticketId: pending.ticketId,
-    replyBody: buildTenantScheduleDeclinedSms(preferredWindow),
+    replyBody: laterSameDayReply ?? buildTenantScheduleDeclinedSms(preferredWindow),
   }
 }

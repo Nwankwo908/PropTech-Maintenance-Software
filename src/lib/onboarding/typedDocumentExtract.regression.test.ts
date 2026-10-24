@@ -46,6 +46,34 @@ describe('rent roll extraction', () => {
     expect(mapped.leases).toHaveLength(0)
   })
 
+  it('keeps a single-family rent-roll tenant who has no unit', () => {
+    const mapped = parseAndMapTypedExtract('rent_roll', {
+      property_address: '3110 Ellerslie Ave, Baltimore, MD 21218',
+      rows: [
+        {
+          unit: '',
+          tenant_names: ['Rashea Hendley'],
+          lease_start: '2025-01-10',
+          lease_end: '2026-01-31',
+          monthly_rent: 1200,
+          status: 'occupied',
+          confidence: 90,
+        },
+      ],
+    })
+    expect(mapped.residents).toEqual([
+      expect.objectContaining({
+        fullName: 'Rashea Hendley',
+        unit: '',
+        monthlyRent: '1200',
+        leaseStart: '2025-01-10',
+        leaseEnd: '2026-01-31',
+      }),
+    ])
+    expect(mapped.units).toHaveLength(0)
+    expect(mapped.roleFacts.some((fact) => fact.role === 'unit_row_needs_review')).toBe(false)
+  })
+
   it('2. unit with two co-tenants keeps both names', () => {
     const mapped = parseAndMapTypedExtract('rent_roll', {
       rows: [

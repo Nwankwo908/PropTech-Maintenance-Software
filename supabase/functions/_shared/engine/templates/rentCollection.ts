@@ -38,6 +38,7 @@ import {
 import { offerLandlordRentReceiptAsk } from "../rentReceiptConfirmation.ts"
 import { maybeSendOfflineTenantGraceReminder } from "../offlineTenantRentReminder.ts"
 import { landlordHasPayments } from "../../../../../shared/landlordCapabilities.ts"
+import { householdRentBillingAmounts } from "../../../../../shared/residents/householdRent.ts"
 import { activeNonMaintenanceRunShouldYield } from "../activeRunYield.ts"
 import {
   buildRentClassificationMetadata,
@@ -430,14 +431,27 @@ async function processRentDueTrigger(
     error: string
   }> = []
 
+  const householdCharges = householdRentBillingAmounts(
+    (residents ?? []).map((row) => {
+      const resident = row as ResidentRow
+      return {
+        id: String(resident.id),
+        unit: resident.unit,
+        building: resident.building,
+        status: "active",
+        amountDue: rentReminderAmountDue(
+          Number(resident.balance_due ?? 0),
+          Number(resident.monthly_rent ?? 0),
+        ),
+      }
+    }),
+  )
+
   for (const row of residents ?? []) {
     const resident = row as ResidentRow
     const residentId = String(resident.id)
-    const amountDue = rentReminderAmountDue(
-      Number(resident.balance_due ?? 0),
-      Number(resident.monthly_rent ?? 0),
-    )
-    if (!(amountDue > 0)) {
+    const amountDue = householdCharges.get(residentId)
+    if (amountDue == null) {
       skipped++
       continue
     }

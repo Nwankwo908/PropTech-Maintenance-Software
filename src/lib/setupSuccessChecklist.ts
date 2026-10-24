@@ -1,5 +1,8 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
+import {
+  isLeaseImportTestLandlord,
+  isLimitedAlphaLandlord,
+} from '@shared/landlordCapabilities'
 import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 
 export const SETUP_SUCCESS_TEST_DELIVERY_HASH = 'test-delivery'
@@ -268,14 +271,27 @@ export function clearSetupSuccessTestDelivery(
   }
 }
 
-/** Limited Alpha overlay after Get Started, until every step is done or the card is closed. */
+/**
+ * Limited Alpha sees the card after Get Started.
+ * Lease-import checks land on the dashboard directly, so they do not need that flag.
+ * Completing setup does not mark the checklist done.
+ */
+export function setupSuccessExperienceReady(
+  landlordId: string = getActiveLandlordId(),
+): boolean {
+  if (isLimitedAlphaLandlord(landlordId)) {
+    return hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
+  }
+  return isLeaseImportTestLandlord(landlordId)
+}
+
+/** Profile setup card after setup, until every step is done or the card is closed. */
 export function shouldShowSetupSuccessCard(
   progress: SetupSuccessProgress,
   landlordId: string = getActiveLandlordId(),
 ): boolean {
   return (
-    isLimitedAlphaLandlord(landlordId) &&
-    hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
+    setupSuccessExperienceReady(landlordId) &&
     !isSetupSuccessCardHidden(landlordId) &&
     progress.doneCount < progress.total
   )
@@ -286,11 +302,7 @@ export function shouldShowSetupSuccessNavHint(
   progress: SetupSuccessProgress,
   landlordId: string = getActiveLandlordId(),
 ): boolean {
-  return (
-    isLimitedAlphaLandlord(landlordId) &&
-    hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
-    progress.doneCount < progress.total
-  )
+  return setupSuccessExperienceReady(landlordId) && progress.doneCount < progress.total
 }
 
 /** How long the green ↑ +N% flash stays under Profile setup after progress increases. */

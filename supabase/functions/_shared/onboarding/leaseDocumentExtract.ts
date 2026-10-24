@@ -2,7 +2,7 @@ import { mapLeaseToPortfolio, type MappedPortfolioExtract } from '../../../../sh
 import { LEASE_SYSTEM_PROMPT } from '../../../../shared/onboarding/typedDocumentExtract/prompts.ts'
 import { validateLeaseExtract } from '../../../../shared/onboarding/typedDocumentExtract/lease.ts'
 import { leaseReviewIssues } from '../../../../shared/onboarding/documentAttention.ts'
-import { LEASE_FIELD_NAMES, leaseRecoveryFields, leaseScanToExtract, mergeLeaseScans, normalizeLeaseScan, selectLeaseRecoveryPages, type LeaseFieldName, type LeaseScanReview, type LeaseScanStage } from '../../../../shared/onboarding/leaseScan.ts'
+import { discloseFastTrackPartialScan, LEASE_FIELD_NAMES, leaseRecoveryFields, leaseScanToExtract, mergeLeaseScans, normalizeLeaseScan, selectLeaseRecoveryPages, type LeaseFieldName, type LeaseScanReview, type LeaseScanStage } from '../../../../shared/onboarding/leaseScan.ts'
 import { GEMINI_DOCUMENT_MODEL, OPENAI_LEASE_BACKUP_MODEL, requestDocumentJson, type DocumentProviderInput } from './documentProvider.ts'
 import { leaseDocumentParts } from './leaseDocumentSource.ts'
 
@@ -56,6 +56,10 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
           ? 'Extract all lease fields. pages_reviewed must include every inspected page, including blank, appendix and signature pages, not just pages cited by fields.'
           : `Recheck these fields: ${fields.join(', ')}. Fill readable missing fields and distinguish absent terms from unreadable text. Return evidence; do not guess or repair earlier values.`
       const fastTrack = Boolean(input.maxPages && input.maxPages > 0)
+      const documentPages = input.pageTexts.length
+      const unreadNote = documentPages > allPages.length
+        ? ` Only the first ${allPages.length} pages are included in this scan. Do not invent terms from the remaining pages.`
+        : ''
       const content: DocumentProviderInput = {
         provider,
         apiKey: provider === 'gemini' ? input.apiKey : input.openaiApiKey || '',
@@ -63,7 +67,7 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
         schema: coverage ? pageCoverageSchema(pages) : LEASE_SCAN_SCHEMA,
         system: SYSTEM,
         mediaResolution: fastTrack ? 'MEDIA_RESOLUTION_MEDIUM' : 'MEDIA_RESOLUTION_HIGH',
-        parts: [{ text: `Total original pages in this scan: ${allPages.length}. Supplied original pages: ${pages.join(', ')}. ${instruction}` }, ...parts],
+        parts: [{ text: `This document has ${documentPages} pages. Supplied original pages: ${pages.join(', ')}.${unreadNote} ${instruction}` }, ...parts],
       }
       const response = await request(content)
       attempts.push({provider,model:response.model,phase,pages,inputTokens:response.inputTokens,outputTokens:response.outputTokens,outcome:'read',purpose})
@@ -118,14 +122,11 @@ export async function extractLeaseDocument(input: LeaseDocumentInput): Promise<L
       await read('openai', 'backup', allPages)
     }
     if (state.current) {
-      const review = state.current.review
-      state.current.review = {
-        ...review,
-        pagesReviewed: [...allPages],
-        coverageComplete: true,
-        complete: LEASE_FIELD_NAMES.every((name) => ['found', 'not_stated'].includes(review.fields[name].status)),
-        needsReview: LEASE_FIELD_NAMES.some((name) => review.fields[name].needsReview),
-      }
+      state.current.review = discloseFastTrackPartialScan(
+        state.current.review,
+        input.pageTexts.length,
+        allPages,
+      )
     }
     const final = result()
     input.onUpdate?.(final, 'complete')

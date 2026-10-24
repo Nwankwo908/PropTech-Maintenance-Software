@@ -46,6 +46,7 @@ import {
 } from '@/lib/onboarding/propertyType'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { assignSharedUnitToLeaseCoTenants, leaseUnitOrDefault, usableLeaseUnit } from '@/lib/onboarding/leaseUnit'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { collectExtractedUnitLabels, extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
 import { resolveImportPropertyType } from '@/lib/onboarding/persist/importResidents'
 import { supabase } from '@/lib/supabase'
@@ -441,6 +442,11 @@ export function isAcceptedUploadFile(file: File): { ok: true } | { ok: false; er
 
 export function inferDocumentCategory(fileName: string): OnboardingDocumentCategory {
   const lower = fileName.toLowerCase()
+  // "rent roll" is more specific than a lease keyword in the same name
+  // (for example "lease-import-hendley-rent-roll.csv").
+  if (/rent.?roll|tenant.?roster|resident.?roster|tenant.?list|resident.?list/.test(lower)) {
+    return 'rent_roll'
+  }
   if (/lease|rental|tenancy|occupancy.?agreement|housing.?agreement/.test(lower)) {
     return 'lease_agreement'
   }
@@ -450,9 +456,6 @@ export function inferDocumentCategory(fileName: string): OnboardingDocumentCateg
     )
   ) {
     return 'vendor_contract'
-  }
-  if (/rent.?roll|tenant.?roster|resident.?roster|tenant.?list|resident.?list/.test(lower)) {
-    return 'rent_roll'
   }
   if (
     /inspection|walkthrough|maintenance.?history|repair.?history|service.?history|work.?order.?history|past.?repair/.test(
@@ -923,6 +926,32 @@ function joinExtractedSourceNames(left: string, right: string): string {
   return parts.join(' · ')
 }
 
+function isoLeaseDate(value: string | null | undefined): string {
+  return (value ?? '').trim().slice(0, 10)
+}
+
+/** Original commencement, not the later document's effective date. */
+function earlierLeaseStart(primary: string, extra: string): string {
+  const dates = [isoLeaseDate(primary), isoLeaseDate(extra)].filter(Boolean).sort()
+  return dates[0] ?? ''
+}
+
+/** A signed extension outruns the term it changes. */
+function laterLeaseEnd(primary: string, extra: string): string {
+  const dates = [isoLeaseDate(primary), isoLeaseDate(extra)].filter(Boolean).sort()
+  return dates[dates.length - 1] ?? ''
+}
+
+function rentOnLaterTerm(primaryEnd: string, primaryRent: string, extraEnd: string, extraRent: string): string {
+  const primary = primaryRent.trim()
+  const extra = extraRent.trim()
+  const primaryDate = isoLeaseDate(primaryEnd)
+  const extraDate = isoLeaseDate(extraEnd)
+  if (extraDate && (!primaryDate || extraDate > primaryDate) && extra) return extra
+  if (primaryDate && (!extraDate || primaryDate > extraDate) && primary) return primary
+  return primary || extra
+}
+
 function mergeExtractedResidentRow(
   primary: OnboardingExtractedResident,
   extra: OnboardingExtractedResident,
@@ -938,9 +967,14 @@ function mergeExtractedResidentRow(
     building,
     phone: primary.phone.trim() || extra.phone.trim(),
     email: primary.email.trim() || extra.email.trim(),
-    leaseStart: primary.leaseStart.trim() || extra.leaseStart.trim(),
-    leaseEnd: primary.leaseEnd.trim() || extra.leaseEnd.trim(),
-    monthlyRent: primary.monthlyRent.trim() || extra.monthlyRent.trim(),
+    leaseStart: earlierLeaseStart(primary.leaseStart, extra.leaseStart),
+    leaseEnd: laterLeaseEnd(primary.leaseEnd, extra.leaseEnd),
+    monthlyRent: rentOnLaterTerm(
+      primary.leaseEnd,
+      primary.monthlyRent,
+      extra.leaseEnd,
+      extra.monthlyRent,
+    ),
     rentDueDay: (primary.rentDueDay ?? '').trim() || (extra.rentDueDay ?? '').trim(),
     sourceDocumentName: joinExtractedSourceNames(
       primary.sourceDocumentName,
@@ -1037,9 +1071,9 @@ function mergeExtractedLeaseRow(primary: ExtractedLeaseInfo, extra: ExtractedLea
     residentName,
     unit,
     building: primary.building.trim() || extra.building.trim(),
-    leaseStart: primary.leaseStart.trim() || extra.leaseStart.trim(),
-    leaseEnd: primary.leaseEnd.trim() || extra.leaseEnd.trim(),
-    rentAmount: primary.rentAmount.trim() || extra.rentAmount.trim(),
+    leaseStart: earlierLeaseStart(primary.leaseStart, extra.leaseStart),
+    leaseEnd: laterLeaseEnd(primary.leaseEnd, extra.leaseEnd),
+    rentAmount: rentOnLaterTerm(primary.leaseEnd, primary.rentAmount, extra.leaseEnd, extra.rentAmount),
     securityDeposit: primary.securityDeposit.trim() || extra.securityDeposit.trim(),
     rentDueDay: (primary.rentDueDay ?? '').trim() || (extra.rentDueDay ?? '').trim(),
     sourceDocumentName: joinExtractedSourceNames(
@@ -1235,8 +1269,10 @@ function fillExtractedResidentsFromLeases(
       resident.building.trim() || lease.building.trim(),
       propertyRows,
     )
-    const unit =
-      usableLeaseUnit(resident.unit) || leaseUnitOrDefault(lease.unit, propertyType)
+    const unit = leaseUnitOrDefault(
+      usableLeaseUnit(resident.unit) || lease.unit,
+      propertyType,
+    )
     const rentConflict =
       Boolean(resident.monthlyRent.trim()) &&
       Boolean(lease.rentAmount.trim()) &&
@@ -1276,7 +1312,7 @@ function fillExtractedResidentsFromLeases(
         : resident.needsReview ||
           rentConflict ||
           resident.confidence < 75 ||
-          Boolean(fullName.trim() && !unit.trim()),
+          (!isSingleFamilyPropertyType(propertyType) && Boolean(fullName.trim() && !unit.trim())),
     }
   })
 
@@ -1396,19 +1432,19 @@ function enrichExtractedResidentPlacement(
   const fallbackBuilding = defaultExtractedBuilding(properties)
 
   const enrichedResidents = residents.map((resident) => {
-    let unit = usableLeaseUnit(resident.unit)
     let building = resident.building.trim()
 
     // Require identity (name + unit/building) — never steal another tenant's lease by unit alone.
     const leaseMatch = leases.find((lease) => leaseResidentPlacementMatch(lease, resident))
+    const propertyType = resolveImportPropertyType(
+      building || leaseMatch?.building.trim() || fallbackBuilding,
+      properties.map((property) => ({
+        name: property.name,
+        propertyType: property.propertyType,
+      })),
+    )
+    let unit = leaseUnitOrDefault(resident.unit, propertyType)
     if (leaseMatch) {
-      const propertyType = resolveImportPropertyType(
-        building || leaseMatch.building.trim() || fallbackBuilding,
-        properties.map((property) => ({
-          name: property.name,
-          propertyType: property.propertyType,
-        })),
-      )
       unit = unit || leaseUnitOrDefault(leaseMatch.unit, propertyType)
       building = building || leaseMatch.building.trim()
     }
@@ -1423,7 +1459,10 @@ function enrichExtractedResidentPlacement(
     building = canonicalExtractedBuilding(building, properties)
 
     const missingPlacement = Boolean(
-      !resident.fieldAttention && resident.fullName.trim() && !unit.trim(),
+      !isSingleFamilyPropertyType(propertyType) &&
+        !resident.fieldAttention &&
+        resident.fullName.trim() &&
+        !unit.trim(),
     )
       return {
       ...resident,
@@ -1434,14 +1473,12 @@ function enrichExtractedResidentPlacement(
   })
 
   const enrichedLeases = leases.map((lease) => {
-    let unit = usableLeaseUnit(lease.unit)
     let building = lease.building.trim()
 
     const residentMatch = enrichedResidents.find((resident) =>
       leaseResidentPlacementMatch(lease, resident),
     )
     if (residentMatch) {
-      unit = unit || residentMatch.unit.trim()
       building = building || residentMatch.building.trim()
     }
     const propertyType = resolveImportPropertyType(
@@ -1451,7 +1488,10 @@ function enrichExtractedResidentPlacement(
         propertyType: property.propertyType,
       })),
     )
-    unit = leaseUnitOrDefault(unit, propertyType)
+    let unit = leaseUnitOrDefault(lease.unit, propertyType)
+    if (residentMatch) {
+      unit = unit || leaseUnitOrDefault(residentMatch.unit, propertyType)
+    }
 
     if (unit && !building) {
       building = uniqueUnitBuildingForLabel(unit, units)
@@ -1594,7 +1634,18 @@ export function enrichExtractedUnits(
     })
   }
 
-  return collapseExtractedUnits([...merged.values()]).sort((left, right) => {
+  const rows = [...merged.values()].filter((row) => {
+    const propertyType = resolveImportPropertyType(
+      row.building,
+      properties.map((property) => ({
+        name: property.name,
+        propertyType: property.propertyType,
+      })),
+    )
+    return !isSingleFamilyPropertyType(propertyType)
+  })
+
+  return collapseExtractedUnits(rows).sort((left, right) => {
     const buildingSort = left.building.localeCompare(right.building)
     if (buildingSort !== 0) return buildingSort
     return left.label.localeCompare(right.label, undefined, { numeric: true })
@@ -1931,6 +1982,18 @@ function finalizeExtractionReviewEntities(input: {
     leases,
     properties.length === 1 ? properties[0]?.propertyType : null,
   )
+  const propertyTypes = properties.map((property) => ({
+    name: property.name,
+    propertyType: property.propertyType,
+  }))
+  residents = residents.map((resident) => ({
+    ...resident,
+    unit: leaseUnitOrDefault(resident.unit, resolveImportPropertyType(resident.building, propertyTypes)),
+  }))
+  leases = leases.map((lease) => ({
+    ...lease,
+    unit: leaseUnitOrDefault(lease.unit, resolveImportPropertyType(lease.building, propertyTypes)),
+  }))
 
   // Collapse nickname/address aliases before Review so UI matches persist identity.
   const addressCollapsed = reconcilePropertiesByAddressIdentity(

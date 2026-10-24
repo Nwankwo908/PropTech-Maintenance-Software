@@ -16,6 +16,7 @@ import {
   resolveSetupSuccessProgress,
   setupSuccessNavPercentGain,
   setupSuccessPercent,
+  setupSuccessExperienceReady,
   shouldShowSetupSuccessNavHint,
   welcomeTextsComplete,
 } from './setupSuccessChecklist'
@@ -216,6 +217,11 @@ describe('setupSuccessChecklist', () => {
     const incomplete = resolveSetupSuccessProgress(progressInput())
     expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
+    expect(
+      shouldShowSetupSuccessNavHint(incomplete, 'de300000-0000-4000-8000-0000000000a2'),
+    ).toBe(true)
+    expect(setupSuccessExperienceReady('de300000-0000-4000-8000-0000000000a2')).toBe(true)
+    expect(setupSuccessExperienceReady(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
     markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_2_LANDLORD_ID)
     expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
     const complete = resolveSetupSuccessProgress(

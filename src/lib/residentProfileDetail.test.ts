@@ -127,10 +127,23 @@ describe('groupResidentsByLeasePlace', () => {
     expect(groups.map((group) => group.map((row) => row.id))).toEqual([['a'], ['d']])
   })
 
-  it('does not merge people who have no unit', () => {
+  it('groups single-family co-tenants who share a property and have no unit', () => {
     const groups = groupResidentsByLeasePlace([
-      { id: 'x', fullName: 'Alex', unit: '', building: '109 S Grove St', status: 'active' },
-      { id: 'y', fullName: 'Blair', unit: '', building: '109 S Grove St', status: 'active' },
+      { id: 'lamont', fullName: 'Lamont Brooks', unit: '', building: '3100 Ellerslie Avenue', status: 'active' },
+      { id: 'raqwan', fullName: 'Raqwan Ruffin', unit: '', building: '3100 Ellerslie Avenue', status: 'active' },
+      { id: 'tynika', fullName: 'Tynika Milan', unit: '', building: '725 Bartlett Ave', status: 'active' },
+      { id: 'dominic', fullName: 'Dominic Conaway', unit: '', building: '725 Bartlett Ave', status: 'active' },
+    ])
+    expect(groups.map((group) => group.map((row) => row.id))).toEqual([
+      ['dominic', 'tynika'],
+      ['lamont', 'raqwan'],
+    ])
+  })
+
+  it('does not merge people who have no property', () => {
+    const groups = groupResidentsByLeasePlace([
+      { id: 'x', fullName: 'Alex', unit: '', building: '', status: 'active' },
+      { id: 'y', fullName: 'Blair', unit: '', building: '', status: 'active' },
     ])
     expect(groups).toHaveLength(2)
   })

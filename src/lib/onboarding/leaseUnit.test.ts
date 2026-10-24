@@ -20,11 +20,13 @@ describe('leaseUnitOrDefault', () => {
     expect(leaseUnitOrDefault(undefined)).toBe(DEFAULT_LEASE_UNIT)
   })
 
-  it('does not invent a unit for single-family leases without a unit field', () => {
+  it('does not assign Unit 1 or Home on a single-family property', () => {
     expect(leaseUnitOrDefault('', 'single_family')).toBe('')
     expect(leaseUnitOrDefault(null, 'single_family_home')).toBe('')
     expect(leaseUnitOrDefault('illegible', 'SFR')).toBe('')
-    expect(leaseUnitOrDefault('2A', 'single_family')).toBe('2A')
+    expect(leaseUnitOrDefault('1', 'single_family_home')).toBe('')
+    expect(leaseUnitOrDefault('Home', 'single_family_home')).toBe('')
+    expect(leaseUnitOrDefault('2A', 'single_family')).toBe('')
   })
 
   it('defaults to unit 1 when the unit is not legible', () => {

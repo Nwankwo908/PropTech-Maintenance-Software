@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('./leaseDocumentSource.ts', () => ({ leaseDocumentParts: vi.fn() }))
 import { extractLeaseDocument } from './leaseDocumentExtract'
+import { leaseReviewIssues } from '../../../../shared/onboarding/documentAttention'
 import { FAST_TRACK_LEASE_SCAN_PAGES } from '../../../../shared/onboarding/leaseScan'
 import { leaseFixture } from '../../../../shared/onboarding/leaseScan.fixtures'
 import { GEMINI_DOCUMENT_MODEL, OPENAI_LEASE_BACKUP_MODEL, type DocumentProviderInput } from './documentProvider'
@@ -17,15 +18,60 @@ describe('single-upload lease recovery', () => {
     expect(result.leaseReview.coverageComplete).toBe(true)
     expect(result.leaseReview.attempts[0].inputTokens).toBe(2000)
   })
-  it('limits Fast Track scans to the first four pages', async () => {
+  it('limits Fast Track scans to the first four pages and discloses the unread remainder', async () => {
     buildParts.mockClear()
-    const request = vi.fn(async () => response(leaseFixture([1, 2, 3, 4])))
+    const request = vi.fn(async (call: DocumentProviderInput) => {
+      const notice = String((call.parts[0] as { text?: string }).text ?? '')
+      expect(notice).toContain('This document has 12 pages.')
+      expect(notice).toContain('Supplied original pages: 1, 2, 3, 4.')
+      expect(notice).toContain('Only the first 4 pages are included')
+      expect(notice).not.toContain('Supplied original pages: 1, 2, 3, 4, 5')
+      return response(leaseFixture([1, 2, 3, 4]))
+    })
     const result = await extractLeaseDocument({ ...input(), maxPages: FAST_TRACK_LEASE_SCAN_PAGES, request })
     expect(request).toHaveBeenCalledTimes(1)
     expect(buildParts.mock.calls.at(-1)?.[1]).toEqual([1, 2, 3, 4])
+    expect(result.leaseReview.pageCount).toBe(12)
+    expect(result.leaseReview.pagesReviewed).toEqual([1, 2, 3, 4])
+    expect(result.leaseReview.coverageComplete).toBe(false)
+    expect(leaseReviewIssues(result.leaseReview).pages).toEqual([5, 6, 7, 8, 9, 10, 11, 12])
+    expect(result.leaseReview.fields.tenant_names.value).toEqual(['Morgan Tenant'])
+    expect(result.leaseReview.fields.monthly_rent.value).toBe(1500)
+    expect(result.residents[0]?.monthlyRent).toBe('1500')
+    expect(result.residents[0]?.leaseStart).toBe('2026-01-01')
+    expect(result.residents[0]?.leaseEnd).toBe('2026-12-31')
+  })
+  it('does not treat a lease that fits in four pages as partially unread', async () => {
+    buildParts.mockClear()
+    const request = vi.fn(async () => response(leaseFixture([1, 2, 3, 4])))
+    const result = await extractLeaseDocument({
+      ...input(),
+      pageTexts: Array.from({ length: FAST_TRACK_LEASE_SCAN_PAGES }, () => ''),
+      maxPages: FAST_TRACK_LEASE_SCAN_PAGES,
+      request,
+    })
+    expect(buildParts.mock.calls.at(-1)?.[1]).toEqual([1, 2, 3, 4])
     expect(result.leaseReview.pageCount).toBe(4)
-    expect(result.leaseReview.pagesProvided).toEqual([1, 2, 3, 4])
     expect(result.leaseReview.coverageComplete).toBe(true)
+    expect(leaseReviewIssues(result.leaseReview).pages).toEqual([])
+  })
+  it('keeps a term missing from the opening pages unknown instead of inventing it', async () => {
+    buildParts.mockClear()
+    const raw = leaseFixture([1, 2, 3, 4])
+    raw.fields.unit = { ...raw.fields.unit, value: null, status: 'not_stated', quote: '' }
+    raw.fields.monthly_rent = { ...raw.fields.monthly_rent, value: null, status: 'unreadable', quote: '' }
+    const request = vi.fn(async () => response(raw))
+    const result = await extractLeaseDocument({ ...input(), maxPages: FAST_TRACK_LEASE_SCAN_PAGES, request })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(result.leaseReview.fields.unit.value).toBeNull()
+    expect(result.leaseReview.fields.unit.status).toBe('unreadable')
+    expect(result.leaseReview.fields.unit.reviewReasons?.[0]).toMatch(/may still be present/)
+    expect(result.leaseReview.fields.monthly_rent.value).toBeNull()
+    expect(result.leaseReview.fields.monthly_rent.status).toBe('unreadable')
+    expect(result.units).toEqual([])
+    expect(result.residents[0]?.unit).toBe('')
+    expect(result.residents[0]?.monthlyRent).toBe('')
+    expect(result.residents[0]?.fullName).toBe('Morgan Tenant')
   })
   it('skips Fast Track recovery and field backup when Gemini returns a scan', async () => {
     buildParts.mockClear()
@@ -40,7 +86,9 @@ describe('single-upload lease recovery', () => {
     const result = await extractLeaseDocument({ ...input(), maxPages: FAST_TRACK_LEASE_SCAN_PAGES, request })
     expect(request).toHaveBeenCalledTimes(1)
     expect(result.leaseReview.attempts.map((attempt) => attempt.phase)).toEqual(['initial'])
-    expect(result.leaseReview.coverageComplete).toBe(true)
+    expect(result.leaseReview.pageCount).toBe(12)
+    expect(result.leaseReview.coverageComplete).toBe(false)
+    expect(result.leaseReview.fields.monthly_rent.value).toBeNull()
     expect(result.leaseReview.fields.monthly_rent.needsReview).toBe(true)
   })
   it('uses OpenAI on Fast Track only when Gemini completely fails', async () => {
@@ -63,7 +111,9 @@ describe('single-upload lease recovery', () => {
       ['openai', 'backup', 'read'],
     ])
     expect(result.leaseReview.attempts[1].model).toBe(OPENAI_LEASE_BACKUP_MODEL)
-    expect(result.leaseReview.coverageComplete).toBe(true)
+    expect(result.leaseReview.attempts.every((attempt) => attempt.pages.join() === '1,2,3,4')).toBe(true)
+    expect(result.leaseReview.pageCount).toBe(12)
+    expect(result.leaseReview.coverageComplete).toBe(false)
     expect(stages).toContain('backup')
     expect(result.leaseReview.fields.tenant_names.status).toBe('found')
   })

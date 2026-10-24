@@ -56,6 +56,27 @@ describe('canCompleteOnboarding', () => {
     expect(check.missing).toContain('At least one unit')
   })
 
+  it('lets a single-family portfolio finish with no units', () => {
+    const base = validOnboardingState()
+    const check = canCompleteOnboarding(
+      validOnboardingState({
+        properties: [
+          {
+            ...base.properties[0]!,
+            propertyType: 'single_family_home',
+            unitCount: 0,
+            unitLabels: [],
+          },
+        ],
+      }),
+      [],
+      [],
+      undefined,
+      true,
+    )
+    expect(check).toEqual({ ok: true, missing: [] })
+  })
+
   it('restores empty emergency types via normalize so completion still passes', () => {
     const base = validOnboardingState()
     const state = validOnboardingState({

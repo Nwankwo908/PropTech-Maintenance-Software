@@ -34,6 +34,55 @@ export type LeaseScanReview = {
 export type LeaseScanStage = 'reading' | 'checking' | 'recovering' | 'verifying_pages' | 'backup' | 'complete'
 /** Fast Track reads only the opening pages so landlords can continue sooner. */
 export const FAST_TRACK_LEASE_SCAN_PAGES = 4
+
+/**
+ * Keep the opening-page scan. When the file is longer, say so: later pages stay
+ * unchecked, and a term missing from the pages that were read is not treated as
+ * absent from the whole document.
+ */
+export function discloseFastTrackPartialScan(
+  review: LeaseScanReview,
+  originalPageCount: number,
+  scannedPages: number[],
+): LeaseScanReview {
+  const scanned = [...new Set(scannedPages.filter((page) => Number.isInteger(page) && page > 0))].sort((a, b) => a - b)
+  const pageCount = Math.max(originalPageCount, scanned.length, review.pageCount)
+  if (!scanned.length || pageCount <= scanned.length) {
+    const pagesReviewed = scanned.length ? scanned : review.pagesReviewed
+    const complete = pagesReviewed.length > 0 && LEASE_FIELD_NAMES.every((name) => ['found', 'not_stated'].includes(review.fields[name].status))
+    return {
+      ...review,
+      pageCount: pageCount || review.pageCount,
+      pagesProvided: pagesReviewed,
+      pagesReviewed,
+      coverageComplete: pagesReviewed.length > 0 && pageCount <= pagesReviewed.length,
+      complete,
+      needsReview: !complete || LEASE_FIELD_NAMES.some((name) => review.fields[name].needsReview),
+    }
+  }
+  const fields = { ...review.fields }
+  for (const name of LEASE_FIELD_NAMES) {
+    const field = fields[name]
+    if (field.status !== 'not_stated') continue
+    fields[name] = {
+      ...field,
+      value: null,
+      status: 'unreadable',
+      needsReview: true,
+      reviewReasons: ['Not all document pages were confirmed as read, so this detail may still be present.'],
+    }
+  }
+  return {
+    ...review,
+    fields,
+    pageCount,
+    pagesProvided: Array.from({ length: pageCount }, (_, index) => index + 1),
+    pagesReviewed: scanned,
+    coverageComplete: false,
+    complete: false,
+    needsReview: true,
+  }
+}
 export const LEASE_FIELD_NAMES = Object.keys(LEASE_FIELD_LABELS) as LeaseFieldName[]
 const record = (raw: unknown): Record<string, unknown> => raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
 const percent = (raw: unknown) => typeof raw === 'number' && Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0

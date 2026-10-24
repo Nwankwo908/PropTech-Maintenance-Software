@@ -33,6 +33,20 @@ it('summarizes a finished scan as pages checked and details left to review', () 
   expect(html).not.toContain('confirm or correct')
 })
 
+it('says when only the opening pages of a longer lease were checked', () => {
+  const { review } = normalizeLeaseScan(leaseFixture([1, 2, 3, 4]), ['', '', '', ''])
+  review.pageCount = 12
+  review.pagesProvided = Array.from({ length: 12 }, (_, index) => index + 1)
+  review.pagesReviewed = [1, 2, 3, 4]
+  review.coverageComplete = false
+  const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
+  expect(html).toContain('Lease scan incomplete')
+  expect(html).toContain('4 of 12 pages checked')
+  expect(html).not.toContain('12 of 12')
+  expect(html).not.toContain('Morgan Tenant')
+  expect(html).not.toContain('1500')
+})
+
 it('counts every page that was checked and does not turn a coverage gap into a field list', () => {
   const raw = leaseFixture()
   for (const field of Object.values(raw.fields)) field.confidence = 100

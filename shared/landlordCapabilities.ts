@@ -21,6 +21,16 @@ export const LIMITED_ALPHA_LANDLORD_IDS = [
   LIMITED_ALPHA_2_LANDLORD_ID,
 ] as const
 
+/**
+ * Empty accounts used only to verify lease import. They are not Limited Alpha 1 or 2.
+ * Setup and document extract may run here. Payments stay off.
+ */
+export const LEASE_IMPORT_TEST_LANDLORD_IDS = [
+  'de300000-0000-4000-8000-0000000000a1',
+  'de300000-0000-4000-8000-0000000000a2',
+  'de300000-0000-4000-8000-0000000000a3',
+] as const
+
 /** Retired portal accounts — not selectable and not used as the default scope. */
 export function isRetiredLandlordAccountId(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
@@ -28,7 +38,10 @@ export function isRetiredLandlordAccountId(landlordId: string | null | undefined
 }
 
 /** Landlord ids allowed to run setup + fast-track document extract. */
-export const ONBOARDING_LANDLORD_IDS = LIMITED_ALPHA_LANDLORD_IDS
+export const ONBOARDING_LANDLORD_IDS = [
+  ...LIMITED_ALPHA_LANDLORD_IDS,
+  ...LEASE_IMPORT_TEST_LANDLORD_IDS,
+] as const
 
 export function isOnboardingLandlordId(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
@@ -39,6 +52,12 @@ export function isOnboardingLandlordId(landlordId: string | null | undefined): b
 export function isLimitedAlphaLandlord(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
   return (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
+}
+
+/** Disposable lease-import accounts. Not Limited Alpha 1 or 2. */
+export function isLeaseImportTestLandlord(landlordId: string | null | undefined): boolean {
+  const id = (landlordId ?? '').trim()
+  return (LEASE_IMPORT_TEST_LANDLORD_IDS as readonly string[]).includes(id)
 }
 
 export function isDemoLandlord(landlordId: string | null | undefined): boolean {
@@ -53,7 +72,12 @@ export function isDemoLandlord(landlordId: string | null | undefined): boolean {
 export function landlordUsesLimitedAlphaSurface(
   landlordId: string | null | undefined,
 ): boolean {
-  return isLimitedAlphaLandlord(landlordId) || isDemoLandlord(landlordId)
+  const id = (landlordId ?? '').trim()
+  return (
+    isLimitedAlphaLandlord(id) ||
+    isDemoLandlord(id) ||
+    (LEASE_IMPORT_TEST_LANDLORD_IDS as readonly string[]).includes(id)
+  )
 }
 
 /** Limited Alpha 1 only — not Alpha 2. Prefer `isLimitedAlphaLandlord` for shared alpha gates. */

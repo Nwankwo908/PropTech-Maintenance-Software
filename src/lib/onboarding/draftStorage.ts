@@ -501,7 +501,7 @@ async function loadLandlordOnboarding(
     }
 
     let state = await readLandlordOnboardingDraft(landlordId)
-    if (state.onboardingStatus === 'completed') {
+    if (state.onboardingStatus === 'completed' || state.properties.length === 0) {
       const canonical = await loadCanonicalOnboardingProperties(landlordId)
       if (canonical.length > 0) {
         state = { ...state, properties: canonical }

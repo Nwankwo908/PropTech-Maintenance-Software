@@ -26,6 +26,7 @@ describe('inferDocumentCategory', () => {
   it('still classifies rent rolls separately', () => {
     expect(inferDocumentCategory('April rent roll.xlsx')).toBe('rent_roll')
     expect(inferDocumentCategory('tenant roster.csv')).toBe('rent_roll')
+    expect(inferDocumentCategory('lease-import-hendley-rent-roll.csv')).toBe('rent_roll')
   })
 
   it('classifies vendor lists before rent-roll spreadsheet defaults', () => {

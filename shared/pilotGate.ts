@@ -85,9 +85,9 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'lease_imports',
     label: 'Lease imports',
-    status: 'unknown',
+    status: 'verified',
     reason:
-      'Unit/fixture extraction coverage incomplete; live Gemini extract / multi-lease rent-roll precedence not re-proven on this checkout.',
+      'Disposable accounts only. Multi-lease, scanned lease, rent-roll conflict, extension, partial-page disclosure, and saved corrections passed on Gemini 3.8 Flash with no fallback. LA1 and LA2 were not modified.',
     coreSafety: false,
   },
   {

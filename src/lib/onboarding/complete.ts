@@ -4,6 +4,10 @@
  * Opted-in vendors get a verification invite after persist.
  */
 import { sendLandlordOnboardingWelcome } from '@/api/landlordOnboardingWelcome'
+import {
+  landlordWelcomeContactsAreUndeliverable,
+  undeliverableWelcomeStatus,
+} from '@shared/onboarding/landlordWelcomeDelivery'
 import { sendTenantWelcomeSms } from '@/api/tenantActivation'
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -12,6 +16,7 @@ import {
   validateOnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
+import { isSingleFamilyPropertyType } from '@/lib/onboarding/propertyType'
 import {
   requireOnboardingLandlord,
   saveLandlordOnboardingConfirmed,
@@ -93,7 +98,10 @@ export function canCompleteOnboarding(
   const missing: string[] = []
   if (!state.accountSetup.contactName.trim()) missing.push('Contact name')
   if (metrics.properties === 0) missing.push('At least one property')
-  if (metrics.units === 0) missing.push('At least one unit')
+  const singleFamilyPortfolio =
+    state.properties.length > 0 &&
+    state.properties.every((property) => isSingleFamilyPropertyType(property.propertyType))
+  if (metrics.units === 0 && !singleFamilyPortfolio) missing.push('At least one unit')
   const approvalCheck = validateOnboardingApprovalRules(
     normalizeOnboardingApprovalRules(state.approvalRules),
   )
@@ -483,25 +491,61 @@ export async function completeOnboarding(
     }
   }
 
+  const welcomeEmails = [
+    state.accountSetup.email,
+    state.accountSetup.backupContactEmail,
+  ]
+  const welcomePhones = [
+    state.accountSetup.phone,
+    state.accountSetup.backupContactPhone,
+  ]
   try {
-    const welcome = await sendLandlordOnboardingWelcome({
-      landlordId: scope.landlordId,
-      companyName: state.accountSetup.companyName.trim() || null,
-      contactName: state.accountSetup.contactName.trim() || null,
-      email: state.accountSetup.email.trim() || null,
-    })
-    if (!welcome.configured) {
-      console.warn('[landlordOnboarding] landlord welcome not configured')
-    } else if (welcome.skipped && welcome.reason === 'already_sent') {
-      welcomeDelivered = true
-    } else if (!welcome.ok || welcome.error) {
-      warnings.push("we couldn't send your setup welcome message")
-    } else if ((welcome.smsSent?.length ?? 0) > 0 || (welcome.emailSent?.length ?? 0) > 0) {
-      welcomeDelivered = true
-    } else if (welcome.reason === 'no_contact_info') {
-      warnings.push('add a phone or email in Account setup to receive your welcome message')
+    if (
+      landlordWelcomeContactsAreUndeliverable({
+        emails: welcomeEmails,
+        phones: welcomePhones,
+      })
+    ) {
+      warnings.push(undeliverableWelcomeStatus({ emails: welcomeEmails, phones: welcomePhones }))
+      try {
+        const { recordActivityLog } = await import('@/lib/recordActivityLog')
+        await recordActivityLog({
+          landlordId: scope.landlordId,
+          eventType: 'landlord.onboarding_welcome_skipped',
+          source: 'automation',
+          actorType: 'system',
+          metadata: {
+            message:
+              'Setup welcome was not sent because the contact details cannot receive messages.',
+            email_skipped: welcomeEmails.map((email) => email.trim().toLowerCase()).filter(Boolean),
+            sms_skipped: welcomePhones.map((phone) => phone.trim()).filter(Boolean),
+          },
+        })
+      } catch (err) {
+        console.warn('[landlordOnboarding] welcome skip log failed', err)
+      }
     } else {
-      warnings.push("we couldn't deliver your setup welcome message")
+      const welcome = await sendLandlordOnboardingWelcome({
+        landlordId: scope.landlordId,
+        companyName: state.accountSetup.companyName.trim() || null,
+        contactName: state.accountSetup.contactName.trim() || null,
+        email: state.accountSetup.email.trim() || null,
+      })
+      if (!welcome.configured) {
+        console.warn('[landlordOnboarding] landlord welcome not configured')
+      } else if (welcome.skipped && welcome.reason === 'already_sent') {
+        welcomeDelivered = true
+      } else if (welcome.skipped && welcome.reason === 'undeliverable_contact') {
+        warnings.push(undeliverableWelcomeStatus({ emails: welcomeEmails, phones: welcomePhones }))
+      } else if (!welcome.ok || welcome.error) {
+        warnings.push("we couldn't send your setup welcome message")
+      } else if ((welcome.smsSent?.length ?? 0) > 0 || (welcome.emailSent?.length ?? 0) > 0) {
+        welcomeDelivered = true
+      } else if (welcome.reason === 'no_contact_info') {
+        warnings.push('add a phone or email in Account setup to receive your welcome message')
+      } else {
+        warnings.push("we couldn't deliver your setup welcome message")
+      }
     }
   } catch (err) {
     console.warn('[landlordOnboarding] landlord welcome trigger failed', err)

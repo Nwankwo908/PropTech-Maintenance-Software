@@ -108,7 +108,7 @@ export function validateRentRollExtract(extract: RentRollExtract): RentRollExtra
   const warnings = [...extract.warnings]
   const rows = extract.rows.map((row) => {
     if (row.skipReason) return row
-    if (!row.unit) {
+    if (!row.unit && row.tenant_names.length === 0) {
       return {
         ...row,
         skipReason: 'missing_unit',

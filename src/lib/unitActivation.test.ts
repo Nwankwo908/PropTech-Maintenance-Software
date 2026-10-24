@@ -4,6 +4,7 @@ import {
   pickCanonicalUnitForResident,
   residentHasLeaseDatesForActivation,
   residentQualifiesForUnitActivation,
+  shouldOccupySingleFamilyProperty,
 } from './unitActivation'
 
 describe('residentQualifiesForUnitActivation', () => {
@@ -62,6 +63,27 @@ describe('residentQualifiesForUnitActivation', () => {
         activationStatus: 'activated',
       }),
     ).toBe(true)
+  })
+
+  it('links a single-family resident to the property when the lease has dates', () => {
+    expect(
+      shouldOccupySingleFamilyProperty('single_family_home', {
+        id: 'res-1',
+        unit: '1',
+        building: '3100 Ellerslie Avenue',
+        leaseStart: '2023-11-10',
+        leaseEnd: '2024-11-10',
+      }),
+    ).toBe(true)
+    expect(
+      shouldOccupySingleFamilyProperty('multifamily', {
+        id: 'res-1',
+        unit: '',
+        building: 'Maple Court',
+        leaseStart: '2024-01-01',
+        leaseEnd: '2025-01-01',
+      }),
+    ).toBe(false)
   })
 
   it('does not activate a past resident or a row with no unit', () => {

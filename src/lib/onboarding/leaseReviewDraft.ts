@@ -129,7 +129,7 @@ export function buildLeaseReviewDraft(input: {
     state: placed.state,
     zipCode: placed.zipCode,
     propertyType: 'single_family_home',
-    unitCount: 1,
+    unitCount: 0,
     unitLabels: '',
     propertyManagerName: '',
     propertyManagerPhone: '',
@@ -144,7 +144,7 @@ export function buildLeaseReviewDraft(input: {
     ? tenant.value.split(',').map((name) => name.trim()).filter(Boolean)
     : ['']
   const shared = {
-    unit: unit.value,
+    unit: '',
     building: street,
     leaseStart: start.value,
     leaseEnd: end.value,
@@ -157,14 +157,12 @@ export function buildLeaseReviewDraft(input: {
     const suffix = names.length === 1 ? 'lease-draft' : `lease-draft-${index}`
     const residentAttention: ReviewFieldAttentionMap = {}
     put(residentAttention, 'fullName', tenant.attention)
-    put(residentAttention, 'unit', unit.attention)
     put(residentAttention, 'leaseStart', start.attention)
     put(residentAttention, 'leaseEnd', end.attention)
     put(residentAttention, 'monthlyRent', rent.attention)
     put(residentAttention, 'rentDueDay', due.attention)
     const leaseAttention: ReviewFieldAttentionMap = {}
     put(leaseAttention, 'residentName', tenant.attention)
-    put(leaseAttention, 'unit', unit.attention)
     put(leaseAttention, 'leaseStart', start.attention)
     put(leaseAttention, 'leaseEnd', end.attention)
     put(leaseAttention, 'rentAmount', rent.attention)
@@ -187,7 +185,7 @@ export function buildLeaseReviewDraft(input: {
     leases.push({
       id: `ext-lease-${input.docId}-${suffix}`,
       residentName: name,
-      unit: unit.value,
+      unit: '',
       building: street,
       leaseStart: start.value,
       leaseEnd: end.value,
@@ -202,26 +200,12 @@ export function buildLeaseReviewDraft(input: {
     })
   })
 
-  const units: OnboardingExtractedUnit[] =
-    unit.value && street
-      ? [
-        {
-          id: `ext-unit-${input.docId}-lease-draft`,
-          label: unit.value,
-          building: street,
-          sourceDocumentName: input.sourceDocumentName,
-          confidence: fields.unit?.confidence ?? 0,
-          selected: true,
-        },
-      ]
-    : []
-
-  return { properties: [property], units, residents, leases }
+  return { properties: [property], units: [], residents, leases }
 }
 
 function draftPairKey(id: string): string | null {
-  const match = id.match(/lease-draft(?:-\d+)?$/)
-  return match ? match[0] : null
+  const match = id.match(/^ext-(?:res|lease|prop|unit)-(.+)-lease-draft(?:-\d+)?$/)
+  return match?.[1] || null
 }
 
 const REQUIRED_REVIEW_KEYS = new Set([

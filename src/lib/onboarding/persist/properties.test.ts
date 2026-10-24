@@ -49,13 +49,17 @@ describe('resolveOnboardingUnitLabels', () => {
     expect(generateUnitLabels(4)).toEqual(['101', '102', '103', '104'])
   })
 
-  it('does not invent unit numbers for single-family properties', () => {
+  it('does not create units for single-family properties', () => {
     expect(
       resolveOnboardingUnitLabels({ unitCount: 1, propertyType: 'single_family_home' }),
-    ).toEqual(['Home'])
+    ).toEqual([])
     expect(
-      resolveOnboardingUnitLabels({ unitCount: 1, propertyType: 'single_family' }),
-    ).toEqual(['Home'])
+      resolveOnboardingUnitLabels({
+        unitCount: 1,
+        propertyType: 'single_family',
+        unitLabels: ['1', 'Home'],
+      }),
+    ).toEqual([])
   })
 })
 

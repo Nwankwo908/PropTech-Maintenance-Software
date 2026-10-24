@@ -104,6 +104,16 @@ describe('lease review drafts', () => {
     expect(toMockExtractionReview(review).residents[0]?.fullName).toBe('Morgan Tenant')
   })
 
+  it('does not create a unit for a single-family lease', () => {
+    const review = buildOnboardingExtractionReview([leaseDoc()])
+    expect(review.properties[0]?.propertyType).toBe('single_family_home')
+    expect(review.units).toEqual([])
+    expect(review.residents[0]?.unit).toBe('')
+    expect(review.leases[0]?.unit).toBe('')
+    expect(review.residents[0]?.fullName).toBe('Morgan Tenant')
+    expect(review.residents[0]?.monthlyRent).toBe('1500')
+  })
+
   it('leaves an optional blank unit unflagged', () => {
     const review = buildOnboardingExtractionReview([
       leaseDoc(scan({ unit: { status: 'not_stated', value: null } })),
@@ -111,6 +121,26 @@ describe('lease review drafts', () => {
     expect(review.residents[0]?.unit).toBe('')
     expect(review.residents[0]?.fieldAttention?.unit).toBeUndefined()
     expect(review.residents[0]?.needsReview).toBe(false)
+  })
+
+  it('shares a rent correction with co-tenants on that lease only', () => {
+    const first = { ...leaseDoc(), id: 'doc-a', fileName: '3100.pdf' }
+    const second = {
+      ...leaseDoc(
+        scan({
+          tenant_names: { status: 'found', value: ['Tynika Milan'] },
+          monthly_rent: { status: 'found', value: 1400 },
+          property_address: { status: 'found', value: '725 Bartlett Ave' },
+        }),
+      ),
+      id: 'doc-b',
+      fileName: '725.pdf',
+    }
+    const review = buildOnboardingExtractionReview([first, second])
+    const lamont = review.residents.find((row) => row.fullName === 'Morgan Tenant')
+    const edited = editLeaseReviewDraft(review, lamont?.id ?? '', 'monthlyRent', '1501')
+    expect(edited.residents.find((row) => row.fullName === 'Morgan Tenant')?.monthlyRent).toBe('1501')
+    expect(edited.residents.find((row) => row.fullName === 'Tynika Milan')?.monthlyRent).toBe('1400')
   })
 
   it('clears only the edited field', () => {

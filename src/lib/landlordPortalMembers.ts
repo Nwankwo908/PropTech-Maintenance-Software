@@ -35,11 +35,48 @@ export async function syncLandlordPortalTeamMember(
   const id = landlordId.trim()
   if (!id) return { ok: false, error: 'Missing landlord.' }
 
-  const { error: clearError } = await supabase
+  const email = normalizePortalEmail(member.email)
+  const session = await supabase.auth.getSession()
+  const signedInEmail = normalizePortalEmail(session.data.session?.user.email ?? '')
+  // A blank optional team member must not remove the person who is signed in.
+  // Replacing the row only after the new login exists keeps portal access through the save.
+  const keepEmail = email || signedInEmail
+
+  if (email) {
+    const { error } = await supabase.from('landlord_portal_members').upsert(
+      {
+        landlord_id: id,
+        email,
+        full_name: member.name.trim() || null,
+        phone: member.phone.trim() || null,
+        role: 'team_member',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'landlord_id,email' },
+    )
+    if (error) {
+      if (/does not exist|schema cache/i.test(error.message)) {
+        console.warn('[portal-members] table missing; skip team login sync')
+        return { ok: true }
+      }
+      if (/duplicate|unique/i.test(error.message)) {
+        return {
+          ok: false,
+          error: 'That team member email is already used on another account.',
+        }
+      }
+      console.warn('[portal-members] upsert failed', error.message)
+      return { ok: false, error: error.message }
+    }
+  }
+
+  let clear = supabase
     .from('landlord_portal_members')
     .delete()
     .eq('landlord_id', id)
     .eq('role', 'team_member')
+  if (keepEmail) clear = clear.neq('email', keepEmail)
+  const { error: clearError } = await clear
   if (clearError) {
     if (/does not exist|schema cache/i.test(clearError.message)) {
       console.warn('[portal-members] table missing; skip team login sync')
@@ -47,31 +84,6 @@ export async function syncLandlordPortalTeamMember(
     }
     console.warn('[portal-members] clear failed', clearError.message)
     return { ok: false, error: clearError.message }
-  }
-
-  const email = normalizePortalEmail(member.email)
-  if (!email) return { ok: true }
-
-  const { error } = await supabase.from('landlord_portal_members').upsert(
-    {
-      landlord_id: id,
-      email,
-      full_name: member.name.trim() || null,
-      phone: member.phone.trim() || null,
-      role: 'team_member',
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'landlord_id,email' },
-  )
-  if (error) {
-    if (/duplicate|unique/i.test(error.message)) {
-      return {
-        ok: false,
-        error: 'That team member email is already used on another account.',
-      }
-    }
-    console.warn('[portal-members] upsert failed', error.message)
-    return { ok: false, error: error.message }
   }
   return { ok: true }
 }

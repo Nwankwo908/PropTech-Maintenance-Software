@@ -47,8 +47,12 @@ import {
   buildTenantRentCollectionPausedSms,
   checkPartialAmount,
   formatTenantRentAmount,
+  isBareYesRentAffirmation,
+  isExplicitRentCollectionReply,
+  looksLikeRentCollectionAsk,
   parseMoneyAmountFromSms,
   parseTenantRentReply,
+  rentAskSentWithinWindow,
   roundRentCents,
   type TenantRentReplyParse,
 } from "./tenantRentReplyParse.ts"
@@ -236,6 +240,48 @@ export function questionsShouldFallThroughToInterpretation(body: string): boolea
     return !bare
   }
   return false
+}
+
+async function loadLastOutboundOnThread(
+  supabase: SupabaseClient,
+  conversationId: string,
+): Promise<{ body: string; sentAt: string } | null> {
+  const { data } = await supabase
+    .from("sms_messages")
+    .select("body, created_at, direction")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .order("created_at", { ascending: false })
+    .limit(1)
+  const row = Array.isArray(data) ? data[0] : null
+  if (!row || typeof row !== "object") return null
+  const body = typeof row.body === "string" ? row.body : ""
+  const sentAt = typeof row.created_at === "string" ? row.created_at : ""
+  if (!body || !sentAt) return null
+  return { body, sentAt }
+}
+
+async function residentHadRecentRentAsk(
+  supabase: SupabaseClient,
+  conversationId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const since = new Date(now.getTime() - 72 * 60 * 60 * 1000).toISOString()
+  const { data } = await supabase
+    .from("sms_messages")
+    .select("body, created_at, direction")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(30)
+  const rows = Array.isArray(data) ? data : []
+  return rows.some((row) => {
+    if (!row || typeof row !== "object") return false
+    const body = typeof row.body === "string" ? row.body : ""
+    const sentAt = typeof row.created_at === "string" ? row.created_at : ""
+    return looksLikeRentCollectionAsk(body) && rentAskSentWithinWindow(sentAt, now)
+  })
 }
 
 async function persistResidentIntake(
@@ -683,22 +729,16 @@ export async function handleTenantRentReply(
 
   const prior = await loadConversationIntake(supabase, params.conversationId)
 
+  const lastOutbound = await loadLastOutboundOnThread(supabase, params.conversationId)
+
   // Landlord paused resident rent outreach — ack and stop. Do not run
   // PAID/PARTIAL amount validation against balance_due (Section 8 loops).
+  // YES / OK are not rent words, even while a dollar-amount ask is open.
   const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
   if (isRentCollectionPaused(operational.rentCollectionPaused)) {
+    if (!isExplicitRentCollectionReply(params.body)) return { handled: false }
     const amountAsk = readAwaitingTenantRentAmount(prior)
-    if (amountAsk) {
-      await persistResidentIntake(
-        supabase,
-        params.conversationId,
-        prior,
-        writeAwaitingTenantRentAmount(prior, null),
-      )
-    }
-    // Only claim the message when it is a rent-reply keyword / pending amount ask.
     const parsed = parseTenantRentReply(params.body)
-    if (!amountAsk && !parsed) return { handled: false }
     if (
       parsed?.kind === "questions" &&
       questionsShouldFallThroughToInterpretation(params.body)
@@ -711,9 +751,18 @@ export async function handleTenantRentReply(
       shouldYieldRentReplyToSpecificPendingAsk({
         intakeState: prior,
         body: params.body,
+        lastOutbound,
       })
     ) {
       return { handled: false }
+    }
+    if (amountAsk) {
+      await persistResidentIntake(
+        supabase,
+        params.conversationId,
+        prior,
+        writeAwaitingTenantRentAmount(prior, null),
+      )
     }
     await recordActivityLog(supabase, {
       landlordId: params.landlordId,
@@ -852,7 +901,14 @@ export async function handleTenantRentReply(
   })
   if (!run) return { handled: false }
 
-  const parsed = parseTenantRentReply(params.body)
+  let parsed = parseTenantRentReply(params.body)
+  // Bare YES is a rent payment only after a rent reminder / PAID prompt
+  // went to this resident in the last 72 hours.
+  if (!parsed && isBareYesRentAffirmation(params.body)) {
+    const asked = await residentHadRecentRentAsk(supabase, params.conversationId)
+    if (!asked) return { handled: false }
+    parsed = { kind: "paid", amountStatus: "missing" }
+  }
   if (!parsed) return { handled: false }
 
   // Ticket-update / schedule / other contextual YES asks beat rent PAID tokens.
@@ -860,6 +916,7 @@ export async function handleTenantRentReply(
     shouldYieldRentReplyToSpecificPendingAsk({
       intakeState: prior,
       body: params.body,
+      lastOutbound,
     })
   ) {
     return { handled: false }

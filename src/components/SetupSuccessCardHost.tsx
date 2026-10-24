@@ -4,7 +4,6 @@ import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { loadSetupSuccessProgress } from '@/lib/loadSetupSuccessProgress'
-import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
@@ -17,11 +16,11 @@ import {
   minimizeSetupSuccessCard,
   SETUP_SUCCESS_COLLAPSED_EVENT,
   SETUP_SUCCESS_PROGRESS_CHANGED_EVENT,
+  setupSuccessExperienceReady,
   shouldShowSetupSuccessCard,
   type SetupSuccessItemId,
   type SetupSuccessProgress,
 } from '@/lib/setupSuccessChecklist'
-import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 
 /**
  * Global Get set up for success overlay — every admin route, not only Overview.
@@ -32,8 +31,7 @@ export function SetupSuccessCardHost() {
   const landlordId = getActiveLandlordId()
   const { profile } = useSidebarAdminProfile()
   const firstName = profile?.name?.trim().split(/\s+/).filter(Boolean)[0] ?? null
-  const eligible =
-    isLimitedAlphaLandlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
+  const eligible = setupSuccessExperienceReady(landlordId)
 
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
   const [hidden, setHidden] = useState(() => isSetupSuccessCardHidden(landlordId))
