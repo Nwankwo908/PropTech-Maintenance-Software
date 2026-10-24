@@ -95,7 +95,7 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
     label: 'Home Checks',
     status: 'unknown',
     reason:
-      'Requires READINESS_HOME_CHECK_DATABASE_URL + upload fixtures; SQL/browser readiness subchecks blocked/not_run — still to verify for pilot inclusion (not hard-disabled).',
+      'Isolated SQL passed, and a disposable live upload showed 2 of 4 distinct photos, one observation ticket, and no text. The original Property Intelligence screen is still unresolved, so this stays unverified.',
     coreSafety: false,
   },
   {
@@ -118,7 +118,7 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
     label: 'Approvals',
     status: 'unknown',
     reason:
-      'Landlord estimate APPROVE/DECLINE from a real handset is not proven (prior late-approval run used inject only).',
+      'Real-phone APPROVE and DECLINE on LA2 passed 2026-10-22 (inbound SM059a977… and SM6741188…, vendor notified, LA1 unchanged; .readiness/integration/landlord-estimate-approval-handset.json). Thread binding in f166932 landed after that handset. Current sms-inbound includes it; a second handset round was not run because the designated phone is the existing LA2 ops number.',
     coreSafety: true,
   },
   {
@@ -131,9 +131,9 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'ask_ulo_priorities',
     label: 'Ask ULO priorities',
-    status: 'unknown',
+    status: 'verified',
     reason:
-      'Routing to executive_briefing unit-covered; cross-system retrieval + action binding not proven.',
+      'Disposable live list ranked emergency, deadline, approval, then visit, and omitted the other account. A reply selects that item only. It does not assign a vendor or approve an estimate. Duplicate replies do not select again.',
     coreSafety: false,
   },
 ] as const

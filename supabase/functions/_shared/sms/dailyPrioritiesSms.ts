@@ -14,6 +14,7 @@ import {
   resolveDailyPriorityReply,
 } from "../ask_ulo/tools/ops/dailyPrioritiesActions.ts"
 import {
+  dailyPrioritySelectionMessage,
   resolveDailyPriorityReplyToken,
   type DailyPriorityActorRole,
 } from "../ask_ulo/tools/ops/dailyPriorities.ts"
@@ -183,7 +184,7 @@ export async function tryHandleDailyPrioritiesReplySms(
       handled: true,
       ok: true,
       alreadyExecuted: true,
-      message: "That item was already handled — I didn't run it again.",
+      message: dailyPrioritySelectionMessage(resolved.item, true),
       itemEntityId: resolved.item.entityId,
       offeredAction: resolved.item.offeredAction,
     }
@@ -208,10 +209,10 @@ export async function tryHandleDailyPrioritiesReplySms(
       ok: false,
       message:
         check.reason === "location_required"
-          ? "I still need the correct address before booking a vendor."
+          ? `I didn't book anyone for ${resolved.item.title}. I still need the correct address before a vendor can be booked.`
           : check.reason === "stale"
-          ? "That item changed since the list was sent — ask for today's priorities again."
-          : "I couldn't complete that action right now.",
+          ? `That item changed since I sent the list. Ask for today's priorities again. Nothing was assigned or approved.`
+          : "I couldn't select that item right now. Nothing was assigned or approved.",
       itemEntityId: resolved.item.entityId,
       offeredAction: resolved.item.offeredAction,
     }
@@ -224,26 +225,20 @@ export async function tryHandleDailyPrioritiesReplySms(
     position: resolved.item.position,
   })
 
-  if (resolved.item.offeredAction === "none") {
+  if (!marked.ok) {
     return {
       handled: true,
-      ok: true,
-      message: "Noted. There's no automatic action on that item — check the dashboard if you need to act.",
+      ok: false,
+      message: "I couldn't select that item right now. Nothing was assigned or approved.",
       itemEntityId: resolved.item.entityId,
       offeredAction: resolved.item.offeredAction,
-      alreadyExecuted: marked.alreadyExecuted,
     }
   }
 
   return {
     handled: true,
     ok: true,
-    message:
-      resolved.item.offeredAction === "approve"
-        ? `Opening approval for #${resolved.item.displayId ?? resolved.item.position}. Reply YES on the approval text to confirm.`
-        : resolved.item.offeredAction === "assign"
-        ? `Got it — I'll use the existing vendor-choice flow for that job (no booking until the address and trade match).`
-        : `Got it — confirm the address first, then we can book.`,
+    message: dailyPrioritySelectionMessage(resolved.item, marked.alreadyExecuted),
     itemEntityId: resolved.item.entityId,
     offeredAction: resolved.item.offeredAction,
     alreadyExecuted: marked.alreadyExecuted,

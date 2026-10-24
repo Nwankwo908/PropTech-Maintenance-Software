@@ -11,6 +11,7 @@ import { isDailyPrioritiesQuestion } from "../../tools/ops/dailyPrioritiesDetect
 import {
   buildDailyPrioritiesResult,
   filterDailyPriorityCandidates,
+  dailyPrioritySelectionMessage,
   formatDailyPrioritiesList,
   instantIsOnLocalDay,
   localDayBoundsUtc,
@@ -149,6 +150,36 @@ Deno.test("mixed account ranks emergency → deadline → approval → visit; de
   assertMatch(smsText, /^Today's priorities:/)
   assertMatch(smsText, /1\. Flooding/)
   assertMatch(smsText, /Reply 102 YES/)
+  assertMatch(smsText, /not approved until you reply APPROVE or DECLINE/)
+  assertMatch(items[0]?.replyInstruction ?? "", /not assigned until you confirm/)
+  assertEquals(/Reply 1 to assign/.test(smsText), false)
+})
+
+Deno.test("priority selection names the chosen job and does not claim the work is done", () => {
+  const flood = {
+    title: "Flooding",
+    displayId: 88011,
+    offeredAction: "assign" as const,
+  }
+  const sink = {
+    title: "Sink leak",
+    displayId: 102,
+    offeredAction: "approve" as const,
+  }
+  const floodMsg = dailyPrioritySelectionMessage(flood)
+  const sinkMsg = dailyPrioritySelectionMessage(sink)
+  assertMatch(floodMsg, /I selected Flooding/)
+  assertMatch(floodMsg, /A vendor is not assigned/)
+  assertEquals(/Sink leak/.test(floodMsg), false)
+  assertEquals(/approved/.test(floodMsg), false)
+  assertMatch(sinkMsg, /I selected Sink leak \(request 102\)/)
+  assertMatch(sinkMsg, /The estimate is not approved/)
+  assertMatch(sinkMsg, /Reply APPROVE/)
+  assertMatch(sinkMsg, /DECLINE/)
+  assertEquals(/Flooding/.test(sinkMsg), false)
+  assertMatch(dailyPrioritySelectionMessage(sink, true), /I already selected Sink leak/)
+  assertMatch(dailyPrioritySelectionMessage(sink, true), /Nothing was assigned or approved/)
+  assertEquals(/completed/i.test(dailyPrioritySelectionMessage(flood, true)), false)
 })
 
 Deno.test("empty actionable set discloses clearly; partial retrieval discloses incompleteness", () => {
@@ -320,5 +351,6 @@ Deno.test("unknown-address emergency offers confirm_location — not assign", ()
     }),
   ])
   assertEquals(items[0]?.offeredAction, "confirm_location")
-  assertMatch(items[0]?.replyInstruction ?? "", /confirm the address/i)
+  assertMatch(items[0]?.replyInstruction ?? "", /address still has to be confirmed before a vendor is booked/i)
+  assertEquals(/to assign/i.test(items[0]?.replyInstruction ?? ""), false)
 })

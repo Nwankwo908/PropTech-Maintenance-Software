@@ -255,16 +255,19 @@ export async function markDailyPriorityItemExecuted(
   if (existing?.executed_at) {
     return { ok: true, alreadyExecuted: true }
   }
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("ask_ulo_priority_list_items")
     .update({ executed_at: new Date().toISOString() })
     .eq("list_id", input.listId)
     .eq("position", input.position)
     .is("executed_at", null)
+    .select("position")
   if (error) {
     console.error("[dailyPriorities] mark executed", error.message)
     return { ok: false, alreadyExecuted: false }
   }
+  // A second reply finds the row already selected and does not write again.
+  if (!updated?.length) return { ok: true, alreadyExecuted: true }
   return { ok: true, alreadyExecuted: false }
 }
 

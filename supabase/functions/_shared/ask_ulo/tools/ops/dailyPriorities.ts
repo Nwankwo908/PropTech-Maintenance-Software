@@ -196,19 +196,49 @@ function replyFor(
   if (action === "approve" && displayId != null) {
     return {
       token: `${displayId} YES`,
-      instruction: `Reply ${displayId} YES`,
+      instruction:
+        `Reply ${displayId} YES to select this estimate. It is not approved until you reply APPROVE or DECLINE.`,
     }
   }
   if (action === "assign" || action === "confirm_location") {
     return {
       token: String(position),
-      instruction:
-        action === "confirm_location"
-          ? `Reply ${position} to confirm the address`
-          : `Reply ${position} to assign`,
+      instruction: action === "confirm_location"
+        ? `Reply ${position} to select this job. The address still has to be confirmed before a vendor is booked.`
+        : `Reply ${position} to select this job. A vendor is not assigned until you confirm on the vendor text.`,
     }
   }
   return { token: String(position), instruction: null }
+}
+
+/** What a priority reply did. Selection is not assignment or approval. */
+export function dailyPrioritySelectionMessage(
+  item: Pick<DailyPriorityListItem, "title" | "displayId" | "offeredAction">,
+  alreadySelected = false,
+): string {
+  const title = item.title.trim() || "that item"
+  if (alreadySelected) {
+    return `I already selected ${title}. I didn't select it again. Nothing was assigned or approved.`
+  }
+  if (item.offeredAction === "approve") {
+    const ref = item.displayId != null ? ` (request ${item.displayId})` : ""
+    return [
+      `I selected ${title}${ref}. The estimate is not approved.`,
+      "",
+      "Reply APPROVE to accept that estimate, or DECLINE if you need a revised one.",
+    ].join("\n")
+  }
+  if (item.offeredAction === "assign") {
+    return [
+      `I selected ${title}. A vendor is not assigned.`,
+      "",
+      "When the vendor text for this job arrives, reply with the number next to the vendor you want.",
+    ].join("\n")
+  }
+  if (item.offeredAction === "confirm_location") {
+    return `I selected ${title}. I still need the correct address before a vendor can be booked.`
+  }
+  return `I selected ${title}. There's no confirmation step for this item.`
 }
 
 function placeLabel(c: DailyPriorityCandidate): string {

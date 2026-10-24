@@ -50,7 +50,7 @@ Deno.test("prefer packet: focus-today uses daily priorities packet, not WO-only 
     capability: "summarize",
     dailyPriorities: {
       markdown:
-        "Today's priorities:\n1. Flooding, 45 Oak Ave #3. Vendor needed. Reply 1 to assign.\n2. Inspection repairs due Fri, 123 Main St.",
+        "Today's priorities:\n1. Flooding, 45 Oak Ave #3. Vendor needed. Reply 1 to select this job. A vendor is not assigned until you confirm on the vendor text.\n2. Inspection repairs due Fri, 123 Main St.",
       items: [{ position: 1 }, { position: 2 }],
     },
   })
