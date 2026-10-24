@@ -663,9 +663,9 @@ export async function tryHandleEstimateDecisionInbound(
     } else {
       const pending = await listPendingEstimatesForLandlord(supabase, landlordId)
 
-      async function disambiguate(
+      const disambiguate = async (
         options: PendingLandlordEstimate[],
-      ): Promise<EstimateDecisionInboundResult> {
+      ): Promise<EstimateDecisionInboundResult> => {
         await supabase
           .from("sms_conversations")
           .update({
