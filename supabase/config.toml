@@ -269,7 +269,9 @@ entrypoint = "./functions/get-broadcast-stats/index.ts"
 
 [functions.retry-failed-delivery]
 enabled = true
-verify_jwt = false
+# Gateway requires a JWT. The function still rejects the anon key unless
+# X-Ulo-Internal-Key matches ULO_INTERNAL_KEY.
+verify_jwt = true
 import_map = "./functions/retry-failed-delivery/deno.json"
 entrypoint = "./functions/retry-failed-delivery/index.ts"
 

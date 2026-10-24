@@ -1,12 +1,18 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
+  isFictionalWelcomePhone,
+  isReservedWelcomeEmail,
+} from "../../../shared/onboarding/landlordWelcomeDelivery.ts"
+import {
   notifyResident,
   type ResidentNotifyEvent,
   normalizePhoneFlexible,
 } from "../_shared/resident_notify.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { sendOutboundSms } from "../_shared/sms/adapters.ts"
+import { serveRetryFailedDelivery } from "../_shared/retryFailedDeliveryEdge.ts"
+import type { DeliveryLog } from "../_shared/retryFailedDelivery.ts"
 import {
   buildVendorRetryEmailSubject,
   buildVendorRetryEmailText,
@@ -26,13 +32,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-type RetrySource = "resident" | "vendor" | "broadcast"
 type RetryChannel = "email" | "sms"
-type RetryBody = {
-  source?: RetrySource
-  logId?: string
-  channel?: RetryChannel
-}
 
 function isResidentEventType(value: string): value is ResidentNotifyEvent {
   return (
@@ -123,14 +123,22 @@ async function retryResidentDelivery(
     (typeof ticket.urgency === "string" && ticket.urgency.trim()
       ? ticket.urgency
       : ticket.priority) || "normal"
+  const residentEmail = typeof ticket.email === "string" ? ticket.email.trim() : ""
+  const residentPhone = typeof ticket.resident_phone === "string" ? ticket.resident_phone : ""
+  if (
+    (channel === "email" && isReservedWelcomeEmail(residentEmail)) ||
+    (channel === "sms" && isFictionalWelcomePhone(residentPhone))
+  ) {
+    console.info("[retry-failed-delivery] dry-run reserved recipient")
+    return { ok: true }
+  }
 
   await notifyResident(supabase, {
     event: eventTypeRaw,
     ticketId: String(data.ticket_id),
     recipientName: String(ticket.resident_name ?? ""),
-    recipientEmail: typeof ticket.email === "string" ? ticket.email.trim() : "",
-    recipientPhone:
-      typeof ticket.resident_phone === "string" ? ticket.resident_phone : null,
+    recipientEmail: residentEmail,
+    recipientPhone: residentPhone || null,
     notificationChannel: channel,
     unit: typeof ticket.unit === "string" ? ticket.unit : undefined,
     priority: String(priority),
@@ -187,6 +195,10 @@ async function retryVendorDelivery(
   if (channel === "email") {
     const to = typeof vendor.email === "string" ? vendor.email.trim() : ""
     if (!to) throw new Error("Vendor has no email for retry")
+    if (isReservedWelcomeEmail(to)) {
+      console.info("[retry-failed-delivery] dry-run reserved recipient")
+      return { ok: true }
+    }
     const email = vendorRetryEmailBodies({
       ticketId,
       vendorName,
@@ -202,6 +214,10 @@ async function retryVendorDelivery(
       typeof vendor.phone === "string" ? vendor.phone : null,
     )
     if (!to) throw new Error("Vendor has no valid phone for SMS retry")
+    if (isFictionalWelcomePhone(to)) {
+      console.info("[retry-failed-delivery] dry-run reserved recipient")
+      return { ok: true }
+    }
     const result = await sendOutboundSms(
       to,
       vendorRetrySmsBody({ ticketId, priority: String(priority), unit }),
@@ -278,6 +294,10 @@ async function retryBroadcastDelivery(
 
   if (channel === "email") {
     if (!recipientEmail) throw new Error("Broadcast recipient email missing for retry")
+    if (isReservedWelcomeEmail(recipientEmail)) {
+      console.info("[retry-failed-delivery] dry-run reserved recipient")
+      return { ok: true }
+    }
     const html = `
 <!DOCTYPE html>
 <html><body style="font-family:system-ui,sans-serif;line-height:1.5;color:#101828;">
@@ -288,6 +308,10 @@ async function retryBroadcastDelivery(
     else providerMessageId = result.id
   } else {
     if (!recipientPhone) throw new Error("Broadcast recipient phone missing for SMS retry")
+    if (isFictionalWelcomePhone(recipientPhone)) {
+      console.info("[retry-failed-delivery] dry-run reserved recipient")
+      return { ok: true }
+    }
     const result = await sendOutboundSms(recipientPhone, message || subject)
     if ("error" in result) sendErr = result.error
     else providerMessageId = result.sid
@@ -311,55 +335,36 @@ async function retryBroadcastDelivery(
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders })
-  }
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed" }, 405)
-  }
-
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
-  if (!supabaseUrl || !serviceKey) {
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY")?.trim()
+  const internalKey = Deno.env.get("ULO_INTERNAL_KEY")?.trim()
+  if (!supabaseUrl || !serviceKey || !anonKey || !internalKey) {
     return jsonResponse(
       { error: "Server misconfiguration: missing Supabase credentials" },
       500,
     )
   }
   const supabase = createClient(supabaseUrl, serviceKey)
-
-  let body: RetryBody
-  try {
-    body = await req.json()
-  } catch {
-    return jsonResponse({ error: "Expected JSON body" }, 400)
-  }
-
-  const source = body.source
-  const logId = typeof body.logId === "string" ? body.logId.trim() : ""
-  const channel = body.channel
-
-  if (source !== "resident" && source !== "vendor" && source !== "broadcast") {
-    return jsonResponse({ error: "Invalid source" }, 400)
-  }
-  if (!logId) return jsonResponse({ error: "Missing logId" }, 400)
-  if (channel !== "email" && channel !== "sms") {
-    return jsonResponse({ error: "Invalid channel" }, 400)
-  }
-
-  try {
-    if (source === "resident") {
-      await retryResidentDelivery(supabase, logId, channel)
-    } else if (source === "vendor") {
-      await retryVendorDelivery(supabase, logId, channel)
-    } else {
-      await retryBroadcastDelivery(supabase, logId, channel)
-    }
-    return jsonResponse({ ok: true, source, logId, channel })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error("[retry-failed-delivery] retry failed", { source, logId, channel, msg })
-    return jsonResponse({ error: msg || "Retry failed" }, 400)
-  }
+  return serveRetryFailedDelivery(
+    req,
+    supabase,
+    { supabaseUrl, anonKey, internalKey },
+    async (entry) => {
+      await sendRetry(supabase, entry)
+    },
+  )
 })
+
+async function sendRetry(supabase: SupabaseClient, entry: DeliveryLog): Promise<void> {
+  if (entry.source === "resident") {
+    await retryResidentDelivery(supabase, entry.id, entry.channel)
+    return
+  }
+  if (entry.source === "vendor") {
+    await retryVendorDelivery(supabase, entry.id, entry.channel)
+    return
+  }
+  await retryBroadcastDelivery(supabase, entry.id, entry.channel)
+}
 
