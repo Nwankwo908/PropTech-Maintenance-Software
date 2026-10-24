@@ -64,6 +64,8 @@ export type SpecialtyFetchContext = {
     cityLabel: string | null
     citySlug: string | null
   }
+  userId?: string | null
+  conversationId?: string | null
 }
 
 export type SpecialtyEvidenceBag = {
@@ -241,6 +243,8 @@ export async function fetchSpecialtyEvidence(
     analytical,
     portfolioJurisdiction,
     effectiveJurisdiction,
+    userId,
+    conversationId,
   } = ctx
 
   const enrichedPlanned = enrichPlannedToolsForFetch(
@@ -254,6 +258,8 @@ export async function fetchSpecialtyEvidence(
       question,
       buildingFilter,
       analytical,
+      userId: userId ?? null,
+      conversationId: conversationId ?? null,
     })
     : []
   const seed = applyDomainToolResults(domainExecuted)

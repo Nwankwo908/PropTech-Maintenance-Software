@@ -52,6 +52,8 @@ export type ExecuteDomainToolContext = {
   propertyId?: string | null
   buildingFilter?: string | null
   analytical?: AnalyticalQuery
+  userId?: string | null
+  conversationId?: string | null
 }
 
 export type ExecuteDomainToolResult =
@@ -340,6 +342,9 @@ export async function executeDomainTool(
           organizationId: ctx.organizationId,
           question: ctx.question,
           buildingFilter: ctx.buildingFilter ?? null,
+          conversationId: ctx.conversationId ?? null,
+          userId: ctx.userId ?? null,
+          channel: "chat",
         }),
       }
     case "summarize_period":

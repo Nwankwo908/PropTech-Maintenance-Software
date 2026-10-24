@@ -505,6 +505,8 @@ export async function executeSelectedTools(
         cityLabel: effectiveJurisdiction.cityLabel,
         citySlug: effectiveJurisdiction.citySlug,
       },
+      userId: context.userId,
+      conversationId,
     },
   )
 
@@ -513,6 +515,7 @@ export async function executeSelectedTools(
     structuredNonLegal,
     property,
     portfolioBriefing,
+    dailyPriorities,
     propertyInsights,
     recurringRepairs,
     repairsToApprove,
@@ -1409,6 +1412,7 @@ export async function executeSelectedTools(
     structuredNonLegal,
     property,
     portfolioBriefing,
+    dailyPriorities,
     propertyInsights,
     recurringRepairs,
     repairsToApprove,

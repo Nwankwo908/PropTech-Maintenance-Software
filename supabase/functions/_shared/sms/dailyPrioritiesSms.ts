@@ -132,7 +132,11 @@ export async function tryHandleDailyPrioritiesReplySms(
     role: DailyPriorityActorRole | "unresolved"
     residentId?: string | null
   },
-): Promise<
+): Promise<DailyPriorityReplyHandleResult> {
+  return tryHandleDailyPrioritiesReply(supabase, { ...input, channel: "sms" })
+}
+
+export type DailyPriorityReplyHandleResult =
   | { handled: false }
   | {
     handled: true
@@ -142,7 +146,22 @@ export async function tryHandleDailyPrioritiesReplySms(
     offeredAction?: string
     alreadyExecuted?: boolean
   }
-> {
+
+/**
+ * Select one item from the open priorities list for this channel.
+ * Selection does not assign a vendor or approve an estimate.
+ */
+export async function tryHandleDailyPrioritiesReply(
+  supabase: SupabaseClient,
+  input: {
+    landlordId: string
+    conversationId?: string | null
+    body: string
+    role: DailyPriorityActorRole | "unresolved"
+    residentId?: string | null
+    channel: "sms" | "chat"
+  },
+): Promise<DailyPriorityReplyHandleResult> {
   if (!canAttemptDailyPrioritiesReply(input.body)) {
     return { handled: false }
   }
@@ -151,7 +170,7 @@ export async function tryHandleDailyPrioritiesReplySms(
   const open = await loadOpenDailyPrioritiesList(supabase, {
     landlordId: input.landlordId,
     conversationId: input.conversationId,
-    channel: "sms",
+    channel: input.channel,
   })
   if (!open) return { handled: false }
   const tokenMatch = resolveDailyPriorityReplyToken(input.body, open.items)
@@ -160,7 +179,7 @@ export async function tryHandleDailyPrioritiesReplySms(
   const resolved = await resolveDailyPriorityReply(supabase, {
     landlordId: input.landlordId,
     conversationId: input.conversationId,
-    channel: "sms",
+    channel: input.channel,
     body: input.body,
     role: input.role,
     residentId: input.residentId,

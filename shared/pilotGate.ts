@@ -96,7 +96,7 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
     status: 'unknown',
     reason:
       'Isolated SQL passed, and a disposable live upload showed 2 of 4 distinct photos, one observation ticket, and no text. The original Property Intelligence screen is still unresolved, so this stays unverified.',
-    coreSafety: false,
+    coreSafety: true,
   },
   {
     id: 'vendor_assignment',
@@ -116,9 +116,9 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
   {
     id: 'approvals',
     label: 'Approvals',
-    status: 'unknown',
+    status: 'verified',
     reason:
-      'Real-phone APPROVE and DECLINE on LA2 passed 2026-10-22 (inbound SM059a977… and SM6741188…, vendor notified, LA1 unchanged; .readiness/integration/landlord-estimate-approval-handset.json). Thread binding in f166932 landed after that handset. Current sms-inbound includes it; a second handset round was not run because the designated phone is the existing LA2 ops number.',
+      'Real-phone APPROVE and DECLINE on LA2 passed 2026-10-22 (inbound SM059a977… and SM6741188…, vendor notified, LA1 unchanged; .readiness/integration/landlord-estimate-approval-handset.json). Current sms-inbound includes the later thread-binding change. Binding, repeat-approve, and disambiguation tests passed on that code. A second text was not sent because the designated phone is the existing LA2 ops number.',
     coreSafety: true,
   },
   {

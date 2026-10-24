@@ -17,6 +17,10 @@ import { synthesizeAnswer } from "./synthesis/synthesizeAnswerStage.ts"
 import { validateFinalAnswer } from "./quality/validateFinalAnswerStage.ts"
 import { auditAskUloTurn } from "./audit/auditAskUloTurn.ts"
 import { runProductSupportTurn } from "./support/runProductSupportTurn.ts"
+import {
+  canAttemptDailyPrioritiesReply,
+  tryHandleDailyPrioritiesReply,
+} from "../sms/dailyPrioritiesSms.ts"
 
 export type {
   AskUloResponse,
@@ -28,10 +32,49 @@ export type {
   AskUloHistoryMessage,
 } from "./core/types.ts"
 
+function prioritySelectionResponse(message: string): AskUloResponse {
+  return {
+    answer: message,
+    citations: [],
+    toolsUsed: ["daily_priorities_reply"],
+    mode: "fallback",
+    model: null,
+    intent: "daily_priorities_reply",
+    agentMode: null,
+    evalId: null,
+    jurisdiction: {
+      countryCode: "US",
+      stateCode: null,
+      countySlug: null,
+      countyLabel: null,
+      citySlug: null,
+      cityLabel: null,
+      courtSystem: null,
+      housingProgram: null,
+      codeSet: null,
+    },
+    visualContext: null,
+    legalAudit: null,
+    safetyBoundary: null,
+  }
+}
+
 export async function runAskUlo(
   supabase: SupabaseClient,
   input: AskUloRunInput,
 ): Promise<AskUloResponse> {
+  // A numbered reply selects the open chat list item. It does not assign or approve.
+  if (canAttemptDailyPrioritiesReply(input.question)) {
+    const reply = await tryHandleDailyPrioritiesReply(supabase, {
+      landlordId: input.landlordId,
+      conversationId: input.conversationId ?? null,
+      body: input.question,
+      role: "landlord",
+      channel: "chat",
+    })
+    if (reply.handled) return prioritySelectionResponse(reply.message)
+  }
+
   // 1. Understand the question (who / where / history / scope)
   const context = await buildAskUloContext(supabase, input)
 

@@ -15,7 +15,10 @@ describe('pilotGate', () => {
     expect(result.blockedBy.some((g) => g.id === 'vendor_assignment')).toBe(false)
     // Rent is hard-excluded from this pilot (not a core blocker once scoped out).
     expect(result.blockedBy.some((g) => g.id === 'rent_payment_ledger')).toBe(false)
-    expect(result.blockedBy.some((g) => g.id === 'approvals')).toBe(true)
+    expect(result.blockedBy.some((g) => g.id === 'approvals')).toBe(false)
+    expect(result.blockedBy.some((g) => g.id === 'home_checks')).toBe(true)
+    expect(pilotWorkflowGate('approvals').status).toBe('verified')
+    expect(pilotWorkflowGate('home_checks').coreSafety).toBe(true)
     expect(isPilotWorkflowAllowed('onboarding')).toBe(true)
     expect(isPilotWorkflowAllowed('scheduling')).toBe(true)
     // Unknown ≠ hard-disabled: soft mode still allows; not verified for pilot claim.
