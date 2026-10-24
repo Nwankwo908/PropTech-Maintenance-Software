@@ -95,7 +95,7 @@ export const PILOT_WORKFLOW_GATES: readonly PilotWorkflowGate[] = [
     label: 'Home Checks',
     status: 'unknown',
     reason:
-      'Isolated SQL passed, and a disposable live upload showed 2 of 4 distinct photos, one observation ticket, and no text. The original Property Intelligence screen is still unresolved, so this stays unverified.',
+      'A disposable signed-in landlord completed start, four file uploads, a 4 of 4 counter, label analysis, unknown fields, retake notices, a March 2018 correction, confirm, and reload. No vendor was assigned. The original Property Intelligence design is not in the project, and the review table is unreadable on a phone, so this stays unverified.',
     coreSafety: true,
   },
   {
