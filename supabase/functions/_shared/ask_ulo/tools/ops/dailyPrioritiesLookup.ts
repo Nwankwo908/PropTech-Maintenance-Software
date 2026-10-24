@@ -137,7 +137,7 @@ export async function lookupDailyPriorities(
     let q = supabase
       .from("maintenance_requests")
       .select(
-        "id, display_id, description, issue_category, priority, urgency, vendor_work_status, property_id, unit_id, unit, building, resident_id, scheduled_at, vendor_notify_error, awaiting_landlord_choice_at, spend_status, created_at",
+        "id, display_id, description, issue_category, priority, urgency, vendor_work_status, property_id, unit_id, unit, resident_id, scheduled_at, vendor_notify_error, awaiting_landlord_choice_at, spend_status, created_at",
       )
       .eq("landlord_id", landlordId)
       .in("vendor_work_status", [...OPEN_STATUSES])
