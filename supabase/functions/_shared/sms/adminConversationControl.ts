@@ -6,6 +6,11 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { normalizeSmsPhone } from "./inbound_db.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import {
+  AWAITING_STAFF_REPLY_KEY,
+  buildAwaitingStaffReply,
+  staffMessageEndsWithQuestion,
+} from "./staffReplyPending.ts"
 
 export const ADMIN_TAKEOVER_KEY = "admin_takeover"
 
@@ -319,10 +324,26 @@ ${body}`
     }
   }
 
-  await supabase
-    .from("sms_conversations")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", conversation.id)
+  const residentThread =
+    Boolean(conversation.resident_id) && !conversation.vendor_id
+  if (residentThread && staffMessageEndsWithQuestion(body)) {
+    intake = {
+      ...intake,
+      [AWAITING_STAFF_REPLY_KEY]: buildAwaitingStaffReply({
+        messageId: saved.id as string,
+        ticketId: conversation.maintenance_request_id,
+      }),
+    }
+    const staffErr = await patchIntakeState(supabase, conversation, intake)
+    if (staffErr) {
+      console.error("[admin-conversation] awaiting_staff_reply was not saved", staffErr.error)
+    }
+  } else {
+    await supabase
+      .from("sms_conversations")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", conversation.id)
+  }
 
   await recordActivityLog(supabase, {
     landlordId: conversation.landlord_id,

@@ -37,6 +37,10 @@ import {
 import { shouldClarifyAmbiguousYesPendingAsks, shouldYieldRentReplyToSpecificPendingAsk } from "./shortReplyArbitration.ts"
 import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import {
+  canHandleStaffReply,
+  tryHandleStaffReplyInbound,
+} from "./staffReplyPending.ts"
+import {
   tryHandleTenantActivationReply,
   tryHandleTenantComplianceKeyword,
 } from "./tenantMessaging.ts"
@@ -110,6 +114,39 @@ async function tryComplianceStopHelpHandler(
       outboundMessageId: result.outboundMessageId,
       source: `tenant_compliance_${result.keyword}`,
     },
+  }
+}
+
+async function tryStaffReplyHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    !canHandleStaffReply({
+      identityType: ctx.identity.identity_type,
+      intakeState: conv?.intake_state,
+    })
+  ) {
+    return { handled: false }
+  }
+  const result = await tryHandleStaffReplyInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    residentId: ctx.identity.resident_id,
+    maintenanceRequestId: ctx.maintenanceRequestId,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: "staff_reply",
+    maintenanceRequestId: ctx.maintenanceRequestId,
   }
 }
 
@@ -864,6 +901,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "Global STOP/START/HELP keyword (sole exception to pending-context rule)",
   landlord_pick_batch:
     "Open landlord_pick_batches row for this sender (reply #display_id decisions). No open batch falls through to single-ticket vendor choice.",
+  staff_reply:
+    "intake_state.awaiting_staff_reply on a resident thread (property-team message ending in ? within 24h)",
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
@@ -919,6 +958,7 @@ export const INBOUND_SMS_HANDLERS_UNUSED: Readonly<
 export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
   { id: "landlord_pick_batch", priority: 6, try: tryLandlordPickBatchHandler },
+  { id: "staff_reply", priority: 9, try: tryStaffReplyHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
   { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
