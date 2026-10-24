@@ -136,10 +136,38 @@ describe('Home Check SMS dispatch', () => {
       const action = await prepareHomeCheckSms(context(db, body, [], true))
       const result = await actHomeCheckSms(db as never, 'landlord', action!)
       expect(result.reply).toContain('INSPECT Property / Unit')
-      expect(result.reply).toContain('Birch / 12A')
-      expect(result.reply).toContain('Oak / 12A')
+      expect(result.reply).toContain('Birch · Unit 12A')
+      expect(result.reply).toContain('Oak · Unit 12A')
+      expect(result.reply).not.toContain('Birch / 12A')
     }
     expect(createHomeCheck).not.toHaveBeenCalled()
+  })
+  it('uses property-level wording for a single-family home and stores the property without a unit', async () => {
+    const db = query([])
+    db.from.mockImplementation((table: string) =>
+      query(
+        table === 'properties'
+          ? [{ id: 'maple', name: '14 Maple Ave', street_address: '14 Maple Ave' }]
+          : [{ id: 'maple-home', property_id: 'maple', unit_label: 'Home' }],
+      ).from(table)
+    )
+    const menu = await actHomeCheckSms(
+      db as never,
+      'landlord',
+      (await prepareHomeCheckSms(context(db, 'INSPECT', [], true)))!,
+    )
+    expect(menu.reply).toContain('14 Maple Ave')
+    expect(menu.reply).not.toContain('Home')
+    expect(menu.reply).not.toContain('Unit 1')
+    const started = await prepareHomeCheckSms(context(db, 'INSPECT 14 Maple Ave', [], true))
+    await actHomeCheckSms(db as never, 'landlord', started!)
+    expect(createHomeCheck).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        propertyId: 'maple',
+        unitId: null,
+      }),
+    )
   })
   it('leaves compliance and unrelated messages outside the Home Check workflow', async () => {
     const db = query([pending])
