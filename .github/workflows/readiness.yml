@@ -125,7 +125,8 @@ jobs:
 
   connected-workflows:
     name: Connected workflows
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which no longer ships postgresql-16.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
