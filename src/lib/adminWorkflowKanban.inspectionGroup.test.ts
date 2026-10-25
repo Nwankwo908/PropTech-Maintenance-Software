@@ -241,15 +241,11 @@ describe('Needs Attention stays per-item for inspection groups', () => {
   it('formats identifiable per-item attention copy', () => {
     expect(
       formatInspectionAttentionMeta({
-        workOrderRef: 'WO-D154',
         itemIndex: 1,
         itemTotal: 12,
         itemLabel: 'Kitchen — Stove',
-        locationLabel: '563 Springdale · Unit 1',
       }),
-    ).toBe(
-      'WO-D154 (1 of 12, Kitchen — Stove — HQS inspection at 563 Springdale · Unit 1) needs attention',
-    )
+    ).toBe('Item 1 of 12 on the inspection: Kitchen — Stove. Review it.')
   })
 
   it('scopes attention meta with visit context when group items exist', () => {
@@ -263,9 +259,9 @@ describe('Needs Attention stays per-item for inspection groups', () => {
       unitLabel: '1',
       fallbackMeta: 'Past response time',
     })
-    expect(copy.meta).toContain('of 12')
-    expect(copy.meta).toContain('needs attention')
-    expect(copy.meta).toContain('HQS inspection')
+    expect(copy.meta).toBe('Item 1 of 12 on the inspection: Item 1. Review it.')
+    expect(copy.context).toContain('563 Springdale')
+    expect(copy.meta).not.toMatch(/WO-|HQS|563/)
   })
 
   it('does not omit an escalated sibling just because the group rollup is in progress', () => {

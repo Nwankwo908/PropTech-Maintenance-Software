@@ -126,12 +126,10 @@ describe('formatInspectionAttentionMeta', () => {
   it('keeps the specific WO identifiable inside a visit group', () => {
     expect(
       formatInspectionAttentionMeta({
-        workOrderRef: 'WO-D154',
         itemIndex: 1,
         itemTotal: 12,
         itemLabel: 'Kitchen — Stove',
-        locationLabel: '563 Springdale',
       }),
-    ).toContain('WO-D154 (1 of 12')
+    ).toBe('Item 1 of 12 on the inspection: Kitchen — Stove. Review it.')
   })
 })

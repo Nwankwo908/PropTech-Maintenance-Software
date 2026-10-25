@@ -11,6 +11,7 @@ import {
   collectAdminWorkflowRuns,
   deriveWorkflowKanbanStage,
 } from '@/lib/adminWorkflowKanban'
+import { inspectionItemAttentionSummary } from '@/lib/needsAttentionSummary'
 import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
 
 export function collectCompletedWorkOrderTicketIds(input: {
@@ -76,18 +77,15 @@ export function shouldOmitEscalatedRunFromNeedsAttention(input: {
 /**
  * Needs Your Attention stays per-item for inspection groups (escalation urgency
  * on one fail item must not hide behind group progress). Copy scopes the row
- * with WO + index + visit location when an inspection_report_id group exists.
+ * with the item and its place in the visit. The property stays in the
+ * location column.
  */
 export function formatInspectionAttentionMeta(input: {
-  workOrderRef: string
   itemIndex: number
   itemTotal: number
   itemLabel: string
-  locationLabel: string
 }): string {
-  const loc = input.locationLabel.trim() || 'this unit'
-  const label = input.itemLabel.trim() || 'fail item'
-  return `${input.workOrderRef} (${input.itemIndex} of ${input.itemTotal}, ${label} — HQS inspection at ${loc}) needs attention`
+  return inspectionItemAttentionSummary(input)
 }
 
 export function resolveInspectionAttentionContext(input: {
@@ -153,11 +151,9 @@ export function buildInspectionScopedAttentionCopy(input: {
   }
   return {
     meta: formatInspectionAttentionMeta({
-      workOrderRef: ctx.workOrderRef,
       itemIndex: ctx.itemIndex,
       itemTotal: ctx.itemTotal,
       itemLabel: ctx.itemLabel,
-      locationLabel: context !== '—' ? context : 'this unit',
     }),
     context,
   }
