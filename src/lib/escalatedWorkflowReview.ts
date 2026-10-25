@@ -1,5 +1,6 @@
 import type { AdminWorkflowRow, AdminWorkflowTimelineEvent } from '@/lib/adminWorkflows'
 import {
+  isHiddenInternalNoteTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isVisibleLandlordTimelineDescription,
 } from '@/lib/landlordFacingTimeline'
@@ -84,6 +85,7 @@ function timelineActor(event: AdminWorkflowTimelineEvent): string {
 
 function isPipelineLogEvent(event: AdminWorkflowTimelineEvent): boolean {
   if (isHiddenPipelineTimelineEventType(event.eventType)) return true
+  if (isHiddenInternalNoteTimelineEventType(event.eventType)) return true
   const step = (event.step ?? '').trim().toLowerCase()
   if (step === 'log' || step === 'logged') return true
   const label = event.label?.trim() ?? ''

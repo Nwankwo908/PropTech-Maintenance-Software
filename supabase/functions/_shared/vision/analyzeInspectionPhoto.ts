@@ -161,6 +161,8 @@ export async function analyzeInspectionPhotoRow(
         metadata: {
           message: serialReview.retakePrompt ??
             `Serial number read${serialReview.serial ? `: ${serialReview.serial}` : ""}.`,
+          serial: serialReview.serial ?? null,
+          appliance: hintCategory && !/_/.test(hintCategory) ? hintCategory : null,
           provider: serialReview.provider,
           paired: serialReview.paired,
         },

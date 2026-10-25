@@ -28,7 +28,7 @@ Copy stays plain language (no “workflow”, event types, IDs). Prefer `metadat
 
 ## Where it lives
 
-- Shared filter: `isHiddenPipelineTimelineEventType` / `isHiddenActivationAlertTimelineEventType` / `isVisibleLandlordTimelineDescription` in `src/lib/landlordFacingTimeline.ts`
+- Shared filter: `isHiddenPipelineTimelineEventType` / `isHiddenActivationAlertTimelineEventType` / `isHiddenInternalNoteTimelineEventType` / `isVisibleLandlordTimelineDescription` in `src/lib/landlordFacingTimeline.ts`
 - Rails: `isVisibleSlaTimelineEntry` / `timelineFromWorkflowEvents`
 - Feed: `isLandlordFacingFeedEvent` in `propertyOperationsGraph.ts`
 

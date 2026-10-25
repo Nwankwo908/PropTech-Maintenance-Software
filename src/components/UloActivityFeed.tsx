@@ -7,6 +7,7 @@ import {
 } from '@/lib/activityFeedTooltip'
 import { PORTFOLIO_RECOMMENDATION_EVENT } from '@/lib/conversationMonitoring'
 import { propertyDetailPathForBuilding } from '@/lib/propertyRoutes'
+import { feedRowA11yProps } from '@/lib/landlordFeedCopy'
 import {
   formatTimelineCategoryLabel,
   formatTimelineContextLine,
@@ -16,12 +17,17 @@ import {
 export type { FeedTooltipDestination }
 
 const FEED_BADGE_STYLES: Record<string, string> = {
+  spend: 'bg-[#fef9c2] text-[#a65f00]',
+  vendor: 'bg-[#e0f2fe] text-[#0069a8]',
+  scheduling: 'bg-[#dbeafe] text-[#1447e6]',
+  work_order: 'bg-[#f3e8ff] text-[#7c3aed]',
+  equipment: 'bg-[#dbeafe] text-[#1447e6]',
+  tenant: 'bg-[#dbfce7] text-[#008236]',
   maintenance: 'bg-[#f3e8ff] text-[#7c3aed]',
   rent: 'bg-[#fef9c2] text-[#a65f00]',
   move_in: 'bg-[#dbfce7] text-[#008236]',
   move_out: 'bg-[#ffe2e2] text-[#c10007]',
   inspection: 'bg-[#dbeafe] text-[#1447e6]',
-  vendor: 'bg-[#e0f2fe] text-[#0069a8]',
   admin: 'bg-[#f3f4f6] text-[#364153]',
 }
 
@@ -197,6 +203,7 @@ export function UloActivityFeedList({
         const isLast = index === events.length - 1
         const isFirst = index === 0
         const target = feedEventOpenTarget(event, propertyIdByBuilding)
+        const spoken = feedRowA11yProps(event.fullLabel?.trim() || event.label)
         const row = (
           <>
             <div className="flex w-[4.75rem] shrink-0 flex-col items-center self-stretch">
@@ -248,6 +255,8 @@ export function UloActivityFeedList({
               type="button"
               style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
               className={`sa-enter sa-row flex min-w-0 w-full gap-3 text-left outline-none hover:bg-[#fafafa] ${pad}`}
+              title={spoken.title}
+              aria-label={spoken['aria-label']}
               onClick={() => onOpenTarget(target)}
             >
               {row}
@@ -260,6 +269,8 @@ export function UloActivityFeedList({
             key={event.id}
             style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
             className={`sa-enter flex min-w-0 gap-3 ${pad}`}
+            title={spoken.title}
+            aria-label={spoken['aria-label']}
           >
             {row}
           </div>

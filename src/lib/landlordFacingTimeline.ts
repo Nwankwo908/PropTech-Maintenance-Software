@@ -42,6 +42,17 @@ export const HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES = new Set([
   'rent.collection_cron_triggered',
 ])
 
+/**
+ * Ops notes that stay in the database for audit. They are not a landlord story.
+ */
+export const HIDDEN_INTERNAL_NOTE_TIMELINE_EVENT_TYPES = new Set([
+  'automation.message_suppressed',
+  'maintenance.terminate_reason_unmapped',
+])
+
+/** Three or more snake_case segments, e.g. schedule_fsm_ttl_tenant_confirm. */
+const SNAKE_CASE_TOKEN = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/i
+
 const HIDDEN_PIPELINE_TIMELINE_LABELS = new Set([
   'logged',
   'action taken',
@@ -72,6 +83,21 @@ export function isHiddenOpsHeartbeatTimelineEventType(
   return HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
 }
 
+export function isHiddenInternalNoteTimelineEventType(
+  eventType: string | null | undefined,
+): boolean {
+  return HIDDEN_INTERNAL_NOTE_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
+}
+
+export function timelineDescriptionHasInternalToken(
+  description: string | null | undefined,
+): boolean {
+  const text = (description ?? '').trim()
+  if (!text) return false
+  if (/^suppressed automated\b/i.test(text)) return true
+  return SNAKE_CASE_TOKEN.test(text)
+}
+
 /** All event types the activity feed should not fetch (PostgREST `not in` list). */
 export function landlordFeedHiddenEventTypes(): string[] {
   return [
@@ -79,10 +105,15 @@ export function landlordFeedHiddenEventTypes(): string[] {
     ...HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES,
     ...HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES,
     ...HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES,
+    ...HIDDEN_INTERNAL_NOTE_TIMELINE_EVENT_TYPES,
   ].sort()
 }
 
 /** Hide engine-stage labels when a timeline row only has the plumbing copy. */
 export function isVisibleLandlordTimelineDescription(description: string | null | undefined): boolean {
-  return !HIDDEN_PIPELINE_TIMELINE_LABELS.has((description ?? '').trim().toLowerCase())
+  const text = (description ?? '').trim()
+  if (!text) return true
+  if (HIDDEN_PIPELINE_TIMELINE_LABELS.has(text.toLowerCase())) return false
+  if (timelineDescriptionHasInternalToken(text)) return false
+  return true
 }

@@ -4,6 +4,7 @@ import {
   isHiddenOpsHeartbeatTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
+  isHiddenInternalNoteTimelineEventType,
   isVisibleLandlordTimelineDescription,
   landlordFeedHiddenEventTypes,
 } from './landlordFacingTimeline'
@@ -59,5 +60,13 @@ describe('landlordFacingTimeline', () => {
     expect(isVisibleLandlordTimelineDescription('Workflow started')).toBe(false)
     expect(isVisibleLandlordTimelineDescription('SLA breached')).toBe(true)
     expect(isVisibleLandlordTimelineDescription('Vendor accepted the job')).toBe(true)
+    expect(
+      isVisibleLandlordTimelineDescription(
+        'Suppressed automated schedule_fsm_ttl_tenant_confirm: referenced_instant_past.',
+      ),
+    ).toBe(false)
+    expect(isHiddenInternalNoteTimelineEventType('automation.message_suppressed')).toBe(true)
+    expect(isHiddenInternalNoteTimelineEventType('maintenance.terminate_reason_unmapped')).toBe(true)
+    expect(isHiddenInternalNoteTimelineEventType('maintenance.created')).toBe(false)
   })
 })

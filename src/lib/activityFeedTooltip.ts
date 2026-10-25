@@ -1,13 +1,8 @@
+import type { PropertyOperationsTimelineCategory } from './propertyOperationsGraph'
+
 export type ActivityFeedTooltipEvent = {
   eventType: string
-  category:
-    | 'maintenance'
-    | 'rent'
-    | 'move_in'
-    | 'move_out'
-    | 'inspection'
-    | 'vendor'
-    | 'admin'
+  category: PropertyOperationsTimelineCategory
   message: string | null
   unitLabel: string | null
   building: string | null
@@ -319,7 +314,10 @@ function defaultActionLabel(
   if (
     event.eventType.startsWith('maintenance.') ||
     event.eventType.startsWith('vendor.') ||
-    event.category === 'maintenance' ||
+    event.category === 'work_order' ||
+    event.category === 'spend' ||
+    event.category === 'scheduling' ||
+    event.category === 'equipment' ||
     event.category === 'vendor'
   ) {
     return 'Click to view work order'

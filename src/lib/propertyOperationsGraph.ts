@@ -10,11 +10,14 @@ import {
 } from '@shared/landlordCapabilities'
 import {
   isHiddenActivationAlertTimelineEventType,
+  isHiddenInternalNoteTimelineEventType,
   isHiddenOpsHeartbeatTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
+  isVisibleLandlordTimelineDescription,
   landlordFeedHiddenEventTypes,
 } from '@/lib/landlordFacingTimeline'
+import { fallbackFeedLine, landlordFeedLine, type FeedLine } from '@/lib/landlordFeedCopy'
 import { readLocalOnboardingState } from '@/lib/onboarding/draftStorage'
 import {
   isEventInOnboardingSession,
@@ -23,12 +26,16 @@ import {
 import { supabase } from '@/lib/supabase'
 
 export type PropertyOperationsTimelineCategory =
-  | 'maintenance'
+  | 'spend'
+  | 'vendor'
+  | 'scheduling'
+  | 'work_order'
+  | 'equipment'
+  | 'tenant'
   | 'rent'
   | 'move_in'
   | 'move_out'
   | 'inspection'
-  | 'vendor'
   | 'admin'
 
 export type PropertyOperationsTimelineEvent = {
@@ -50,6 +57,10 @@ export type PropertyOperationsTimelineEvent = {
   workflowRunId: string | null
   /** Setup-run stamp from metadata when present (isolates Overview during onboarding). */
   onboardingSessionId?: string | null
+  /** Source payload kept for landlord copy. Not rendered on its own. */
+  metadata?: Record<string, unknown> | null
+  /** Full line before a window cut, for title and aria-label. */
+  fullLabel?: string | null
 }
 
 export type PropertyOperationsTimelineScope =
@@ -63,22 +74,30 @@ export type FetchPropertyOperationsTimelineParams = {
 }
 
 export const PROPERTY_OPERATIONS_TIMELINE_CATEGORIES: PropertyOperationsTimelineCategory[] = [
-  'maintenance',
+  'spend',
+  'vendor',
+  'scheduling',
+  'work_order',
+  'equipment',
+  'tenant',
   'rent',
   'move_in',
   'move_out',
   'inspection',
-  'vendor',
   'admin',
 ]
 
 export const TIMELINE_CATEGORY_LABELS: Record<PropertyOperationsTimelineCategory, string> = {
-  maintenance: 'Maintenance',
+  spend: 'Spend',
+  vendor: 'Vendor',
+  scheduling: 'Scheduling',
+  work_order: 'Work orders',
+  equipment: 'Equipment',
+  tenant: 'Tenant',
   rent: 'Rent',
   move_in: 'Move in',
   move_out: 'Move out',
   inspection: 'Inspection',
-  vendor: 'Vendor',
   admin: 'Admin',
 }
 
@@ -140,19 +159,54 @@ export function categorizePropertyOperationsEvent(
   eventType: string,
   eventSource: string,
 ): PropertyOperationsTimelineCategory {
-  const domain = eventType.split('.')[0]
+  const type = eventType.trim().toLowerCase()
+  const source = eventSource.trim().toLowerCase()
+  const domain = type.split('.')[0] ?? ''
 
-  if (domain === 'maintenance') return 'maintenance'
+  if (type.includes('spend') || type.includes('estimate') || type.includes('invoice')) return 'spend'
+  if (
+    type.includes('serial') ||
+    type.includes('nameplate') ||
+    type.includes('data_plate') ||
+    type.includes('equipment')
+  ) {
+    return 'equipment'
+  }
+  if (domain === 'inspection') return 'inspection'
+  if (
+    type.includes('schedule') ||
+    type.includes('visit') ||
+    type.includes('reschedule') ||
+    type.includes('availability')
+  ) {
+    return 'scheduling'
+  }
+  if (
+    domain === 'vendor' ||
+    type.includes('vendor_alert') ||
+    type.includes('.accepted') ||
+    type.includes('.declined')
+  ) {
+    return 'vendor'
+  }
+  if (domain === 'tenant' || domain === 'sms') return 'tenant'
   if (domain === 'rent') return 'rent'
   if (domain === 'move_in') return 'move_in'
   if (domain === 'move_out') return 'move_out'
-  if (domain === 'inspection') return 'inspection'
-  if (domain === 'vendor') return 'vendor'
-  if (eventSource === 'dashboard') return 'admin'
-  if (ADMIN_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))) return 'admin'
-  if (domain === 'workflow') return 'admin'
+  if (domain === 'maintenance' || domain === 'workflow') return 'work_order'
 
-  return 'admin'
+  const systemSource = source === 'automation' || source === 'edge_function' || source === 'system'
+  const landlordAction =
+    !systemSource &&
+    (source === 'dashboard' ||
+      domain === 'broadcast' ||
+      domain === 'landlord' ||
+      domain === 'unit' ||
+      domain === 'attention' ||
+      domain === 'lease')
+  if (landlordAction) return 'admin'
+  if (domain === 'broadcast' || domain === 'landlord' || domain === 'attention') return 'admin'
+  return 'work_order'
 }
 
 export function formatTimelineCategoryLabel(
@@ -189,15 +243,12 @@ function upsertTimelineEvent(
   merged: Map<string, PropertyOperationsTimelineEvent>,
   event: PropertyOperationsTimelineEvent,
 ): void {
-  const key = eventDedupeKey(event)
-  const existing = merged.get(key)
-  if (!existing) {
-    merged.set(key, event)
+  for (const [key, existing] of merged) {
+    if (!isDuplicateFeedEvent(existing, event)) continue
+    merged.set(key, preferRicherFeedEvent(existing, event))
     return
   }
-  if (!existing.scheduledAt && event.scheduledAt) {
-    merged.set(key, { ...existing, scheduledAt: event.scheduledAt })
-  }
+  merged.set(event.id || eventDedupeKey(event), event)
 }
 
 const SUPPLEMENTAL_GRAPH_DOMAINS = new Set([
@@ -244,13 +295,14 @@ function mapEnrichedGraphRow(row: EnrichedGraphRow): PropertyOperationsTimelineE
     building: row.building,
     residentId: row.resident_id,
     residentName: row.resident_name,
-    vendorName: row.vendor_name,
+    vendorName: row.vendor_name ?? readMetadataString(payload, 'vendor_name'),
     maintenanceRequestId:
       typeof payload.maintenance_request_id === 'string'
         ? payload.maintenance_request_id
         : null,
     workflowRunId: row.workflow_run_id,
     onboardingSessionId: readMetadataString(payload, 'onboarding_session_id'),
+    metadata: payload,
   }
 }
 
@@ -269,14 +321,15 @@ function mapLegacyBridgeRow(row: LegacyGraphRow): PropertyOperationsTimelineEven
     unitLabel: null,
     building: null,
     residentId: row.resident_id,
-    residentName: null,
-    vendorName: null,
+    residentName: readMetadataString(payload, 'resident_name'),
+    vendorName: readMetadataString(payload, 'vendor_name'),
     maintenanceRequestId:
       typeof payload.maintenance_request_id === 'string'
         ? payload.maintenance_request_id
         : null,
     workflowRunId: row.workflow_run_id,
     onboardingSessionId: readMetadataString(payload, 'onboarding_session_id'),
+    metadata: payload,
   }
 }
 
@@ -416,7 +469,7 @@ function mergeTenantOnboardingGroup(
     ...latest,
     id: `tenant-onboarding:${residentId}:${day}`,
     eventType: 'tenant.onboarding_verification',
-    category: 'admin',
+    category: 'tenant',
     label,
     message,
     residentName,
@@ -440,6 +493,13 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   if (isHiddenSmsTransportTimelineEventType(event.eventType)) return false
   if (isHiddenActivationAlertTimelineEventType(event.eventType)) return false
   if (isHiddenOpsHeartbeatTimelineEventType(event.eventType)) return false
+  if (isHiddenInternalNoteTimelineEventType(event.eventType)) return false
+  if (
+    !isVisibleLandlordTimelineDescription(event.label) &&
+    (!event.message || !isVisibleLandlordTimelineDescription(event.message))
+  ) {
+    return false
+  }
   if (!landlordHasPayments(getActiveLandlordId()) && isPaymentGraphEventType(event.eventType)) {
     return false
   }
@@ -451,20 +511,172 @@ function looksLikeRawEventTypeLabel(eventType: string, label: string): boolean {
   return label.trim().toLowerCase() === fallback.toLowerCase()
 }
 
-function landlordFacingEventLabel(event: PropertyOperationsTimelineEvent): string {
+const DEDUPE_WINDOW_MS = 5_000
+const PAIR_WINDOW_MS = 60_000
+
+function eventTime(iso: string): number {
+  const value = Date.parse(iso)
+  return Number.isNaN(value) ? 0 : value
+}
+
+function withinWindow(a: string, b: string, windowMs: number): boolean {
+  return Math.abs(eventTime(a) - eventTime(b)) <= windowMs
+}
+
+function normalizeFeedMessage(message: string | null | undefined): string {
+  return (message ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function feedRichness(event: PropertyOperationsTimelineEvent): number {
+  let score = 0
+  if (event.building) score += 4
+  if (event.unitLabel) score += 2
+  if (event.residentName) score += 2
+  if (event.vendorName) score += 2
+  if (event.maintenanceRequestId) score += 1
+  if (event.message) score += 1
+  if (event.metadata && Object.keys(event.metadata).length > 0) score += 1
+  return score
+}
+
+function preferRicherFeedEvent(
+  a: PropertyOperationsTimelineEvent,
+  b: PropertyOperationsTimelineEvent,
+): PropertyOperationsTimelineEvent {
+  const primary = feedRichness(a) >= feedRichness(b) ? a : b
+  const secondary = primary === a ? b : a
+  const primaryMessage = primary.message?.trim() ?? ''
+  const secondaryMessage = secondary.message?.trim() ?? ''
+  return {
+    ...primary,
+    building: primary.building ?? secondary.building,
+    unitLabel: primary.unitLabel ?? secondary.unitLabel,
+    residentName: primary.residentName ?? secondary.residentName,
+    vendorName: primary.vendorName ?? secondary.vendorName,
+    maintenanceRequestId: primary.maintenanceRequestId ?? secondary.maintenanceRequestId,
+    workflowRunId: primary.workflowRunId ?? secondary.workflowRunId,
+    scheduledAt: primary.scheduledAt ?? secondary.scheduledAt,
+    message: primaryMessage.length >= secondaryMessage.length ? primary.message : secondary.message,
+    metadata: { ...(secondary.metadata ?? {}), ...(primary.metadata ?? {}) },
+  }
+}
+
+export function isDuplicateFeedEvent(
+  a: PropertyOperationsTimelineEvent,
+  b: PropertyOperationsTimelineEvent,
+): boolean {
+  if (a.id && a.id === b.id) return true
+  if (a.eventType !== b.eventType) return false
+  if (a.workflowRunId && b.workflowRunId && a.workflowRunId !== b.workflowRunId) return false
+  const ticketA = a.maintenanceRequestId ?? ''
+  const ticketB = b.maintenanceRequestId ?? ''
+  if (ticketA && ticketB && ticketA !== ticketB) return false
+  if (!withinWindow(a.createdAt, b.createdAt, DEDUPE_WINDOW_MS)) return false
+  const messageA = normalizeFeedMessage(a.message)
+  const messageB = normalizeFeedMessage(b.message)
+  if (messageA && messageB && messageA !== messageB && !messageA.startsWith(messageB) && !messageB.startsWith(messageA)) {
+    return false
+  }
+  return true
+}
+
+export function dedupePropertyOperationsEvents(
+  events: PropertyOperationsTimelineEvent[],
+): PropertyOperationsTimelineEvent[] {
+  const kept: PropertyOperationsTimelineEvent[] = []
+  for (const event of events) {
+    const index = kept.findIndex((existing) => isDuplicateFeedEvent(existing, event))
+    if (index === -1) {
+      kept.push(event)
+      continue
+    }
+    kept[index] = preferRicherFeedEvent(kept[index]!, event)
+  }
+  return kept
+}
+
+function sameTicket(
+  a: PropertyOperationsTimelineEvent,
+  b: PropertyOperationsTimelineEvent,
+): boolean {
+  if (a.maintenanceRequestId && b.maintenanceRequestId) {
+    return a.maintenanceRequestId === b.maintenanceRequestId
+  }
+  return withinWindow(a.createdAt, b.createdAt, PAIR_WINDOW_MS)
+}
+
+function isWorkOrderCloseEvent(eventType: string): boolean {
+  return (
+    eventType === 'maintenance.work_order_terminated' ||
+    eventType === 'maintenance.work_order_archived' ||
+    eventType === 'maintenance.cancelled' ||
+    eventType === 'sms.maintenance_cancelled'
+  )
+}
+
+function landlordFacingEventLabel(event: PropertyOperationsTimelineEvent): FeedLine {
+  const specific = landlordFeedLine(event)
+  if (specific) return specific
   if (hasMappedEventTypeLabel(event.eventType) || isMergedLandlordFacingFeedCard(event)) {
-    return event.label
+    return { line: event.label, full: event.label }
   }
   const message = event.message?.trim()
   if (
     message &&
     message.length >= 12 &&
     /[A-Za-z]/.test(message) &&
-    looksLikeRawEventTypeLabel(event.eventType, event.label)
+    looksLikeRawEventTypeLabel(event.eventType, event.label) &&
+    isVisibleLandlordTimelineDescription(message)
   ) {
-    return message.length > 90 ? `${message.slice(0, 87)}…` : message
+    return fallbackFeedLine(message, event.building)
   }
-  return event.label
+  return fallbackFeedLine(event.label, event.building)
+}
+
+function mergePairedFeedStories(
+  events: PropertyOperationsTimelineEvent[],
+): PropertyOperationsTimelineEvent[] {
+  const reasons = events.filter((event) => event.eventType === 'maintenance.terminate_reason_unmapped')
+  return events
+    .filter((event) => !isHiddenInternalNoteTimelineEventType(event.eventType))
+    .map((event) => {
+      if (!isWorkOrderCloseEvent(event.eventType)) return event
+      const reason = reasons.find(
+        (row) => sameTicket(row, event) && withinWindow(row.createdAt, event.createdAt, PAIR_WINDOW_MS),
+      )
+      if (!reason) return event
+      const paired =
+        readMetadataString(reason.metadata, 'reason') ??
+        reason.message?.replace(/^Cancel reason needs vendor-safe copy:\s*/i, '').replace(/^"|"$/g, '') ??
+        null
+      return {
+        ...event,
+        metadata: { ...(event.metadata ?? {}), _paired_reason: paired },
+      }
+    })
+}
+
+function applyLandlordFacingCopy(
+  event: PropertyOperationsTimelineEvent,
+): PropertyOperationsTimelineEvent {
+  const copy = landlordFacingEventLabel(event)
+  const message =
+    event.message && isVisibleLandlordTimelineDescription(event.message) && copy.line === event.label
+      ? event.message
+      : null
+  const metadata = { ...(event.metadata ?? {}) }
+  delete metadata.reason
+  delete metadata._paired_reason
+  return {
+    ...event,
+    label: copy.line,
+    fullLabel: copy.full,
+    message,
+    metadata,
+    category: isMergedLandlordFacingFeedCard(event)
+      ? event.category
+      : categorizePropertyOperationsEvent(event.eventType, event.eventSource),
+  }
 }
 
 /** Collapse setup/onboarding noise, then keep only landlord-facing outcome lines. */
@@ -489,12 +701,9 @@ export function selectLandlordFacingFeedEvents(
       )
     : events
 
-  return consolidateFeedEvents(scoped)
+  return consolidateFeedEvents(mergePairedFeedStories(dedupePropertyOperationsEvents(scoped)))
     .filter(isLandlordFacingFeedEvent)
-    .map((event) => ({
-      ...event,
-      label: landlordFacingEventLabel(event),
-    }))
+    .map(applyLandlordFacingCopy)
     .slice(0, Math.max(limit, 0))
 }
 
@@ -561,10 +770,11 @@ function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimel
     building: readMetadataString(metadata, 'building'),
     residentId: row.resident_id,
     residentName: readMetadataString(metadata, 'resident_name'),
-    vendorName: null,
+    vendorName: readMetadataString(metadata, 'vendor_name'),
     maintenanceRequestId: row.maintenance_request_id,
     workflowRunId: row.workflow_run_id,
     onboardingSessionId: readMetadataString(metadata, 'onboarding_session_id'),
+    metadata,
   }
 }
 
@@ -770,17 +980,28 @@ export async function fetchRecentPropertyOperationsEvents(
   )
 }
 
+function contextPerson(event: PropertyOperationsTimelineEvent): string | null {
+  const vendor = event.vendorName?.trim() || null
+  const resident = event.residentName?.trim() || null
+  const type = event.eventType
+  const aboutVendor =
+    event.category === 'vendor' ||
+    event.category === 'spend' ||
+    type.startsWith('vendor.') ||
+    type.includes('spend') ||
+    type.includes('invoice') ||
+    type.includes('estimate')
+  if (aboutVendor) return vendor ?? resident
+  return resident ?? vendor
+}
+
 export function formatTimelineContextLine(
   event: PropertyOperationsTimelineEvent,
 ): string | null {
-  const locationParts = [event.unitLabel, event.building].filter(Boolean)
-  const location = locationParts.length ? locationParts.join(' · ') : null
-  const people = [event.residentName, event.vendorName].filter(Boolean)
-
-  if (location && people.length) {
-    return `${location} · ${people.join(' · ')}`
-  }
-  return location ?? (people.length ? people.join(' · ') : null)
+  const place = (event.building || event.unitLabel || '').trim() || null
+  const person = contextPerson(event)
+  if (place && person) return `${place} · ${person}`
+  return place ?? person
 }
 
 export type TimelineResidentOption = {

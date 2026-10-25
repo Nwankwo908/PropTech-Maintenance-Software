@@ -9,16 +9,21 @@ import {
   type PropertyOperationsTimelineEvent,
   type PropertyOperationsTimelineScope,
 } from '@/lib/propertyOperationsGraph'
+import { feedRowA11yProps } from '@/lib/landlordFeedCopy'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
 const CATEGORY_STYLES: Record<PropertyOperationsTimelineCategory, string> = {
-  maintenance: 'bg-[#e8f4ff] text-[#0030b5]',
+  spend: 'bg-[#fff8e6] text-[#92600a]',
+  vendor: 'bg-[#ecfdf3] text-[#047857]',
+  scheduling: 'bg-[#e8f4ff] text-[#0030b5]',
+  work_order: 'bg-[#e8f4ff] text-[#0030b5]',
+  equipment: 'bg-[#f3eeff] text-[#4a2d8a]',
+  tenant: 'bg-[#e8f4ff] text-[#0030b5]',
   rent: 'bg-[#fff8e6] text-[#92600a]',
   move_in: 'bg-[#e8f4ff] text-[#0030b5]',
   move_out: 'bg-[#fff1e8] text-[#b52a00]',
   inspection: 'bg-[#f3eeff] text-[#4a2d8a]',
-  vendor: 'bg-[#ecfdf3] text-[#047857]',
   admin: 'bg-secondary text-neutral-variant',
 }
 
@@ -156,8 +161,7 @@ export function PropertyOperationsTimeline({
         <div>
           <h3 className="text-[14px] font-semibold text-extended-3">{title}</h3>
           <p className="mt-1 text-[12px] text-neutral">
-            Maintenance, rent, move-in/out, inspections, vendor activity, and admin actions from the
-            property operations graph.
+            Spend, vendor, scheduling, work orders, equipment, tenant, and admin activity.
           </p>
         </div>
         {!loading ? (
@@ -221,9 +225,15 @@ export function PropertyOperationsTimeline({
           {filteredEvents.map((event, index) => {
             const context = formatTimelineContextLine(event)
             const sourceLabel = SOURCE_LABELS[event.eventSource] ?? event.eventSource
+            const spoken = feedRowA11yProps(event.fullLabel?.trim() || event.label)
 
             return (
-              <li key={event.id} className="relative pb-5 last:pb-0">
+              <li
+                key={event.id}
+                className="relative pb-5 last:pb-0"
+                title={spoken.title}
+                aria-label={spoken['aria-label']}
+              >
                 <span
                   className="absolute -left-[5px] top-1.5 size-2 rounded-full bg-primary"
                   aria-hidden
@@ -256,12 +266,6 @@ export function PropertyOperationsTimeline({
 
                   {context ? (
                     <p className="mt-1 text-[12px] text-neutral">{context}</p>
-                  ) : null}
-
-                  {event.maintenanceRequestId ? (
-                    <p className="mt-1 font-mono text-[11px] text-neutral">
-                      Ticket {event.maintenanceRequestId.slice(0, 8)}…
-                    </p>
                   ) : null}
 
                   {index === 0 ? (
