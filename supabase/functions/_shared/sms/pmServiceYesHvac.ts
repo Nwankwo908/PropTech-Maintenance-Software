@@ -4,7 +4,7 @@ import {
   canHandlePmServiceYesHvac,
   PM_SERVICE_ASK_KEY,
   resolveYesHvacReply,
-} from "../../../shared/pm/pmServiceAttention.ts"
+} from "../../../../shared/pm/pmServiceAttention.ts"
 
 type TaskRow = {
   id: string
