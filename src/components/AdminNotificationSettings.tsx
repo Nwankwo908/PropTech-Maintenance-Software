@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { AdminBreadcrumb } from '@/components/AdminBreadcrumb'
 import {
   CRITICAL_SAFETY_ALERTS,
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -447,18 +448,13 @@ export function AdminNotificationSettings() {
         message={SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE}
       />
       <div className="py-6">
-        <nav
-          className="flex flex-wrap items-center gap-2 text-[14px] tracking-[-0.1504px] text-[#6a7282]"
-          aria-label="Breadcrumb"
-        >
-          <Link to="/admin/settings" className="sa-link font-medium hover:text-[#101828]">
-            ← Settings
-          </Link>
-          <span aria-hidden>/</span>
-          <span className="font-medium text-[#6a7282]">Operations</span>
-          <span aria-hidden>/</span>
-          <span className="text-[#101828]">Notifications</span>
-        </nav>
+        <AdminBreadcrumb
+          items={[
+            { label: '← Settings', to: '/admin/settings' },
+            { label: 'Operations' },
+            { label: 'Notifications' },
+          ]}
+        />
 
         <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

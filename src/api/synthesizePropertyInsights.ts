@@ -6,9 +6,10 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import type {
-  PortfolioInsightFinding,
-  SynthesizedInsightCard,
+import {
+  withCanonicalInsightActionLabels,
+  type PortfolioInsightFinding,
+  type SynthesizedInsightCard,
 } from '@shared/portfolioIntelligence'
 
 export type SynthesizePropertyInsightsOk = {
@@ -78,7 +79,7 @@ export function readCachedPropertyInsightCards(
     if (!raw) return null
     const cached = JSON.parse(raw) as CachedSynthesis
     if (cached.fingerprint !== propertyInsightFindingsFingerprint(findings)) return null
-    return Array.isArray(cached.cards) ? cached.cards : null
+    return Array.isArray(cached.cards) ? withCanonicalInsightActionLabels(cached.cards) : null
   } catch {
     return null
   }
@@ -122,10 +123,11 @@ export async function synthesizePropertyInsightsCached(input: {
 
   const request = postSynthesizePropertyInsights(input)
     .then((result) => {
+      const cards = withCanonicalInsightActionLabels(result.cards)
       if (result.mode === 'openai') {
-        writeCachedPropertyInsightCards(input.landlordId, fingerprint, result.cards)
+        writeCachedPropertyInsightCards(input.landlordId, fingerprint, cards)
       }
-      return result
+      return { ...result, cards }
     })
     .finally(() => {
       inFlight.delete(flightKey)

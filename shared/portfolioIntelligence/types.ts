@@ -68,8 +68,12 @@ export type SynthesizedInsightCard = {
   id: string
   sourceTags: PortfolioInsightTag[]
   tag: PortfolioInsightTag
-  /** Grounded recommendation (or plain aggregate when mode is fallback). */
+  /** Grounded recommendation (or plain aggregate when mode is fallback). Shown in View details. */
   text: string
+  /** One phrase for the card, at most 20 characters. The address is separate. */
+  summary?: string | null
+  /** One sentence for the detail panel. The address and title stay in the header. */
+  mainIssue?: string | null
   aggregateText: string
   urgency: number
   confidence: number

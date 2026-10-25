@@ -8,7 +8,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   startLifecycleWorkflow,
   loadResidentsForUnit,
@@ -34,6 +34,11 @@ import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { WorkflowKanbanBoard } from '@/components/workflowKanban/WorkflowKanbanBoard'
 import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
+import {
+  insightWorkOrderHref,
+  lookupWorkflowRunIdForTicket,
+  pickWorkflowRunIdForTicket,
+} from '@/lib/insightWorkOrderDestination'
 import { mutateSearchParams, readCsvSet, writeCsvSet } from '@/lib/adminListUrlState'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -423,9 +428,11 @@ class WorkflowKanbanBoardErrorBoundary extends Component<
 }
 
 export function AdminWorkflowOperationsDashboard() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const selectedRunId = searchParams.get('run')?.trim() || null
+  const ticketDeepLink = searchParams.get('ticket')?.trim() || null
   const activeFilters = useMemo(() => readWorkflowFilters(searchParams), [searchParams])
   const [data, setData] = useState<AdminWorkflowDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -509,6 +516,39 @@ export function AdminWorkflowOperationsDashboard() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!ticketDeepLink || selectedRunId || loading || !data) return
+    const local = pickWorkflowRunIdForTicket(allRuns, ticketDeepLink, data.runMetadata)
+    if (local) {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          next.delete('ticket')
+          next.set('run', local)
+        }),
+        { replace: true },
+      )
+      return
+    }
+    let cancelled = false
+    void lookupWorkflowRunIdForTicket(ticketDeepLink).then((runId) => {
+      if (cancelled) return
+      if (runId && allRuns.some((row) => row.id === runId)) {
+        setSearchParams(
+          mutateSearchParams(searchParams, (next) => {
+            next.delete('ticket')
+            next.set('run', runId)
+          }),
+          { replace: true },
+        )
+        return
+      }
+      navigate(insightWorkOrderHref({ ticketId: ticketDeepLink }), { replace: true })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [ticketDeepLink, selectedRunId, loading, data, allRuns, searchParams, setSearchParams, navigate])
 
   useEffect(() => {
     if (!selectedRunId || loading) return

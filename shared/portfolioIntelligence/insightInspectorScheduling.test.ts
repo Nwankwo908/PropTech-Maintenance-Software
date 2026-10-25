@@ -8,6 +8,7 @@ import {
   isFlagForReviewAction,
   isProbeTimedOut,
   listFreeInspectorsForDay,
+  noInspectorAvailableTitle,
   probingStatusLabel,
   resolveHoldClaim,
   ticketOccupiesInspectorDay,
@@ -122,6 +123,15 @@ describe('free inspector for target day', () => {
       requestId: 'req-1',
     })
     expect(next.status).toBe('needs_external')
+  })
+
+  it('names the property and day when no inspector is available', () => {
+    expect(
+      noInspectorAvailableTitle({ building: '123 Main', targetDay: '2026-10-26' }),
+    ).toBe('No inspector available for 123 Main on Mon, Oct 26')
+    expect(noInspectorAvailableTitle({ targetDay: '2026-10-26' })).toBe(
+      'No inspector available for Mon, Oct 26',
+    )
   })
 
   it('no inspector free at request time → external immediately, no probe', () => {

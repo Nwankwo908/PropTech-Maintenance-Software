@@ -38,6 +38,7 @@ import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
 import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import {
   TRY_DEMO_SPOTLIGHT_ATTENTION_ID,
@@ -45,6 +46,12 @@ import {
   TRY_DEMO_SPOTLIGHT_PROPERTIES_SECTION_ID,
 } from '@/lib/tryDemoAttentionGuide'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
+import { insightDetailSections, insightDetailWorkOrderContext } from '@shared/portfolioIntelligence/insightDetailSections'
+import {
+  insightCardAddressLine,
+  insightCardHeadline,
+  resolveInsightCardSummary,
+} from '@shared/portfolioIntelligence/insightCardSummary'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
@@ -103,7 +110,13 @@ import {
 } from '@/lib/adminRightRail'
 import { buildPropertyIdByBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 import {
+  insightWorkOrderHref,
+  lookupWorkflowRunIdForTicket,
+  pickWorkflowRunIdForTicket,
+} from '@/lib/insightWorkOrderDestination'
+import {
   buildLeaseRenewalCallReasonLine,
+  formatWorkOrderRefFromTicketId,
   type VendorCallContext,
 } from '@/lib/vendorCallFlow'
 import {
@@ -194,6 +207,7 @@ import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
   applyInsightSynthesis,
+  insightActionLabel,
   computePortfolioInsights,
   acceptedStatusLabel,
   needsExternalStatusLabel,
@@ -212,6 +226,7 @@ import {
   runPropertyInsightAction,
   schedulingStateFromActionResult,
 } from '@/lib/propertyInsightActions'
+import { NoInspectorAvailableModal } from '@/components/NoInspectorAvailableModal'
 
 type OverviewTicket = {
   id: string
@@ -743,7 +758,7 @@ function InsightStrengthMeter({ score }: { score: number }) {
   )
 }
 
-function PropertyInsightRecommendationCard({
+export function PropertyInsightRecommendationCard({
   card,
   scheduling,
   onAction,
@@ -759,6 +774,11 @@ function PropertyInsightRecommendationCard({
   actionBusy: boolean
 }) {
   const title = INSIGHT_TAG_LABEL[card.tag] ?? card.tag
+  const summary = resolveInsightCardSummary({
+    summary: card.summary,
+    tag: card.tag,
+    categoryLabel: card.categoryLabel,
+  })
   const requestCount = card.requestCount ?? 0
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
   const strengthScore = Math.round(card.urgency * (card.confidence / 100))
@@ -785,6 +805,7 @@ function PropertyInsightRecommendationCard({
     card.actionType === 'schedule_inspection' ||
     card.actionType === 'schedule_building_inspection' ||
     card.actionType === 'schedule_unit_walkthrough'
+  const actionLabel = insightActionLabel(card.actionType) ?? card.actionLabel
 
   return (
     <div className="sa-enter-scale sa-surface flex w-full min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-3 shadow-[0px_1px_3px_rgba(0,0,0,0.08)] sm:p-4">
@@ -796,7 +817,9 @@ function PropertyInsightRecommendationCard({
           >
             {title}
           </p>
-          <p className="min-w-0 text-[16px] font-normal leading-[1.35] text-[#0f172a]">{card.text}</p>
+          <p className="min-w-0 truncate whitespace-nowrap text-[16px] font-normal leading-[1.35] text-[#0f172a]">
+            {insightCardHeadline(card.building, summary)}
+          </p>
           {status === 'probing' ? (
             <p key="probing" className="sa-enter text-[13px] font-medium leading-5 text-[#64748b]">
               {probingStatusLabel()}
@@ -847,19 +870,19 @@ function PropertyInsightRecommendationCard({
             >
               Reaching out…
             </button>
-          ) : status === 'accepted' ? null : card.actionType !== 'none' && card.actionLabel ? (
+          ) : status === 'accepted' ? null : card.actionType !== 'none' && actionLabel ? (
             <button
               key="primary-cta"
               type="button"
               disabled={actionBusy}
               onClick={() => onAction(card)}
               className={`sa-enter-scale sa-press rounded-[8px] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60 ${
-                scheduleCta || /assign\s*vendor/i.test(card.actionLabel)
+                scheduleCta || /assign\s*vendor/i.test(actionLabel)
                   ? 'bg-[#70ABC5]'
                   : 'bg-[#101828]'
               }`}
             >
-              {card.actionLabel}
+              {actionLabel}
             </button>
           ) : null}
           {card.ticketIds.length > 0 ? (
@@ -1225,7 +1248,7 @@ export function AdminOverviewDashboard() {
           allowImportedOperations
             ? supabase
                 .from('maintenance_requests')
-                .select('id, completed_at, recognized_spend_amount, recognized_spend_at')
+                .select('id, completed_at, recognized_spend_amount, recognized_spend_at, description')
                 .eq('landlord_id', landlordId)
                 .order('created_at', { ascending: false })
                 .limit(500)
@@ -1279,12 +1302,13 @@ export function AdminOverviewDashboard() {
         const spendById = new Map<string, Record<string, unknown>>()
         if (!mrSpendResult.error) {
           for (const row of (mrSpendResult.data ?? []) as Record<string, unknown>[]) {
+            if (!isLandlordFacingMaintenanceRequest(row)) continue
             const id = asString(row.id)
             if (id) spendById.set(id, row)
           }
         }
         setTickets(
-          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) => {
+          ((ticketsResult.data ?? []) as Record<string, unknown>[]).filter(isLandlordFacingMaintenanceRequest).map((raw) => {
             const spend = spendById.get(asString(raw.id))
             const merged = spend ? { ...raw, ...spend } : raw
             if (
@@ -1343,9 +1367,9 @@ export function AdminOverviewDashboard() {
       }
 
       const ticketRowsForInvoice = !ticketsResult.error
-        ? ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) =>
-            normalizeTicketRow(raw, vendorNameById),
-          )
+        ? ((ticketsResult.data ?? []) as Record<string, unknown>[])
+            .filter(isLandlordFacingMaintenanceRequest)
+            .map((raw) => normalizeTicketRow(raw, vendorNameById))
         : []
       const ticketById = new Map(ticketRowsForInvoice.map((t) => [t.id, t]))
 
@@ -1721,9 +1745,9 @@ export function AdminOverviewDashboard() {
       if (!ticketsResult.error) {
         const vendorNameById = Object.fromEntries(vendors.map((v) => [v.id, v.name]))
         setTickets(
-          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) =>
-            normalizeTicketRow(raw, vendorNameById),
-          ),
+          ((ticketsResult.data ?? []) as Record<string, unknown>[])
+            .filter(isLandlordFacingMaintenanceRequest)
+            .map((raw) => normalizeTicketRow(raw, vendorNameById)),
         )
       }
     })()
@@ -2916,6 +2940,11 @@ export function AdminOverviewDashboard() {
   const [insightSchedulingByCard, setInsightSchedulingByCard] = useState<
     Record<string, InsightSchedulingCardState>
   >({})
+  const [noInspectorPrompt, setNoInspectorPrompt] = useState<{
+    ticketId: string
+    targetDay: string | null
+    building: string | null
+  } | null>(null)
   const [insightPipelineRunId, setInsightPipelineRunId] = useState<string | null>(null)
   const [insightPipelineDetail, setInsightPipelineDetail] = useState<WorkflowPipelineDetail | null>(null)
   const [insightPipelineLoading, setInsightPipelineLoading] = useState(false)
@@ -2991,6 +3020,13 @@ export function AdminOverviewDashboard() {
       if (result.scheduling) {
         const next = schedulingStateFromActionResult(result.scheduling)
         setInsightSchedulingByCard((prev) => ({ ...prev, [card.id]: next }))
+        if (next.status === 'needs_external' && next.ticketId) {
+          setNoInspectorPrompt({
+            ticketId: next.ticketId,
+            targetDay: next.targetDay,
+            building: card.building,
+          })
+        }
       }
     } catch (err) {
       setInsightActionError(getErrorMessage(err, 'Could not start that action.'))
@@ -3052,18 +3088,29 @@ export function AdminOverviewDashboard() {
             }
           })
         } else if (status === 'needs_external') {
+          const ticketId = typeof data.ticket_id === 'string' ? data.ticket_id : state.ticketId
+          const targetDay =
+            typeof data.target_day === 'string'
+              ? String(data.target_day).slice(0, 10)
+              : state.targetDay
+          let prompt: { ticketId: string; targetDay: string | null; building: string | null } | null =
+            null
           setInsightSchedulingByCard((prev) => {
             const cardId = Object.entries(prev).find(([, v]) => v.requestId === state.requestId)?.[0]
             if (!cardId) return prev
+            if (prev[cardId]?.status !== 'needs_external' && ticketId) {
+              prompt = {
+                ticketId,
+                targetDay,
+                building: insightCards.find((card) => card.id === cardId)?.building ?? null,
+              }
+            }
             return {
               ...prev,
               [cardId]: {
                 status: 'needs_external',
-                ticketId: typeof data.ticket_id === 'string' ? data.ticket_id : state.ticketId,
-                targetDay:
-                  typeof data.target_day === 'string'
-                    ? String(data.target_day).slice(0, 10)
-                    : state.targetDay,
+                ticketId,
+                targetDay,
                 inspectorName: null,
                 confirmedWindow: null,
                 holdId: null,
@@ -3071,6 +3118,7 @@ export function AdminOverviewDashboard() {
               },
             }
           })
+          if (prompt) setNoInspectorPrompt(prompt)
         }
       }
     }
@@ -3080,7 +3128,7 @@ export function AdminOverviewDashboard() {
       cancelled = true
       window.clearInterval(id)
     }
-  }, [insightSchedulingByCard])
+  }, [insightSchedulingByCard, insightCards])
 
   const insightDetailsItems = useMemo<RecommendedActionWorkOrderItem[]>(() => {
     if (!insightDetailsCard) return []
@@ -3103,13 +3151,16 @@ export function AdminOverviewDashboard() {
         .join(' · ')
       return {
         id: ticketId,
-        title: ticketId.length > 12 ? `WO ${ticketId.slice(0, 8)}…` : `WO ${ticketId}`,
+        title: formatWorkOrderRefFromTicketId(ticketId),
         summary:
           ticket?.description?.trim() ||
           fallbackSummary ||
           categoryLabel ||
           'Maintenance request',
-        context: location || insightDetailsCard.unitLabel || insightDetailsCard.building || null,
+        context: insightDetailWorkOrderContext(
+          location || insightDetailsCard.unitLabel || insightDetailsCard.building || null,
+          insightDetailsCard.building,
+        ),
         categoryLabel: categoryLabel || null,
         statusLabel,
         critical: ticket ? isTicketCritical(ticket) : false,
@@ -3126,19 +3177,27 @@ export function AdminOverviewDashboard() {
 
   const handleInsightWorkOrderSelect = useCallback(
     (item: RecommendedActionWorkOrderItem) => {
-      const ticketId = item.id
-      const run = insightWorkflowRuns.find(
-        (row) => maintenanceTicketIdFromWorkflowRun(row) === ticketId,
+      const ticketId = item.id.trim()
+      if (!ticketId) return
+      const runId = pickWorkflowRunIdForTicket(
+        insightWorkflowRuns,
+        ticketId,
+        workflowData?.runMetadata,
       )
-      if (!run) {
+      if (runId) {
+        navigate(insightWorkOrderHref({ runId, ticketId }))
+        return
+      }
+      if (!workflowData) {
         navigate(`/admin/workflows?ticket=${encodeURIComponent(ticketId)}`)
         return
       }
-      setInsightPipelineRunId(run.id)
-      setInsightPipelineDetail(null)
-      setInsightPipelineLoading(true)
+      void lookupWorkflowRunIdForTicket(ticketId).then((found) => {
+        const loaded = found && insightWorkflowRuns.some((row) => row.id === found) ? found : null
+        navigate(insightWorkOrderHref({ runId: loaded, ticketId }))
+      })
     },
-    [insightWorkflowRuns, navigate],
+    [insightWorkflowRuns, navigate, workflowData],
   )
 
   useEffect(() => {
@@ -3643,7 +3702,22 @@ export function AdminOverviewDashboard() {
             ? (INSIGHT_TAG_LABEL[insightDetailsCard.tag] ?? 'Recommended action')
             : 'Recommended action'
         }
-        subtitle={insightDetailsCard?.text ?? null}
+        subtitle={
+          insightDetailsCard ? insightCardAddressLine(insightDetailsCard.building) || null : null
+        }
+        {...(insightDetailsCard
+          ? insightDetailSections({
+              title: INSIGHT_TAG_LABEL[insightDetailsCard.tag] ?? 'Recommended action',
+              building: insightDetailsCard.building,
+              unitLabel: insightDetailsCard.unitLabel,
+              categoryLabel: insightDetailsCard.categoryLabel,
+              tag: insightDetailsCard.tag,
+              text: insightDetailsCard.text,
+              aggregateText: insightDetailsCard.aggregateText,
+              mainIssue: insightDetailsCard.mainIssue,
+              ticketSummaries: insightDetailsCard.ticketSummaries,
+            })
+          : { mainIssue: null, recommendedAction: null })}
         items={insightDetailsItems}
         onClose={closeInsightDetailsRail}
         onSelect={handleInsightWorkOrderSelect}
@@ -3812,6 +3886,18 @@ export function AdminOverviewDashboard() {
           quickNotesPlaceholder="e.g. Tenant leaning toward renewing, asked about parking…"
         />
       ) : null}
+
+      <NoInspectorAvailableModal
+        open={noInspectorPrompt != null}
+        building={noInspectorPrompt?.building}
+        targetDay={noInspectorPrompt?.targetDay}
+        onClose={() => setNoInspectorPrompt(null)}
+        onFindExternal={() => {
+          const ticketId = noInspectorPrompt?.ticketId
+          setNoInspectorPrompt(null)
+          if (ticketId) openInsightFindExternal(ticketId)
+        }}
+      />
 
       <AwaitingDecisionOutcomeModal
         open={awaitingDecisionOutcome != null}

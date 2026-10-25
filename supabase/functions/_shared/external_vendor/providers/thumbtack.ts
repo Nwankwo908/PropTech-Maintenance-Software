@@ -405,6 +405,7 @@ function searchQueriesForInput(input: ExternalVendorSearchInput): string[] {
   else if (slug.includes("plumb")) extras.push("plumber", "plumbing")
   else if (slug.includes("electric")) extras.push("electrician", "electrical")
   else if (slug.includes("hvac")) extras.push("HVAC", "air conditioning")
+  else if (slug.includes("inspect")) extras.push("home inspection", "home inspector")
   else if (slug.includes("general") || slug.includes("other")) extras.push("handyman")
   const out: string[] = []
   for (const q of [primary, ...extras]) {

@@ -3,19 +3,16 @@ import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
 import { normalizeSmsPhone } from '../sms/inbound_db.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import {
-  formatHomeCheckLocation,
   type HomeCheckAnswers,
   type HomeCheckTarget,
   nearestHomeCheckVendors,
   parseHomeCheckCommand,
   parseHomeCheckPhotoReply,
-  resolveHomeCheckTarget,
 } from '../../../../shared/homeCheck.ts'
 import {
   checked,
   checkLocation,
   confirmHomeCheck,
-  createHomeCheck,
   type HomeCheckRow,
   requireData,
   saveHomeCheckAnswers,
@@ -218,68 +215,9 @@ export async function actHomeCheckSms(
 ) {
   if (action.kind === 'clarify') return { reply: action.reply }
   if (action.kind === 'start') {
-    const [targetText, windowEnd] = action.command.target.split('|').map((part) => part.trim())
-    const targets = await homeCheckTargets(db, landlordId)
-    const target = resolveHomeCheckTarget(targetText, targets)
-    if (!target) {
-      return {
-        reply:
-          `Start your inspection with INSPECT Property / Unit. To ask the tenant, send INSPECT TENANT Property / Unit (or CHECK Property / Unit). For a contractor, send INSPECT CONTRACTOR Property / Unit | job-window-end. Duplicate unit labels require the property. Available: ${
-            targets.slice(0, 8).map((row) =>
-              formatHomeCheckLocation(row.propertyName, row.unitLabel)
-            )
-              .join('; ')
-          }${targets.length > 8 ? '; see Property Intelligence for the full list' : ''}`,
-      }
-    }
-    let vendorId: string | null = null
-    if (action.command.role === 'contractor') {
-      const roster = await homeCheckVendors(db, landlordId, target.propertyId)
-      vendorId = roster.closest
-      if (!vendorId) {
-        return {
-          reply:
-            'I can’t determine the closest contractor from the saved locations. Open Property Intelligence to choose a contractor or get a link to forward. Add exact vendor coordinates to enable distance routing.',
-        }
-      }
-      if (!windowEnd) {
-        return {
-          reply: `For the contractor’s expiring job window, send CHECK CONTRACTOR ${targetText} | ${
-            new Date(Date.now() + 86400000).toISOString()
-          } (replace with the actual window end within seven days).`,
-        }
-      }
-    }
-    try {
-      const result = await createHomeCheck(db, {
-        landlordId,
-        propertyId: target.propertyId,
-        unitId: target.unitId,
-        role: action.command.role,
-        authorizedBy: `sms:${action.messageId}`,
-        vendorId,
-        jobWindowEnd: windowEnd,
-        sendSms: true,
-        selfCapturePhone: action.command.role === 'landlord' ? action.initiatorPhone : undefined,
-      })
-      if (result.deliveryError) {
-        return {
-          runId: result.check.workflow_run_id,
-          reply: `Created ${result.check.reference} for ${
-            checkLocation(result.check)
-          }, but the text was not sent: ${result.deliveryError}. Use this scoped link: ${result.link}`,
-        }
-      }
-      return {
-        runId: result.check.workflow_run_id,
-        reply: `${result.check.reference}: Home Check sent for ${checkLocation(result.check)}.${
-          action.command.role === 'tenant'
-            ? ' Your request authorizes this message. Please give your tenant a heads-up first. One reminder after 48 hours, then we stop.'
-            : ' Observation only; no repair work authorized.'
-        }`,
-      }
-    } catch (error) {
-      return { reply: error instanceof Error ? error.message : 'Could not start the Home Check.' }
+    return {
+      reply:
+        'Upload equipment photos from Property Intelligence. Home Check links are no longer sent by text.',
     }
   }
   if (action.kind === 'confirm') {
@@ -346,17 +284,8 @@ export async function runHomeCheckReminder(db: SupabaseClient, check: HomeCheckR
     ).eq('status', 'collecting').is('reminder_claimed_at', null).select('id'),
   )
   if (!claimed.length) return
-  // Claim before sending: a cron overlap or provider timeout never sends a
-  // second tenant reminder. Delivery failures remain visible in SMS audit.
-  await sendHomeCheckSms(
-    db,
-    check,
-    check.recipient_phone!,
-    `One reminder from Ulo: please finish the four Home Check photos for ${
-      checkLocation(check)
-    } using the link we sent. No more reminders will be sent.`,
-    check.resident_id,
-  )
+  // Capture links are retired. Claiming the reminder stops the cron from
+  // texting the old page. Existing checks stay in Property Intelligence.
   await checked(
     db.from('home_checks').update({ reminder_sent_at: new Date().toISOString() }).eq(
       'id',

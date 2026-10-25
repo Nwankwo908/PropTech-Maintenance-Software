@@ -15,7 +15,10 @@ import {
 } from "./providers/thumbtack.ts"
 import { mergeAndRankExternalHits, rosterNameKeys } from "./ranking.ts"
 import { buildExternalSearchQuery, normalizeIssueCategoryForSearch } from "./trade_terms.ts"
-import { resolveExternalVendorSearchContext } from "./search_location.ts"
+import {
+  propertyIdMatchingVendorBuilding,
+  resolveExternalVendorSearchContext,
+} from "./search_location.ts"
 import type {
   ExternalVendorProvider,
   ExternalVendorSearchInput,
@@ -349,7 +352,27 @@ export async function discoverExternalVendorsForTicket(
   if (!building && fromWorkflow.building) building = fromWorkflow.building
   if (!propertyId && fromWorkflow.propertyId) propertyId = fromWorkflow.propertyId
 
-  const normalizedCategory = normalizeIssueCategoryForSearch(issueCategory)
+  const fromInspection = await loadInsightInspectionLocation(
+    supabase,
+    ticketId,
+    jobDescription,
+    landlordId,
+  )
+  if (fromInspection.inspectionSearch) {
+    if (fromInspection.building) building = fromInspection.building
+    if (fromInspection.unit) unit = fromInspection.unit
+    if (fromInspection.namedPropertyId) propertyId = fromInspection.namedPropertyId
+    else if (!propertyId && fromInspection.propertyId) propertyId = fromInspection.propertyId
+    issueCategory = "inspection"
+  } else {
+    if ((!unit || unit === "—") && fromInspection.unit) unit = fromInspection.unit
+    if (!building && fromInspection.building) building = fromInspection.building
+    if (!propertyId && fromInspection.propertyId) propertyId = fromInspection.propertyId
+  }
+
+  const searchCategory = fromInspection.inspectionSearch
+    ? "inspection"
+    : normalizeIssueCategoryForSearch(issueCategory)
   const { searchLocation, locationLabel, areaLabel } = await resolveExternalVendorSearchContext(
     supabase,
     { unit, building, landlordId, propertyId },
@@ -366,11 +389,11 @@ export async function discoverExternalVendorsForTicket(
       searchLocation,
       locationLabel,
       areaLabel,
-      issueCategory: normalizedCategory,
+      issueCategory: searchCategory,
     }
   }
   const result = await discoverExternalVendors(supabase, {
-    issueCategory: normalizedCategory,
+    issueCategory: searchCategory,
     searchLocation,
     locationLabel,
     areaLabel,
@@ -421,7 +444,7 @@ export async function discoverExternalVendorsForTicket(
     suggestions,
     jobContext: {
       propertyAddress: searchLocation || locationLabel,
-      jobCategory: formatThumbtackJobCategoryLabel(normalizedCategory),
+      jobCategory: formatThumbtackJobCategoryLabel(searchCategory),
       issueSummary,
       urgency,
       timeframe,
@@ -433,6 +456,83 @@ function metaTrimmedString(meta: unknown, key: string): string | null {
   if (!meta || typeof meta !== "object") return null
   const value = (meta as Record<string, unknown>)[key]
   return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+const INSPECTION_SCHEDULING_ACTIONS = new Set([
+  "schedule_unit_walkthrough",
+  "schedule_inspection",
+  "schedule_building_inspection",
+])
+
+export function buildingLineFromInspectionDescription(
+  description: string | null | undefined,
+): string | null {
+  const match = String(description ?? "").match(/^Building:\s*(.+)$/m)
+  const value = match?.[1]?.trim()
+  return value || null
+}
+
+async function loadInsightInspectionLocation(
+  supabase: SupabaseClient,
+  ticketId: string,
+  description: string | null,
+  landlordId: string | null,
+): Promise<{
+  unit: string | null
+  building: string | null
+  propertyId: string | null
+  namedPropertyId: string | null
+  inspectionSearch: boolean
+}> {
+  let building = buildingLineFromInspectionDescription(description)
+  let unit: string | null = null
+  let propertyId: string | null = null
+  let namedPropertyId: string | null = null
+  let inspectionSearch = false
+
+  const { data, error } = await supabase
+    .from("insight_scheduling_requests")
+    .select("building, unit_label, unit_id, action_type")
+    .eq("ticket_id", ticketId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.warn("[external-vendor] inspection location load", error.message)
+  } else if (data) {
+    inspectionSearch = INSPECTION_SCHEDULING_ACTIONS.has(String(data.action_type ?? ""))
+    if (!building && typeof data.building === "string" && data.building.trim()) {
+      building = data.building.trim()
+    }
+    const label = typeof data.unit_label === "string" ? data.unit_label.trim() : ""
+    if (label && label !== "—") unit = label
+    const unitId = typeof data.unit_id === "string" ? data.unit_id.trim() : ""
+    if (unitId) {
+      const { data: unitRow } = await supabase
+        .from("units")
+        .select("unit_label, building, property_id")
+        .eq("id", unitId)
+        .maybeSingle()
+      if (unitRow) {
+        if (typeof unitRow.unit_label === "string" && unitRow.unit_label.trim()) {
+          unit = unitRow.unit_label.trim()
+        }
+        if (!building && typeof unitRow.building === "string" && unitRow.building.trim()) {
+          building = unitRow.building.trim()
+        }
+        if (typeof unitRow.property_id === "string" && unitRow.property_id.trim()) {
+          propertyId = unitRow.property_id.trim()
+        }
+      }
+    }
+  }
+
+  if (landlordId && building) {
+    namedPropertyId = await propertyIdMatchingVendorBuilding(supabase, landlordId, building)
+  }
+
+  return { unit, building, propertyId, namedPropertyId, inspectionSearch }
 }
 
 /** Prefer the work-order unit (workflow unit_id / building) over a label-only Unit A match. */

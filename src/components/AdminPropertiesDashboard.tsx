@@ -8,6 +8,7 @@ import { PropertyHealthScoreInfoTip } from '@/components/PropertyHealthScoreInfo
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { deleteLandlordBuildings } from '@/lib/onboarding'
 import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
@@ -413,9 +414,13 @@ export function AdminPropertiesDashboard() {
 
       const ticketRows =
         enrichedTickets.error == null
-          ? ((enrichedTickets.data ?? []) as Record<string, unknown>[])
+          ? ((enrichedTickets.data ?? []) as Record<string, unknown>[]).filter(
+              isLandlordFacingMaintenanceRequest,
+            )
           : !mrTickets.error
-            ? ((mrTickets.data ?? []) as Record<string, unknown>[])
+            ? ((mrTickets.data ?? []) as Record<string, unknown>[]).filter(
+                isLandlordFacingMaintenanceRequest,
+              )
             : null
 
       if (ticketRows) {

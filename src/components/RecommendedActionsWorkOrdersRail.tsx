@@ -1,4 +1,5 @@
 import { useEffect, useId, type CSSProperties } from 'react'
+import { insightDetailWorkOrderContext } from '@shared/portfolioIntelligence/insightDetailSections'
 import {
   ADMIN_RAIL_FOOTER_CLASS,
   ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
@@ -21,6 +22,8 @@ type RecommendedActionsWorkOrdersRailProps = {
   open: boolean
   title: string
   subtitle?: string | null
+  mainIssue?: string | null
+  recommendedAction?: string | null
   items: RecommendedActionWorkOrderItem[]
   onClose: () => void
   onSelect: (item: RecommendedActionWorkOrderItem) => void
@@ -39,6 +42,8 @@ export function RecommendedActionsWorkOrdersRail({
   open,
   title,
   subtitle,
+  mainIssue,
+  recommendedAction,
   items,
   onClose,
   onSelect,
@@ -87,50 +92,73 @@ export function RecommendedActionsWorkOrdersRail({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+          {mainIssue?.trim() || recommendedAction?.trim() ? (
+            <div className="mb-4 space-y-4 px-2">
+              {mainIssue?.trim() ? (
+                <div>
+                  <h3 className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">Main issue</h3>
+                  <p className="mt-1 text-[14px] leading-5 text-[#364153]">{mainIssue.trim()}</p>
+                </div>
+              ) : null}
+              {recommendedAction?.trim() ? (
+                <div>
+                  <h3 className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">
+                    Recommended action
+                  </h3>
+                  <p className="mt-1 text-[14px] leading-5 text-[#364153]">
+                    {recommendedAction.trim()}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {items.length === 0 ? (
             <p className="sa-enter px-2 py-12 text-center text-[13px] text-[#6a7282]">
               No linked work orders for this recommendation.
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              {items.map((item, index) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelect(item)}
-                  style={{ '--sa-stagger': index } as CSSProperties}
-                  className="sa-stagger-scale sa-card sa-press flex w-full flex-col gap-2 rounded-[10px] border border-[#e5e7eb] bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="min-w-0 flex-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
-                      {item.title}
-                    </p>
-                    {item.critical ? (
-                      <span className="mt-1 size-2 shrink-0 rounded-full bg-[#fb2c36]" aria-hidden />
+              {items.map((item, index) => {
+                const context = insightDetailWorkOrderContext(item.context, subtitle)
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelect(item)}
+                    style={{ '--sa-stagger': index } as CSSProperties}
+                    className="sa-stagger-scale sa-card sa-press flex w-full flex-col gap-2 rounded-[10px] border border-[#e5e7eb] bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 flex-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                        {item.title}
+                      </p>
+                      {item.critical ? (
+                        <span className="mt-1 size-2 shrink-0 rounded-full bg-[#fb2c36]" aria-hidden />
+                      ) : null}
+                    </div>
+                    {item.summary ? (
+                      <p className="truncate text-[13px] font-medium leading-4 text-[#364153]">
+                        {item.summary}
+                      </p>
                     ) : null}
-                  </div>
-                  {item.summary ? (
-                    <p className="truncate text-[13px] font-medium leading-4 text-[#364153]">
-                      {item.summary}
-                    </p>
-                  ) : null}
-                  {item.context ? (
-                    <p className="truncate text-[12px] leading-4 text-[#6a7282]">{item.context}</p>
-                  ) : null}
-                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                    {item.categoryLabel ? (
-                      <span className="inline-flex rounded-[6px] bg-[#e8f4f2] px-2 py-0.5 text-[11px] font-medium text-[#146b52]">
-                        {item.categoryLabel}
-                      </span>
+                    {context ? (
+                      <p className="truncate text-[12px] leading-4 text-[#6a7282]">{context}</p>
                     ) : null}
-                    {item.statusLabel ? (
-                      <span className="inline-flex rounded-[6px] bg-[#f3f4f6] px-2 py-0.5 text-[11px] font-medium text-[#364153]">
-                        {item.statusLabel}
-                      </span>
-                    ) : null}
-                  </div>
-                </button>
-              ))}
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      {item.categoryLabel ? (
+                        <span className="inline-flex rounded-[6px] bg-[#e8f4f2] px-2 py-0.5 text-[11px] font-medium text-[#146b52]">
+                          {item.categoryLabel}
+                        </span>
+                      ) : null}
+                      {item.statusLabel ? (
+                        <span className="inline-flex rounded-[6px] bg-[#f3f4f6] px-2 py-0.5 text-[11px] font-medium text-[#364153]">
+                          {item.statusLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>

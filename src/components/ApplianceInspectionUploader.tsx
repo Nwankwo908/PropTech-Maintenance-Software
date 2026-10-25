@@ -18,6 +18,10 @@ import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
 import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
 import type { InspectionCapturePhoto } from '@/api/inspectionCapture'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
+import {
+  partitionPropertyIntelligenceFiles,
+  savePropertyIntelligencePhotos,
+} from '@/lib/propertyIntelligenceUpload'
 import { prepareInspectionDocumentUpload } from '@/lib/prepareInspectionDocumentUpload'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { visionResultFromSavedInspectionAsset } from '@/lib/inspectionAssessmentTable'
@@ -374,40 +378,35 @@ export function ApplianceInspectionUploader({
       return
     }
 
-    const jobs: LocalJob[] = []
-    for (const file of Array.from(fileList).slice(0, remaining)) {
-      if (file.size > MAX_BYTES) {
-        setError(`${file.name} is larger than 25MB.`)
-        continue
+    const selected = Array.from(fileList).slice(0, remaining)
+    const { reports, photos: equipmentPhotos, rejected } = partitionPropertyIntelligenceFiles(
+      selected,
+      MAX_BYTES,
+    )
+    if (rejected.length) setError(rejected[0] ?? 'Use JPG, PNG, WEBP, HEIC, or PDF.')
+    if (equipmentPhotos.length && !propertyId) {
+      setError('Choose a property before uploading equipment photos.')
+    } else if (equipmentPhotos.length && propertyId) {
+      setBusy(true)
+      setError(null)
+      setSuccess(null)
+      try {
+        const saved = await savePropertyIntelligencePhotos(propertyId, equipmentPhotos)
+        setSuccess(saved === 1 ? 'Equipment photo saved' : `${saved} equipment photos saved`)
+      } catch (err) {
+        setError(getErrorMessage(err, 'Could not analyze that equipment photo.'))
+      } finally {
+        setBusy(false)
       }
-      const ok =
-        /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(file.name) ||
-        file.type.startsWith('image/') ||
-        file.type === 'application/pdf'
-      if (!ok) {
-        setError('Use JPG, PNG, WEBP, HEIC, or PDF.')
-        continue
-      }
-      const mode = file.type === 'application/pdf' || /\.pdf$/i.test(file.name) ? 'document' : 'photo'
-      jobs.push({
-        localId: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        file,
-        previewUrl: mode === 'photo' ? URL.createObjectURL(file) : '',
-        hintCategory: null,
-        mode,
-      })
     }
-    if (jobs.length === 0) return
-    const paired: LocalJob[] = []
-    const photoJobs = jobs.filter((job) => job.mode === 'photo')
-    const documents = jobs.filter((job) => job.mode === 'document')
-    for (let i = 0; i < photoJobs.length; i += 2) {
-      const equipment = photoJobs[i]!
-      const label = photoJobs[i + 1]
-      if (label) equipment.nameplateFile = label.file
-      paired.push(equipment)
-    }
-    await processQueue([...paired, ...documents], assessmentId)
+    const jobs: LocalJob[] = reports.map((file) => ({
+      localId: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      file,
+      previewUrl: '',
+      hintCategory: null,
+      mode: 'document' as const,
+    }))
+    if (jobs.length) await processQueue(jobs, assessmentId)
     if (inputRef.current) inputRef.current.value = ''
     if (cameraInputRef.current) cameraInputRef.current.value = ''
   }
@@ -657,7 +656,6 @@ export function ApplianceInspectionUploader({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <HomeCheckPanel key={propertyId || building} building={building} propertyId={propertyId} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch [&>*]:min-w-0">
         {leading}
         <div className="flex h-full min-h-[220px] min-w-0 flex-col">
@@ -773,6 +771,8 @@ export function ApplianceInspectionUploader({
       ) : null}
         </div>
       </div>
+
+      <HomeCheckPanel key={propertyId || building} building={building} propertyId={propertyId} />
 
       {photos.some((photo) => photo.aiResult?.serialReview?.retakePrompt) ? (
         <ul className="space-y-2">

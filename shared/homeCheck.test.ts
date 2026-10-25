@@ -5,6 +5,7 @@ import {
   homeCheckAsset,
   homeCheckAssetStatusLabel,
   homeCheckComplete,
+  nextHomeCheckSlot,
   homeCheckReceivedCount,
   homeCheckFieldBasis,
   homeCheckFollowUpReason,
@@ -49,6 +50,9 @@ describe('Home Check scope and completion', () => {
     expect(homeCheckReceivedCount(['water_heater_label', 'not_a_slot', 'heating_label'])).toBe(2)
     expect(homeCheckComplete(HOME_CHECK_PHOTOS.map((photo) => photo.slot))).toBe(true)
     expect(homeCheckComplete(HOME_CHECK_PHOTOS.slice(0, 3).map((photo) => photo.slot))).toBe(false)
+    expect(nextHomeCheckSlot([])).toBe('water_heater_label')
+    expect(nextHomeCheckSlot(['water_heater_label', 'not_a_slot'])).toBe('water_heater_whole')
+    expect(nextHomeCheckSlot(HOME_CHECK_PHOTOS.map((photo) => photo.slot))).toBeNull()
   })
   it('never guesses a property from a duplicated unit number', () => {
     const targets = ['Birch', 'Oak'].map((name, i) => ({

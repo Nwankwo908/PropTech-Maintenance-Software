@@ -18,6 +18,8 @@ export { computePortfolioInsights } from './computeInsights.ts'
 export { computePortfolioRecommendations } from './computeRecommendations.ts'
 export {
   applyInsightSynthesis,
+  insightActionLabel,
+  withCanonicalInsightActionLabels,
   buildFallbackInsightRecommendations,
   buildInsightSynthesisPromptPayload,
   insightSynthesisSystemPrompt,

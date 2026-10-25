@@ -7,12 +7,14 @@ import {
   homeCheckAsset,
   formatHomeCheckLocation,
   homeCheckReceivedSlots,
+  nextHomeCheckSlot,
   homeCheckReference,
   type HomeCheckRole,
   type HomeCheckSlot,
   homeCheckSummary,
   supportedHomeCheckPhotoWarning,
 } from '../../../../shared/homeCheck.ts'
+import { homeCheckFollowUpCategory } from '../../../../shared/maintenance/homeCheckRepairCategory.ts'
 import {
   generateInspectionCaptureToken,
   hashInspectionCaptureToken,
@@ -217,6 +219,8 @@ export async function createHomeCheck(db: SupabaseClient, input: {
   vendorId?: string | null
   jobWindowEnd?: string | null
   sendSms?: boolean
+  /** Dashboard uploads store a check without a public capture URL or a text. */
+  publishLink?: boolean
   /** Internal SMS-only recipient override; authenticated HTTP inputs never set this. */
   selfCapturePhone?: string
 }) {
@@ -298,12 +302,16 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     }
     expires = end
   }
-  const origin = new URL(uloAppOrigin())
+  const publishLink = input.publishLink !== false
+  const origin = publishLink ? new URL(uloAppOrigin()) : null
   if (
-    origin.protocol !== 'https:' ||
-    !(origin.hostname === 'ulohome.io' || origin.hostname.endsWith('.ulohome.io'))
+    origin &&
+    (origin.protocol !== 'https:' ||
+      !(origin.hostname === 'ulohome.io' || origin.hostname.endsWith('.ulohome.io')))
   ) throw new Error('APP_URL must use the branded HTTPS Ulo domain for Home Check links.')
-  const line = await resolveOutboundLandlordSmsLine(db, input.landlordId)
+  const line = publishLink
+    ? await resolveOutboundLandlordSmsLine(db, input.landlordId)
+    : null
   if (input.sendSms && !line?.phone) throw new Error('Configure an active Ulo SMS number first.')
   const recent = requireData(
     await db.from('home_checks').select('id').eq('landlord_id', input.landlordId).gte(
@@ -352,8 +360,11 @@ export async function createHomeCheck(db: SupabaseClient, input: {
       role: check.role,
     },
   })
-  const link = `${origin.origin}/c/${id}#${token}`
+  const link = origin ? `${origin.origin}/c/${id}#${token}` : null
   await homeCheckEvent(db, check, 'authorized', { authorized_by: input.authorizedBy })
+  if (!publishLink) {
+    return { check: await loadHomeCheck(db, id), link: null, deliveryError: null }
+  }
   const instructions = `${
     HOME_CHECK_PHOTOS.map((photo, i) => `${i + 1}. ${photo.title}`).join('\n')
   }\n5. Leaks, odd noises or smells? Yes / no.\n6. Last service and last filter change, if known.\nObservation only. Don’t open covers or touch equipment.\nFor text photos: send one photo per message with ${check.reference} and its number (1–4). Otherwise use the link.\n${link}`
@@ -494,7 +505,9 @@ export async function uploadHomeCheckPhoto(
     slot: HomeCheckSlot
     bytes: Uint8Array
     contentType: string
-    source: 'link' | 'photo_text'
+    source: 'link' | 'photo_text' | 'dashboard'
+    /** Dashboard uploads save the observation and do not text or open paid work. */
+    skipOutreach?: boolean
   },
 ) {
   if (check.confirmed_at || Date.parse(check.expires_at) <= Date.now()) {
@@ -542,10 +555,73 @@ export async function uploadHomeCheckPhoto(
     await checked(
       db.from('home_checks').update({ detected_warning: photoWarning }).eq('id', check.id),
     )
-    await openHomeCheckFollowUp(db, await loadHomeCheck(db, check.id))
+    if (!input.skipOutreach) await openHomeCheckFollowUp(db, await loadHomeCheck(db, check.id))
   }
-  await notifyHomeCheckResult(db, await loadHomeCheck(db, check.id), assets)
+  if (!input.skipOutreach) {
+    await notifyHomeCheckResult(db, await loadHomeCheck(db, check.id), assets)
+  }
   return publicHomeCheck(db, current)
+}
+
+/** Property-level observation. Single-family homes are not given a unit. */
+export async function ensureDashboardHomeCheck(
+  db: SupabaseClient,
+  input: { landlordId: string; propertyId: string; authorizedBy: string },
+): Promise<HomeCheckRow> {
+  const { data: open } = await db.from('home_checks').select('id').eq(
+    'landlord_id',
+    input.landlordId,
+  ).eq('property_id', input.propertyId).eq('role', 'landlord').is('unit_id', null).is(
+    'confirmed_at',
+    null,
+  ).in('status', ['collecting', 'completed']).gt('expires_at', new Date().toISOString()).order(
+    'created_at',
+    { ascending: false },
+  ).limit(1).maybeSingle()
+  if (open?.id) {
+    const { data: photos } = await db.from('home_check_photos').select('slot').eq('check_id', open.id)
+    if (nextHomeCheckSlot((photos ?? []).map((photo) => String(photo.slot)))) {
+      return loadHomeCheck(db, open.id, input.landlordId)
+    }
+  }
+  const created = await createHomeCheck(db, {
+    landlordId: input.landlordId,
+    propertyId: input.propertyId,
+    unitId: null,
+    role: 'landlord',
+    authorizedBy: input.authorizedBy,
+    sendSms: false,
+    publishLink: false,
+  })
+  return created.check
+}
+
+export async function uploadDashboardHomeCheckPhoto(
+  db: SupabaseClient,
+  input: {
+    landlordId: string
+    propertyId: string
+    authorizedBy: string
+    bytes: Uint8Array
+    contentType: string
+  },
+) {
+  const check = await ensureDashboardHomeCheck(db, input)
+  const { data: photos, error } = await db.from('home_check_photos').select('slot').eq(
+    'check_id',
+    check.id,
+  )
+  if (error) throw new Error(error.message)
+  const slot = nextHomeCheckSlot((photos ?? []).map((photo) => String(photo.slot)))
+  if (!slot) throw new Error('This Home Check already has its four equipment photos.')
+  await uploadHomeCheckPhoto(db, check, {
+    slot,
+    bytes: input.bytes,
+    contentType: input.contentType,
+    source: 'dashboard',
+    skipOutreach: true,
+  })
+  return { checkId: check.id, slot }
 }
 
 export async function saveHomeCheckAnswers(
@@ -577,6 +653,9 @@ async function openHomeCheckFollowUp(db: SupabaseClient, check: HomeCheckRow) {
   const { data: issueId, error } = await db.rpc('report_home_check_issue', { p_check_id: check.id })
   if (error) throw new Error(error.message)
   if (issueId && issueId !== alreadyOpen) {
+    const warningText = [check.detected_warning, check.answers?.warningDetails]
+      .filter(Boolean)
+      .join(' ')
     await startMaintenanceRequestWorkflow(db, {
       landlordId: check.landlord_id,
       ticketId: issueId,
@@ -586,7 +665,7 @@ async function openHomeCheckFollowUp(db: SupabaseClient, check: HomeCheckRow) {
       residentId: check.resident_id,
       triggerType: 'home_check',
       dueAt: new Date(Date.now() + 86400000).toISOString(),
-      issueCategory: 'home_check_warning',
+      issueCategory: homeCheckFollowUpCategory(warningText),
       severity: 'medium',
       source: 'web_form',
     })

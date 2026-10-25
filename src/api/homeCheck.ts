@@ -1,5 +1,6 @@
 import type { LabelReadability } from '@shared/vision/equipmentLabel'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { compressImageForVision } from '@/lib/imageCompress'
 import { supabase } from '@/lib/supabase'
 import type {
   HomeCheckAnswers,
@@ -70,4 +71,21 @@ export async function homeCheckRequest<T>(
   }
   if (data?.error) throw new Error(String(data.error))
   return data as T
+}
+
+/** Landlord dashboard photo. No public link and no text. */
+export async function uploadDashboardEquipmentPhoto(input: {
+  propertyId: string
+  file: File
+}): Promise<{ checkId: string; slot: string }> {
+  const image = await compressImageForVision(input.file)
+  if (!image.base64 || image.contentType === 'application/pdf') {
+    throw new Error('Use a photo of the equipment.')
+  }
+  return homeCheckRequest({
+    action: 'dashboard_photo',
+    propertyId: input.propertyId,
+    imageBase64: image.base64,
+    contentType: image.contentType,
+  })
 }

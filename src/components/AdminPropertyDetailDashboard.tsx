@@ -19,6 +19,7 @@ import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, workflowMatchesPropertyScope, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
   collectAdminWorkflowRuns,
@@ -564,12 +565,13 @@ export function AdminPropertyDetailDashboard() {
         }
       }
 
-      const ticketSource =
+      const ticketSource = (
         enrichedTickets.error == null
           ? ((enrichedTickets.data ?? []) as Record<string, unknown>[])
           : !mrTickets.error
             ? ((mrTickets.data ?? []) as Record<string, unknown>[])
             : []
+      ).filter(isLandlordFacingMaintenanceRequest)
 
       const parsedTickets = ticketSource.map((raw) => {
         const spend = spendById.get(asString(raw.id))

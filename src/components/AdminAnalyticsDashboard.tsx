@@ -8,6 +8,7 @@ import {
   type RecognizedMaintenanceSpend,
 } from '@/api/maintenanceInvoice'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { fetchPmCompliance, type PmComplianceSummary } from '@/lib/pmCompliance'
 import { PmComplianceTaskCard } from '@/components/PmComplianceTaskCard'
 import { supabase } from '@/lib/supabase'
@@ -343,7 +344,9 @@ export function AdminAnalyticsDashboard() {
 
       if (!ticketsResult.error) {
         setTickets(
-          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTicketRow),
+          ((ticketsResult.data ?? []) as Record<string, unknown>[])
+            .filter(isLandlordFacingMaintenanceRequest)
+            .map(normalizeTicketRow),
         )
       } else {
         setError(

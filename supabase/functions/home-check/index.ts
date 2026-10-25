@@ -3,22 +3,12 @@ import { equipmentSerialFormatRules } from '../_shared/vision/getProvider.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import { assertAskUloLandlordAccess } from '../_shared/ask_ulo/auth/assertAskUloLandlordAccess.ts'
 import {
-  authorizeHomeCheckLink,
   confirmHomeCheck,
-  createHomeCheck,
-  homeCheckEvent,
-  publicHomeCheck,
   requireData,
-  saveHomeCheckAnswers,
-  uploadHomeCheckPhoto,
+  uploadDashboardHomeCheckPhoto,
 } from '../_shared/homeCheck/service.ts'
 import { homeCheckTargets, homeCheckVendors } from '../_shared/homeCheck/sms.ts'
-import {
-  type HomeCheckAnswers,
-  homeCheckMetrics,
-  isHomeCheckSlot,
-} from '../../../shared/homeCheck.ts'
-import { assertPilotAllows } from '../../../shared/pilotGate.ts'
+import { homeCheckMetrics } from '../../../shared/homeCheck.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -47,61 +37,11 @@ Deno.serve(async (req) => {
     if (raw.length > 15 * 1024 * 1024) return json({ error: 'Photo too large' }, 413)
     const body = JSON.parse(raw)
     const action = str(body.action)
-    if (['open', 'upload', 'answers'].includes(action)) {
-      const check = await authorizeHomeCheckLink(db, str(body.id), str(body.token))
-      if (action === 'open') {
-        const opened = requireData(
-          await db.from('home_checks').update({ opened_at: new Date().toISOString() }).eq(
-            'id',
-            check.id,
-          ).is('opened_at', null).select('id'),
-        )
-        if (opened.length) await homeCheckEvent(db, check, 'opened')
-        return json(await publicHomeCheck(db, check))
-      }
-      if (action === 'answers') {
-        if (typeof body.answers?.warningSigns !== 'boolean') {
-          return json({ error: 'Answer yes or no for leaks, odd noises or smells.' }, 400)
-        }
-        const answers: HomeCheckAnswers = {
-          warningSigns: body.answers.warningSigns,
-          warningDetails: str(body.answers.warningDetails).slice(0, 2000),
-          lastService: str(body.answers.lastService).slice(0, 160),
-          waterHeaterLastService: str(body.answers.waterHeaterLastService).slice(0, 160),
-          heatingLastService: str(body.answers.heatingLastService).slice(0, 160),
-          lastFilterChange: str(body.answers.lastFilterChange).slice(0, 160),
-        }
-        await saveHomeCheckAnswers(db, check, answers)
-        return json({ ok: true })
-      }
-      if (!isHomeCheckSlot(body.slot)) {
-        return json({ error: 'Choose one of the four photo slots.' }, 400)
-      }
-      const mime = str(body.contentType)
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
-        return json({ error: 'Use JPEG, PNG or WebP photos.' }, 400)
-      }
-      const binary = atob(str(body.imageBase64))
-      if (!binary.length || binary.length > 10 * 1024 * 1024) {
-        return json({ error: 'Use a photo under 10 MB.' }, 400)
-      }
-      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
-      // MIME is checked against the file signature as well as the request.
-      const signature = mime === 'image/jpeg'
-        ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
-        : mime === 'image/png'
-        ? [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes[i] === v)
-        : new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF' &&
-          new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP'
-      if (!signature) return json({ error: 'Invalid image content.' }, 400)
-      return json(
-        await uploadHomeCheckPhoto(db, check, {
-          slot: body.slot,
-          bytes,
-          contentType: mime,
-          source: 'link',
-        }),
-      )
+    if (['open', 'upload', 'answers', 'start'].includes(action)) {
+      return json({
+        error:
+          'This Home Check link is no longer used. Upload equipment photos from Property Intelligence.',
+      }, 410)
     }
     const access = await assertAskUloLandlordAccess({
       req,
@@ -120,33 +60,33 @@ Deno.serve(async (req) => {
           : { vendors: [], closest: null }),
       })
     }
-    if (action === 'start') {
-      const pilotGate = assertPilotAllows('home_checks', Deno.env)
-      if (!pilotGate.ok) {
-        return json(
-          {
-            error:
-              'Home Checks are excluded from this pilot until capture and confirmation are verified.',
-            pilot: { status: pilotGate.status, reason: pilotGate.reason },
-          },
-          503,
-        )
+    if (action === 'dashboard_photo') {
+      const propertyId = str(body.propertyId)
+      if (!propertyId) return json({ error: 'Choose a property first.' }, 400)
+      const mime = str(body.contentType)
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
+        return json({ error: 'Use JPEG, PNG or WebP photos.' }, 400)
       }
-      if (!['tenant', 'contractor', 'landlord'].includes(body.role)) {
-        return json({ error: 'Choose a capture role.' }, 400)
+      const binary = atob(str(body.imageBase64))
+      if (!binary.length || binary.length > 10 * 1024 * 1024) {
+        return json({ error: 'Use a photo under 10 MB.' }, 400)
       }
-      const result = await createHomeCheck(db, {
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+      const signature = mime === 'image/jpeg'
+        ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
+        : mime === 'image/png'
+        ? [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes[i] === v)
+        : new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF' &&
+          new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP'
+      if (!signature) return json({ error: 'Invalid image content.' }, 400)
+      const saved = await uploadDashboardHomeCheckPhoto(db, {
         landlordId,
-        propertyId: str(body.propertyId),
-        unitId: str(body.unitId) || null,
-        role: body.role,
+        propertyId,
         authorizedBy: access.user.id,
-        vendorId: str(body.vendorId) || null,
-        jobWindowEnd: str(body.jobWindowEnd),
-        sendSms: body.sendSms === true,
+        bytes,
+        contentType: mime,
       })
-      // Never send a token hash back to the dashboard.
-      return json({ id: result.check.id, link: result.link, deliveryError: result.deliveryError })
+      return json({ ok: true, checkId: saved.checkId, slot: saved.slot })
     }
     if (action === 'confirm') {
       const corrections = body.labelCorrections || []

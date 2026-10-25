@@ -1,8 +1,11 @@
 /// <reference lib="deno.ns" />
 
 import {
+  alignZipToPropertyState,
   formatVendorSetupLocationLabel,
+  matchPropertyForVendorSearch,
   resolveExternalVendorSearchContext,
+  vendorAddressMatchesSearchState,
 } from "./search_location.ts"
 
 function mockSupabaseWithProperty(): { from: (table: string) => unknown } {
@@ -50,6 +53,63 @@ function mockSupabaseWithProperty(): { from: (table: string) => unknown } {
     },
   }
 }
+
+Deno.test("alignZipToPropertyState replaces a ZIP from another state", async () => {
+  const fetchFn = (async (input: string | URL | Request) => {
+    const url = String(input)
+    if (url.endsWith("/07102")) {
+      return new Response(JSON.stringify({
+        places: [{ "state abbreviation": "NJ", "place name": "Newark" }],
+      }), { status: 200 })
+    }
+    if (url.includes("/md/")) {
+      return new Response(JSON.stringify({
+        places: [{ "post code": "20745", "place name": "Oxon Hill" }],
+      }), { status: 200 })
+    }
+    return new Response("no", { status: 404 })
+  }) as typeof fetch
+
+  const zip = await alignZipToPropertyState(
+    { city: "Oxon Hill", state: "MD", zipCode: "07102" },
+    fetchFn,
+  )
+  if (zip !== "20745") throw new Error(`expected Oxon Hill ZIP, got ${zip}`)
+})
+
+Deno.test("alignZipToPropertyState keeps a ZIP in the property state", async () => {
+  const fetchFn = (async () => new Response(JSON.stringify({
+    places: [{ "state abbreviation": "MD", "place name": "Baltimore" }],
+  }), { status: 200 })) as typeof fetch
+  const zip = await alignZipToPropertyState(
+    { city: "Baltimore", state: "MD", zipCode: "21218" },
+    fetchFn,
+  )
+  if (zip !== "21218") throw new Error(`expected Baltimore ZIP, got ${zip}`)
+})
+
+Deno.test("matchPropertyForVendorSearch does not treat a short name as another street", () => {
+  const records = [
+    { id: "nj", name: "Maple", streetAddress: "10 Grove St", state: "NJ" },
+    { id: "md", name: "646 Bartlett", streetAddress: "646 Bartlett Ave", state: "MD" },
+  ]
+  const hit = matchPropertyForVendorSearch(records, "646 Bartlett Ave")
+  if (hit?.id !== "md") throw new Error(`expected the Maryland street, got ${hit?.id}`)
+  const vague = matchPropertyForVendorSearch(records, "Ave")
+  if (vague) throw new Error("a short fragment must not match a property")
+})
+
+Deno.test("vendorAddressMatchesSearchState drops a different state", () => {
+  if (vendorAddressMatchesSearchState("Trenton, New Jersey", "Baltimore, MD 21218")) {
+    throw new Error("New Jersey vendor must not match a Maryland search")
+  }
+  if (!vendorAddressMatchesSearchState("Baltimore, MD", "Baltimore, MD 21218")) {
+    throw new Error("Maryland vendor must match a Maryland search")
+  }
+  if (!vendorAddressMatchesSearchState(null, "Baltimore, MD 21218")) {
+    throw new Error("unknown vendor address stays in the list")
+  }
+})
 
 Deno.test("formatVendorSetupLocationLabel combines building and unit", () => {
   const label = formatVendorSetupLocationLabel("Unit 304", "Maple Heights")

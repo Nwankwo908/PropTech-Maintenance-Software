@@ -18,6 +18,10 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { findPropertyByName } from '@/lib/properties'
 import { prepareInspectionDocumentUpload } from '@/lib/prepareInspectionDocumentUpload'
 import {
+  partitionPropertyIntelligenceFiles,
+  savePropertyIntelligencePhotos,
+} from '@/lib/propertyIntelligenceUpload'
+import {
   INSPECTION_SESSION_CHANGED_EVENT,
   hasPersistedInspectionData,
   isInspectionReportPhoto,
@@ -1562,18 +1566,30 @@ export function PropertyDetailsPanel({
     if (!files?.length || !building) return
     setError(null)
     setInspectionSaveMessage(null)
-    const accepted: File[] = []
-    for (const file of Array.from(files)) {
-      if (!isAcceptedInspectionFile(file)) {
-        setError('Upload a PDF or image of the inspection report. ZIP and Word files are not supported.')
-        continue
+    const incoming = Array.from(files).filter((file) => {
+      if (isAcceptedInspectionFile(file)) return true
+      setError('Upload a PDF or image of the inspection report. ZIP and Word files are not supported.')
+      return false
+    })
+    const { reports, photos, rejected } = partitionPropertyIntelligenceFiles(
+      incoming,
+      INSPECTION_MAX_BYTES,
+    )
+    if (rejected.length) setError(rejected[0] ?? 'Each file must be 25MB or smaller.')
+    let equipmentNote = ''
+    if (photos.length && !propertyId) {
+      setError('Choose a property before uploading equipment photos.')
+    } else if (photos.length && propertyId) {
+      try {
+        const saved = await savePropertyIntelligencePhotos(propertyId, photos)
+        equipmentNote = saved === 1 ? 'Equipment photo saved' : `${saved} equipment photos saved`
+        setInspectionSaveMessage(equipmentNote)
+        setInspectionHasPersistedWork(true)
+      } catch (err) {
+        setError(getErrorMessage(err, 'Could not analyze that equipment photo.'))
       }
-      if (file.size > INSPECTION_MAX_BYTES) {
-        setError('Each file must be 25MB or smaller.')
-        continue
-      }
-      accepted.push(file)
     }
+    const accepted = reports
     if (accepted.length === 0) return
 
     const pending = accepted.map((file) => ({
@@ -1622,9 +1638,10 @@ export function PropertyDetailsPanel({
       notifyInspectionSessionChanged(building)
       notifyAssetRegistryChanged(building)
       notifyPropertyDetailsChanged(building)
-      setInspectionSaveMessage(
-        accepted.length === 1 ? 'Inspection report saved' : `${accepted.length} inspection reports saved`,
-      )
+      const reportNote = accepted.length === 1
+        ? 'Inspection report saved'
+        : `${accepted.length} inspection reports saved`
+      setInspectionSaveMessage(equipmentNote ? `${equipmentNote}. ${reportNote}` : reportNote)
     } catch (err) {
       try {
         const [refreshed, assets] = await Promise.all([

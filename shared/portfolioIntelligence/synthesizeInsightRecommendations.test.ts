@@ -125,6 +125,10 @@ describe('applyInsightSynthesis', () => {
     expect(synthesized).toHaveLength(1)
     expect(synthesized[0]?.actionType).toBe('request_diagnostic')
     expect(synthesized[0]?.ticketIds.sort()).toEqual(['t1', 't2'])
+    expect(synthesized[0]?.text).toBe('Schedule a plumbing diagnostic for Unit 4B.')
+    expect(synthesized[0]?.summary?.length ?? 0).toBeLessThanOrEqual(20)
+    expect(synthesized[0]?.mainIssue?.includes('Oak Tower')).toBe(false)
+    expect(synthesized[0]?.mainIssue?.toLowerCase().includes('high risk')).toBe(false)
   })
 
   it('uses plain aggregate text when confidence is low instead of dropping the card', () => {
@@ -143,5 +147,7 @@ describe('applyInsightSynthesis', () => {
     expect(result).toHaveLength(1)
     expect(result[0]?.text).toBe(findings[0]!.text)
     expect(result[0]?.mode).toBe('fallback')
+    expect(result[0]?.summary?.length ?? 0).toBeLessThanOrEqual(20)
+    expect(result[0]?.summary).not.toBe(result[0]?.text)
   })
 })

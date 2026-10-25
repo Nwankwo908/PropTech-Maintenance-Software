@@ -106,18 +106,10 @@ describe('Home Check SMS dispatch', () => {
     )
     const action = await prepareHomeCheckSms(context(db, 'INSPECT Birch / 12A', [], true))
     expect(action).toMatchObject({ kind: 'start', initiatorPhone: '+15551112222' })
-    await actHomeCheckSms(db as never, 'landlord', action!)
-    expect(createHomeCheck).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({
-        landlordId: 'landlord',
-        propertyId: 'birch',
-        unitId: 'birch-12a',
-        role: 'landlord',
-        selfCapturePhone: '+15551112222',
-        authorizedBy: 'sms:message',
-      }),
-    )
+    const result = await actHomeCheckSms(db as never, 'landlord', action!)
+    expect(result.reply).toContain('Property Intelligence')
+    expect(result.reply).not.toContain('/c/')
+    expect(createHomeCheck).not.toHaveBeenCalled()
   })
   it('asks for an exact property/unit before starting when scope is absent or duplicated', async () => {
     const db = query([])
@@ -135,10 +127,8 @@ describe('Home Check SMS dispatch', () => {
     for (const body of ['INSPECT', 'INSPECT 12A']) {
       const action = await prepareHomeCheckSms(context(db, body, [], true))
       const result = await actHomeCheckSms(db as never, 'landlord', action!)
-      expect(result.reply).toContain('INSPECT Property / Unit')
-      expect(result.reply).toContain('Birch · Unit 12A')
-      expect(result.reply).toContain('Oak · Unit 12A')
-      expect(result.reply).not.toContain('Birch / 12A')
+      expect(result.reply).toContain('Property Intelligence')
+      expect(result.reply).not.toContain('/c/')
     }
     expect(createHomeCheck).not.toHaveBeenCalled()
   })
@@ -156,18 +146,12 @@ describe('Home Check SMS dispatch', () => {
       'landlord',
       (await prepareHomeCheckSms(context(db, 'INSPECT', [], true)))!,
     )
-    expect(menu.reply).toContain('14 Maple Ave')
-    expect(menu.reply).not.toContain('Home')
+    expect(menu.reply).toContain('Property Intelligence')
     expect(menu.reply).not.toContain('Unit 1')
+    expect(menu.reply).not.toContain('/c/')
     const started = await prepareHomeCheckSms(context(db, 'INSPECT 14 Maple Ave', [], true))
     await actHomeCheckSms(db as never, 'landlord', started!)
-    expect(createHomeCheck).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({
-        propertyId: 'maple',
-        unitId: null,
-      }),
-    )
+    expect(createHomeCheck).not.toHaveBeenCalled()
   })
   it('leaves compliance and unrelated messages outside the Home Check workflow', async () => {
     const db = query([pending])
@@ -249,20 +233,13 @@ describe('Home Check SMS dispatch', () => {
       }),
     ).toBeNull()
   })
-  it('claims the single reminder before sending and skips subsequent cron calls', async () => {
+  it('claims the reminder and does not text a retired capture link', async () => {
     vi.mocked(sendHomeCheckSms).mockClear()
     const db = query([{ id: 'check' }])
     await runHomeCheckReminder(db as never, pending as never)
     expect(db.filters).toContainEqual(['is', ['reminder_claimed_at', null]])
     expect(db.filters).toContainEqual(['eq', ['status', 'collecting']])
     await runHomeCheckReminder(query([]) as never, pending as never)
-    expect(sendHomeCheckSms).toHaveBeenCalledTimes(1)
-  })
-  it('a provider failure does not create a second reminder attempt', async () => {
-    vi.mocked(sendHomeCheckSms).mockClear().mockRejectedValueOnce(new Error('Provider timeout'))
-    await expect(runHomeCheckReminder(query([{ id: 'check' }]) as never, pending as never)).rejects
-      .toThrow('Provider timeout')
-    await runHomeCheckReminder(query([]) as never, pending as never)
-    expect(sendHomeCheckSms).toHaveBeenCalledTimes(1)
+    expect(sendHomeCheckSms).not.toHaveBeenCalled()
   })
 })

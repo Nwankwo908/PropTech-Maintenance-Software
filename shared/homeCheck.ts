@@ -78,6 +78,12 @@ export function homeCheckComplete(slots: readonly string[]): boolean {
   return homeCheckReceivedCount(slots) === HOME_CHECK_PHOTOS.length
 }
 
+/** Next baseline slot that does not already have a photo. Order is the four-photo contract. */
+export function nextHomeCheckSlot(filled: readonly string[]): HomeCheckSlot | null {
+  const have = new Set(homeCheckReceivedSlots(filled))
+  return HOME_CHECK_PHOTOS.find((photo) => !have.has(photo.slot))?.slot ?? null
+}
+
 /** Explicit commands prevent property names and short replies being guessed as scope. */
 export function parseHomeCheckCommand(
   body: string,

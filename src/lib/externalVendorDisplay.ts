@@ -35,8 +35,10 @@ export type ExternalVendorDisplayRow = ExternalVendorSuggestionDto & {
 }
 
 function categoryTag(issueCategory: string | null | undefined): string {
-  if (!String(issueCategory ?? '').trim()) return 'Maintenance'
-  return formatVendorTradeLabel(issueCategory, { emptyLabel: 'Maintenance' })
+  const raw = String(issueCategory ?? '').trim()
+  if (!raw) return 'Maintenance'
+  if (/inspection|inspector|walkthrough/i.test(raw)) return 'Inspection'
+  return formatVendorTradeLabel(raw, { emptyLabel: 'Maintenance' })
 }
 
 function isMockOnlySuggestion(suggestion: ExternalVendorSuggestionDto): boolean {

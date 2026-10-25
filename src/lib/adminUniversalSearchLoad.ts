@@ -6,6 +6,7 @@ import {
   residentDetailPath,
 } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { isOnboardingImportLeaseRenewalRun } from '@/lib/onboardingImportLeaseRenewal'
 import type { UniversalSearchItem } from '@/lib/adminUniversalSearchCore'
 
@@ -412,7 +413,7 @@ export async function loadAdminSearchIndexHeavy(
   const [enrichedTicketsResult, workflowRunsResult] = await Promise.all([
     supabase
       .from('maintenance_request_enriched')
-      .select('id, building, unit, issue, issue_category')
+      .select('id, building, unit, issue, issue_category, description')
       .eq('landlord_id', landlordId)
       .order('created_at', { ascending: false })
       .limit(200),
@@ -432,7 +433,7 @@ export async function loadAdminSearchIndexHeavy(
   } else {
     const fallback = await supabase
       .from('maintenance_requests')
-      .select('id, building, unit, issue, issue_category')
+      .select('id, building, unit, issue, issue_category, description')
       .eq('landlord_id', landlordId)
       .order('created_at', { ascending: false })
       .limit(200)
@@ -440,7 +441,9 @@ export async function loadAdminSearchIndexHeavy(
       maintenanceRows = (fallback.data ?? []) as Record<string, unknown>[]
     }
   }
-  items.push(...mapMaintenanceLight(maintenanceRows))
+  items.push(
+    ...mapMaintenanceLight(maintenanceRows.filter(isLandlordFacingMaintenanceRequest)),
+  )
 
   if (!workflowRunsResult.error) {
     const operationalRuns = ((workflowRunsResult.data ?? []) as Record<string, unknown>[]).filter(
@@ -489,7 +492,7 @@ export async function enrichSearchItemsDetail(
     if (!fallback.error) rows = (fallback.data ?? []) as Record<string, unknown>[]
   }
 
-  for (const item of mapMaintenanceDetailed(rows)) {
+  for (const item of mapMaintenanceDetailed(rows.filter(isLandlordFacingMaintenanceRequest))) {
     out.set(item.id, item)
   }
   return out

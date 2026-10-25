@@ -1,3 +1,4 @@
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { supabase } from '@/lib/supabase'
 import { normalizeUnitLabel } from '@/lib/propertyHealth'
 import {
@@ -43,7 +44,7 @@ export async function fetchResidentMaintenanceCalendarEvents(params: {
   const { data, error } = await supabase
     .from('maintenance_requests')
     .select(
-      'id, scheduled_at, schedule_confirmed_at, unit, resident_user_id, resident_name, vendor_work_status',
+      'id, scheduled_at, schedule_confirmed_at, unit, resident_user_id, resident_name, vendor_work_status, description',
     )
     .eq('landlord_id', landlordId)
     .not('scheduled_at', 'is', null)
@@ -65,6 +66,7 @@ export async function fetchResidentMaintenanceCalendarEvents(params: {
     const record = row as Record<string, unknown>
     const ticketId = typeof record.id === 'string' ? record.id : ''
     if (!ticketId) continue
+    if (!isLandlordFacingMaintenanceRequest(record)) continue
     if (!ticketBelongsToResident(record, match)) continue
     tickets.push({
       id: ticketId,
@@ -113,6 +115,7 @@ export async function fetchResidentOpenMaintenanceTickets(params: {
     const record = row as Record<string, unknown>
     const ticketId = typeof record.id === 'string' ? record.id : ''
     if (!ticketId) continue
+    if (!isLandlordFacingMaintenanceRequest(record)) continue
     if (!ticketBelongsToResident(record, match)) continue
     const status = typeof record.vendor_work_status === 'string' ? record.vendor_work_status : ''
     tickets.push({

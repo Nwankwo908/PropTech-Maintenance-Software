@@ -209,13 +209,55 @@ async function loadActiveHolds(
   }))
 }
 
+async function resolveInsightPropertyId(
+  supabase: SupabaseClient,
+  input: { landlordId: string; unitId?: string | null; building?: string | null },
+): Promise<string | null> {
+  const unitId = input.unitId?.trim()
+  if (unitId) {
+    const { data } = await supabase
+      .from("units")
+      .select("property_id")
+      .eq("id", unitId)
+      .maybeSingle()
+    const propertyId = typeof data?.property_id === "string" ? data.property_id.trim() : ""
+    if (propertyId) return propertyId
+  }
+
+  const building = input.building?.trim().toLowerCase()
+  if (!building) return null
+  const { data: properties } = await supabase
+    .from("properties")
+    .select("id, name, street_address")
+    .eq("landlord_id", input.landlordId)
+  for (const row of properties ?? []) {
+    const name = String(row.name ?? "").trim().toLowerCase()
+    const street = String(row.street_address ?? "").trim().toLowerCase()
+    if (name === building || street === building) return String(row.id)
+    if (street.length >= 8 && (building.startsWith(`${street} `) || building.startsWith(`${street},`))) {
+      return String(row.id)
+    }
+  }
+  return null
+}
+
 async function mintInsightInspectionTicket(
   supabase: SupabaseClient,
   input: StartInsightInspectorSchedulingInput & { targetDay: string },
 ): Promise<string> {
   const unit = (input.unitLabel ?? "").replace(/^Unit\s+/i, "").trim() || "—"
   const summary = (input.issueSummary ?? "").trim() || "Property inspection visit"
-  const category = (input.categoryLabel ?? "Inspection").trim() || "Inspection"
+  const inspectionRequest = input.actionType === "schedule_unit_walkthrough" ||
+    input.actionType === "schedule_inspection" ||
+    input.actionType === "schedule_building_inspection"
+  const category = inspectionRequest
+    ? "inspection"
+    : ((input.categoryLabel ?? "Inspection").trim() || "Inspection")
+  const propertyId = await resolveInsightPropertyId(supabase, {
+    landlordId: input.landlordId,
+    unitId: input.unitId,
+    building: input.building,
+  })
   const description =
     `${summary}\n\nTarget day: ${input.targetDay}` +
     (input.building ? `\nBuilding: ${input.building}` : "") +
@@ -228,10 +270,12 @@ async function mintInsightInspectionTicket(
     issue_category: category,
     priority: "normal",
     urgency: "normal",
+    resident_name: "Property inspection",
+    email: "inspection@ulo.invalid",
     vendor_work_status: "unassigned",
     photo_paths: [],
-    building: input.building ?? null,
   }
+  if (propertyId) row.property_id = propertyId
   if (input.unitId?.trim()) row.unit_id = input.unitId.trim()
   // Best-effort landlord scope when column exists.
   row.landlord_id = input.landlordId

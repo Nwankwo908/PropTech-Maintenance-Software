@@ -1,4 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
   buildPropertyHealthReport,
@@ -79,7 +80,9 @@ export async function fetchMyPropertiesPortfolio(
 
   const ticketRows = ticketsResult.error
     ? []
-    : ((ticketsResult.data ?? []) as Record<string, unknown>[])
+    : ((ticketsResult.data ?? []) as Record<string, unknown>[]).filter(
+        isLandlordFacingMaintenanceRequest,
+      )
   const unitRows = unitsResult.error
     ? []
     : ((unitsResult.data ?? []) as Record<string, unknown>[])

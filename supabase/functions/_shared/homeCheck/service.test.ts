@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHomeCheck } from './service.ts'
+import { resolveOutboundLandlordSmsLine } from '../sms/landlordSmsOnboarding.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
 
@@ -161,5 +162,32 @@ describe('SMS self-capture recipient', () => {
       expect.objectContaining({ toNumber: '+15553334444' }),
     )
     expect(isLandlordAccountOrOpsPhone).not.toHaveBeenCalled()
+  })
+  it('stores a property-level dashboard check without a capture link or a text', async () => {
+    const db = client()
+    const result = await createHomeCheck(db as never, {
+      landlordId: 'landlord',
+      propertyId: 'birch',
+      unitId: null,
+      role: 'landlord',
+      authorizedBy: 'user',
+      sendSms: false,
+      publishLink: false,
+    })
+    expect(result.link).toBeNull()
+    expect(result.deliveryError).toBeNull()
+    expect(db.rpc).toHaveBeenCalledWith(
+      'create_home_check',
+      expect.objectContaining({
+        p_input: expect.objectContaining({
+          property_id: 'birch',
+          unit_id: null,
+          role: 'landlord',
+          token_hash: expect.any(String),
+        }),
+      }),
+    )
+    expect(sendInboundAutoReply).not.toHaveBeenCalled()
+    expect(resolveOutboundLandlordSmsLine).not.toHaveBeenCalled()
   })
 })

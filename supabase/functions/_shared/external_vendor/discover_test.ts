@@ -1,6 +1,6 @@
 /// <reference lib="deno.ns" />
 
-import { discoverExternalVendors, discoverExternalVendorsMerged, landlordAllowsMockExternalVendors, workflowLocationHintFromRuns } from "./discover.ts"
+import { buildingLineFromInspectionDescription, discoverExternalVendors, discoverExternalVendorsMerged, landlordAllowsMockExternalVendors, workflowLocationHintFromRuns } from "./discover.ts"
 import { ALPHA_PRODUCTION_LANDLORD_ID, DEMO_SHOWCASE_LANDLORD_ID } from "../demo_workflow_ids.ts"
 
 Deno.test("discoverExternalVendorsMerged falls back to mock without API keys", async () => {
@@ -88,4 +88,11 @@ Deno.test("workflow location hint prefers the work-order building over a duplica
   if (hint.unitId !== "unit-grove") {
     throw new Error(`expected unit-grove, got ${hint.unitId}`)
   }
+})
+
+Deno.test("inspection description keeps the building line for vendor search", () => {
+  const building = buildingLineFromInspectionDescription(
+    "Property inspection visit\n\nTarget day: 2026-10-26\nBuilding: 14 Maple Ave\nUnit: 1",
+  )
+  if (building !== "14 Maple Ave") throw new Error(`expected 14 Maple Ave, got ${building}`)
 })

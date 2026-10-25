@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { adminNavPath } from '@/lib/adminNavigation'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { supabase } from '@/lib/supabase'
@@ -247,6 +248,7 @@ async function loadVendorJobHistory(input: {
   const ticketsById = new Map<string, Record<string, unknown>>()
   const addTickets = (rows: Record<string, unknown>[]) => {
     for (const row of rows) {
+      if (!isLandlordFacingMaintenanceRequest(row)) continue
       const id = asString(row.id)
       if (id) ticketsById.set(id, row)
     }

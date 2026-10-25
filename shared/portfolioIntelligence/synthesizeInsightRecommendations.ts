@@ -4,6 +4,11 @@
  * merges overlapping signals, ranks by urgency/confidence, and falls back to plain cards.
  */
 
+import { insightDetailSections } from './insightDetailSections.ts'
+import {
+  INSIGHT_CARD_SUMMARY_MAX_CHARS,
+  resolveInsightCardSummary,
+} from './insightCardSummary.ts'
 import {
   INSIGHT_SYNTHESIS_LOW_CONFIDENCE,
   type InsightRecommendationActionType,
@@ -18,6 +23,10 @@ export type InsightSynthesisModelItem = {
   /** Cards sharing a non-null mergeGroup are combined into one recommendation. */
   mergeGroup?: string | null
   recommendation: string
+  /** One phrase, at most 20 characters. The address is not included. */
+  summary?: string | null
+  /** One sentence naming the issue. The address and title are not included. */
+  mainIssue?: string | null
   urgency: number
   confidence: number
   actionType: InsightRecommendationActionType
@@ -38,11 +47,27 @@ export type ApplyInsightSynthesisOptions = {
 const ACTION_LABELS: Record<InsightRecommendationActionType, string | null> = {
   schedule_inspection: 'Schedule inspection',
   schedule_building_inspection: 'Schedule building inspection',
-  schedule_unit_walkthrough: 'Schedule unit walkthrough',
+  schedule_unit_walkthrough: 'Request inspection',
   request_diagnostic: 'Request diagnostic',
   nudge_vendor: 'Nudge vendor',
   flag_for_review: 'Flag for review',
   none: null,
+}
+
+/** Button copy for an insight action. Saved cards keep an older label until this is applied. */
+export function insightActionLabel(
+  actionType: InsightRecommendationActionType,
+): string | null {
+  return ACTION_LABELS[actionType]
+}
+
+export function withCanonicalInsightActionLabels(
+  cards: SynthesizedInsightCard[],
+): SynthesizedInsightCard[] {
+  return cards.map((card) => ({
+    ...card,
+    actionLabel: insightActionLabel(card.actionType),
+  }))
 }
 
 function clampScore(value: unknown, fallback: number): number {
@@ -105,6 +130,19 @@ export function buildFallbackInsightRecommendations(
       tag: finding.tag,
       text: finding.text,
       aggregateText: finding.text,
+      summary: resolveInsightCardSummary({
+        tag: finding.tag,
+        categoryLabel: finding.categoryLabel,
+      }),
+      mainIssue: insightDetailSections({
+        tag: finding.tag,
+        building: finding.building,
+        unitLabel: finding.unitLabel,
+        categoryLabel: finding.categoryLabel,
+        aggregateText: finding.text,
+        text: finding.text,
+        ticketSummaries: finding.ticketSummaries,
+      }).mainIssue,
       urgency: clampScore(finding.score, 50),
       confidence: 70,
       actionType,
@@ -224,6 +262,8 @@ function cardFromFinding(
   finding: PortfolioInsightFinding,
   overlay: {
     text: string
+    summary: string
+    mainIssue: string
     urgency: number
     confidence: number
     actionType: InsightRecommendationActionType
@@ -237,6 +277,8 @@ function cardFromFinding(
     sourceTags: overlay.sourceTags ?? [finding.tag],
     tag: finding.tag,
     text: overlay.text,
+    summary: overlay.summary,
+    mainIssue: overlay.mainIssue,
     aggregateText: finding.text,
     urgency: clampScore(overlay.urgency, finding.score),
     confidence: clampScore(overlay.confidence, 70),
@@ -290,6 +332,8 @@ export function normalizeInsightSynthesisModelResult(
     if (sourceTags.length === 0) continue
     const recommendation = String(row.recommendation ?? '').trim()
     if (!recommendation) continue
+    const summary = typeof row.summary === 'string' ? row.summary.trim() : ''
+    const mainIssue = typeof row.mainIssue === 'string' ? row.mainIssue.trim() : ''
     const actionRaw = String(row.actionType ?? 'none')
       .trim()
       .toLowerCase() as InsightRecommendationActionType
@@ -301,6 +345,8 @@ export function normalizeInsightSynthesisModelResult(
           ? row.mergeGroup.trim()
           : null,
       recommendation: recommendation.slice(0, 320),
+      summary,
+      mainIssue,
       urgency: clampScore(row.urgency, 50),
       confidence: clampScore(row.confidence, 50),
       actionType,
@@ -339,6 +385,21 @@ export function applyInsightSynthesis(
     if (!finding) continue
 
     const lowConfidence = item.confidence < threshold
+    const summary = resolveInsightCardSummary({
+      summary: lowConfidence ? null : item.summary,
+      tag: finding.tag,
+      categoryLabel: finding.categoryLabel,
+    })
+    const mainIssue = insightDetailSections({
+      tag: finding.tag,
+      building: finding.building,
+      unitLabel: finding.unitLabel,
+      categoryLabel: finding.categoryLabel,
+      aggregateText: finding.text,
+      text: lowConfidence ? finding.text : item.recommendation,
+      mainIssue: lowConfidence ? null : item.mainIssue,
+      ticketSummaries: finding.ticketSummaries,
+    }).mainIssue
     const relatedFindings = item.sourceTags
       .map((tag) => byTag.get(tag))
       .filter((f): f is PortfolioInsightFinding => Boolean(f))
@@ -351,6 +412,8 @@ export function applyInsightSynthesis(
 
     const base = cardFromFinding(finding, {
       text: lowConfidence ? finding.text : item.recommendation,
+      summary,
+      mainIssue,
       urgency: item.urgency,
       confidence: lowConfidence ? 70 : item.confidence,
       actionType: item.actionType,
@@ -403,9 +466,19 @@ export function insightSynthesisSystemPrompt(): string {
     'return grounded recommendations. Do not invent tickets or stats. ' +
     'If two signals share the same underlying tickets, set the same mergeGroup string. ' +
     'Omit a signal only when nothing is worth flagging (omit:true). ' +
+    `summary is one phrase of at most ${INSIGHT_CARD_SUMMARY_MAX_CHARS} characters, including spaces and punctuation. ` +
+    'Do not put the property address in summary. ' +
+    'Write the whole phrase. Never cut a word or leave the phrase unfinished. Use fewer whole words instead. ' +
+    'mainIssue is one concise sentence naming what is happening, such as "Repeated kitchen sink leaks." ' +
+    'Use only details present in the work orders. Do not include the property address or the card title. ' +
+    'recommendation is one concise sentence saying what to do next, such as ' +
+    '"Schedule a plumbing inspection to identify the cause and prevent repeat repairs." ' +
+    'Name the actual trade. Do not repeat the address, the title, or the main issue. ' +
+    'Do not call a situation high risk, dangerous, or an emergency unless a work-order description says so. ' +
+    'Do not add rooms, equipment, or causes that the work orders do not mention. ' +
     'actionType must be one of: schedule_inspection, schedule_building_inspection, ' +
     'schedule_unit_walkthrough, request_diagnostic, nudge_vendor, flag_for_review, none. ' +
     'Return ONLY JSON: {"recommendations":[{"sourceTags":["RECURRING ISSUES"],"mergeGroup":null,' +
-    '"recommendation":"...","urgency":0-100,"confidence":0-100,"actionType":"none","omit":false}]}'
+    '"summary":"Repeat plumbing","mainIssue":"Repeated kitchen sink leaks.","recommendation":"Schedule a plumbing inspection to identify the cause and prevent repeat repairs.","urgency":0-100,"confidence":0-100,"actionType":"none","omit":false}]}'
   )
 }

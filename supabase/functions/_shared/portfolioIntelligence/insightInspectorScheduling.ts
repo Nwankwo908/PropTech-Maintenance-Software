@@ -280,6 +280,19 @@ export function needsExternalStatusLabel(targetDay: string): string {
   return `No inspector available for ${formatInsightTargetDayLabel(targetDay)} — find an external vendor?`
 }
 
+/** Modal title when Request inspection finds no inspector. */
+export function noInspectorAvailableTitle(input: {
+  building?: string | null
+  targetDay?: string | null
+}): string {
+  const place = input.building?.trim() ?? ''
+  const day = input.targetDay?.trim() ? formatInsightTargetDayLabel(input.targetDay.trim()) : ''
+  if (place && day) return `No inspector available for ${place} on ${day}`
+  if (place) return `No inspector available for ${place}`
+  if (day) return `No inspector available for ${day}`
+  return 'No inspector available'
+}
+
 export function acceptedStatusLabel(state: InsightSchedulingCardState): string {
   const name = state.inspectorName?.trim() || 'Inspector'
   const window = state.confirmedWindow?.trim()

@@ -304,6 +304,14 @@ export function getIssueCategorySlugForTicket(row: {
 export function tradeTermsFromVendorTrade(
   issueCategory: string | null | undefined,
 ): string {
+  const raw = String(issueCategory ?? '').trim().toLowerCase()
+  if (
+    raw === 'inspection' ||
+    raw.includes('inspector') ||
+    raw.includes('walkthrough')
+  ) {
+    return 'home inspector property inspection'
+  }
   const slug = matchingTradeForVendorSearch(issueCategory)
   switch (slug) {
     case 'plumbing':

@@ -7,6 +7,7 @@
  */
 
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import {
   isMaintenanceInvoicePaidFromRow,
   isRentChargePaidFromRun,
@@ -615,10 +616,11 @@ export async function fetchPropertyHistory(params: {
     const id = asString(row.id)
     if (id) extraById.set(id, row)
   }
-  const ticketSource =
+  const ticketSource = (
     !enrichedTickets.error && (enrichedTickets.data?.length ?? 0) > 0
       ? ((enrichedTickets.data ?? []) as Record<string, unknown>[])
       : ((mrTickets.data ?? []) as Record<string, unknown>[])
+  ).filter(isLandlordFacingMaintenanceRequest)
 
   const tickets = ticketSource
     .map((row) => {
