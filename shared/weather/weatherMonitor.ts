@@ -339,7 +339,9 @@ export function cellNeedsFetch(input: {
   lastFetchedAt: string | null
   hasActiveEvent: boolean
   now: Date
+  lastSourceOk?: boolean
 }): boolean {
+  if (input.lastSourceOk === false) return true
   if (!input.lastFetchedAt) return true
   const at = Date.parse(input.lastFetchedAt)
   if (!Number.isFinite(at)) return true

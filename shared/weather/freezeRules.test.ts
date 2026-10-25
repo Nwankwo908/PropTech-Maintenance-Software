@@ -13,6 +13,7 @@ import {
   formatPropertyNameList,
   geocodeStatusForAddress,
   planGeocodeBackfill,
+  cellNeedsFetch,
   planWeatherCycle,
   raisedTicketUrgency,
   resolveFrostDate,
@@ -144,6 +145,12 @@ describe('freeze rules', () => {
     expect(shouldRetryNwsStatus(429)).toBe(true)
     expect(shouldRetryNwsStatus(503)).toBe(true)
     expect(shouldRetryNwsStatus(404)).toBe(false)
+    expect(cellNeedsFetch({
+      lastFetchedAt: new Date().toISOString(),
+      hasActiveEvent: false,
+      lastSourceOk: false,
+      now: new Date(),
+    })).toBe(true)
   })
 })
 

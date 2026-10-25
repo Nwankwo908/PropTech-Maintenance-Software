@@ -168,6 +168,7 @@ serve(async (req) => {
   const beforeRequest = paceNws()
   let fetched = 0
   let failed = 0
+  const nws: Array<{ cell: string; points: number; hourly: number; alerts: number }> = []
   for (const [cellKey, coords] of cells) {
     const last = latest.get(cellKey)
     if (
@@ -175,6 +176,7 @@ serve(async (req) => {
       !cellNeedsFetch({
         lastFetchedAt: last?.fetchedAt ?? null,
         hasActiveEvent: activeCells.has(cellKey),
+        lastSourceOk: last?.sourceOk,
         now,
       })
     ) {
@@ -185,6 +187,9 @@ serve(async (req) => {
         hourly: mock.hourly ?? [],
         alerts: mock.alerts ?? [],
         sourceOk: (mock.hourly ?? []).length > 0,
+        pointStatus: 0,
+        hourlyStatus: 0,
+        alertStatus: 0,
       }
       : await fetchNwsCellSnapshot(coords.lat, coords.lon, fetch, undefined, beforeRequest)
     const row = {
@@ -209,6 +214,12 @@ serve(async (req) => {
     })
     if (!snapshot.sourceOk) failed += 1
     fetched += 1
+    nws.push({
+      cell: cellKey,
+      points: snapshot.pointStatus,
+      hourly: snapshot.hourlyStatus,
+      alerts: snapshot.alertStatus,
+    })
   }
 
   const cycleProperties: CycleProperty[] = properties.map((property) => ({
@@ -496,6 +507,7 @@ serve(async (req) => {
     cells: cells.size,
     fetched,
     failed,
+    nws,
     events: plan.events.filter((event) => event.status === "active").length,
     sms: smsSent.length,
     tickets: plan.ticketUpdates.length,

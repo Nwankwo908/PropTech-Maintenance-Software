@@ -209,11 +209,11 @@ async function fetchNwsOnce(
   beforeRequest?: () => Promise<void>,
 ): Promise<WeatherFetchResult> {
   if (beforeRequest) await beforeRequest()
-  let result = await fetchWeatherResponse(url, NWS_HEADERS, fetchFn, 8000)
-  if (shouldRetryNwsStatus(result.status)) {
+  let result = await fetchWeatherResponse(url, NWS_HEADERS, fetchFn, 15000)
+  if (shouldRetryNwsStatus(result.status) || result.status === 0) {
     await pause(750)
     if (beforeRequest) await beforeRequest()
-    result = await fetchWeatherResponse(url, NWS_HEADERS, fetchFn, 8000)
+    result = await fetchWeatherResponse(url, NWS_HEADERS, fetchFn, 15000)
   }
   return result
 }
@@ -224,32 +224,51 @@ export async function fetchNwsCellSnapshot(
   fetchFn: typeof fetch = fetch,
   pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   beforeRequest?: () => Promise<void>,
-): Promise<{ hourly: HourlyForecastPoint[]; alerts: NwsAlertFact[]; sourceOk: boolean }> {
+): Promise<{
+  hourly: HourlyForecastPoint[]
+  alerts: NwsAlertFact[]
+  sourceOk: boolean
+  pointStatus: number
+  hourlyStatus: number
+  alertStatus: number
+}> {
   const points = await fetchNwsOnce(
-    `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
+    `https://api.weather.gov/points/${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`,
     fetchFn,
     pause,
     beforeRequest,
   )
   const urls = parseNwsPointUrls(points.body)
   if (!urls.forecastHourly) {
-    return { hourly: [], alerts: [], sourceOk: false }
+    console.warn("[weather] nws points failed", points.status)
+    return { hourly: [], alerts: [], sourceOk: false, pointStatus: points.status, hourlyStatus: 0, alertStatus: 0 }
   }
   const hourly = await fetchNwsOnce(urls.forecastHourly, fetchFn, pause, beforeRequest)
   const alerts = await fetchNwsOnce(
-    `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`,
+    `https://api.weather.gov/alerts/active?point=${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`,
     fetchFn,
     pause,
     beforeRequest,
   )
   const parsedHours = parseNwsHourlyForecast(hourly.body)
   if (!hourly.ok || parsedHours.length === 0) {
-    return { hourly: [], alerts: parseNwsActiveAlerts(alerts.body), sourceOk: false }
+    console.warn("[weather] nws hourly failed", hourly.status, alerts.status)
+    return {
+      hourly: [],
+      alerts: parseNwsActiveAlerts(alerts.body),
+      sourceOk: false,
+      pointStatus: points.status,
+      hourlyStatus: hourly.status,
+      alertStatus: alerts.status,
+    }
   }
   return {
     hourly: parsedHours,
     alerts: parseNwsActiveAlerts(alerts.body),
     sourceOk: true,
+    pointStatus: points.status,
+    hourlyStatus: hourly.status,
+    alertStatus: alerts.status,
   }
 }
 
