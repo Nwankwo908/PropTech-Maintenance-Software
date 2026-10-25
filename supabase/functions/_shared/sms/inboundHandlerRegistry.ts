@@ -81,6 +81,10 @@ import {
   tryHandleHqsUnitReplyInbound,
 } from "./hqsInspectionLetterInbound.ts"
 import {
+  canHandlePropertyChoice,
+  tryHandlePropertyChoiceInbound,
+} from "./propertyChoiceInbound.ts"
+import {
   dailyPrioritiesRoleFromIdentity,
   tryHandleDailyPrioritiesAskSms,
   tryHandleDailyPrioritiesReplySms,
@@ -603,6 +607,42 @@ async function tryTenantDistressHandler(
   }
 }
 
+async function tryPropertyChoiceHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (!canHandlePropertyChoice({
+    identityType: ctx.identity.identity_type,
+    intakeState: conv?.intake_state,
+  })) {
+    return { handled: false }
+  }
+  const result = await tryHandlePropertyChoiceInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: "property_choice",
+    maintenanceRequestId: result.ticketId,
+    reply: result.replyBody
+      ? {
+        body: result.replyBody,
+        source: "property_choice",
+        skipGenericFallback: true,
+      }
+      : undefined,
+  }
+}
+
 async function tryHqsUnitReplyHandler(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
@@ -906,6 +946,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
+  property_choice:
+    "intake_state.awaiting_property_choice on the landlord thread (property name or list number). No pending ask falls through.",
   landlord_vendor_choice:
     "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3… — roster or nearby external vendors)",
   daily_priorities_reply:
@@ -961,6 +1003,7 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "staff_reply", priority: 9, try: tryStaffReplyHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
+  { id: "property_choice", priority: 20.5, try: tryPropertyChoiceHandler },
   { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
   // After vendor-choice / estimate so "1" / "YES" pending asks win over list replies.
   {

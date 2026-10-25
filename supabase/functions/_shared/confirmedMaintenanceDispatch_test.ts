@@ -77,6 +77,15 @@ Deno.test("preferred selection or assignment skips nearby search", () => {
     false,
     "preferred choice underway",
   )
+  assertEqual(
+    confirmedTicketNeedsNearbySearch({
+      assigned: false,
+      vendorId: null,
+      skipReason: "address_unknown",
+    }),
+    false,
+    "unknown property is not a nearby booking",
+  )
 })
 
 Deno.test("every confirmed outcome is complete except dispatch_error", () => {

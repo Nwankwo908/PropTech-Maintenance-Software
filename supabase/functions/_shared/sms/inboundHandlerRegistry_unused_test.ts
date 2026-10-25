@@ -21,6 +21,7 @@ const ADAPTER_ID_FROM_FN: Record<string, string> = {
   tryStaffReplyHandler: "staff_reply",
   tryScheduleConfirmHandler: "schedule_confirm",
   tryEstimateDecisionHandler: "estimate_decision",
+  tryPropertyChoiceHandler: "property_choice",
   tryLandlordVendorChoiceHandler: "landlord_vendor_choice",
   tryDailyPrioritiesReplyHandler: "daily_priorities_reply",
   tryLandlordRentReceiptHandler: "landlord_rent_receipt",

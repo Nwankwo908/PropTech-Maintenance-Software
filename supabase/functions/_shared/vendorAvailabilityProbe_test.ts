@@ -176,6 +176,19 @@ Deno.test("buildVendorAvailabilityProbeSms asks for window before assign", () =>
   assertStringIncludes(body, "WO-1234")
 })
 
+Deno.test("availability probe omits a place when the address is not confirmed", () => {
+  const body = buildVendorAvailabilityProbeSms({
+    vendorName: "Manny Plumber",
+    companyName: "acme property",
+    workOrderRef: "WO-1234",
+    location: "",
+    unit: "",
+    issueHeadline: "Kitchen sink leaking",
+  })
+  assertStringIncludes(body, "Kitchen sink leaking")
+  assertEquals(body.includes(" at "), false)
+})
+
 Deno.test("formatVendorProbeLocationLine joins street and unit", () => {
   assertEquals(
     formatVendorProbeLocationLine({

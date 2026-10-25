@@ -1073,6 +1073,11 @@ export async function startVendorAvailabilityProbe(
     urgent?: boolean
     residentAvailabilityText?: string | null
     options: VendorAssignmentOption[]
+    /**
+     * When false, the availability text names the issue but not a street or unit.
+     * Booking still waits until the property is confirmed.
+     */
+    addressConfirmed?: boolean
     /** Insight inspector scheduling: auto-assign on offer; skip landlord choice SMS. */
     insightAutoAssign?: boolean
     insightSchedulingRequestId?: string | null
@@ -1190,11 +1195,15 @@ export async function startVendorAvailabilityProbe(
     ? params.entryOkIfAbsent
     : null
   const urgent = params.urgent === true
-  const locationLabel = await resolveVendorProbeLocationLabel(supabase, {
-    landlordId: params.landlordId,
-    ticketId: primary.ticketId,
-    unitFallback: params.unit,
-  })
+  const addressConfirmed = params.addressConfirmed !== false
+  const locationLabel = addressConfirmed
+    ? await resolveVendorProbeLocationLabel(supabase, {
+      landlordId: params.landlordId,
+      ticketId: primary.ticketId,
+      unitFallback: params.unit,
+    })
+    : ""
+  const probeUnit = addressConfirmed ? params.unit : ""
 
   const inspectionRef = inspectionReportId
     ? `IR-${inspectionReportId.replace(/-/g, "").slice(0, 4).toUpperCase()}`
@@ -1206,7 +1215,7 @@ export async function startVendorAvailabilityProbe(
     const probe: VendorAvailabilityProbe = {
       ticketId: item.ticketId,
       landlordId: params.landlordId,
-      unit: locationLabel || params.unit,
+      unit: locationLabel || probeUnit,
       issueCategory: item.issueCategory,
       description: item.description,
       issueHeadline: item.issueHeadline,
@@ -1222,7 +1231,7 @@ export async function startVendorAvailabilityProbe(
       statusSmsSentAt: null,
       holdUntil: null,
       landlordNotifiedAt: null,
-      insightAutoAssign: params.insightAutoAssign === true,
+      insightAutoAssign: addressConfirmed && params.insightAutoAssign === true,
       insightSchedulingRequestId: params.insightSchedulingRequestId ?? null,
       inspectionReportId,
       visitTicketIds,
@@ -1244,7 +1253,7 @@ export async function startVendorAvailabilityProbe(
       ? buildVendorInspectionVisitProbeSms({
         vendorName: candidate.name,
         companyName: companyName || null,
-        location: locationLabel || params.unit,
+        location: locationLabel || probeUnit,
         urgent,
         inspectionRef,
         items: visitItems.map((item) => ({
@@ -1256,7 +1265,7 @@ export async function startVendorAvailabilityProbe(
         vendorName: candidate.name,
         companyName: companyName || null,
         workOrderRef: wo,
-        location: locationLabel || params.unit,
+        location: locationLabel || probeUnit,
         issueHeadline,
         entryOkIfAbsent,
         urgent,

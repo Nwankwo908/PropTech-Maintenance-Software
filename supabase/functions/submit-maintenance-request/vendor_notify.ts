@@ -38,6 +38,10 @@ import {
   ticketIsAwaitingVendorAvailabilityProbe,
   ticketIsUrgentForVendorProbe,
 } from "../_shared/vendorAvailabilityProbe.ts"
+import {
+  holdBookingUntilPropertyKnown,
+  isImmediatePropertyEmergency,
+} from "../_shared/vendorPropertyGate.ts"
 import { resumeMaintenanceWorkflowAfterVendorAssigned } from "../_shared/maintenance_admin_escalation.ts"
 import { closeOpenAsksForTicket } from "../_shared/closeOpenAsksForTicket.ts"
 
@@ -542,6 +546,7 @@ export type VendorAssignSkipReason =
   | "ticket_missing"
   | "awaiting_landlord_choice"
   | "awaiting_vendor_probe"
+  | "address_unknown"
 
 export type AssignVendorResult = {
   assigned: boolean
@@ -664,6 +669,28 @@ export async function assignVendorAndNotify(
     ticketId: payload.ticketId,
     landlordId,
   })
+  const propertyHold = await holdBookingUntilPropertyKnown(supabase, {
+    ticketId: payload.ticketId,
+    landlordId,
+    emergency: isImmediatePropertyEmergency({
+      priority: payload.priority ||
+        (typeof ticket.priority === "string" ? ticket.priority : null),
+      urgency: payload.urgency ??
+        (typeof ticket.urgency === "string" ? ticket.urgency : null),
+      severity: payload.severity ??
+        (typeof ticket.severity === "string" ? ticket.severity : null),
+    }),
+    issueLine: payload.issueHeadline ??
+      (typeof ticket.issue_headline === "string" ? ticket.issue_headline : null) ??
+      payload.description ??
+      null,
+  })
+  if (
+    !propertyHold.mayBook &&
+    (payload.landlordAcknowledged === true || !propertyHold.mayLook)
+  ) {
+    return { assigned: false, vendorId: null, skipReason: "address_unknown" }
+  }
 
   const alreadyAwaitingChoice =
     typeof ticket.vendor_notify_error === "string" &&
@@ -770,6 +797,7 @@ export async function assignVendorAndNotify(
         }),
         residentAvailabilityText: payload.residentAvailabilityText,
         options: decision.options,
+        addressConfirmed: propertyHold.mayBook,
       })
       if (probe.probed === 0) {
         // No reachable phones — fall back to immediate landlord choice.
@@ -800,6 +828,9 @@ export async function assignVendorAndNotify(
     })
   }
   if (!vendor) {
+    if (!propertyHold.mayBook) {
+      return { assigned: false, vendorId: null, skipReason: "address_unknown" }
+    }
     // Open landlord ask must survive a refresh rematch that finds nothing.
     // Never overwrite AWAITING_LANDLORD_VENDOR_CHOICE or fall through to no_vendor.
     if (alreadyAwaitingChoice && payload.landlordAcknowledged !== true) {
@@ -827,6 +858,9 @@ export async function assignVendorAndNotify(
       })
       .eq("id", payload.ticketId)
     return { assigned: false, vendorId: null, skipReason: "no_vendor" }
+  }
+  if (!propertyHold.mayBook) {
+    return { assigned: false, vendorId: null, skipReason: "address_unknown" }
   }
   const assignedAt = new Date().toISOString()
   const actionToken = crypto.randomUUID()

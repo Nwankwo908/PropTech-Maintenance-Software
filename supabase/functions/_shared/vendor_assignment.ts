@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { MarketplacePreferenceId } from "./landlordNotificationPrefs.ts"
 import { vendorTradeMatchesForDispatch, isGeneralistTrade } from "./vendor_trades.ts"
+import { decideVendorPropertyGate } from "./vendorPropertyGate.ts"
 import {
   normalizeUsStateCode,
   vendorCoversJobState,
@@ -664,14 +665,27 @@ export async function loadJobStateForTicket(
   if (!landlordId) return null
   const { data: properties } = await supabase
     .from("properties")
-    .select("state")
+    .select("id, name, street_address, city, state")
     .eq("landlord_id", landlordId)
     .limit(200)
-  const states = new Set<string>()
-  for (const row of properties ?? []) {
-    const code = normalizeUsStateCode(typeof row.state === "string" ? row.state : "")
-    if (code) states.add(code)
+  const decision = decideVendorPropertyGate({
+    ticketPropertyId: null,
+    properties: (properties ?? []).flatMap((row) => {
+      const id = typeof row.id === "string" ? row.id.trim() : ""
+      if (!id) return []
+      return [{
+        id,
+        name: typeof row.name === "string" ? row.name : null,
+        streetAddress: typeof row.street_address === "string" ? row.street_address : null,
+        city: typeof row.city === "string" ? row.city : null,
+        state: typeof row.state === "string" ? row.state : null,
+      }]
+    }),
+  })
+  if (decision.assumePropertyId) {
+    await persistLocation({ propertyId: decision.assumePropertyId })
+    return decision.state
   }
-  if (states.size === 1) return [...states][0] ?? null
+  if (decision.mayLook) return decision.state
   return null
 }

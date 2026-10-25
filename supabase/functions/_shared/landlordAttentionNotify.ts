@@ -71,6 +71,8 @@ export type NotifyLandlordAttentionParams = {
   propertyId?: string | null
   /** When true, omit the trailing "Ref: WO-…" line (assign-vendor landlord texts). */
   omitWorkOrderRef?: boolean
+  /** Life-safety and unknown-address emergencies send now, including during quiet hours. */
+  isCritical?: boolean
   landlordFirstName?: string | null
   invoicePaidConfirmation?: AwaitingInvoicePaidConfirmation | null
 }
@@ -741,6 +743,7 @@ export async function notifyLandlordNeedsAttention(
   const deliveryPlan = resolveLandlordNotificationDelivery({
     settings: notificationSettings,
     attentionKind: params.kind,
+    isCritical: params.isCritical === true,
     timeZone: operationalSettings.timeZone,
     quietHoursEnabled: operationalSettings.quietHoursEnabled,
   })

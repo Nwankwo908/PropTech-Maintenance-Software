@@ -419,6 +419,9 @@ export function resolveLandlordNotificationDelivery(input: {
     if (!event || event.channels.sms !== false) channels.push("sms")
     if (!event || event.channels.activity_feed !== false) channels.push("activity_feed")
   }
+  if (channels.length === 0 && input.isCritical === true) {
+    channels.push("sms", "email")
+  }
   if (channels.length === 0) return { allowed: false, channels: [], reason: "no_channels" }
 
   if (
