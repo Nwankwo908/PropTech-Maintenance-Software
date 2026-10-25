@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:sms-simulated": "deno test --cached-only --config supabase/functions/deno.json --no-lock --allow-read supabase/functions/_shared/sms/simulations/userJourneys_test.ts",
     "deploy:status": "node scripts/deploy-status.mjs",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "check:packaging": "bash scripts/readiness/check-packaging.sh",
