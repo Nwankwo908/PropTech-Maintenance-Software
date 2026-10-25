@@ -5,13 +5,15 @@ on:
   push:
     branches: [main]
 
+# All jobs are pinned to ubuntu-24.04: ubuntu-latest moved to 26.04, which no longer
+# ships postgresql-16, and image changes should not break readiness unannounced.
 # Each job is an independently visible required check.
 # Packaging success must not mask type/lint/behavior/connected failures.
 
 jobs:
   packaging:
     name: Packaging (Vite production build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +32,7 @@ jobs:
 
   frontend-types:
     name: Frontend type correctness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,7 +51,7 @@ jobs:
 
   backend-types:
     name: Backend type correctness (Deno)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -67,7 +69,7 @@ jobs:
 
   lint:
     name: Coding standards
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -89,7 +91,7 @@ jobs:
 
   behavior-frontend:
     name: Automated behavior (Vitest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -108,7 +110,7 @@ jobs:
 
   behavior-backend:
     name: Automated behavior (Deno)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -125,7 +127,7 @@ jobs:
 
   connected-workflows:
     name: Connected workflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
