@@ -236,6 +236,7 @@ export async function ensureProperty(
       unit_count: input.unitCount ?? undefined,
     })
   }
+  void requestPropertyGeocode(propertyId)
 
   return { ok: true, propertyId }
 }
@@ -291,13 +292,27 @@ export async function updatePropertyDetails(input: {
     if (!renamed.ok) return renamed
   }
 
+  const { data: current } = await supabase
+    .from('properties')
+    .select('street_address, city, state, zip_code')
+    .eq('id', propertyId)
+    .maybeSingle()
+  const nextAddress = {
+    street_address: input.streetAddress?.trim() || null,
+    city: input.city?.trim() || null,
+    state: input.state?.trim() || null,
+    zip_code: input.zipCode?.trim() || null,
+  }
+  const addressChanged = !current ||
+    (current.street_address ?? null) !== nextAddress.street_address ||
+    (current.city ?? null) !== nextAddress.city ||
+    (current.state ?? null) !== nextAddress.state ||
+    (current.zip_code ?? null) !== nextAddress.zip_code
+
   const { error } = await supabase
     .from('properties')
     .update({
-      street_address: input.streetAddress?.trim() || null,
-      city: input.city?.trim() || null,
-      state: input.state?.trim() || null,
-      zip_code: input.zipCode?.trim() || null,
+      ...nextAddress,
       property_type: input.propertyType?.trim() || null,
       unit_count: input.unitCount ?? null,
       year_built: input.yearBuilt ?? null,
@@ -323,8 +338,25 @@ export async function updatePropertyDetails(input: {
 
   const { invalidateAdminSearchIndex } = await import('@/lib/adminUniversalSearch')
   invalidateAdminSearchIndex(getActiveLandlordId())
+  if (addressChanged) {
+    await supabase
+      .from('properties')
+      .update({
+        latitude: null,
+        longitude: null,
+        geocoded_at: null,
+        geocode_status: null,
+      })
+      .eq('id', propertyId)
+  }
+  void requestPropertyGeocode(propertyId)
 
   return { ok: true, propertyId }
+}
+
+function requestPropertyGeocode(propertyId: string) {
+  if (!supabase) return
+  void supabase.functions.invoke('geocode-property', { body: { propertyId } })
 }
 
 export async function listPropertiesForLandlord(

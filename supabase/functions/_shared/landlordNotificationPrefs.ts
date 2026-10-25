@@ -376,6 +376,7 @@ const ATTENTION_EVENT_MAP: Record<string, { categoryId: string; eventId: string 
   unknown_occupant: { categoryId: "workflows", eventId: "needs_your_attention" },
   external_vendor_replied: { categoryId: "workflows", eventId: "needs_your_attention" },
   pm_service: { categoryId: "workflows", eventId: "needs_your_attention" },
+  weather_alert: { categoryId: "workflows", eventId: "needs_your_attention" },
 }
 
 export function resolveLandlordNotificationDelivery(input: {

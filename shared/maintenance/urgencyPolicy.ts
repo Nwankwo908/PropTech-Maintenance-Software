@@ -39,7 +39,7 @@ function haystack(text: string): string {
 }
 
 const NO_HEAT_RE =
-  /\b(no\s*heat|no\s*heating|heat(?:ing)?\s+(?:is\s+)?(?:n'?t|not|isn'?t)\s+working|won'?t\s+heat)\b/
+  /\b(no\s*heat|no\s*heating|heat(?:ing)?\s+(?:is\s+)?(?:n'?t|not|isn'?t)\s+working|won'?t\s+heat|heating\s+failure|frozen\s+pipe)\b/
 const NO_COOLING_RE =
   /\b(no\s+cool(?:ing)?|ac\s+(?:not|isn'?t|n'?t)\s+working|air\s*condition(?:er|ing)?\s+(?:not|isn'?t)|won'?t\s+cool|blowing\s+warm)\b/
 

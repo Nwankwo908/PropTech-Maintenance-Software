@@ -11,6 +11,18 @@ import {
   type AskUloPropertyRecord,
 } from "../ask_ulo/tools/properties/propertyRecords.ts"
 import { descriptionNeedsOutdoorTemp } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import {
+  forecastLowF,
+  shouldRetryNwsStatus,
+  snapshotIsFresh,
+  weatherCellKey,
+  type HourlyForecastPoint,
+  type NwsAlertFact,
+} from "../../../../shared/weather/freezeRules.ts"
+import {
+  colderForecastTemp,
+  geocodeStatusForAddress,
+} from "../../../../shared/weather/weatherMonitor.ts"
 
 export const NWS_TEMP_USER_AGENT =
   "UloPropertyOps/1.0 (maintenance-urgency; https://ulohome.com)"
@@ -102,11 +114,78 @@ export function parseNwsPointUrls(body: unknown): {
   return { forecastHourly, observations }
 }
 
-function firstStationUrl(stationsBody: unknown): string | null {
-  const features = asRecord(stationsBody)?.features
-  if (!Array.isArray(features) || features.length === 0) return null
-  const id = asRecord(features[0])?.id
-  return typeof id === "string" && id.trim() ? `${id.replace(/\/$/, "")}/observations/latest` : null
+export function parseNwsHourlyForecast(
+  body: unknown,
+  now = new Date(),
+): HourlyForecastPoint[] {
+  const props = asRecord(asRecord(body)?.properties)
+  const periods = props?.periods
+  if (!Array.isArray(periods)) return []
+  const end = now.getTime() + 72 * 60 * 60 * 1000
+  const points: HourlyForecastPoint[] = []
+  for (const raw of periods) {
+    const period = asRecord(raw)
+    const time = typeof period?.startTime === "string" ? period.startTime : ""
+    const at = Date.parse(time)
+    if (!time || !Number.isFinite(at) || at > end) continue
+    const value = period?.temperature
+    if (typeof value !== "number" || !Number.isFinite(value)) continue
+    const unit = typeof period?.temperatureUnit === "string"
+      ? period.temperatureUnit.toUpperCase()
+      : "F"
+    const tempF = unit === "C" ? celsiusToFahrenheit(value) : Math.round(value)
+    const chillRaw = period?.windChill
+    let windChillF: number | null = null
+    if (typeof chillRaw === "number" && Number.isFinite(chillRaw)) {
+      const chillUnit = typeof period?.windChillUnit === "string"
+        ? period.windChillUnit.toUpperCase()
+        : unit
+      windChillF = chillUnit === "C" ? celsiusToFahrenheit(chillRaw) : Math.round(chillRaw)
+    }
+    points.push({ time, tempF, windChillF })
+    if (points.length >= 72) break
+  }
+  return points
+}
+
+export function parseNwsActiveAlerts(body: unknown): NwsAlertFact[] {
+  const features = asRecord(body)?.features
+  if (!Array.isArray(features)) return []
+  const alerts: NwsAlertFact[] = []
+  for (const raw of features) {
+    const props = asRecord(asRecord(raw)?.properties)
+    const event = typeof props?.event === "string" ? props.event.trim() : ""
+    if (!event) continue
+    alerts.push({
+      event,
+      severity: typeof props?.severity === "string" ? props.severity : null,
+      onset: typeof props?.onset === "string" ? props.onset : null,
+      ends: typeof props?.ends === "string" ? props.ends : null,
+      headline: typeof props?.headline === "string" ? props.headline : null,
+    })
+  }
+  return alerts
+}
+
+export type WeatherFetchResult = { ok: boolean; status: number; body: unknown | null }
+
+export async function fetchWeatherResponse(
+  url: string,
+  headers: Record<string, string>,
+  fetchFn: typeof fetch,
+  timeoutMs = FETCH_MS,
+): Promise<WeatherFetchResult> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetchFn(url, { headers, signal: ctrl.signal })
+    if (!res.ok) return { ok: false, status: res.status, body: null }
+    return { ok: true, status: res.status, body: await res.json() }
+  } catch {
+    return { ok: false, status: 0, body: null }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function fetchJson(
@@ -114,17 +193,71 @@ async function fetchJson(
   headers: Record<string, string>,
   fetchFn: typeof fetch,
 ): Promise<unknown | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), FETCH_MS)
-  try {
-    const res = await fetchFn(url, { headers, signal: ctrl.signal })
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
+  const result = await fetchWeatherResponse(url, headers, fetchFn)
+  return result.ok ? result.body : null
+}
+
+const NWS_HEADERS = {
+  Accept: "application/geo+json",
+  "User-Agent": NWS_TEMP_USER_AGENT,
+}
+
+async function fetchNwsOnce(
+  url: string,
+  fetchFn: typeof fetch,
+  pause: (ms: number) => Promise<void>,
+  beforeRequest?: () => Promise<void>,
+): Promise<WeatherFetchResult> {
+  if (beforeRequest) await beforeRequest()
+  let result = await fetchWeatherResponse(url, NWS_HEADERS, fetchFn, 8000)
+  if (shouldRetryNwsStatus(result.status)) {
+    await pause(750)
+    if (beforeRequest) await beforeRequest()
+    result = await fetchWeatherResponse(url, NWS_HEADERS, fetchFn, 8000)
   }
+  return result
+}
+
+export async function fetchNwsCellSnapshot(
+  lat: number,
+  lon: number,
+  fetchFn: typeof fetch = fetch,
+  pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  beforeRequest?: () => Promise<void>,
+): Promise<{ hourly: HourlyForecastPoint[]; alerts: NwsAlertFact[]; sourceOk: boolean }> {
+  const points = await fetchNwsOnce(
+    `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
+    fetchFn,
+    pause,
+    beforeRequest,
+  )
+  const urls = parseNwsPointUrls(points.body)
+  if (!urls.forecastHourly) {
+    return { hourly: [], alerts: [], sourceOk: false }
+  }
+  const hourly = await fetchNwsOnce(urls.forecastHourly, fetchFn, pause, beforeRequest)
+  const alerts = await fetchNwsOnce(
+    `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`,
+    fetchFn,
+    pause,
+    beforeRequest,
+  )
+  const parsedHours = parseNwsHourlyForecast(hourly.body)
+  if (!hourly.ok || parsedHours.length === 0) {
+    return { hourly: [], alerts: parseNwsActiveAlerts(alerts.body), sourceOk: false }
+  }
+  return {
+    hourly: parsedHours,
+    alerts: parseNwsActiveAlerts(alerts.body),
+    sourceOk: true,
+  }
+}
+
+function firstStationUrl(stationsBody: unknown): string | null {
+  const features = asRecord(stationsBody)?.features
+  if (!Array.isArray(features) || features.length === 0) return null
+  const id = asRecord(features[0])?.id
+  return typeof id === "string" && id.trim() ? `${id.replace(/\/$/, "")}/observations/latest` : null
 }
 
 export async function geocodeUsAddress(
@@ -295,9 +428,59 @@ async function resolvePropertyRecord(
   return records.length === 1 ? records[0] : null
 }
 
+async function persistPropertyGeocode(
+  supabase: SupabaseClient,
+  record: AskUloPropertyRecord,
+  coords: { lat: number; lon: number } | null,
+): Promise<void> {
+  const status = geocodeStatusForAddress(record.state, coords)
+  const { error } = await supabase
+    .from("properties")
+    .update({
+      latitude: coords?.lat ?? null,
+      longitude: coords?.lon ?? null,
+      geocoded_at: new Date().toISOString(),
+      geocode_status: status,
+    })
+    .eq("id", record.id)
+  if (error) console.warn("[weather] could not save property coordinates", error.message)
+}
+
+async function loadActiveForecastLow(
+  supabase: SupabaseClient,
+  propertyId: string,
+  coords: { lat: number; lon: number },
+  now: Date,
+): Promise<number | null> {
+  const { data: event, error: eventError } = await supabase
+    .from("weather_events")
+    .select("id")
+    .eq("property_id", propertyId)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle()
+  if (eventError || !event) return null
+  const { data: snap, error: snapError } = await supabase
+    .from("weather_snapshots")
+    .select("fetched_at, source_ok, forecast_hourly")
+    .eq("cell_key", weatherCellKey(coords.lat, coords.lon))
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (snapError || !snap) return null
+  const fetchedAt = typeof snap.fetched_at === "string" ? snap.fetched_at : ""
+  if (snap.source_ok !== true || !snapshotIsFresh(fetchedAt, now)) return null
+  const hourly = Array.isArray(snap.forecast_hourly)
+    ? snap.forecast_hourly as HourlyForecastPoint[]
+    : []
+  return forecastLowF(hourly, now, 24)
+}
+
 /**
  * Best-effort outdoor °F at the ticket property. Returns null when the
  * description does not need temperature, or lookup fails.
+ * Saved coordinates are used first. A missing geocode is saved.
+ * During an active freeze, the forecast low is used when it is colder.
  */
 export async function lookupOutdoorTempForProperty(
   supabase: SupabaseClient,
@@ -312,21 +495,26 @@ export async function lookupOutdoorTempForProperty(
 
   try {
     const record = await resolvePropertyRecord(supabase, input)
-    let coords = coordsFromRecord(record)
+    const saved = coordsFromRecord(record)
+    let coords = saved
     if (!coords) {
       const address = addressFromRecord(record)
       if (address) coords = await geocodeUsAddress(address, fetchFn)
+      if (record?.id) await persistPropertyGeocode(supabase, record, coords)
     }
     if (!coords) return null
 
     const key = cacheKey(coords.lat, coords.lon)
     const cached = tempCache.get(key)
-    if (cached && cached.expiresAt > now()) return cached.tempF
-
-    const tempF = await fetchNwsTempF(coords.lat, coords.lon, fetchFn)
-    if (tempF == null) return null
-    tempCache.set(key, { tempF, expiresAt: now() + CACHE_TTL_MS })
-    return tempF
+    let tempF: number | null = cached && cached.expiresAt > now() ? cached.tempF : null
+    if (tempF == null) {
+      tempF = await fetchNwsTempF(coords.lat, coords.lon, fetchFn)
+      if (tempF != null) tempCache.set(key, { tempF, expiresAt: now() + CACHE_TTL_MS })
+    }
+    const forecastLow = record?.id
+      ? await loadActiveForecastLow(supabase, record.id, coords, new Date(now()))
+      : null
+    return colderForecastTemp(tempF, forecastLow)
   } catch (err) {
     console.warn("[weather] outdoor temp lookup failed", err)
     return null

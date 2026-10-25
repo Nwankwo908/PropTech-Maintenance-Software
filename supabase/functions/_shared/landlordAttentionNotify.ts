@@ -45,6 +45,7 @@ export type LandlordAttentionKind =
   | "unknown_occupant"
   | "external_vendor_replied"
   | "pm_service"
+  | "weather_alert"
 
 export type NotifyLandlordAttentionParams = {
   landlordId: string
@@ -74,6 +75,8 @@ export type NotifyLandlordAttentionParams = {
   omitWorkOrderRef?: boolean
   /** Life-safety and unknown-address emergencies send now, including during quiet hours. */
   isCritical?: boolean
+  /** Exact SMS body. Weather alerts use this so the grouped copy stays intact. */
+  smsBody?: string | null
   landlordFirstName?: string | null
   invoicePaidConfirmation?: AwaitingInvoicePaidConfirmation | null
   /** Pending YES HVAC ask, stored on the landlord thread with this alert. */
@@ -127,6 +130,8 @@ export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[]
       return []
     case "pm_service":
       return ["Reply YES HVAC to approve", "Or review each home in Ulo"]
+    case "weather_alert":
+      return ["Open the checklist in Ulo", "Schedule a check for homes that are not ready"]
     default:
       return ["Open Ulo to decide next"]
   }
@@ -150,6 +155,8 @@ export function defaultAttentionWhyLine(kind: LandlordAttentionKind): string | n
       return "They wrote back on the job thread."
     case "pm_service":
       return "A preventive HVAC visit needs a decision from you."
+    case "weather_alert":
+      return "A freeze is in the forecast for one or more of your homes."
     default:
       return "This needs a decision from you."
   }
@@ -822,7 +829,7 @@ export async function notifyLandlordNeedsAttention(
         ? formatWorkOrderRef(params.maintenanceRequestId)
         : null,
   }
-  const smsBody = buildLandlordAttentionSms(copy)
+  const smsBody = params.smsBody?.trim() || buildLandlordAttentionSms(copy)
   const email = buildLandlordAttentionEmail(copy)
 
   const errors: string[] = []

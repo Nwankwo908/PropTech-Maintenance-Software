@@ -13,6 +13,8 @@ import { PropertyAnalyticsPanel } from '@/components/PropertyAnalyticsPanel'
 import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
 import { PropertyHistoryPanel } from '@/components/PropertyHistoryPanel'
+import { WeatherPropertyStatus } from '@/components/WeatherPropertyStatus'
+import { WinterizingChecklist } from '@/components/WinterizingChecklist'
 import { PropertyHomeDataPanel } from '@/components/PropertyHomeDataPanel'
 import { PropertyAccessRail } from '@/components/PropertyAccessRail'
 import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
@@ -1436,6 +1438,7 @@ export function AdminPropertyDetailDashboard() {
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               {subtitle}
             </p>
+            <WeatherPropertyStatus propertyId={canonicalProperty?.id ?? activeCanonicalProperty?.id} />
           </div>
           {(buildingHealth && buildingHealth.status !== 'unknown') || canonicalProperty ? (
             <div className="flex shrink-0 items-center gap-1.5">
@@ -1517,6 +1520,10 @@ export function AdminPropertyDetailDashboard() {
         />
         <StatTile label="Health" value={loading ? '—' : healthValue} icon={<StarStatIcon />} />
       </div>
+
+      {activeTab === 'overview' ? (
+        <WinterizingChecklist propertyId={canonicalProperty?.id ?? activeCanonicalProperty?.id} />
+      ) : null}
 
       <nav
         className="mt-6 shrink-0 -mx-8 overflow-x-auto overscroll-x-contain px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"

@@ -99,7 +99,7 @@ export function AwaitingDecisionListRail({
           ) : (
             <div className="flex flex-col divide-y divide-[#f3f4f6]">
               {items.map((item) =>
-                item.key.startsWith('pm_') ? (
+                item.key.startsWith('pm_') || item.key.startsWith('weather:') ? (
                   <div key={item.key} className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">

@@ -13,6 +13,7 @@ import {
   type NotificationSettingsState,
 } from '@/lib/notificationSettings'
 import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
+import { FreezeAlertSettings } from '@/components/FreezeAlertSettings'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -617,6 +618,8 @@ export function AdminNotificationSettings() {
               ))}
             </div>
           </section>
+
+          <FreezeAlertSettings />
 
           <section
             id={SETUP_SUCCESS_TEST_DELIVERY_HASH}

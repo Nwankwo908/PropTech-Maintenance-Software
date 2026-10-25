@@ -22,6 +22,8 @@ import { NeedsAttentionRow } from '@/components/NeedsAttentionRowAction'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
 import { PmAttentionActions, PmServiceReviewRail } from '@/components/PmServiceReviewRail'
 import { batchesFromPmTaskRows, type PmTaskAttentionRow } from '@/lib/pmServiceAttentionCards'
+import { deriveWeatherAttentionCard, type WeatherEventState } from '@shared/weather/weatherMonitor'
+import { propertyDetailPath } from '@/lib/propertyRoutes'
 import { persistPmServiceAppResolution } from '@/lib/pmServiceAttentionActions'
 import {
   approvePmServiceSelection,
@@ -975,6 +977,7 @@ export function AdminOverviewDashboard() {
     runIds: new Set(),
   })
   const [pmServiceBatches, setPmServiceBatches] = useState<PmServiceBatchSnapshot[]>([])
+  const [weatherCard, setWeatherCard] = useState<ReturnType<typeof deriveWeatherAttentionCard>>(null)
   const [pmReviewCard, setPmReviewCard] = useState<PmServiceCard | null>(null)
   // Card buttons only queue the action; the effect below runs it outside render.
   const [pmPendingAction, setPmPendingAction] = useState<
@@ -1042,7 +1045,7 @@ export function AdminOverviewDashboard() {
   const [awaitingDecisionOutcome, setAwaitingDecisionOutcome] =
     useState<AwaitingDecisionOutcome | null>(null)
   const prevAttentionItemsRef = useRef<AttentionItem[]>([])
-  const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
+  const [skipAutoOutcomeKeys, setSkipAutoOutcomeKeys] = useState<Set<string>>(() => new Set())
   const findVendorDeepLinkHandledRef = useRef<string | null>(null)
   const attentionTrackingReadyRef = useRef(false)
   const allowImportedOperationsRef = useRef(true)
@@ -1052,12 +1055,21 @@ export function AdminOverviewDashboard() {
     invoicePayReviewsRef.current = invoicePayReviews
   }, [invoicePayReviews])
 
+  const rememberSkipAutoOutcome = useCallback((key: string) => {
+    setSkipAutoOutcomeKeys((current) => {
+      if (current.has(key)) return current
+      const next = new Set(current)
+      next.add(key)
+      return next
+    })
+  }, [])
+
   const showAwaitingDecisionOutcome = useCallback(
     (outcome: AwaitingDecisionOutcome, itemKey?: string) => {
-      if (itemKey) skipAutoOutcomeKeysRef.current.add(itemKey)
+      if (itemKey) rememberSkipAutoOutcome(itemKey)
       setAwaitingDecisionOutcome(outcome)
     },
-    [],
+    [rememberSkipAutoOutcome],
   )
 
   useEffect(() => {
@@ -1131,7 +1143,7 @@ export function AdminOverviewDashboard() {
           ytdPaidTotal,
         })
         setInvoicePayRailId(paidInvoiceId)
-        skipAutoOutcomeKeysRef.current.add(`invoice-${paidInvoiceId}`)
+        rememberSkipAutoOutcome(`invoice-${paidInvoiceId}`)
       } catch (err) {
         if (!cancelled) {
           setInvoicePayError(
@@ -1150,7 +1162,7 @@ export function AdminOverviewDashboard() {
     return () => {
       cancelled = true
     }
-  }, [location.pathname, location.search, navigate])
+  }, [location.pathname, location.search, navigate, rememberSkipAutoOutcome])
 
   useEffect(() => {
     let cancelled = false
@@ -1917,6 +1929,66 @@ export function AdminOverviewDashboard() {
         .eq('landlord_id', getActiveLandlordId())
         .limit(500)
       if (cancelled) return
+      const { data: weatherRows } = await supabase
+        .from('weather_events')
+        .select('id, landlord_id, property_id, level, starts_at, ends_at, low_temp_f, nws_event, status, notified_level')
+        .eq('landlord_id', getActiveLandlordId())
+        .eq('status', 'active')
+        .limit(100)
+      const events = ((weatherRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.id ?? ''),
+        landlordId: String(row.landlord_id ?? ''),
+        propertyId: String(row.property_id ?? ''),
+        level: row.level as WeatherEventState['level'],
+        startsAt: String(row.starts_at ?? ''),
+        endsAt: typeof row.ends_at === 'string' ? row.ends_at : null,
+        lowTempF: typeof row.low_temp_f === 'number' ? row.low_temp_f : null,
+        nwsEvent: typeof row.nws_event === 'string' ? row.nws_event : null,
+        status: 'active' as const,
+        notifiedLevel: (row.notified_level as WeatherEventState['notifiedLevel']) ?? null,
+      }))
+      const propertyIds = events.map((event) => event.propertyId)
+      const { data: propertyRows } = propertyIds.length
+        ? await supabase.from('properties').select('id, name').in('id', propertyIds)
+        : { data: [] }
+      const { data: vacantUnits } = propertyIds.length
+        ? await supabase.from('units').select('property_id').in('property_id', propertyIds).eq('status', 'vacant')
+        : { data: [] }
+      const vacantIds = new Set((vacantUnits ?? []).map((unit) => String(unit.property_id ?? '')))
+      const winterizingOpen = ((data ?? []) as Array<Record<string, unknown>>).filter((row) => {
+        const metadata = row.metadata as { kind?: string; property_id?: string; checklist?: Array<{ done?: boolean }> } | null
+        if (metadata?.kind !== 'winterizing') return false
+        if (row.status === 'completed') return false
+        const checklist = metadata.checklist ?? []
+        return checklist.length === 0 || checklist.some((item) => !item.done)
+      }).map((row) => String((row.metadata as { property_id?: string }).property_id ?? ''))
+      const { data: heatTickets } = propertyIds.length
+        ? await supabase
+          .from('maintenance_requests')
+          .select('id, property_id, description, status, vendor_work_status')
+          .in('property_id', propertyIds)
+          .limit(200)
+        : { data: [] }
+      setWeatherCard(deriveWeatherAttentionCard({
+        landlordId: getActiveLandlordId(),
+        events,
+        properties: ((propertyRows ?? []) as Array<{ id: string; name: string | null }>).map((row) => ({
+          id: row.id,
+          name: row.name?.trim() || 'Property',
+          vacant: vacantIds.has(row.id),
+        })),
+        unwinterizedPropertyIds: winterizingOpen,
+        heatTickets: ((heatTickets ?? []) as Array<Record<string, unknown>>)
+          .filter((ticket) => {
+            const status = String(ticket.status ?? '').toLowerCase()
+            const work = String(ticket.vendor_work_status ?? '').toLowerCase()
+            const description = String(ticket.description ?? '')
+            return !['completed', 'cancelled', 'closed', 'resolved'].includes(status) &&
+              work !== 'cancelled' &&
+              /heat|frozen|burst pipe/i.test(description)
+          })
+          .map((ticket) => ({ id: String(ticket.id), propertyId: String(ticket.property_id ?? '') })),
+      }))
       setPmServiceBatches(
         batchesFromPmTaskRows(
           ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
@@ -1996,6 +2068,30 @@ export function AdminOverviewDashboard() {
     if (kind === 'approve') approvePmBatch(card, card.units.map((unit) => unit.id))
     else snoozePmBatch(card)
   }, [pmPendingAction, approvePmBatch, snoozePmBatch])
+
+  const markWeatherDone = useCallback(() => {
+    if (!supabase || !weatherCard) return
+    void (async () => {
+      const { data } = await supabase
+        .from('preventive_maintenance_tasks')
+        .select('id, metadata')
+        .eq('landlord_id', getActiveLandlordId())
+        .limit(200)
+      for (const row of data ?? []) {
+        const metadata = row.metadata as { kind?: string; property_id?: string; checklist?: Array<{ key: string; label: string; done: boolean }> } | null
+        if (metadata?.kind !== 'winterizing' || metadata.property_id !== weatherCard.propertyId) continue
+        const checklist = (metadata.checklist ?? []).map((item) => ({ ...item, done: true }))
+        await supabase
+          .from('preventive_maintenance_tasks')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            metadata: { ...metadata, checklist },
+          })
+          .eq('id', row.id)
+      }
+    })()
+  }, [weatherCard])
 
   const allAttentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
@@ -2305,6 +2401,24 @@ export function AdminOverviewDashboard() {
       }
     }
 
+    if (weatherCard) {
+      items.push({
+        key: weatherCard.key,
+        badge: weatherCard.badge,
+        title: weatherCard.title,
+        context: weatherCard.context,
+        meta: weatherCard.meta,
+        actionLabel: 'Schedule check',
+        secondaryActionLabel: 'Mark done',
+        onAction: () => {
+          if (weatherCard.heatTicketId) openEscalatedRailForTicket(weatherCard.heatTicketId)
+          else navigate(propertyDetailPath(weatherCard.propertyId))
+        },
+        onSecondaryAction: markWeatherDone,
+        dueAt: new Date().toISOString(),
+      })
+    }
+
     return sortNeedsAttention(
       items.map((item) => ({
         ...item,
@@ -2313,7 +2427,7 @@ export function AdminOverviewDashboard() {
         emergencyRepair: item.emergencyRepair === true,
       })),
     )
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, openTickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches, weatherCard, markWeatherDone])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
@@ -2336,7 +2450,7 @@ export function AdminOverviewDashboard() {
 
     for (const item of prev) {
       if (currentKeys.has(item.key)) continue
-      if (skipAutoOutcomeKeysRef.current.has(item.key)) continue
+      if (skipAutoOutcomeKeys.has(item.key)) continue
       showAwaitingDecisionOutcome(
         buildAutoRemovedAttentionOutcome({
           title: item.title,
@@ -2348,11 +2462,17 @@ export function AdminOverviewDashboard() {
       break
     }
 
-    skipAutoOutcomeKeysRef.current = new Set(
-      [...skipAutoOutcomeKeysRef.current].filter((key) => currentKeys.has(key)),
-    )
+    setSkipAutoOutcomeKeys((current) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const key of current) {
+        if (currentKeys.has(key)) next.add(key)
+        else changed = true
+      }
+      return changed ? next : current
+    })
     prevAttentionItemsRef.current = allAttentionItems
-  }, [loading, allAttentionItems, showAwaitingDecisionOutcome])
+  }, [loading, allAttentionItems, showAwaitingDecisionOutcome, skipAutoOutcomeKeys])
 
   useEffect(() => {
     if (!escalatedRailTarget) {
@@ -2720,10 +2840,10 @@ export function AdminOverviewDashboard() {
           for (const id of dismissedRunIds) runIds.add(id)
           return { ticketIds, runIds }
         })
-        if (ticketId) skipAutoOutcomeKeysRef.current.add(`sla-${ticketId}`)
-        if (workflowRunId) skipAutoOutcomeKeysRef.current.add(`run-${workflowRunId}`)
+        if (ticketId) rememberSkipAutoOutcome(`sla-${ticketId}`)
+        if (workflowRunId) rememberSkipAutoOutcome(`run-${workflowRunId}`)
         for (const id of dismissedRunIds) {
-          skipAutoOutcomeKeysRef.current.add(`run-${id}`)
+          rememberSkipAutoOutcome(`run-${id}`)
         }
 
         setFindExternalVendorOpen(false)
@@ -2745,7 +2865,7 @@ export function AdminOverviewDashboard() {
         setEscalatedRailSaving(false)
       }
     },
-    [escalatedRailSaving, workflowData, showAwaitingDecisionOutcome],
+    [escalatedRailSaving, workflowData, showAwaitingDecisionOutcome, rememberSkipAutoOutcome],
   )
 
   const backFromFindExternalVendor = useCallback(() => {
@@ -3441,7 +3561,7 @@ export function AdminOverviewDashboard() {
       setRecognizedSpend(spendRows)
       invoiceApprovalPhaseRef.current = finishInvoiceApproval(true)
       lastApprovedInvoiceIdRef.current = invoiceId
-      skipAutoOutcomeKeysRef.current.add(`invoice-${invoiceId}`)
+      rememberSkipAutoOutcome(`invoice-${invoiceId}`)
       setInvoicePayReviews((prev) => prev.filter((row) => row.invoiceId !== invoiceId))
       setInvoiceApprovalSuccess({ vendorName, amountLabel })
       setInvoicePayRailId(invoiceId)
@@ -3452,7 +3572,7 @@ export function AdminOverviewDashboard() {
     } finally {
       setInvoicePaySaving(false)
     }
-  }, [invoicePayReview])
+  }, [invoicePayReview, rememberSkipAutoOutcome])
 
   const handleInvoicePayReject = useCallback(async () => {
     if (!invoicePayReview) return
@@ -3505,6 +3625,11 @@ export function AdminOverviewDashboard() {
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
             See what&apos;s happening across your portfolio.
           </p>
+          {weatherCard ? (
+            <p className="mt-2 text-[13px] font-medium leading-5 text-[#92400e]">
+              {weatherCard.title} · {weatherCard.context}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -3547,7 +3672,7 @@ export function AdminOverviewDashboard() {
             </p>
           ) : (
             attentionItems.map((item, index) =>
-              item.key.startsWith('pm_') ? (
+              item.key.startsWith('pm_') || item.key.startsWith('weather:') ? (
                 <div
                   key={item.key}
                   className="sa-enter flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-6"

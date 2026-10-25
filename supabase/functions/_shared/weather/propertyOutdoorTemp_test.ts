@@ -3,10 +3,13 @@
 import {
   celsiusToFahrenheit,
   parseCensusCoordinates,
+  parseNwsActiveAlerts,
+  parseNwsHourlyForecast,
   parseNwsHourlyTempF,
   parseNwsObservationTempF,
   parseNwsPointUrls,
 } from "./propertyOutdoorTemp.ts"
+import { evaluateFreezeLevel } from "../../../../shared/weather/freezeRules.ts"
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {
@@ -41,6 +44,36 @@ Deno.test("NWS hourly forecast uses Fahrenheit periods", () => {
     },
   })
   assertEqual(temp, 91, "hourly F")
+})
+
+Deno.test("NWS hourly forecast keeps the next 72 hours and wind chill", () => {
+  const start = new Date("2026-01-20T18:00:00.000Z")
+  const periods = Array.from({ length: 3 }, (_, index) => ({
+    startTime: new Date(start.getTime() + index * 60 * 60 * 1000).toISOString(),
+    temperature: 19 - index,
+    temperatureUnit: "F",
+    windChill: index === 2 ? 0 : 10,
+  }))
+  const points = parseNwsHourlyForecast({ properties: { periods } }, start)
+  assertEqual(points.length, 3, "hours")
+  assertEqual(points[2]?.windChillF, 0, "chill")
+})
+
+Deno.test("NWS active alerts keep the event name", () => {
+  const alerts = parseNwsActiveAlerts({
+    features: [{ properties: { event: "Hard Freeze Warning", severity: "Severe" } }],
+  })
+  assertEqual(alerts[0]?.event, "Hard Freeze Warning", "event")
+})
+
+Deno.test("a hard freeze warning outranks a mild temperature", () => {
+  const level = evaluateFreezeLevel({
+    hourly: [{ time: "2026-01-20T18:00:00.000Z", tempF: 50, windChillF: null }],
+    alerts: [{ event: "Hard Freeze Warning" }],
+    property: {},
+    now: new Date("2026-01-20T18:00:00.000Z"),
+  })
+  assertEqual(level, "hard_freeze", "alert")
 })
 
 Deno.test("NWS points expose hourly and station collection URLs", () => {

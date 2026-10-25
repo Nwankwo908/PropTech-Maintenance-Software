@@ -485,6 +485,16 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/run-ops-sms-crons/index.ts"
 
+[functions.run-weather-monitor]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/run-weather-monitor/index.ts"
+
+[functions.geocode-property]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/geocode-property/index.ts"
+
 [functions.check-landlord-estimate-notify]
 enabled = true
 verify_jwt = false
