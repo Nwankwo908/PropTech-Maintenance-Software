@@ -50,6 +50,7 @@ import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
 import {
   tryHandleLandlordVendorChoiceInbound,
 } from "../vendorLandlordChoice.ts"
+import { tryHandleLandlordPickBatchInbound } from "../landlordDecisionExecute.ts"
 import { tryHandlePmServiceYesHvacInbound } from "./pmServiceYesHvac.ts"
 import {
   canHandleVendorAvailabilityProbe,

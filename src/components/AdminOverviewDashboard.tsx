@@ -976,6 +976,10 @@ export function AdminOverviewDashboard() {
   })
   const [pmServiceBatches, setPmServiceBatches] = useState<PmServiceBatchSnapshot[]>([])
   const [pmReviewCard, setPmReviewCard] = useState<PmServiceCard | null>(null)
+  // Card buttons only queue the action; the effect below runs it outside render.
+  const [pmPendingAction, setPmPendingAction] = useState<
+    { kind: 'approve' | 'snooze'; card: PmServiceCard } | null
+  >(null)
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1985,6 +1989,14 @@ export function AdminOverviewDashboard() {
     [resolvePmBatch],
   )
 
+  useEffect(() => {
+    if (!pmPendingAction) return
+    setPmPendingAction(null)
+    const { kind, card } = pmPendingAction
+    if (kind === 'approve') approvePmBatch(card, card.units.map((unit) => unit.id))
+    else snoozePmBatch(card)
+  }, [pmPendingAction, approvePmBatch, snoozePmBatch])
+
   const allAttentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
     const completedTicketIds = collectCompletedWorkOrderTicketIds({
@@ -2284,9 +2296,9 @@ export function AdminOverviewDashboard() {
           meta: card.meta,
           actionLabel: approval ? 'Review' : 'Review',
           secondaryActionLabel: approval ? 'Approve all' : undefined,
-          onSecondaryAction: approval ? () => approvePmBatch(card, card.units.map((unit) => unit.id)) : undefined,
+          onSecondaryAction: approval ? () => setPmPendingAction({ kind: 'approve', card }) : undefined,
           onAction: approval ? () => setPmReviewCard(card) : undefined,
-          onSnooze: card.canSnooze ? () => snoozePmBatch(card) : undefined,
+          onSnooze: card.canSnooze ? () => setPmPendingAction({ kind: 'snooze', card }) : undefined,
           pmSafety: card.safety,
           dueAt: card.dueAt,
         })
@@ -2301,7 +2313,7 @@ export function AdminOverviewDashboard() {
         emergencyRepair: item.emergencyRepair === true,
       })),
     )
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches, approvePmBatch, snoozePmBatch])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
