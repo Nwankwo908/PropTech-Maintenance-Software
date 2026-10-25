@@ -25,7 +25,12 @@ import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRai
 import { LateRentAccountMessageRail } from '@/components/LateRentAccountMessageRail'
 import { LeaseRenewalEscalatedRail } from '@/components/LeaseRenewalEscalatedRail'
 import { LeaseRenewalIncentiveMessageRail } from '@/components/LeaseRenewalIncentiveMessageRail'
-import { InvoicePaymentRail, type InvoicePaymentReview, type InvoicePaymentSuccessDetails } from '@/components/InvoicePaymentRail'
+import {
+  InvoicePaymentRail,
+  type InvoiceApprovalSuccess,
+  type InvoicePaymentReview,
+  type InvoicePaymentSuccessDetails,
+} from '@/components/InvoicePaymentRail'
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { RecommendedActionsWorkOrdersRail } from '@/components/RecommendedActionsWorkOrdersRail'
 import type { RecommendedActionWorkOrderItem } from '@/components/RecommendedActionsWorkOrdersRail'
@@ -48,11 +53,9 @@ import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
   isMaintenanceAdminVendorEscalationReason,
   isStalePendingAcceptNeedsAdminVendor,
-  maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
   shouldSkipSlaReassignForNeedsAdminVendor,
   STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE,
-  STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT,
 } from '@/lib/maintenanceAdminVendor'
 import {
   emptyAdminWorkflowDashboardData,
@@ -67,6 +70,27 @@ import {
   shouldOmitEscalatedRunFromNeedsAttention,
   buildInspectionScopedAttentionCopy,
 } from '@/lib/needsAttentionWorkOrder'
+import {
+  lateRentAttentionSummary,
+  leaseInfoAttentionSummary,
+  leaseRenewalAttentionSummary,
+  responseTimeNoVendorSummary,
+  rosterGapAttentionSummary,
+  smsDeliveryAttentionSummary,
+  staleVendorAttentionSummary,
+  vendorDeclinedAttentionSummary,
+  waitingAttentionSummary,
+} from '@/lib/needsAttentionSummary'
+import {
+  finishInvoiceApproval,
+  formatInvoiceAmount,
+  invoiceAttentionCard,
+  invoiceReviewLocation,
+  propertyLabelForInvoice,
+  propertyTypeForInvoice,
+  startInvoiceApproval,
+  type InvoiceApprovalPhase,
+} from '@/lib/invoiceApprovalFlow'
 import {
   fetchVendorYtdPaidTotal,
   fetchWorkflowPipelineDetail,
@@ -948,6 +972,10 @@ export function AdminOverviewDashboard() {
   const [invoicePayError, setInvoicePayError] = useState<string | null>(null)
   const [invoicePaySuccess, setInvoicePaySuccess] =
     useState<InvoicePaymentSuccessDetails | null>(null)
+  const [invoiceApprovalSuccess, setInvoiceApprovalSuccess] =
+    useState<InvoiceApprovalSuccess | null>(null)
+  const invoiceApprovalPhaseRef = useRef<InvoiceApprovalPhase>('idle')
+  const lastApprovedInvoiceIdRef = useRef<string | null>(null)
   const [lateRentMessageBrief, setLateRentMessageBrief] =
     useState<LateRentAccountMessageBrief | null>(null)
   const [lateRentMessageSending, setLateRentMessageSending] = useState(false)
@@ -1322,8 +1350,11 @@ export function AdminOverviewDashboard() {
       const ticketById = new Map(ticketRowsForInvoice.map((t) => [t.id, t]))
 
       const payReviews: InvoicePaymentReview[] = []
-      // Always surface submitted invoices — Limited Alpha has no Stripe pay rail but
-      // still needs Approve cost so YTD can lock the vendor invoice amount.
+      const invoiceProperties = canonicalPropertiesResult.ok
+        ? canonicalPropertiesResult.properties
+        : []
+      // Always surface submitted invoices. Payments stay off for Limited Alpha;
+      // the landlord can still review and approve the cost.
       if (!invoicesResult.error) {
         const paymentsEnabled = landlordHasPayments(getActiveLandlordId())
         for (const row of (invoicesResult.data ?? []) as Record<string, unknown>[]) {
@@ -1334,6 +1365,16 @@ export function AdminOverviewDashboard() {
           // Full accounts keep the 4★ gate before pay; Limited Alpha can approve without it.
           if (paymentsEnabled && (rating == null || rating < 4)) continue
           const ticket = ticketById.get(ticketId)
+          const propertyType = propertyTypeForInvoice(
+            invoiceProperties,
+            ticket?.propertyId,
+            ticket?.building,
+          )
+          const propertyLabel = propertyLabelForInvoice(
+            invoiceProperties,
+            ticket?.propertyId,
+            ticket?.building,
+          )
           const vendorId = asString(row.vendor_id)
           const vendorScore = vendorId ? vendorScoreById.get(vendorId) : undefined
           payReviews.push({
@@ -1344,7 +1385,7 @@ export function AdminOverviewDashboard() {
             materialCost: Number(row.material_cost) || 0,
             taxAmount: Number(row.tax_amount) || 0,
             unit: ticket?.unit ?? '',
-            building: ticket?.building ?? null,
+            building: ticket?.building?.trim() || propertyLabel,
             residentName: ticket?.residentName ?? '',
             vendorName:
               (vendorId ? vendorNameById[vendorId] : '') ||
@@ -1356,6 +1397,7 @@ export function AdminOverviewDashboard() {
             rating: rating ?? null,
             invoiceNumber: asString(row.invoice_number) || null,
             documentPath: asString(row.document_path) || null,
+            propertyType,
             vendorRating: vendorScore?.rating ?? null,
             vendorReviewCount: vendorScore?.reviewCount ?? null,
           })
@@ -1808,6 +1850,13 @@ export function AdminOverviewDashboard() {
     )
   }, [workflowData, leaseRenewalRailRunId, overviewResidents])
 
+  const openInvoiceReview = useCallback((invoiceId: string) => {
+    setInvoicePayError(null)
+    setInvoicePaySuccess(null)
+    setInvoiceApprovalSuccess(null)
+    setInvoicePayRailId(invoiceId)
+  }, [])
+
   const allAttentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
     const completedTicketIds = collectCompletedWorkOrderTicketIds({
@@ -1834,9 +1883,7 @@ export function AdminOverviewDashboard() {
           (u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit),
         )?.building ??
         null
-      const fallbackMeta = ticket.dueAt
-        ? `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past due ${formatRelativeTime(ticket.dueAt)}`
-        : `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past response time`
+      const fallbackMeta = responseTimeNoVendorSummary(ticket.issueCategory)
       const scoped = buildInspectionScopedAttentionCopy({
         ticketId: ticket.id,
         workflowData,
@@ -1898,15 +1945,18 @@ export function AdminOverviewDashboard() {
             linkedTicket?.autoReassignLastOutcome ?? run.autoReassignLastOutcome,
           workflowNeedsAdminVendor: needsVendor,
         })
+        const relative = run.lastEventAt ? formatRelativeTime(run.lastEventAt) : null
         const fallbackMeta = stalePendingAccept
-          ? STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT
+          ? staleVendorAttentionSummary()
           : needsVendor
-            ? maintenanceAdminVendorAttentionMeta(adminVendorReason, issueCategory)
-            : run.lastEventAt
-              ? isLeaseRenewal
-                ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
-                : `Escalated ${formatRelativeTime(run.lastEventAt)}`
-              : 'Awaiting input'
+            ? adminVendorReason === 'vendor_declined_no_vendor'
+              ? vendorDeclinedAttentionSummary()
+              : adminVendorReason === 'sla_expired_no_vendor'
+                ? responseTimeNoVendorSummary(issueCategory)
+                : rosterGapAttentionSummary(issueCategory)
+            : isLeaseRenewal
+              ? leaseRenewalAttentionSummary(relative)
+              : waitingAttentionSummary(relative)
         const scoped = ticketId
           ? buildInspectionScopedAttentionCopy({
               ticketId,
@@ -1988,7 +2038,7 @@ export function AdminOverviewDashboard() {
           propertyLabel: building,
           unitLabel: ticket.unit,
           residentName: ticket.residentName,
-          fallbackMeta: STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT,
+          fallbackMeta: staleVendorAttentionSummary(),
         })
         items.push({
           key: `stale-admin-${ticket.id}`,
@@ -2012,9 +2062,14 @@ export function AdminOverviewDashboard() {
             unitLabel: row.unitLabel,
             residentName: row.residentName,
           }),
-          meta: row.rentDueDate
-            ? `Overdue since ${new Date(row.rentDueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-            : 'Overdue',
+          meta: lateRentAttentionSummary(
+            row.rentDueDate
+              ? new Date(row.rentDueDate).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                })
+              : null,
+          ),
           actionLabel: 'Review',
           onAction: () => openLateRentRail(row.id),
         })
@@ -2048,7 +2103,7 @@ export function AdminOverviewDashboard() {
           unitLabel: resident?.unit ?? null,
           residentName: resident?.fullName ?? null,
         }),
-        meta: missing.message?.trim() || 'A resident asked about their lease over text.',
+        meta: leaseInfoAttentionSummary(),
         actionLabel: 'Review resident',
         onAction: () => navigate(path),
       })
@@ -2060,9 +2115,7 @@ export function AdminOverviewDashboard() {
         badge: 'warning',
         title: 'SMS could not be delivered',
         context: 'Account phone missing',
-        meta:
-          row.message?.trim() ||
-          'Add a phone number in Account settings so Ulo can text you updates.',
+        meta: smsDeliveryAttentionSummary(),
         actionLabel: 'Open account',
         onAction: () => navigate('/admin/settings'),
       })
@@ -2070,49 +2123,28 @@ export function AdminOverviewDashboard() {
 
     for (const inv of invoicePayReviews) {
       if (completedTicketIds.has(inv.maintenanceRequestId)) continue
-      const totalLabel = inv.totalCost.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'USD',
+      const card = invoiceAttentionCard({
+        vendorName: inv.vendorName,
+        amount: inv.totalCost,
       })
-      const paymentsEnabled = landlordHasPayments(getActiveLandlordId())
       items.push({
         key: `invoice-${inv.invoiceId}`,
         badge: 'warning',
-        title: paymentsEnabled ? 'Invoice ready to pay' : 'Invoice ready to approve',
-        context: formatLocationContextLabel({
-          propertyLabel: inv.building,
-          unitLabel: inv.unit,
+        title: card.title,
+        context: invoiceReviewLocation({
+          building: inv.building,
+          unit: inv.unit,
+          propertyType: inv.propertyType,
           residentName: inv.residentName,
         }),
-        meta: `${inv.vendorName} · ${totalLabel}${inv.rating != null ? ` · Rated ${inv.rating}/5` : ''}`,
-        actionLabel: paymentsEnabled ? 'Review & pay' : 'Approve cost',
-        onAction: () => {
-          setInvoicePayError(null)
-          setInvoicePayRailId(inv.invoiceId)
-          // Limited Alpha has no Stripe checkout — approve immediately so YTD picks up the amount.
-          if (!paymentsEnabled) {
-            void (async () => {
-              try {
-                await approveMaintenanceInvoice(inv.invoiceId)
-                const spendRows = await fetchRecognizedMaintenanceSpend()
-                setRecognizedSpend(spendRows)
-                setInvoicePayReviews((prev) =>
-                  prev.filter((r) => r.invoiceId !== inv.invoiceId),
-                )
-                setInvoicePayRailId(null)
-              } catch (err) {
-                setInvoicePayError(
-                  getErrorMessage(err, 'Could not approve invoice'),
-                )
-              }
-            })()
-          }
-        },
+        meta: card.summary,
+        actionLabel: card.actionLabel,
+        onAction: () => openInvoiceReview(inv.invoiceId),
       })
     }
 
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
@@ -3176,42 +3208,42 @@ export function AdminOverviewDashboard() {
 
   const closeInvoicePayRail = useCallback(() => {
     if (invoicePaySaving) return
+    invoiceApprovalPhaseRef.current = 'idle'
+    lastApprovedInvoiceIdRef.current = null
     setInvoicePayRailId(null)
     setInvoicePayError(null)
     setInvoicePaySuccess(null)
+    setInvoiceApprovalSuccess(null)
   }, [invoicePaySaving])
 
   const handleInvoicePayApprove = useCallback(async (note?: string) => {
     if (!invoicePayReview) return
+    const phase =
+      invoiceApprovalPhaseRef.current === 'approved' &&
+      lastApprovedInvoiceIdRef.current !== invoicePayReview.invoiceId
+        ? 'idle'
+        : invoiceApprovalPhaseRef.current
+    const started = startInvoiceApproval(phase)
+    if (!started.submit) return
+    invoiceApprovalPhaseRef.current = 'submitting'
     setInvoicePaySaving(true)
     setInvoicePayError(null)
+    const invoiceId = invoicePayReview.invoiceId
+    const vendorName = invoicePayReview.vendorName
+    const amountLabel = formatInvoiceAmount(invoicePayReview.totalCost)
     try {
-      await approveMaintenanceInvoice(invoicePayReview.invoiceId, note)
-      const [ytdPaidTotal, spendRows] = await Promise.all([
-        invoicePayReview.vendorId
-          ? fetchVendorYtdPaidTotal({
-              landlordId: getActiveLandlordId(),
-              vendorId: invoicePayReview.vendorId,
-            })
-          : Promise.resolve(null),
-        fetchRecognizedMaintenanceSpend(),
-      ])
+      await approveMaintenanceInvoice(invoiceId, note)
+      const spendRows = await fetchRecognizedMaintenanceSpend()
       setRecognizedSpend(spendRows)
-      setInvoicePayReviews((prev) =>
-        prev.filter((r) => r.invoiceId !== invoicePayReview.invoiceId),
-      )
-      setInvoicePaySuccess({
-        amountPaid: invoicePayReview.totalCost,
-        vendorName: invoicePayReview.vendorName,
-        sourceLabel: 'Payment method',
-        transactionId: `TXN-${invoicePayReview.invoiceId.replace(/-/g, '').slice(0, 8).toUpperCase()}-ULO`,
-        paidAt: new Date().toISOString(),
-        receiptUrl: null,
-        ytdPaidTotal,
-      })
-      setInvoicePayRailId(invoicePayReview.invoiceId)
-      skipAutoOutcomeKeysRef.current.add(`invoice-${invoicePayReview.invoiceId}`)
+      invoiceApprovalPhaseRef.current = finishInvoiceApproval(true)
+      lastApprovedInvoiceIdRef.current = invoiceId
+      skipAutoOutcomeKeysRef.current.add(`invoice-${invoiceId}`)
+      setInvoicePayReviews((prev) => prev.filter((row) => row.invoiceId !== invoiceId))
+      setInvoiceApprovalSuccess({ vendorName, amountLabel })
+      setInvoicePayRailId(invoiceId)
     } catch (err) {
+      invoiceApprovalPhaseRef.current = finishInvoiceApproval(false)
+      setInvoiceApprovalSuccess(null)
       setInvoicePayError(getErrorMessage(err, 'Could not approve invoice'))
     } finally {
       setInvoicePaySaving(false)
@@ -3233,10 +3265,11 @@ export function AdminOverviewDashboard() {
       setInvoicePayRailId(null)
       showAwaitingDecisionOutcome(
         {
-          operationTitle: 'Invoice ready to pay',
-          context: formatLocationContextLabel({
-            propertyLabel: invoicePayReview.building,
-            unitLabel: invoicePayReview.unit,
+          operationTitle: 'Invoice needs approval',
+          context: invoiceReviewLocation({
+            building: invoicePayReview.building,
+            unit: invoicePayReview.unit,
+            propertyType: invoicePayReview.propertyType,
             residentName: invoicePayReview.residentName,
           }),
           kind: 'resolved',
@@ -3639,11 +3672,13 @@ export function AdminOverviewDashboard() {
         }}
       />
 
-      {landlordHasPayments(getActiveLandlordId()) && (invoicePaySuccess || invoicePayReview) ? (
+      {invoicePaySuccess || invoiceApprovalSuccess || invoicePayReview ? (
         <InvoicePaymentRail
           open
           review={invoicePayReview}
           successDetails={invoicePaySuccess}
+          approvalSuccess={invoiceApprovalSuccess}
+          paymentsEnabled={landlordHasPayments(getActiveLandlordId())}
           saving={invoicePaySaving}
           error={invoicePayError}
           onClose={closeInvoicePayRail}

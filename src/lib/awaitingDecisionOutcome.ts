@@ -148,15 +148,14 @@ export function buildInvoiceApprovedOutcome(input: {
   totalLabel: string
   vendorName: string
 }): AwaitingDecisionOutcome {
+  const vendor = input.vendorName.trim() || 'the vendor'
   return {
-    operationTitle: 'Invoice ready to pay',
+    operationTitle: 'Invoice approved',
     context: input.context,
-    kind: 'resolved',
-    headline: 'Removed from Needs Your Attention',
-    detail: `Approved ${input.totalLabel} for ${input.vendorName}. Ulo recorded the spend and cleared this invoice from your queue.`,
-    removedFromQueue: true,
-    actionLabel: 'View in Analytics',
-    actionTo: '/admin/analytics',
+    kind: 'updated',
+    headline: 'Invoice approved',
+    detail: `You approved ${vendor}'s ${input.totalLabel} invoice. No payment was made.`,
+    removedFromQueue: false,
   }
 }
 

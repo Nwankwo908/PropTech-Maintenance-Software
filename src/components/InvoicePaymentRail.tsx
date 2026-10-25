@@ -19,6 +19,11 @@ import klarnaIcon from '@/assets/payment/klarna.png'
 import creditCardIcon from '@/assets/payment/credit-card.png'
 import chevronRightIcon from '@/assets/payment/chevron-right.svg'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  invoiceApprovedCopy,
+  invoiceReviewActionPlan,
+  invoiceReviewLocation,
+} from '@/lib/invoiceApprovalFlow'
 
 export type InvoicePaymentReview = {
   invoiceId: string
@@ -38,6 +43,7 @@ export type InvoicePaymentReview = {
   rating: number | null
   invoiceNumber: string | null
   documentPath: string | null
+  propertyType?: string | null
   /** Vendor roster average when available. */
   vendorRating: number | null
   vendorReviewCount: number | null
@@ -174,11 +180,14 @@ function formatSubmittedDate(iso: string): string {
   })
 }
 
-function formatLocation(unit: string, building: string | null): string {
-  const unitLabel = unit.trim() ? `Unit ${unit.trim()}` : null
-  const buildingLabel = building?.trim() || null
-  if (unitLabel && buildingLabel) return `${unitLabel} · ${buildingLabel}`
-  return unitLabel ?? buildingLabel ?? '—'
+function formatLocation(review: Pick<InvoicePaymentReview, 'unit' | 'building' | 'propertyType'>): string {
+  return (
+    invoiceReviewLocation({
+      building: review.building,
+      unit: review.unit,
+      propertyType: review.propertyType,
+    }) || '—'
+  )
 }
 
 function formatServiceType(issueCategory: string | null): string {
@@ -454,12 +463,22 @@ function parseExpiration(value: string): { month: string; year: string } | null 
   return { month, year }
 }
 
+export type InvoiceApprovalSuccess = {
+  vendorName: string
+  amountLabel: string
+}
+
 type InvoicePaymentRailProps = {
   open: boolean
   review: InvoicePaymentReview | null
   saving: boolean
   error: string | null
+  /** Stripe checkout finished. Separate from cost approval. */
   successDetails?: InvoicePaymentSuccessDetails | null
+  /** Cost was approved. No payment is claimed. */
+  approvalSuccess?: InvoiceApprovalSuccess | null
+  /** When false, pay and checkout actions stay hidden. Review and approval stay available. */
+  paymentsEnabled?: boolean
   onClose: () => void
   onApprove: (note?: string) => void
   onReject: () => void
@@ -484,8 +503,10 @@ export function InvoicePaymentRail({
   saving,
   error,
   successDetails = null,
+  approvalSuccess = null,
+  paymentsEnabled = false,
   onClose,
-  onApprove: _onApprove,
+  onApprove,
   onReject,
 }: InvoicePaymentRailProps) {
   const titleId = useId()
@@ -532,6 +553,11 @@ export function InvoicePaymentRail({
     setStep('review')
     setPaymentMethod(readSavedPaymentMethod())
   }, [open, review?.invoiceId, successDetails])
+
+  useEffect(() => {
+    if (paymentsEnabled) return
+    if (step === 'confirm' || step === 'addMethod' || step === 'addCard') setStep('review')
+  }, [paymentsEnabled, step])
 
   useEffect(() => {
     if (!open) return
@@ -586,6 +612,69 @@ export function InvoicePaymentRail({
   }, [open, review?.documentPath, review?.invoiceId])
 
   if (!open) return null
+
+  if (approvalSuccess) {
+    const copy = invoiceApprovedCopy(approvalSuccess.vendorName, approvalSuccess.amountLabel)
+    return (
+      <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+        <div
+          role="presentation"
+          className={ADMIN_RIGHT_RAIL_SCRIM}
+          aria-hidden
+          onClick={onClose}
+        />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          className={adminRightRailPanelClass(undefined, 'max-w-[min(100vw,420px)]')}
+        >
+          <div className="flex min-h-0 flex-1 flex-col justify-between p-6">
+            <div className="flex min-h-0 flex-1 flex-col justify-center gap-6 overflow-y-auto overscroll-contain">
+              <div className="flex items-start justify-end">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close"
+                  className="rounded-full bg-[#f9fafb] p-1.5 text-[#6b7280] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#065f46] focus-visible:ring-offset-2"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="flex flex-col items-center gap-4">
+                <div className="flex size-[72px] items-center justify-center rounded-[36px] bg-[#f0fdf4] text-[#15803d]">
+                  <svg className="size-8" viewBox="0 0 32 32" fill="none" aria-hidden>
+                    <path
+                      d="M8 16.5l5 5 11-12"
+                      stroke="currentColor"
+                      strokeWidth="2.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+                <div className="flex w-full flex-col items-center gap-2 text-center">
+                  <h2 id={titleId} className="text-[22px] font-bold text-[#111827]">
+                    {copy.title}
+                  </h2>
+                  <p className="max-w-[320px] text-[14px] text-[#4b5563]">{copy.message}</p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 shrink-0">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex w-full items-center justify-center rounded-lg bg-[#111827] p-3.5 text-[14px] font-semibold text-white outline-none hover:bg-[#030712] focus-visible:ring-2 focus-visible:ring-[#111827] focus-visible:ring-offset-2"
+              >
+                {copy.button}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (step === 'success' && successDetails) {
     const amountLabel = formatMoney(successDetails.amountPaid)
@@ -927,7 +1016,7 @@ export function InvoicePaymentRail({
                   <div className="flex items-center justify-between gap-3">
                     <dt className="text-[#6b7280]">Location</dt>
                     <dd className="text-right text-[#111827]">
-                      {formatLocation(review.unit, review.building)}
+                      {formatLocation(review)}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
@@ -1017,15 +1106,39 @@ export function InvoicePaymentRail({
             </div>
 
             <div className="mt-6 shrink-0 space-y-3">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => setStep('confirm')}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#065f46] px-4 py-3.5 text-[14px] font-semibold text-white outline-none hover:bg-[#064e3b] focus-visible:ring-2 focus-visible:ring-[#065f46] focus-visible:ring-offset-2 disabled:opacity-50"
-              >
-                {`Pay now · ${formatMoney(review.totalCost)}`}
-                <ArrowRightIcon />
-              </button>
+              {(() => {
+                const actions = invoiceReviewActionPlan({
+                  paymentsEnabled,
+                  saving,
+                  amount: review.totalCost,
+                })
+                return (
+                  <>
+                    <button
+                      type="button"
+                      disabled={actions.approveDisabled}
+                      onClick={() => {
+                        if (actions.approveDisabled) return
+                        onApprove(paymentNote)
+                      }}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#065f46] px-4 py-3.5 text-[14px] font-semibold text-white outline-none hover:bg-[#064e3b] focus-visible:ring-2 focus-visible:ring-[#065f46] focus-visible:ring-offset-2 disabled:opacity-50"
+                    >
+                      {actions.approveLabel}
+                    </button>
+                    {actions.showPayNow ? (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => setStep('confirm')}
+                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#e5e7eb] bg-white px-4 py-3.5 text-[14px] font-semibold text-[#111827] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#065f46] focus-visible:ring-offset-2 disabled:opacity-50"
+                      >
+                        {`Pay now · ${formatMoney(review.totalCost)}`}
+                        <ArrowRightIcon />
+                      </button>
+                    ) : null}
+                  </>
+                )
+              })()}
               <button
                 type="button"
                 disabled={saving}
