@@ -7,6 +7,8 @@ import {
   assessmentConfidencePercent,
   assessmentConfidenceReason,
   assessmentDescription,
+  assessmentTableDescription,
+  isUnmatchedApplianceRow,
   assessmentSerial,
   assessmentActionLabel,
   parseBrandModelField,
@@ -41,6 +43,50 @@ describe('inspectionAssessmentTable', () => {
         identifiedItem: { type: 'Faucet', brand: 'Grohe', modelNumber: 'Essence' },
       }),
     ).toBe('Grohe / Essence')
+  })
+
+  it('omits description text already shown in other columns', () => {
+    expect(assessmentTableDescription({
+      ...base,
+      identifiedItem: { type: 'Water heater' },
+      condition: { rating: 'fair', summary: 'Visible condition unknown. Age unknown.' },
+    }, 'Water heater')).toBe('')
+    expect(assessmentTableDescription({
+      ...base,
+      identifiedItem: { type: 'Water heater' },
+      condition: { rating: 'fair', summary: 'Rust at the base. About 12 years (estimate).' },
+    }, 'Water heater')).toBe('Rust at the base.')
+    expect(assessmentTableDescription(base, 'Appliance')).toBe(
+      'Shows signs of wear and tarnishing on the finish.',
+    )
+  })
+
+  it('treats an unknown or mismatched appliance as not table-ready', () => {
+    expect(isUnmatchedApplianceRow({
+      categoryLabel: 'Unknown',
+      result: { ...base, category: 'unknown', identifiedItem: { type: 'Unknown' } },
+    })).toBe(true)
+    expect(isUnmatchedApplianceRow({
+      categoryLabel: 'Water heater',
+      result: {
+        ...base,
+        category: 'water_heater',
+        identifiedItem: { type: 'Water heater' },
+        labelReadability: {
+          status: 'uncertain',
+          modelConfidence: 0,
+          serialConfidence: 0,
+          uncertainCharacters: [],
+          formatWarnings: [],
+          retakeRequested: true,
+          retakeMessage: 'These photos do not match the selected system.',
+        },
+      },
+    })).toBe(true)
+    expect(isUnmatchedApplianceRow({
+      categoryLabel: 'Water heater',
+      result: { ...base, category: 'water_heater', identifiedItem: { type: 'Water heater' } },
+    })).toBe(false)
   })
 
   it('uses condition summary as description', () => {

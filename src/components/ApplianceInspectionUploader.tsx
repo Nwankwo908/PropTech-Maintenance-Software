@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import waterHeaterLabelExample from '@/assets/water-heater-label-example.jpg'
+import wholeWaterHeaterExample from '@/assets/whole-water-heater-example.png'
+import heatingSystemLabelExample from '@/assets/heating-system-label-example.png'
+import wholeHeatingSystemExample from '@/assets/whole-heating-system-example.jpg'
 import {
   confirmInspectionPhoto,
   listInspectionAssets,
@@ -13,7 +17,6 @@ import {
 } from '@/api/inspectionAssetAssess'
 import { HomeCheckPanel } from '@/components/HomeCheckPanel'
 import { ApplianceAssessmentReviewCard } from '@/components/ApplianceAssessmentReviewCard'
-import { InspectionAssessmentTable } from '@/components/InspectionAssessmentTable'
 import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
 import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
 import type { InspectionCapturePhoto } from '@/api/inspectionCapture'
@@ -32,6 +35,7 @@ import {
 import {
   INSPECTION_SESSION_CHANGED_EVENT,
   inspectionPhotosForDisplay,
+  isInspectionReportPhoto,
   notifyInspectionSessionChanged,
 } from '@/lib/inspectionSession'
 import type {
@@ -135,6 +139,10 @@ export function ApplianceInspectionUploader({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [chooserOpen, setChooserOpen] = useState(false)
+  const [waterHeaterLabelExampleOpen, setWaterHeaterLabelExampleOpen] = useState(false)
+  const [wholeWaterHeaterExampleOpen, setWholeWaterHeaterExampleOpen] = useState(false)
+  const [heatingSystemLabelExampleOpen, setHeatingSystemLabelExampleOpen] = useState(false)
+  const [wholeHeatingSystemExampleOpen, setWholeHeatingSystemExampleOpen] = useState(false)
   const [phoneCaptureOpen, setPhoneCaptureOpen] = useState(false)
   const previewByIdRef = useRef<Record<string, string>>({})
   const removedIdsRef = useRef(new Set<string>())
@@ -633,7 +641,8 @@ export function ApplianceInspectionUploader({
     }
   }
 
-  const reviewPhotos = photos.filter((p) => p.status !== 'error')
+  const equipmentPhotos = photos.filter((photo) => !isInspectionReportPhoto(photo))
+  const reviewPhotos = equipmentPhotos.filter((p) => p.status !== 'error')
 
   const safetyAssets = assets.filter((a) => {
     const defs = a.metadata?.deficiencies
@@ -648,14 +657,175 @@ export function ApplianceInspectionUploader({
     )
   })
 
-  const hasFollowUp =
-    photos.length > 0 ||
-    reviewPhotos.length > 0 ||
-    safetyAssets.length > 0 ||
-    assets.length > 0
+  const hasFollowUp = equipmentPhotos.length > 0 || safetyAssets.length > 0
+  const equipmentRows = assets.map((asset) => ({
+    id: asset.id,
+    result: assetDrafts[asset.id] ?? visionResultFromSavedInspectionAsset(asset),
+    previewUrl: assetPreviewById[asset.id] ?? null,
+    editable: editingAssetIds.includes(asset.id),
+  }))
+  const equipmentActions = assetCheckedIds.length > 0 || deleting || savingAssetEdits || editingAssetIds.length > 0 ? (
+    <>
+      {assetCheckedIds.length > 0 ? (
+        <button
+          type="button"
+          disabled={deleting || savingAssetEdits}
+          onClick={() => {
+            setAssetDrafts((prev) => {
+              const next = { ...prev }
+              for (const id of assetCheckedIds) {
+                if (next[id]) continue
+                const asset = assets.find((row) => row.id === id)
+                if (asset) next[id] = visionResultFromSavedInspectionAsset(asset)
+              }
+              return next
+            })
+            setEditingAssetIds((prev) => [...new Set([...prev, ...assetCheckedIds])])
+          }}
+          className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff] disabled:text-[#94a3b8]"
+        >
+          Edit selected ({assetCheckedIds.length})
+        </button>
+      ) : null}
+      {editingAssetIds.length > 0 ? (
+        <button
+          type="button"
+          disabled={deleting || savingAssetEdits}
+          onClick={() => void onSaveAssetEdits()}
+          className="pd-btn pd-btn-primary rounded-[10px] px-4 py-2.5 text-[13px] font-semibold disabled:text-[#94a3b8]"
+        >
+          {savingAssetEdits ? 'Saving…' : 'Save edits'}
+        </button>
+      ) : null}
+      {assetCheckedIds.length > 0 || deleting ? (
+        <button
+          type="button"
+          disabled={deleting || savingAssetEdits}
+          onClick={() => void onDeleteSavedAssets(assetCheckedIds)}
+          className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b] disabled:text-[#94a3b8]"
+        >
+          {deleting ? 'Deleting…' : `Delete selected (${assetCheckedIds.length})`}
+        </button>
+      ) : null}
+    </>
+  ) : null
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
+      <section className="rounded-[10px] border border-[#e2e8f0] bg-white px-4 py-4 text-[13px] leading-5 text-[#334155]">
+        <h3 className="text-[14px] font-semibold text-[#0d0f11]">Add equipment photos</h3>
+        <p className="mt-2 text-[#64748b]">Upload these photos in this exact order:</p>
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5">
+          <li>
+            <button
+              type="button"
+              aria-pressed={waterHeaterLabelExampleOpen}
+              onClick={() => setWaterHeaterLabelExampleOpen((open) => !open)}
+              className={[
+                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                waterHeaterLabelExampleOpen ? 'text-[#186179]' : '',
+              ].join(' ')}
+            >
+              Water heater label:
+            </button>{' '}
+            A clear close-up showing the model and serial number. Avoid glare.
+            {waterHeaterLabelExampleOpen ? (
+              <figure className="mt-3 max-w-xl">
+                <img
+                  src={waterHeaterLabelExample}
+                  alt="Example of a water heater label"
+                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                />
+                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                  Here is an example of a water heater label.
+                </figcaption>
+              </figure>
+            ) : null}
+          </li>
+          <li>
+            <button
+              type="button"
+              aria-pressed={wholeWaterHeaterExampleOpen}
+              onClick={() => setWholeWaterHeaterExampleOpen((open) => !open)}
+              className={[
+                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                wholeWaterHeaterExampleOpen ? 'text-[#186179]' : '',
+              ].join(' ')}
+            >
+              Whole water heater:
+            </button>{' '}
+            Include the entire unit and its base.
+            {wholeWaterHeaterExampleOpen ? (
+              <figure className="mt-3 max-w-xl">
+                <img
+                  src={wholeWaterHeaterExample}
+                  alt="Example of a whole water heater"
+                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                />
+                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                  Here is an example of a whole water heater.
+                </figcaption>
+              </figure>
+            ) : null}
+          </li>
+          <li>
+            <button
+              type="button"
+              aria-pressed={heatingSystemLabelExampleOpen}
+              onClick={() => setHeatingSystemLabelExampleOpen((open) => !open)}
+              className={[
+                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                heatingSystemLabelExampleOpen ? 'text-[#186179]' : '',
+              ].join(' ')}
+            >
+              Heating system label:
+            </button>{' '}
+            A clear close-up of the furnace or boiler&apos;s model and serial number.
+            {heatingSystemLabelExampleOpen ? (
+              <figure className="mt-3 max-w-xl">
+                <img
+                  src={heatingSystemLabelExample}
+                  alt="Example of a heating system label"
+                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                />
+                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                  Here is an example of a heating system label.
+                </figcaption>
+              </figure>
+            ) : null}
+          </li>
+          <li>
+            <button
+              type="button"
+              aria-pressed={wholeHeatingSystemExampleOpen}
+              onClick={() => setWholeHeatingSystemExampleOpen((open) => !open)}
+              className={[
+                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                wholeHeatingSystemExampleOpen ? 'text-[#186179]' : '',
+              ].join(' ')}
+            >
+              Whole heating system:
+            </button>{' '}
+            Step back to capture the entire unit.
+            {wholeHeatingSystemExampleOpen ? (
+              <figure className="mt-3 max-w-xl">
+                <img
+                  src={wholeHeatingSystemExample}
+                  alt="Example of a whole heating system"
+                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                />
+                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                  Here is an example of a whole heating system.
+                </figcaption>
+              </figure>
+            ) : null}
+          </li>
+        </ol>
+        <p className="mt-3">
+          <span className="font-semibold text-[#0d0f11]">File requirements:</span>{' '}
+          JPG, PNG, WEBP, or HEIC, under 25 MB per photo. PDFs are processed as inspection reports, not equipment photos.
+        </p>
+      </section>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch [&>*]:min-w-0">
         {leading}
         <div className="flex h-full min-h-[220px] min-w-0 flex-col">
@@ -700,13 +870,13 @@ export function ApplianceInspectionUploader({
           {success ? <p className="text-[12px] text-[#059669]">{success}</p> : null}
           <ScanEquipmentIcon />
           <p className="text-[14px] font-semibold text-[#0d0f11]">
-            Other equipment and inspection uploads
+            Appliance equipment upload
           </p>
           <p className="text-[12px] text-[#64748b]">
-            For each appliance, upload a whole-equipment photo and a close-up of the data plate. Keep the label in focus and avoid flash.
+            Upload two photos per appliance: one of the whole appliance and one close-up of its model and serial number label. Keep the label clear and avoid glare.
           </p>
-          <p className="text-[12px] text-[#64748b]">
-            Additional equipment · Inspection reports
+          <p className="text-[12px] leading-[18px] text-[#64748b]">
+            JPG
           </p>
           <input
             ref={inputRef}
@@ -772,11 +942,22 @@ export function ApplianceInspectionUploader({
         </div>
       </div>
 
-      <HomeCheckPanel key={propertyId || building} building={building} propertyId={propertyId} />
+      <HomeCheckPanel
+        key={propertyId || building}
+        building={building}
+        propertyId={propertyId}
+        equipmentRows={equipmentRows}
+        equipmentCheckedIds={assetCheckedIds}
+        onEquipmentCheckedIdsChange={setAssetCheckedIds}
+        onEquipmentChangeRow={(id, result) => {
+          setAssetDrafts((prev) => ({ ...prev, [id]: result }))
+        }}
+        equipmentActions={equipmentActions}
+      />
 
-      {photos.some((photo) => photo.aiResult?.serialReview?.retakePrompt) ? (
+      {equipmentPhotos.some((photo) => photo.aiResult?.serialReview?.retakePrompt) ? (
         <ul className="space-y-2">
-          {photos
+          {equipmentPhotos
             .filter((photo) => photo.aiResult?.serialReview?.retakePrompt)
             .map((photo) => (
               <li
@@ -791,11 +972,11 @@ export function ApplianceInspectionUploader({
 
       {hasFollowUp ? (
       <div className="min-w-0 w-full">
-      {photos.length > 0 ? (
+      {equipmentPhotos.length > 0 ? (
         <>
-      {photos.some((photo) => photo.status === 'error') ? (
+      {equipmentPhotos.some((photo) => photo.status === 'error') ? (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {photos
+          {equipmentPhotos
             .filter((photo) => photo.status === 'error')
             .map((photo) => (
             <li
@@ -867,70 +1048,6 @@ export function ApplianceInspectionUploader({
             deleting={deleting}
             onConfirm={onConfirm}
             onDeletePhotos={onDeletePhotos}
-          />
-        </div>
-      ) : assets.length > 0 ? (
-        <div className="mt-1 w-full">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-[13px] font-semibold text-[#0f172a]">Assets from inspection</p>
-            {assetCheckedIds.length > 0 || deleting || savingAssetEdits || editingAssetIds.length > 0 ? (
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                {assetCheckedIds.length > 0 ? (
-                  <button
-                    type="button"
-                    disabled={deleting || savingAssetEdits}
-                    onClick={() => {
-                      setAssetDrafts((prev) => {
-                        const next = { ...prev }
-                        for (const id of assetCheckedIds) {
-                          if (next[id]) continue
-                          const asset = assets.find((row) => row.id === id)
-                          if (asset) next[id] = visionResultFromSavedInspectionAsset(asset)
-                        }
-                        return next
-                      })
-                      setEditingAssetIds((prev) => [...new Set([...prev, ...assetCheckedIds])])
-                    }}
-                    className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff] disabled:text-[#94a3b8]"
-                  >
-                    Edit selected ({assetCheckedIds.length})
-                  </button>
-                ) : null}
-                {editingAssetIds.length > 0 ? (
-                  <button
-                    type="button"
-                    disabled={deleting || savingAssetEdits}
-                    onClick={() => void onSaveAssetEdits()}
-                    className="pd-btn pd-btn-primary rounded-[10px] px-4 py-2.5 text-[13px] font-semibold disabled:text-[#94a3b8]"
-                  >
-                    {savingAssetEdits ? 'Saving…' : 'Save edits'}
-                  </button>
-                ) : null}
-                {assetCheckedIds.length > 0 || deleting ? (
-                  <button
-                    type="button"
-                    disabled={deleting || savingAssetEdits}
-                    onClick={() => void onDeleteSavedAssets(assetCheckedIds)}
-                    className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b] disabled:text-[#94a3b8]"
-                  >
-                    {deleting ? 'Deleting…' : `Delete selected (${assetCheckedIds.length})`}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <InspectionAssessmentTable
-            checkedIds={assetCheckedIds}
-            onCheckedIdsChange={setAssetCheckedIds}
-            onChangeRow={(id, result) => {
-              setAssetDrafts((prev) => ({ ...prev, [id]: result }))
-            }}
-            rows={assets.map((asset) => ({
-              id: asset.id,
-              result: assetDrafts[asset.id] ?? visionResultFromSavedInspectionAsset(asset),
-              previewUrl: assetPreviewById[asset.id] ?? null,
-              editable: editingAssetIds.includes(asset.id),
-            }))}
           />
         </div>
       ) : null}

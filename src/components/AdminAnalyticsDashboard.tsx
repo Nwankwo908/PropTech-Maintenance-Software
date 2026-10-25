@@ -193,8 +193,8 @@ function KpiCard({
       <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
-      <div className="flex flex-col items-start gap-2">
-        <p className="text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="shrink-0 whitespace-nowrap text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
           {value}
         </p>
         {delta != null ? (

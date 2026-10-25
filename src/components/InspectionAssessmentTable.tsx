@@ -2,6 +2,7 @@ import { EquipmentLabelNotice } from './EquipmentLabelNotice'
 import type { ReactNode } from 'react'
 import type { ApplianceVisionResult, ConditionRating, VisionCategory } from '@/lib/vision/types'
 import { InspectionPhotoExtractProgress } from '@/components/InspectionPhotoExtractProgress'
+import { NounInfoIcon } from '@/components/NounInfoIcon'
 import {
   assessmentActionLabel,
   assessmentBrandModel,
@@ -9,7 +10,7 @@ import {
   assessmentConditionLabel,
   assessmentConfidencePercent,
   assessmentConfidenceReason,
-  assessmentDescription,
+  assessmentTableDescription,
   assessmentSerial,
 } from '@/lib/inspectionAssessmentTable'
 
@@ -37,15 +38,6 @@ function assetGridClass(selectable: boolean, extra = '') {
   return `grid w-full min-w-0 items-center gap-x-2 gap-y-1 px-3 py-4 sm:gap-x-3 sm:px-4 ${columns} ${extra}`.trim()
 }
 
-function ConfidenceInfoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5" aria-hidden>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 function ConfidenceReasonButton({ reason }: { reason: string }) {
   return (
     <span className="group/conf relative inline-flex shrink-0">
@@ -56,7 +48,7 @@ function ConfidenceReasonButton({ reason }: { reason: string }) {
         className="inline-flex rounded-full p-0.5 text-[#94a3b8] outline-none hover:text-[#64748b] focus-visible:ring-2 focus-visible:ring-[#186179]"
         aria-label="Why this confidence"
       >
-        <ConfidenceInfoIcon />
+        <NounInfoIcon />
       </button>
       <span
         role="tooltip"
@@ -332,7 +324,10 @@ export function InspectionAssessmentTable({
                   />
                 ) : (
                   <div className="min-w-0">
-                    <p className="break-words">{assessmentDescription(result)}</p>
+                    {(() => {
+                      const note = assessmentTableDescription(result, categoryLabel)
+                      return note ? <p className="break-words">{note}</p> : null
+                    })()}
                     {row.descriptionExtra}
                   </div>
                 )}

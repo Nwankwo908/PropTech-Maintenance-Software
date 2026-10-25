@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SINGLE_FAMILY_UNIT_LABEL } from '@shared/properties/propertyType'
 import { formatUnitReference } from '@shared/properties/unitLabelDisplay'
-import { formatPropertyUnitDisplay } from './propertyUnitRows'
+import { formatPropertyUnitDisplay, propertyUnitColumnLabel } from './propertyUnitRows'
 import { buildUnitOptionsFromPropertyPayload, unitOptionKeyToCell } from './residentUnitKeys'
 
 describe('single-family unit numbers', () => {
@@ -11,6 +11,8 @@ describe('single-family unit numbers', () => {
     expect(formatPropertyUnitDisplay('101', 'SFR')).toBe('')
     expect(formatPropertyUnitDisplay(SINGLE_FAMILY_UNIT_LABEL)).toBe('')
     expect(formatUnitReference('1', 'single_family')).toBe('')
+    expect(propertyUnitColumnLabel('1', 'single_family')).toBe('n/a')
+    expect(propertyUnitColumnLabel('Unit 1', 'single_family_home')).toBe('n/a')
   })
 
   it('still formats multifamily unit numbers', () => {

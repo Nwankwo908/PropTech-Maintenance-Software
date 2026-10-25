@@ -9,6 +9,7 @@
  * Property activation (Active vs Pending setup) is separate from health scoring.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import {
   REPEAT_ISSUE_WINDOW_DAYS,
   calculatePropertyHealth,
@@ -175,6 +176,8 @@ export type PropertyHealthScopeScore = {
 export type PropertyHealthBuildingRow = PropertyHealthScopeScore & {
   building: string
   unitCount: number
+  /** Saved `properties.property_type`, when the row is a canonical property. */
+  propertyType?: string | null
   /** Open (not completed/cancelled) maintenance tickets for this building. */
   openTickets: number
   /** All non-voided work orders (open + completed) — Properties table “Work orders” column. */
@@ -206,6 +209,14 @@ export type PropertyHealthUnit = {
 export type PropertyHealthCanonicalProperty = {
   id: string
   name: string
+  propertyType?: string | null
+}
+
+/** Units column on the properties table. Single-family homes have no unit count. */
+export function propertyTableUnitsLabel(
+  row: Pick<PropertyHealthBuildingRow, 'unitCount' | 'propertyType'>,
+): string {
+  return isSingleFamilyPropertyType(row.propertyType) ? 'n/a' : String(row.unitCount)
 }
 
 export type PropertyHealthResident = {
@@ -1603,14 +1614,19 @@ function collectBuildingHealthRows(
         : null
 
     buildings.push({
+      ...scopeScore,
       building,
       unitCount: buildingUnits.length,
+      propertyType: scopeProperty?.propertyType
+        ?? (inputs.canonicalProperties ?? []).find((property) =>
+          buildingUnits.some((unit) => unit.propertyId && unit.propertyId === property.id),
+        )?.propertyType
+        ?? null,
       openTickets: scopedOpenTickets.length,
       workOrderCount: scopedWorkOrders.length,
       occupancyPct: occupancy.occupancyPct,
       residentRating,
       feedbackCount: ratings.length,
-      ...scopeScore,
     })
   }
 

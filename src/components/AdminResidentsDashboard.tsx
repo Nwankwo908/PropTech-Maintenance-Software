@@ -139,7 +139,12 @@ function asFiniteNumber(value: unknown): number {
   return 0
 }
 
-function formatUnit(building: string | null, unit: string | null): string {
+function formatUnit(
+  building: string | null,
+  unit: string | null,
+  propertyType?: string | null,
+): string {
+  if (isSingleFamilyPropertyType(propertyType)) return 'n/a'
   const b = building?.trim().replace(/\s+Apartments$/i, '')
   const u = unit?.trim()
   if (b && u) return `${b} - ${u}`
@@ -440,24 +445,24 @@ export function AdminResidentsDashboard() {
         .limit(1000),
     ])
 
-    const canonicalProperties =
-      propertiesResult.ok
-        ? propertiesResult.properties.map((property) => ({
-            id: property.id,
-            name: property.name,
-          }))
-        : []
+    const listedProperties = propertiesResult.ok ? propertiesResult.properties : []
+    const propertyTypeById = new Map(
+      listedProperties.map((property) => [property.id, property.propertyType]),
+    )
+    const canonicalProperties = listedProperties.map((property) => ({
+      id: property.id,
+      name: property.name,
+      propertyType: property.propertyType,
+    }))
     setPropertyOptions(
-      propertiesResult.ok
-        ? propertiesResult.properties
-            .map((property) => ({
-              value: property.id,
-              label: property.name.trim() || 'Untitled property',
-              name: property.name.trim(),
-            }))
-            .filter((option) => option.name)
-            .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
-        : [],
+      listedProperties
+        .map((property) => ({
+          value: property.id,
+          label: property.name.trim() || 'Untitled property',
+          name: property.name.trim(),
+        }))
+        .filter((option) => option.name)
+        .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })),
     )
     const propertyIdByBuilding = buildPropertyIdByBuilding(canonicalProperties)
     const healthUnits = mapUnitsForPropertyHealth(
@@ -530,6 +535,9 @@ export function AdminResidentsDashboard() {
         const propertyLinkId =
           matchedProperty?.id ??
           (building ? propertyIdByBuilding.get(normalizeBuildingKey(building)) ?? null : null)
+        const propertyType =
+          matchedProperty?.propertyType ??
+          (propertyLinkId ? propertyTypeById.get(propertyLinkId) : null)
         return {
           id: asString(raw.id),
           residentId: asString(raw.resident_id),
@@ -537,7 +545,7 @@ export function AdminResidentsDashboard() {
           unit: unit ?? '',
           building,
           propertyLinkId,
-          unitLabel: formatUnit(building, unit),
+          unitLabel: formatUnit(building, unit, propertyType),
           rentLabel: formatMonthlyRent(monthlyRent > 0 ? monthlyRent : null),
           paymentStatus: paymentStatusByResident.get(asString(raw.id)) ?? 'not_paid',
           contactPhone: phone,
@@ -1881,6 +1889,9 @@ export function AdminResidentsDashboard() {
         kind="resident"
         retry={selectedOnboardingRetryOnly}
         saving={onboardingSaving}
+        recipientName={selectedResidentCount === 1 ? selectedEditResident?.name : undefined}
+        channel="sms"
+        several={selectedResidentCount > 1}
         onClose={() => {
           if (onboardingSaving) return
           setSetupOutreachAckOpen(false)

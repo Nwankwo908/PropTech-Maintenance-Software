@@ -18,6 +18,7 @@ import { PropertyAccessRail } from '@/components/PropertyAccessRail'
 import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, workflowMatchesPropertyScope, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
@@ -818,13 +819,17 @@ export function AdminPropertyDetailDashboard() {
 
   const canonicalPropertiesForHealth = useMemo(
     (): PropertyHealthCanonicalProperty[] =>
-      canonicalProperties.map((property) => ({ id: property.id, name: property.name })),
+      canonicalProperties.map((property) => ({
+        id: property.id,
+        name: property.name,
+        propertyType: property.propertyType,
+      })),
     [canonicalProperties],
   )
 
   const activeCanonicalProperty = useMemo((): PropertyHealthCanonicalProperty | null => {
     if (canonicalProperty) {
-      return { id: canonicalProperty.id, name: canonicalProperty.name }
+      return { id: canonicalProperty.id, name: canonicalProperty.name, propertyType: canonicalProperty.propertyType }
     }
     if (!building) return null
     return canonicalPropertiesForHealth.find(
@@ -1112,7 +1117,7 @@ export function AdminPropertyDetailDashboard() {
     return buildPropertyUnitRows({
       building,
       propertyId: activeCanonicalProperty?.id ?? null,
-      propertyType: canonicalProperty?.propertyType ?? null,
+      propertyType: canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType ?? null,
       units: buildingUnits,
       residents: buildingResidents,
       tickets: buildingTickets.map((ticket) => ({
@@ -1486,7 +1491,13 @@ export function AdminPropertyDetailDashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatTile
           label="Units"
-          value={loading ? '—' : String(propertyUnitRows.length || buildingUnits.length)}
+          value={
+            loading
+              ? '—'
+              : isSingleFamilyPropertyType(canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType)
+                ? 'n/a'
+                : String(propertyUnitRows.length || buildingUnits.length)
+          }
           icon={<BuildingStatIcon />}
         />
         <StatTile

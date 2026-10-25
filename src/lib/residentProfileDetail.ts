@@ -8,7 +8,7 @@ import {
   isOpenWorkflowKanbanCard,
   WORKFLOW_STAGE_LABEL,
 } from '@/lib/adminWorkflowKanban'
-import { formatPropertyLeaseEnd, formatPropertyUnitDisplay } from '@/lib/propertyUnitRows'
+import { formatPropertyLeaseEnd, propertyUnitColumnLabel } from '@/lib/propertyUnitRows'
 import {
   normalizeResidentOccupancyStatus,
   residentOccupancyLabel,
@@ -361,7 +361,7 @@ export function buildResidentProfileDetail(input: {
     name: user.fullName,
     building: user.building?.trim() || 'Address',
     buildingShort: residentPlaceLabel(user.building),
-    unitDisplay: formatPropertyUnitDisplay(user.unit, propertyType),
+    unitDisplay: propertyUnitColumnLabel(user.unit, propertyType),
     standing: standing.standing,
     standingLabel: standing.standingLabel,
     phone: formatPhone(user.phone),

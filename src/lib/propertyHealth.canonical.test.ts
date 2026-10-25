@@ -6,6 +6,7 @@ import {
   dedupePropertyUnitsByLabel,
   filterResidentsForPropertyScope,
   filterUnitsForPropertyDetailScope,
+  propertyTableUnitsLabel,
   resolveBuildingHealthRow,
   unitBelongsToCanonicalProperty,
   type PropertyHealthCanonicalProperty,
@@ -574,5 +575,28 @@ describe('Properties grid work-order counts', () => {
     const row35 = resolveBuildingHealthRow(report, '35 Maple St')
     expect(row33?.workOrderCount).toBe(0)
     expect(row35?.workOrderCount).toBe(1)
+  })
+})
+
+describe('propertyTableUnitsLabel', () => {
+  it('shows n/a for a single-family property and the count otherwise', () => {
+    const report = buildPropertyHealthReport(
+      {
+        units: [],
+        tickets: [],
+        pmTasks: [],
+        feedback: [],
+        vendorMetrics: [],
+        canonicalProperties: [
+          { id: 'sfh', name: '123 Main', propertyType: 'single_family_home' },
+          { id: 'multi', name: 'Pine Court', propertyType: 'multifamily' },
+        ],
+      },
+      'landlord-1',
+    )
+    const singleFamily = resolveBuildingHealthRow(report, '123 Main')
+    const multifamily = resolveBuildingHealthRow(report, 'Pine Court')
+    expect(propertyTableUnitsLabel(singleFamily!)).toBe('n/a')
+    expect(propertyTableUnitsLabel({ ...multifamily!, unitCount: 4 })).toBe('4')
   })
 })

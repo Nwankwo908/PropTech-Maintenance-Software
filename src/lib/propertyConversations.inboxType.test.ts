@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  countInboxConversations,
   isAdminDirectedConversationType,
   isCommunicationInboxConversationType,
   landlordUpdateInboxDisplayName,
@@ -28,6 +29,20 @@ describe('isCommunicationInboxConversationType', () => {
         includeLandlordUpdate: true,
       }),
     ).toBe(true)
+  })
+})
+
+describe('countInboxConversations', () => {
+  it('counts inbox threads and skips Ask Ulo', () => {
+    expect(
+      countInboxConversations(['resident_intake', 'ai_copilot', 'vendor_alert', 'landlord_update']),
+    ).toBe(2)
+    expect(
+      countInboxConversations(
+        ['resident_intake', 'landlord_update'],
+        { includeLandlordUpdate: true },
+      ),
+    ).toBe(2)
   })
 })
 

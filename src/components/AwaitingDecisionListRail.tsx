@@ -7,6 +7,7 @@ import {
   adminRightRailPanelClass,
 } from '@/lib/adminRightRail'
 import { NeedsAttentionRow } from '@/components/NeedsAttentionRowAction'
+import { PmAttentionActions } from '@/components/PmServiceReviewRail'
 
 export type AwaitingDecisionItem = {
   key: string
@@ -18,6 +19,9 @@ export type AwaitingDecisionItem = {
   actionTo?: string
   onAction?: () => void
   actionStyle?: 'alert'
+  secondaryActionLabel?: string
+  onSecondaryAction?: () => void
+  onSnooze?: () => void
 }
 
 function CloseIcon() {
@@ -94,7 +98,39 @@ export function AwaitingDecisionListRail({
             <p className="px-6 py-12 text-center text-[13px] text-[#6a7282]">Nothing needs attention.</p>
           ) : (
             <div className="flex flex-col divide-y divide-[#f3f4f6]">
-              {items.map((item) => (
+              {items.map((item) =>
+                item.key.startsWith('pm_') ? (
+                  <div key={item.key} className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+                          {item.title}
+                        </p>
+                        <span
+                          className={[
+                            'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
+                            item.badge === 'critical'
+                              ? 'bg-[#E3646C] text-white'
+                              : 'bg-[#fef9c2] text-[#a65f00]',
+                          ].join(' ')}
+                        >
+                          {item.badge === 'critical' ? 'Critical' : 'Warning'}
+                        </span>
+                      </div>
+                      {item.context ? (
+                        <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">{item.context}</p>
+                      ) : null}
+                      <p className="text-[12px] leading-4 text-[#6a7282]">{item.meta}</p>
+                    </div>
+                    <PmAttentionActions
+                      approveLabel={item.secondaryActionLabel}
+                      onApprove={item.onSecondaryAction}
+                      reviewLabel={item.actionLabel}
+                      onReview={item.onAction ? () => onItemAction(item) : undefined}
+                      onSnooze={item.onSnooze}
+                    />
+                  </div>
+                ) : (
                 <NeedsAttentionRow
                   key={item.key}
                   actionLabel={item.actionLabel}
@@ -127,7 +163,8 @@ export function AwaitingDecisionListRail({
                     <p className="text-[12px] leading-4 text-[#6a7282]">{item.meta}</p>
                   </div>
                 </NeedsAttentionRow>
-              ))}
+                )
+              )}
             </div>
           )}
         </div>

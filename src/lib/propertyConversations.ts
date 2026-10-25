@@ -51,6 +51,16 @@ export function isCommunicationInboxConversationType(
   return !isAdminDirectedConversationType(type)
 }
 
+/** Inbox threads that count as Messages. Same type rules as the inbox list. */
+export function countInboxConversations(
+  conversationTypes: readonly (string | null | undefined)[],
+  options?: CommunicationInboxTypeOptions,
+): number {
+  return conversationTypes.filter((type) =>
+    isCommunicationInboxConversationType(type ?? '', options),
+  ).length
+}
+
 /** List title for a Ulo ↔ landlord SMS thread on Messages. */
 export function landlordUpdateInboxDisplayName(companyName?: string | null): string {
   const company = (companyName ?? '').trim()

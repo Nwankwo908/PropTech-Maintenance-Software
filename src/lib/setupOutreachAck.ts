@@ -11,11 +11,6 @@ export function setupOutreachAckBody(kind: SetupOutreachRecipientKind): string {
   return `You're about to send a text to this ${who}. Ask them to save our number in their contacts so the message does not go to Unknown Sender or Filtered Unknown.`
 }
 
-export function setupOutreachAckCheckboxLabel(kind: SetupOutreachRecipientKind): string {
-  const who = kind === 'resident' ? 'resident' : 'vendor'
-  return `I will remind the ${who} to save our number so texts are not filtered as unknown.`
-}
-
 export function setupOutreachAckConfirmLabel(input: {
   kind: SetupOutreachRecipientKind
   retry?: boolean

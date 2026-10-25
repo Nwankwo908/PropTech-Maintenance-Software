@@ -50,7 +50,7 @@ import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
 import {
   tryHandleLandlordVendorChoiceInbound,
 } from "../vendorLandlordChoice.ts"
-import { tryHandleLandlordPickBatchInbound } from "../landlordDecisionExecute.ts"
+import { tryHandlePmServiceYesHvacInbound } from "./pmServiceYesHvac.ts"
 import {
   canHandleVendorAvailabilityProbe,
   tryHandleVendorAvailabilityProbeInbound,
@@ -247,6 +247,25 @@ async function tryEstimateDecisionHandler(
     reply: {
       body: result.replyBody,
       source: `estimate_decision_${result.action}`,
+    },
+  }
+}
+
+async function tryPmServiceYesHvacHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandlePmServiceYesHvacInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: "pm_service_yes_hvac",
+    reply: {
+      body: result.replyBody,
+      source: "pm_service_yes_hvac",
     },
   }
 }
@@ -941,6 +960,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "Global STOP/START/HELP keyword (sole exception to pending-context rule)",
   landlord_pick_batch:
     "Open landlord_pick_batches row for this sender (reply #display_id decisions). No open batch falls through to single-ticket vendor choice.",
+  pm_service_yes_hvac:
+    "intake_state.awaiting_pm_service on the landlord thread and the reply is YES HVAC",
   staff_reply:
     "intake_state.awaiting_staff_reply on a resident thread (property-team message ending in ? within 24h)",
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
@@ -1000,6 +1021,7 @@ export const INBOUND_SMS_HANDLERS_UNUSED: Readonly<
 export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
   { id: "landlord_pick_batch", priority: 6, try: tryLandlordPickBatchHandler },
+  { id: "pm_service_yes_hvac", priority: 7, try: tryPmServiceYesHvacHandler },
   { id: "staff_reply", priority: 9, try: tryStaffReplyHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },

@@ -1720,7 +1720,7 @@ export function PropertyDetailsPanel({
         description={
           inspectionEmpty
             ? 'Start with the water heater and heating system'
-            : 'Capture equipment details or add an inspection report'
+            : 'Capture appliance details or add an inspection report'
         }
         empty={inspectionEmpty}
         expanded={expanded === 'inspection'}

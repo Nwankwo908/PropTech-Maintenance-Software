@@ -5,6 +5,7 @@ import { TableCheckbox } from '@/components/TableCheckbox'
 import {
   resolvePropertyHealthPendingMessage,
   shouldShowPropertyHealthScore,
+  propertyTableUnitsLabel,
   type PropertyHealthBuildingRow,
   type PropertyHealthStatus,
 } from '@/lib/propertyHealth'
@@ -398,7 +399,7 @@ export function PropertyHealthBuildingGrid({
                       </div>
                     </td>
                     <td className={`${td} ${numericAlign} tabular-nums text-[#364153]`}>
-                      {b.unitCount}
+                      {propertyTableUnitsLabel(b)}
                     </td>
                     <td className={td}>
                       <span

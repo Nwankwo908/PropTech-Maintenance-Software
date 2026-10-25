@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import feedInfoIcon from '@/assets/noun-information.png'
+import infoIcon from '@/assets/noun_Info_6553140.svg'
 import {
   PROPERTY_HEALTH_SCORE_INFO_DESCRIPTION,
   type PropertyHealthFactorBreakdownLine,
@@ -8,7 +8,7 @@ import {
 
 function KpiInfoIcon() {
   return (
-    <img src={feedInfoIcon} alt="" aria-hidden className="size-4 opacity-55" />
+    <img src={infoIcon} alt="" aria-hidden className="size-4" />
   )
 }
 

@@ -242,13 +242,13 @@ function KpiCard({
         </p>
         {infoContent}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
         {chart ? (
-          <div className="pointer-events-none -ml-2 sm:-ml-3">{chart}</div>
+          <div className="pointer-events-none -ml-2 shrink-0 sm:-ml-3">{chart}</div>
         ) : valueNote ? (
-          <div className="min-w-0 w-full text-left">{valueNote}</div>
+          <div className="max-w-full text-left">{valueNote}</div>
         ) : value ? (
-          <p className="whitespace-nowrap text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
+          <p className="shrink-0 whitespace-nowrap text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
             {value}
           </p>
         ) : null}
@@ -328,7 +328,11 @@ export function AdminPropertiesDashboard() {
 
   const canonicalPropertiesForHealth = useMemo(
     (): PropertyHealthCanonicalProperty[] =>
-      canonicalProperties.map((property) => ({ id: property.id, name: property.name })),
+      canonicalProperties.map((property) => ({
+        id: property.id,
+        name: property.name,
+        propertyType: property.propertyType,
+      })),
     [canonicalProperties],
   )
 

@@ -104,6 +104,7 @@ export async function fetchMyPropertiesPortfolio(
     ? canonicalPropertiesResult.properties.map((property) => ({
         id: property.id,
         name: property.name,
+        propertyType: property.propertyType,
       }))
     : []
 

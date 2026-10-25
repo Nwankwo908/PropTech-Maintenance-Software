@@ -20,6 +20,16 @@ import ytdMaintenanceCostIcon from '@/assets/price-up.png'
 import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
 import { NeedsAttentionRow } from '@/components/NeedsAttentionRowAction'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
+import { PmAttentionActions, PmServiceReviewRail } from '@/components/PmServiceReviewRail'
+import { batchesFromPmTaskRows, type PmTaskAttentionRow } from '@/lib/pmServiceAttentionCards'
+import { persistPmServiceAppResolution } from '@/lib/pmServiceAttentionActions'
+import {
+  approvePmServiceSelection,
+  derivePmServiceCards,
+  sortNeedsAttention,
+  type PmServiceBatchSnapshot,
+  type PmServiceCard,
+} from '@shared/pm/pmServiceAttention'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
 import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
 import { LateRentAccountMessageRail } from '@/components/LateRentAccountMessageRail'
@@ -286,6 +296,12 @@ type AttentionItem = {
   actionTo?: string
   onAction?: () => void
   actionStyle?: 'alert'
+  secondaryActionLabel?: string
+  onSecondaryAction?: () => void
+  onSnooze?: () => void
+  emergencyRepair?: boolean
+  pmSafety?: boolean
+  dueAt?: string | null
 }
 
 type EscalatedRailTarget =
@@ -693,13 +709,13 @@ function KpiCard({
   )
 
   const valueBlock = (
-    <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+    <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
       {chart ? (
-        <div className="pointer-events-none -ml-2 sm:-ml-3">{chart}</div>
+        <div className="pointer-events-none -ml-2 shrink-0 sm:-ml-3">{chart}</div>
       ) : valueNote ? (
-        <div className="min-w-0 w-full text-left">{valueNote}</div>
+        <div className="max-w-full text-left">{valueNote}</div>
       ) : value ? (
-        <p className="min-w-0 whitespace-nowrap text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+        <p className="shrink-0 whitespace-nowrap text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
           {value}
         </p>
       ) : null}
@@ -958,6 +974,8 @@ export function AdminOverviewDashboard() {
     ticketIds: new Set(),
     runIds: new Set(),
   })
+  const [pmServiceBatches, setPmServiceBatches] = useState<PmServiceBatchSnapshot[]>([])
+  const [pmReviewCard, setPmReviewCard] = useState<PmServiceCard | null>(null)
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1542,7 +1560,11 @@ export function AdminOverviewDashboard() {
 
   const canonicalPropertiesForHealth = useMemo(
     (): PropertyHealthCanonicalProperty[] =>
-      canonicalProperties.map((property) => ({ id: property.id, name: property.name })),
+      canonicalProperties.map((property) => ({
+        id: property.id,
+        name: property.name,
+        propertyType: property.propertyType,
+      })),
     [canonicalProperties],
   )
 
@@ -1881,6 +1903,88 @@ export function AdminOverviewDashboard() {
     setInvoicePayRailId(invoiceId)
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    async function loadPmServiceBatches() {
+      if (!supabase) return
+      const { data } = await supabase
+        .from('preventive_maintenance_tasks')
+        .select('id, title, status, due_at, unit_label, building, metadata')
+        .eq('landlord_id', getActiveLandlordId())
+        .limit(500)
+      if (cancelled) return
+      setPmServiceBatches(
+        batchesFromPmTaskRows(
+          ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+            id: String(row.id ?? ''),
+            title: typeof row.title === 'string' ? row.title : null,
+            status: typeof row.status === 'string' ? row.status : null,
+            dueAt: typeof row.due_at === 'string' ? row.due_at : null,
+            unitLabel: typeof row.unit_label === 'string' ? row.unit_label : null,
+            building: typeof row.building === 'string' ? row.building : null,
+            metadata: row.metadata,
+          })) satisfies PmTaskAttentionRow[],
+        ),
+      )
+    }
+    void loadPmServiceBatches()
+    return () => {
+      cancelled = true
+    }
+  }, [location.pathname])
+
+  const resolvePmBatch = useCallback((batchId: string, resolution: PmServiceBatchSnapshot['resolution'], snoozedUntil?: string | null) => {
+    setPmServiceBatches((current) =>
+      current.map((batch) =>
+        batch.batchId === batchId
+          ? { ...batch, resolution: resolution ?? batch.resolution, snoozedUntil: snoozedUntil ?? batch.snoozedUntil }
+          : batch,
+      ),
+    )
+  }, [])
+
+  const approvePmBatch = useCallback(
+    (card: PmServiceCard, unitIds: string[]) => {
+      const batch = pmServiceBatches.find((row) => row.batchId === card.batchId)
+      if (!batch) return
+      const result = approvePmServiceSelection(batch, unitIds)
+      resolvePmBatch(card.batchId, 'app')
+      setPmReviewCard(null)
+      setAwaitingDecisionListOpen(false)
+      showAwaitingDecisionOutcome(
+        {
+          operationTitle: 'Preventive HVAC',
+          context: card.context,
+          kind: 'resolved',
+          headline: 'Removed from Needs Your Attention',
+          detail: result.summary,
+          removedFromQueue: true,
+        },
+        card.key,
+      )
+      void persistPmServiceAppResolution({
+        batchId: card.batchId,
+        taskIds: unitIds,
+        summary: result.summary,
+      })
+    },
+    [pmServiceBatches, resolvePmBatch, showAwaitingDecisionOutcome],
+  )
+
+  const snoozePmBatch = useCallback(
+    (card: PmServiceCard) => {
+      const until = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
+      resolvePmBatch(card.batchId, null, until)
+      void persistPmServiceAppResolution({
+        batchId: card.batchId,
+        taskIds: [],
+        summary: 'Snoozed',
+        snoozedUntil: until,
+      })
+    },
+    [resolvePmBatch],
+  )
+
   const allAttentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
     const completedTicketIds = collectCompletedWorkOrderTicketIds({
@@ -1924,6 +2028,8 @@ export function AdminOverviewDashboard() {
         meta: scoped.meta,
         actionLabel: 'Assign vendor',
         actionStyle: 'alert',
+        emergencyRepair: ticket.urgency === 'emergency',
+        dueAt: ticket.dueAt,
         onAction: () => openEscalatedRailForTicket(ticket.id),
       })
     }
@@ -2167,8 +2273,35 @@ export function AdminOverviewDashboard() {
       })
     }
 
-    return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview])
+    for (const batch of pmServiceBatches) {
+      for (const card of derivePmServiceCards(batch)) {
+        const approval = card.subtype === 'batch_approval'
+        items.push({
+          key: card.key,
+          badge: card.badge,
+          title: card.title,
+          context: card.context,
+          meta: card.meta,
+          actionLabel: approval ? 'Review' : 'Review',
+          secondaryActionLabel: approval ? 'Approve all' : undefined,
+          onSecondaryAction: approval ? () => approvePmBatch(card, card.units.map((unit) => unit.id)) : undefined,
+          onAction: approval ? () => setPmReviewCard(card) : undefined,
+          onSnooze: card.canSnooze ? () => snoozePmBatch(card) : undefined,
+          pmSafety: card.safety,
+          dueAt: card.dueAt,
+        })
+      }
+    }
+
+    return sortNeedsAttention(
+      items.map((item) => ({
+        ...item,
+        id: item.key,
+        safety: item.pmSafety === true,
+        emergencyRepair: item.emergencyRepair === true,
+      })),
+    )
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches, approvePmBatch, snoozePmBatch])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
@@ -3401,7 +3534,45 @@ export function AdminOverviewDashboard() {
               Nothing needs attention.
             </p>
           ) : (
-            attentionItems.map((item, index) => (
+            attentionItems.map((item, index) =>
+              item.key.startsWith('pm_') ? (
+                <div
+                  key={item.key}
+                  className="sa-enter flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-6"
+                  style={{ animationDelay: `${Math.min(index, 3) * 40}ms` }}
+                >
+                  <div className="flex w-[4.75rem] shrink-0 items-center sm:justify-start">
+                    <span
+                      className={[
+                        'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
+                        item.badge === 'critical'
+                          ? 'bg-[#E3646C] text-white'
+                          : 'bg-[#fef9c2] text-[#a65f00]',
+                      ].join(' ')}
+                    >
+                      {item.badge === 'critical' ? 'Critical' : 'Warning'}
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1 basis-0">
+                    <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+                      {item.title}
+                    </p>
+                    {item.context ? (
+                      <p className="mt-0.5 truncate text-[13px] leading-5 text-[#6a7282]">{item.context}</p>
+                    ) : null}
+                  </div>
+                  <p className="min-w-0 flex-1 basis-0 text-[12px] leading-4 text-[#6a7282] sm:text-[13px] sm:leading-5">
+                    {item.meta}
+                  </p>
+                  <PmAttentionActions
+                    approveLabel={item.secondaryActionLabel}
+                    onApprove={item.onSecondaryAction}
+                    reviewLabel={item.actionLabel}
+                    onReview={item.onAction}
+                    onSnooze={item.onSnooze}
+                  />
+                </div>
+              ) : (
               <NeedsAttentionRow
                 key={item.key}
                 actionLabel={item.actionLabel}
@@ -3438,7 +3609,8 @@ export function AdminOverviewDashboard() {
                   {item.meta}
                 </p>
               </NeedsAttentionRow>
-            ))
+              )
+            )
           )}
         </div>
       </section>
@@ -3686,6 +3858,16 @@ export function AdminOverviewDashboard() {
           />
         </>
       )}
+
+      <PmServiceReviewRail
+        open={pmReviewCard != null}
+        card={pmReviewCard}
+        onClose={() => setPmReviewCard(null)}
+        onApprove={(unitIds) => {
+          if (!pmReviewCard) return
+          approvePmBatch(pmReviewCard, unitIds)
+        }}
+      />
 
       <AwaitingDecisionListRail
         open={awaitingDecisionListOpen}

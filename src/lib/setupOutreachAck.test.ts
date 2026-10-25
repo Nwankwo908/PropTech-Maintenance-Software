@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   setupOutreachAckBody,
-  setupOutreachAckCheckboxLabel,
   setupOutreachAckConfirmLabel,
   setupOutreachAckTitle,
 } from './setupOutreachAck'
@@ -10,7 +9,6 @@ describe('setupOutreachAck', () => {
   it('mentions saving the number so messages are not filtered', () => {
     expect(setupOutreachAckBody('resident')).toMatch(/save our number/i)
     expect(setupOutreachAckBody('resident')).toMatch(/Unknown Sender|Filtered Unknown/i)
-    expect(setupOutreachAckCheckboxLabel('vendor')).toMatch(/save our number/i)
   })
 
   it('labels confirm as Send invite, with Retry invite when retrying', () => {

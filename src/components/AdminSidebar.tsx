@@ -21,6 +21,7 @@ import {
 } from '@/lib/adminNavigation'
 import { useSetupSuccessNavHint } from '@/hooks/useSetupSuccessNavHint'
 import { useActiveTasksNavCount } from '@/hooks/useActiveTasksNavCount'
+import { useMessagesNavCount } from '@/hooks/useMessagesNavCount'
 import { assignAdminPath } from '@/lib/assignAdminPath'
 import {
   PROFILE_SETUP_NAV_POINT_EVENT,
@@ -115,6 +116,14 @@ function SidebarChromeGlyph({ src }: { src: string }) {
   )
 }
 
+function NavCountBadge({ count }: { count: number }) {
+  return (
+    <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#101828] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
+      {count}
+    </span>
+  )
+}
+
 type NavItem = {
   id: AdminNavId
   to: string
@@ -186,6 +195,7 @@ export function AdminSidebarContent({
   const isCollapsedRail = Boolean(forRail && collapsed)
   const setupNavHint = useSetupSuccessNavHint()
   const activeTasksCount = useActiveTasksNavCount()
+  const messagesCount = useMessagesNavCount()
   const [profileSetupPointed, setProfileSetupPointed] = useState(false)
   /** Remounts shine text so hover / focus replay the sweep (load uses CSS delay). */
   const [portfolioShineKey, setPortfolioShineKey] = useState(0)
@@ -310,9 +320,10 @@ export function AdminSidebarContent({
                 <>
                   <span className="min-w-0 text-left">{item.label}</span>
                   {item.id === 'workflows' && activeTasksCount != null ? (
-                    <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#101828] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
-                      {activeTasksCount}
-                    </span>
+                    <NavCountBadge count={activeTasksCount} />
+                  ) : null}
+                  {item.id === 'communication' && messagesCount != null ? (
+                    <NavCountBadge count={messagesCount} />
                   ) : null}
                 </>
               ) : null}

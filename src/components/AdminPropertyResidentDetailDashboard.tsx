@@ -53,7 +53,8 @@ import {
   residentDetailPath,
 } from '@/lib/propertyRoutes'
 import { findPropertyById, findPropertyByName, listPropertiesForLandlord } from '@/lib/properties'
-import { formatPropertyUnitDisplay } from '@/lib/propertyUnitRows'
+import { propertyUnitColumnLabel } from '@/lib/propertyUnitRows'
+import { NounInfoIcon } from '@/components/NounInfoIcon'
 import {
   filterResidentsForPropertyScope,
   filterUnitsForCanonicalProperty,
@@ -227,12 +228,7 @@ function MailIcon() {
 }
 
 function InfoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5 text-[#9ca3af]">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
-    </svg>
-  )
+  return <NounInfoIcon className="size-3.5" />
 }
 
 function PawIcon() {
@@ -810,6 +806,7 @@ export function AdminPropertyResidentDetailDashboard() {
           activeCanonicalProperty = {
             id: propertyResult.property.id,
             name: propertyResult.property.name,
+            propertyType: propertyResult.property.propertyType,
           }
           if (slug.kind === 'name') {
             const nextPath = propertyResidentDetailPath(propertyResult.property.id, loaded.id)
@@ -877,7 +874,7 @@ export function AdminPropertyResidentDetailDashboard() {
               ...current,
               building: buildingName,
               buildingShort: residentPlaceLabel(buildingName),
-              unitDisplay: formatPropertyUnitDisplay(loaded.unit, resolvedPropertyType),
+              unitDisplay: propertyUnitColumnLabel(loaded.unit, resolvedPropertyType),
               communications,
             }
           : current,
@@ -1651,6 +1648,8 @@ export function AdminPropertyResidentDetailDashboard() {
         kind="resident"
         retry={retryOnboarding}
         saving={resendingActivation}
+        recipientName={loadedUser?.fullName}
+        channel="sms"
         onClose={() => {
           if (resendingActivation) return
           setSetupOutreachAckOpen(false)

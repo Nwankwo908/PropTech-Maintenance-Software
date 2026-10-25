@@ -1,4 +1,4 @@
-import feedInfoIcon from '@/assets/noun-information.png'
+import feedInfoIcon from '@/assets/noun_Info_6553140.svg'
 import { workflowOperationsPath } from '@/lib/adminWorkflowKanban'
 import {
   buildActivityFeedTooltipCopy,
@@ -117,7 +117,7 @@ function FeedEventInfo({
             : `More information about ${copy.title}`
         }
       >
-        <img src={feedInfoIcon} alt="" aria-hidden className="size-5 opacity-55" />
+        <img src={feedInfoIcon} alt="" aria-hidden className="size-5" />
       </button>
       <div
         role="tooltip"

@@ -44,6 +44,7 @@ export type LandlordAttentionKind =
   | "lease_info_missing"
   | "unknown_occupant"
   | "external_vendor_replied"
+  | "pm_service"
 
 export type NotifyLandlordAttentionParams = {
   landlordId: string
@@ -75,6 +76,8 @@ export type NotifyLandlordAttentionParams = {
   isCritical?: boolean
   landlordFirstName?: string | null
   invoicePaidConfirmation?: AwaitingInvoicePaidConfirmation | null
+  /** Pending YES HVAC ask, stored on the landlord thread with this alert. */
+  pmServiceAsk?: { batchId: string; idempotencyKey: string } | null
 }
 
 export type NotifyLandlordAttentionResult = {
@@ -122,6 +125,8 @@ export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[]
     case "external_vendor_replied":
       // Paid confirmation uses YES/NO in the body — no numbered reply options.
       return []
+    case "pm_service":
+      return ["Reply YES HVAC to approve", "Or review each home in Ulo"]
     default:
       return ["Open Ulo to decide next"]
   }
@@ -143,6 +148,8 @@ export function defaultAttentionWhyLine(kind: LandlordAttentionKind): string | n
       return "This person is not on the unit roster yet."
     case "external_vendor_replied":
       return "They wrote back on the job thread."
+    case "pm_service":
+      return "A preventive HVAC visit needs a decision from you."
     default:
       return "This needs a decision from you."
   }
@@ -341,6 +348,7 @@ export async function persistLandlordAttentionSms(
     kind: LandlordAttentionKind
     maintenanceRequestId?: string | null
     idempotencyKey?: string | null
+    pmServiceAsk?: { batchId: string; idempotencyKey: string } | null
   },
 ): Promise<void> {
   const identity = await upsertSmsIdentityForPhone(supabase, {
@@ -414,6 +422,12 @@ export async function persistLandlordAttentionSms(
       : {}
   const nextIntake = { ...prior }
   delete nextIntake[UNKNOWN_CONTACT_INTAKE_KEY]
+  if (params.pmServiceAsk?.batchId) {
+    nextIntake.awaiting_pm_service = {
+      batchId: params.pmServiceAsk.batchId,
+      idempotencyKey: params.pmServiceAsk.idempotencyKey,
+    }
+  }
 
   await supabase
     .from("sms_conversations")
@@ -795,7 +809,9 @@ export async function notifyLandlordNeedsAttention(
     locationLine: params.locationLine,
     whyLine: params.whyLine,
     nextSteps: params.nextSteps,
-    choiceReplyHint: params.choiceReplyHint,
+    choiceReplyHint:
+      params.choiceReplyHint ??
+      (params.pmServiceAsk ? "Reply YES HVAC to approve this service." : null),
     dashboardUrl,
     actionLabel: attentionEmailActionLabel(params.kind),
     invoicePaid,
@@ -889,6 +905,7 @@ export async function notifyLandlordNeedsAttention(
               kind: params.kind,
               maintenanceRequestId: params.maintenanceRequestId ?? null,
               idempotencyKey: key,
+              pmServiceAsk: params.kind === "pm_service" ? params.pmServiceAsk ?? null : null,
             })
           }
         } catch (e) {

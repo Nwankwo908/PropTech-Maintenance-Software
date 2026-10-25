@@ -83,6 +83,15 @@ export function formatPropertyUnitDisplay(
   return ''
 }
 
+/** Unit column on a property's units table. */
+export function propertyUnitColumnLabel(
+  unitLabel: string,
+  propertyType?: string | null,
+): string {
+  if (isSingleFamilyPropertyType(propertyType)) return 'n/a'
+  return formatPropertyUnitDisplay(unitLabel, propertyType) || '—'
+}
+
 export function formatPropertyLeaseEnd(value: string | null): string | null {
   if (!value?.trim()) return null
   const date = new Date(`${value.trim()}T12:00:00`)
@@ -307,11 +316,11 @@ export function buildPropertyUnitRows(input: {
       const balanceDue = household.length > 0 ? Math.max(...household.map((member) => member.balanceDue), 0) : 0
       const leaseEndDate =
         household.find((member) => member.leaseEndDate?.trim())?.leaseEndDate ?? null
-      const unitDisplay = formatPropertyUnitDisplay(unit.unitLabel, propertyType)
+      const unitDisplay = propertyUnitColumnLabel(unit.unitLabel, propertyType)
 
       return {
         id: unit.id,
-        unitDisplay: unitDisplay || '—',
+        unitDisplay,
         // Always link a matched resident so profile is reachable even if the unit
         // chip has not flipped to Occupied yet. Co-tenants share one cell.
         residentId: resident?.id ?? null,

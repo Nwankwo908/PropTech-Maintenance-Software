@@ -71,16 +71,61 @@ describe('Home Check results', () => {
     vi.mocked(homeCheckRequest).mockReset()
   })
 
+  it('keeps one water heater and one heating system when another check repeats them', async () => {
+    const older = {
+      ...openCheck,
+      id: 'older',
+      assets: [
+        asset('old-heater', 'water_heater'),
+        asset('old-furnace', 'heating'),
+      ],
+    }
+    vi.mocked(homeCheckRequest).mockResolvedValue({ checks: [openCheck, older], metrics: [] })
+    render(<HomeCheckPanel building='14 Maple Ave' propertyId='maple' />)
+    expect(await screen.findAllByText('Water heater')).toHaveLength(1)
+    expect(screen.getAllByText('Heating system')).toHaveLength(1)
+  })
+
+  it('hides an unmatched appliance and explains it above the table', async () => {
+    const mismatched = {
+      ...openCheck,
+      assets: [
+        {
+          ...asset('heater', 'water_heater'),
+          labelReadability: {
+            status: 'uncertain' as const,
+            modelConfidence: 0,
+            serialConfidence: 0,
+            uncertainCharacters: [],
+            formatWarnings: [],
+            retakeRequested: true,
+            retakeMessage: 'These photos do not match the selected system. Send its whole-equipment photo and data plate.',
+          },
+        },
+        asset('furnace', 'heating'),
+      ],
+    }
+    vi.mocked(homeCheckRequest).mockResolvedValue({ checks: [mismatched], metrics: [] })
+    render(<HomeCheckPanel building='14 Maple Ave' propertyId='maple' />)
+    const banner = await screen.findByRole('alert')
+    expect(banner.textContent).toContain('Recent photos do not match the selected system. Please try again.')
+    expect(banner.querySelector('svg')).toBeTruthy()
+    expect(screen.queryByText('Water heater')).toBeNull()
+    const heating = screen.getByText('Heating system')
+    expect(banner.compareDocumentPosition(heating) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('shows the equipment table without the retired capture instructions', async () => {
     vi.mocked(homeCheckRequest).mockResolvedValue({ checks: [openCheck], metrics: [] })
     const html = render(<HomeCheckPanel building='14 Maple Ave' propertyId='maple' />)
-    expect(await screen.findByText('Assets from Home Check')).toBeTruthy()
+    expect(await screen.findByText('Water heater')).toBeTruthy()
     expect(html.container.textContent).not.toContain('Scan property equipment')
     expect(html.container.textContent).not.toContain('I’ll do it')
     expect(html.container.textContent).not.toContain('Ask my tenant')
     expect(html.container.textContent).not.toContain('Open my Home Check')
-    expect(html.container.textContent).toContain('14 Maple Ave')
-    expect(html.container.textContent).not.toContain('Unit 1')
+    expect(html.container.textContent).not.toContain('HC-100')
+    expect(html.container.textContent).not.toContain('14 Maple Ave')
+    expect(html.container.textContent).not.toContain('collecting')
   })
 
   it('reviews a correction, confirms it, and reloads the saved record', async () => {
@@ -99,7 +144,7 @@ describe('Home Check results', () => {
       return { ok: true }
     })
     render(<HomeCheckPanel building='14 Maple Ave' propertyId='maple' />)
-    expect(await screen.findByText('Assets from Home Check')).toBeTruthy()
+    expect(await screen.findByText('Water heater')).toBeTruthy()
     fireEvent.click(screen.getByLabelText('Select all assets'))
     fireEvent.click(screen.getByRole('button', { name: /Edit selected/ }))
     fireEvent.change(screen.getAllByLabelText('Model')[0]!, { target: { value: 'ABC-1' } })
@@ -125,7 +170,7 @@ describe('Home Check results', () => {
     await waitFor(() => expect(homeCheckRequest).toHaveBeenCalled())
     vi.mocked(homeCheckRequest).mockResolvedValue({ checks: [openCheck], metrics: [] })
     window.dispatchEvent(new CustomEvent(HOME_CHECK_CHANGED_EVENT, { detail: { propertyId: 'maple' } }))
-    expect(await screen.findByText('Assets from Home Check')).toBeTruthy()
+    expect(await screen.findByText('Water heater')).toBeTruthy()
   })
 })
 

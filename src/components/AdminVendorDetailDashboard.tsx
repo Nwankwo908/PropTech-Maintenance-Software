@@ -43,6 +43,7 @@ import {
 } from '@/api/vendorVerification'
 import { OverrideOnboardingModal } from '@/components/OverrideOnboardingModal'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
+import { inviteChannelFromContact } from '@/lib/inviteMessagePreview'
 import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
 import {
   VENDOR_ONBOARDING_OVERRIDE_DISCLAIMER_VERSION,
@@ -1439,6 +1440,8 @@ export function AdminVendorDetailDashboard() {
         kind="vendor"
         retry={canRetryVerificationInvite}
         saving={inviteSaving}
+        recipientName={vendor?.name || vendor?.contactName}
+        channel={inviteChannelFromContact(vendor?.phone, vendor?.email)}
         onClose={() => {
           if (inviteSaving) return
           setSetupOutreachAckOpen(false)

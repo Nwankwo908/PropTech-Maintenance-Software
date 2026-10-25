@@ -6,6 +6,7 @@ import {
   type VendorInviteChannel,
 } from '@/api/vendorVerification'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { InviteMessagePreview } from '@/components/InviteMessagePreview'
 
 export type InviteVendorPrefill = {
   vendorId?: string | null
@@ -239,6 +240,11 @@ export function InviteVendorModal({
                 ))}
               </div>
             </div>
+            <InviteMessagePreview
+              kind="vendor"
+              recipientName={businessName.trim() || contactName.trim() || undefined}
+              channel={channel}
+            />
             <button
               type="button"
               disabled={!canSend || saving}

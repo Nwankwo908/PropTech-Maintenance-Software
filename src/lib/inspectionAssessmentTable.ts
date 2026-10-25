@@ -40,6 +40,37 @@ export function assessmentDescription(result: ApplianceVisionResult): string {
   return type || '—'
 }
 
+/** A row the photo reading could not place on the selected appliance. */
+export function isUnmatchedApplianceRow(row: {
+  categoryLabel?: string
+  result?: ApplianceVisionResult | null
+}): boolean {
+  const category = `${row.categoryLabel ?? ''} ${row.result?.category ?? ''} ${row.result?.identifiedItem.type ?? ''}`.toLowerCase()
+  if (/\bunknown\b/.test(category)) return true
+  const note = `${row.result?.labelReadability?.retakeMessage ?? ''} ${row.result?.estimatedAge?.basis ?? ''}`
+  return /do not match the selected/i.test(note)
+}
+
+/** Description cell text that is not already shown in category, condition, or age. */
+export function assessmentTableDescription(
+  result: ApplianceVisionResult,
+  categoryLabel: string,
+): string {
+  const type = result.identifiedItem.type.trim()
+  const category = categoryLabel.trim()
+  const kept = assessmentDescription(result)
+    .replace(/Visible condition unknown\.?/gi, '')
+    .replace(/Age unknown\.?/gi, '')
+    .replace(/About \d+ years \(estimate\)\.?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!kept) return ''
+  if (kept.toLowerCase() === type.toLowerCase() || kept.toLowerCase() === category.toLowerCase()) {
+    return ''
+  }
+  return kept
+}
+
 export function assessmentSerial(result: ApplianceVisionResult): string {
   return result.identifiedItem.serialNumber?.trim() ?? ''
 }

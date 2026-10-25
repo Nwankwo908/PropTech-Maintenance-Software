@@ -4,7 +4,9 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal, type VendorManagementRow } from '@/components/VendorFormModal'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
+import { inviteChannelFromContact } from '@/lib/inviteMessagePreview'
 import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
+import { NounInfoIcon } from '@/components/NounInfoIcon'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
@@ -158,12 +160,7 @@ const VENDOR_RATING_INFO =
   'Based on resident reviews, completed jobs, response time, and how often work needs to be redone. One rating doesn’t tell the whole story.'
 
 function ColumnInfoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5" aria-hidden>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
-    </svg>
-  )
+  return <NounInfoIcon />
 }
 
 function ColumnInfoTip({
@@ -742,6 +739,13 @@ export function AdminVendorsDashboard() {
       })
     })
   }, [vendors, selectedVendorIds, verificationByVendor, availabilityByVendor])
+
+  const selectedInviteVendor = useMemo(() => {
+    if (selectedVendorIds.size !== 1) return null
+    const id = [...selectedVendorIds][0]
+    if (!id) return null
+    return vendors.find((vendor) => vendor.id === id) ?? null
+  }, [vendors, selectedVendorIds])
 
   const selectedCanSetupOrRetry =
     selectedCanStartOnboarding || selectedOnboardingRetryOnly
@@ -1372,6 +1376,13 @@ export function AdminVendorsDashboard() {
         kind="vendor"
         retry={selectedOnboardingRetryOnly}
         saving={onboardingSaving}
+        recipientName={selectedInviteVendor?.name || selectedInviteVendor?.contactName}
+        channel={
+          selectedInviteVendor
+            ? inviteChannelFromContact(selectedInviteVendor.phone, selectedInviteVendor.email)
+            : 'both'
+        }
+        several={selectedVendorCount > 1}
         onClose={() => {
           if (onboardingSaving) return
           setSetupOutreachAckOpen(false)

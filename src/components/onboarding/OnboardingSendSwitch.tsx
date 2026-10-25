@@ -1,26 +1,11 @@
 import { useId } from 'react'
+import { NounInfoIcon } from '@/components/NounInfoIcon'
 
 export const TENANT_SEND_INVITE_INFO =
   'Turning this on sends the tenant an SMS invite. If they don’t see it, ask them to check their Unknown Senders or spam folder. They can reply YES to activate.'
 
 export const VENDOR_SEND_INVITE_INFO =
   'Turning this on sends the vendor a verification invite so they can confirm their details before receiving jobs.'
-
-function SendInviteInfoIcon({ className = 'size-3.5' }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      className={className}
-      aria-hidden
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 /** Info tip shared by onboarding switches and Residents / Vendors Send invite actions. */
 export function SendInviteInfoTip({
@@ -39,7 +24,7 @@ export function SendInviteInfoTip({
         aria-label="About Send invite"
         aria-describedby={tipId}
       >
-        <SendInviteInfoIcon />
+        <NounInfoIcon />
       </button>
       <span
         id={tipId}
