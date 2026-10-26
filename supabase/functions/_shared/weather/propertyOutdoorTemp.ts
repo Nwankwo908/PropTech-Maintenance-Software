@@ -12,6 +12,10 @@ import {
 } from "../ask_ulo/tools/properties/propertyRecords.ts"
 import { descriptionNeedsOutdoorTemp } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import {
+  controlledOutdoorTempF,
+  isDisposableMaintenanceTestLandlord,
+} from "../../../../shared/maintenance/testOutdoorTemp.ts"
+import {
   forecastLowF,
   shouldRetryNwsStatus,
   snapshotIsFresh,
@@ -496,10 +500,35 @@ async function loadActiveForecastLow(
 }
 
 /**
+ * Stored °F for a disposable verification landlord. Other accounts are not queried.
+ * A missing table or row returns null so live weather lookup continues.
+ */
+export async function readControlledTestOutdoorTemp(
+  supabase: SupabaseClient,
+  landlordId: string | null | undefined,
+): Promise<number | null> {
+  const id = (landlordId ?? "").trim()
+  if (!isDisposableMaintenanceTestLandlord(id)) return null
+  const { data, error } = await supabase
+    .from("maintenance_test_outdoor_temp")
+    .select("temp_f")
+    .eq("landlord_id", id)
+    .maybeSingle()
+  if (error) {
+    console.warn("[weather] test outdoor temp lookup failed", error.message)
+    return null
+  }
+  const row = asRecord(data)
+  return controlledOutdoorTempF(id, row?.temp_f)
+}
+
+/**
  * Best-effort outdoor °F at the ticket property. Returns null when the
  * description does not need temperature, or lookup fails.
- * Saved coordinates are used first. A missing geocode is saved.
- * During an active freeze, the forecast low is used when it is colder.
+ * A disposable verification landlord with a stored test temperature skips
+ * geocoding and the National Weather Service. Every other account uses saved
+ * coordinates first. A missing geocode is saved. During an active freeze, the
+ * forecast low is used when it is colder.
  */
 export async function lookupOutdoorTempForProperty(
   supabase: SupabaseClient,
@@ -508,6 +537,9 @@ export async function lookupOutdoorTempForProperty(
 ): Promise<number | null> {
   const text = input.description ?? ""
   if (text.trim() && !descriptionNeedsOutdoorTemp(text)) return null
+
+  const controlled = await readControlledTestOutdoorTemp(supabase, input.landlordId)
+  if (controlled != null) return controlled
 
   const fetchFn = deps.fetchFn ?? fetch
   const now = deps.now ?? Date.now

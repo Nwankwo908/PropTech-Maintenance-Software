@@ -1,7 +1,10 @@
 /// <reference lib="deno.ns" />
 
+import { LIMITED_ALPHA_1_LANDLORD_ID } from "../../../../shared/landlordCapabilities.ts"
+import { controlledOutdoorTempF } from "../../../../shared/maintenance/testOutdoorTemp.ts"
 import {
   celsiusToFahrenheit,
+  lookupOutdoorTempForProperty,
   parseCensusCoordinates,
   parseNwsActiveAlerts,
   parseNwsHourlyForecast,
@@ -74,6 +77,61 @@ Deno.test("a hard freeze warning outranks a mild temperature", () => {
     now: new Date("2026-01-20T18:00:00.000Z"),
   })
   assertEqual(level, "hard_freeze", "alert")
+})
+
+Deno.test("controlled outdoor temperature applies only to a disposable test landlord", () => {
+  const disposable = "d15a0000-0000-4000-8000-000000000001"
+  assertEqual(controlledOutdoorTempF(disposable, 95), 95, "disposable")
+  assertEqual(controlledOutdoorTempF(LIMITED_ALPHA_1_LANDLORD_ID, 95), null, "limited alpha 1")
+  assertEqual(controlledOutdoorTempF("068daf53-07e4-4493-bd7f-6106e3c8c62f", 95), null, "full alpha")
+  assertEqual(controlledOutdoorTempF(disposable, 200), null, "out of range")
+})
+
+Deno.test("AC lookup uses the stored 95F and does not call the weather service", async () => {
+  const disposable = "d15a0000-0000-4000-8000-000000000001"
+  const tables: string[] = []
+  const supabase = {
+    from(table: string) {
+      tables.push(table)
+      const builder = {
+        select() { return builder },
+        eq() { return builder },
+        maybeSingle: async () => ({ data: { temp_f: 95 }, error: null }),
+      }
+      return builder
+    },
+  }
+  let fetched = false
+  const temp = await lookupOutdoorTempForProperty(
+    supabase as never,
+    { landlordId: disposable, description: "The AC isn't working." },
+    { fetchFn: () => { fetched = true; throw new Error("weather fetch") } },
+  )
+  assertEqual(temp, 95, "temp")
+  assertEqual(fetched, false, "no weather fetch")
+  assertEqual(tables.includes("maintenance_test_outdoor_temp"), true, "test table")
+  assertEqual(tables.includes("properties"), false, "no property lookup")
+})
+
+Deno.test("an existing landlord does not read the test temperature table", async () => {
+  const tables: string[] = []
+  const supabase = {
+    from(table: string) {
+      tables.push(table)
+      throw new Error(`stop at ${table}`)
+    },
+  }
+  const temp = await lookupOutdoorTempForProperty(
+    supabase as never,
+    {
+      landlordId: LIMITED_ALPHA_1_LANDLORD_ID,
+      description: "The AC isn't working.",
+    },
+    { fetchFn: () => Promise.reject(new Error("weather fetch")) },
+  )
+  assertEqual(temp, null, "fail closed")
+  assertEqual(tables.includes("maintenance_test_outdoor_temp"), false, "no test table")
+  assertEqual(tables.length > 0, true, "live property lookup")
 })
 
 Deno.test("NWS points expose hourly and station collection URLs", () => {
