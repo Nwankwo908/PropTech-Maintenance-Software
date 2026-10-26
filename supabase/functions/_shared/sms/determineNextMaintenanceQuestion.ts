@@ -2,7 +2,10 @@
  * Dynamic SMS intake questions. Tenants give facts; Ulo classifies urgency/trade.
  * Ask only when the answer would change safety handling, routing, or next steps.
  */
-import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import {
+  indicatesImmediateHeatDanger,
+  parseDurationHours,
+} from "../../../../shared/maintenance/urgencyPolicy.ts"
 import {
   classifySelfFixReply,
   shouldOfferSelfFix,
@@ -21,6 +24,7 @@ import {
   type IntakeStep,
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
+import { VAGUE_MAINTENANCE_QUESTION } from "../maintenance_classification/clarification.ts"
 import { isVagueTicketDescription, looksLikeBareRepairRequest } from "./clarifyMenuIntakeSeed.ts"
 import { recognizeInboundIntentSync } from "./recognizeInboundIntent.ts"
 import {
@@ -41,6 +45,7 @@ export type MaintenanceQuestionType =
   | "toilet_overflow"
   | "toilet_only"
   | "hvac_behavior"
+  | "hvac_heat_check"
   | "hvac_dangerous_temp"
   | "electrical_scope"
   | "electrical_hazard"
@@ -124,6 +129,64 @@ function isHvac(state: SmsIntakeState, hay: string): boolean {
   const cat = (state.primary_category ?? state.vendor_trade ?? state.issue_type ?? "")
     .toLowerCase()
   return cat.includes("hvac") || /\b(ac|air condition|heat(?:er|ing)?|furnace|no heat|no cooling)\b/.test(hay)
+}
+
+const HVAC_HEAT_CHECK_QUESTION =
+  "How hot is it inside, and is anyone feeling unwell? Is the AC blowing warm air or not turning on at all?"
+
+function hotOutdoor(state: SmsIntakeState): boolean {
+  return state.outdoor_temp_f != null && state.outdoor_temp_f >= 85
+}
+
+function isCoolingFailure(tenantHay: string): boolean {
+  return /\b(no\s+cool(?:ing)?|ac\s+(?:not|isn'?t|n'?t)\s+working|air\s*condition(?:er|ing)?\s+(?:not|isn'?t)|won'?t\s+cool|blowing\s+warm)\b/
+    .test(tenantHay) ||
+    (/\b(ac|a\/c|air\s*condition)/.test(tenantHay) &&
+      /\b(not|isn'?t|n'?t|won'?t|broken|out|down|dead|warm)\b/.test(tenantHay))
+}
+
+function knowsIndoorTemp(tenantHay: string): boolean {
+  return /\b\d{2,3}\s*(?:degrees|°|f)\b/.test(tenantHay) ||
+    /\b\d{2,3}\b[^.]{0,16}\b(?:inside|indoor|in here)\b/.test(tenantHay) ||
+    /\b(?:inside|indoor|in here|in the (?:house|apartment|unit|home))\b[^.]{0,24}\b\d{2,3}\b/.test(tenantHay) ||
+    /\b(?:very|really|so)\s+hot\s+inside\b/.test(tenantHay)
+}
+
+function knowsWellness(tenantHay: string): boolean {
+  return indicatesImmediateHeatDanger(tenantHay) ||
+    /\b(no\s*one|nobody)\b[^.]{0,40}\b(unwell|sick|ill)\b/.test(tenantHay) ||
+    /\b(feeling|feels)\s+(?:fine|ok|okay|alright)\b/.test(tenantHay) ||
+    /\b(?:everyone|we)\s+(?:is|are|'re)\s+(?:fine|ok|okay)\b/.test(tenantHay) ||
+    /\b(?:we'?re|i'?m|everyone is)\s+(?:ok|okay|fine)\b/.test(tenantHay)
+}
+
+function knowsAcBehavior(tenantHay: string): boolean {
+  return /\b(blowing\s+warm|warm\s+air|not\s+turning\s+on|won'?t\s+turn\s+on|will\s+not\s+turn\s+on|no\s+airflow|running\s+but)\b/
+    .test(tenantHay)
+}
+
+function acBehaviorPhrase(answer: string): string | null {
+  const hay = answer.toLowerCase()
+  if (/\b(not\s+turning\s+on|won'?t\s+turn\s+on|will\s+not\s+turn\s+on|no\s+airflow)\b/.test(hay)) {
+    return "not turning on"
+  }
+  if (/\b(blowing\s+warm|warm\s+air|running\s+but)\b/.test(hay)) return "blowing warm air"
+  return null
+}
+
+/** Ask only the heat details the resident has not already given. */
+function heatCheckQuestion(tenantHay: string): string | null {
+  const temp = !knowsIndoorTemp(tenantHay)
+  const well = !knowsWellness(tenantHay)
+  const behavior = !knowsAcBehavior(tenantHay)
+  if (!temp && !well && !behavior) return null
+  if (temp && well && behavior) return HVAC_HEAT_CHECK_QUESTION
+  const parts: string[] = []
+  if (temp && well) parts.push("How hot is it inside, and is anyone feeling unwell?")
+  else if (temp) parts.push("How hot is it inside?")
+  else if (well) parts.push("Is anyone feeling unwell?")
+  if (behavior) parts.push("Is the AC blowing warm air or not turning on at all?")
+  return parts.join(" ")
 }
 
 function isElectrical(state: SmsIntakeState, hay: string): boolean {
@@ -419,10 +482,17 @@ function resolveNextMaintenanceQuestion(
     return {
       shouldAsk: true,
       questionType: "symptom_clarify",
-      question:
-        "Got it — what needs to be fixed? For example: no hot water, a leak, no heat, or an outlet issue.",
+      question: VAGUE_MAINTENANCE_QUESTION,
       step: "diagnostic",
     }
+  }
+
+  // Heat distress is already an emergency. Do not keep troubleshooting.
+  if (
+    fact(state, "hvac_immediate_danger") === "yes" ||
+    (isHvac(state, hay) && indicatesImmediateHeatDanger(tenantAuthoredText(state)))
+  ) {
+    return { shouldAsk: false }
   }
 
   const overBudget = answered >= budget
@@ -441,7 +511,7 @@ function resolveNextMaintenanceQuestion(
     const safetyFollowUp = type === "lock_secure" || type === "door_safety" ||
       type === "door_part" || type === "electrical_hazard" ||
       type === "structural_risk" || type === "plumbing_active_flow" ||
-      type === "hvac_dangerous_temp" || type === "unit_entry"
+      type === "hvac_dangerous_temp" || type === "hvac_heat_check" || type === "unit_entry"
     if (overBudget && !safetyFollowUp) return null
     return { shouldAsk: true, questionType: type, question, step }
   }
@@ -554,7 +624,19 @@ function resolveNextMaintenanceQuestion(
     if (q) return q
   }
 
-  if (isHvac(state, hay) && !fact(state, "hvac_behavior")) {
+  if (
+    isCoolingFailure(tenantHay) &&
+    hotOutdoor(state) &&
+    !asked(state, "hvac_heat_check")
+  ) {
+    const heatQuestion = heatCheckQuestion(tenantHay)
+    if (heatQuestion) {
+      const q = tryAsk("hvac_heat_check", heatQuestion)
+      if (q) return q
+    }
+  }
+
+  if (isHvac(state, hay) && !fact(state, "hvac_behavior") && !asked(state, "hvac_heat_check") && !knowsAcBehavior(tenantHay)) {
     const q = tryAsk(
       "hvac_behavior",
       "Is the system running but not cooling, or is it not turning on at all? You can say running but warm, no airflow, won't turn on, or not sure.",
@@ -566,7 +648,12 @@ function resolveNextMaintenanceQuestion(
     const extreme = (state.outdoor_temp_f != null &&
       (state.outdoor_temp_f >= 88 || state.outdoor_temp_f <= 40)) ||
       /\b(?:no heat|no ac|not cooling|not heating)\b/.test(hay)
-    if (extreme && !fact(state, "hvac_dangerous_temp")) {
+    if (
+      extreme &&
+      !fact(state, "hvac_dangerous_temp") &&
+      !asked(state, "hvac_heat_check") &&
+      !(hotOutdoor(state) && knowsWellness(tenantHay))
+    ) {
       const q = tryAsk(
         "hvac_dangerous_temp",
         "Is the home getting dangerously hot or cold?",
@@ -804,8 +891,7 @@ export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
         ...prepared,
         step: "diagnostic",
         diagnostic_question_type: "symptom_clarify",
-        diagnostic_question:
-          "Got it — what needs to be fixed? For example: no hot water, a leak, no heat, or an outlet issue.",
+        diagnostic_question: VAGUE_MAINTENANCE_QUESTION,
         asked_question_types: prepared.asked_question_types,
       }
     }
@@ -878,6 +964,16 @@ export function applyDiagnosticAnswer(
       safety = SYSTEM_SAFETY_NOTES.doorAtRisk
     }
     if (isNo(answer)) safety = safety ?? SYSTEM_SAFETY_NOTES.doorSafe
+  }
+  if (type === "hvac_heat_check") {
+    if (!askedTypes.includes("hvac_behavior")) askedTypes.push("hvac_behavior")
+    if (!askedTypes.includes("hvac_dangerous_temp")) askedTypes.push("hvac_dangerous_temp")
+    const behavior = acBehaviorPhrase(answer)
+    if (behavior) facts.hvac_behavior = behavior
+    if (indicatesImmediateHeatDanger(answer)) {
+      facts.hvac_immediate_danger = "yes"
+      safety = SYSTEM_SAFETY_NOTES.heatIllness
+    }
   }
   if (type === "hvac_dangerous_temp" && isYes(answer)) {
     safety = SYSTEM_SAFETY_NOTES.dangerousTemp

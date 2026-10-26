@@ -10,8 +10,10 @@ describe('buildInvitePreview', () => {
       channel: 'sms',
     })
     expect(text?.label).toBe('Text')
-    expect(text?.body).toContain('Hi Sebastian — this is the property management team at Oak Properties.')
-    expect(text?.body).toContain('Reply YES to activate maintenance requests')
+    expect(text?.body).toContain(
+      "Hi Sebastian! Meet Ulo, your Oak Properties's text assistant for your home.",
+    )
+    expect(text?.body).toContain('Reply YES to activate | NO to opt out')
   })
 
   it('shows the vendor text and email that will be sent', () => {

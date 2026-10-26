@@ -1,5 +1,10 @@
-import { useId } from 'react'
+import { useId, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { NounInfoIcon } from '@/components/NounInfoIcon'
+import {
+  ReviewInvitePreviewModal,
+  type ReviewInvitePreview,
+} from '@/components/onboarding/ReviewInvitePreviewModal'
 
 export const TENANT_SEND_INVITE_INFO =
   'Turning this on sends the tenant an SMS invite. If they don’t see it, ask them to check their Unknown Senders or spam folder. They can reply YES to activate.'
@@ -53,6 +58,7 @@ export function OnboardingSendSwitch({
   id,
   variant = 'tenant',
   'aria-label': ariaLabel,
+  messagePreview,
 }: {
   enabled: boolean
   onChange: (enabled: boolean) => void
@@ -60,7 +66,10 @@ export function OnboardingSendSwitch({
   id?: string
   variant?: 'tenant' | 'vendor'
   'aria-label'?: string
+  /** Shown when the switch is turned on. */
+  messagePreview?: ReviewInvitePreview & { companyName?: string | null }
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false)
   const resolvedAriaLabel =
     ariaLabel ??
     (variant === 'vendor'
@@ -70,7 +79,7 @@ export function OnboardingSendSwitch({
   return (
     <div className="flex shrink-0 flex-col items-end gap-1">
       <div className="flex items-center gap-1">
-        <span className="text-[11px] font-medium leading-none text-[#9E439F]">Send invite</span>
+        <span className="text-[11px] font-medium leading-none text-[#9E439F]">Send invite text</span>
         <SendInviteInfoTip variant={variant} />
       </div>
       <button
@@ -80,7 +89,11 @@ export function OnboardingSendSwitch({
         aria-checked={enabled}
         aria-label={resolvedAriaLabel}
         disabled={disabled}
-        onClick={() => onChange(!enabled)}
+        onClick={() => {
+          const next = !enabled
+          onChange(next)
+          if (next && messagePreview) setPreviewOpen(true)
+        }}
         style={{ backgroundColor: enabled ? '#9E439F' : '#e5e7eb' }}
         className={[
           'relative h-6 w-11 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#9E439F]/30 focus-visible:ring-offset-2',
@@ -96,6 +109,16 @@ export function OnboardingSendSwitch({
           ].join(' ')}
         />
       </button>
+      {previewOpen && messagePreview
+        ? createPortal(
+            <ReviewInvitePreviewModal
+              preview={messagePreview}
+              companyName={messagePreview.companyName}
+              onClose={() => setPreviewOpen(false)}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

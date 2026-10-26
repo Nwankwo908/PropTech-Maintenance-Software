@@ -1,4 +1,5 @@
 import { resolveAmbiguousMaintenance } from "../../../../shared/maintenance/ambiguityResolution.ts"
+import { LOW_CONFIDENCE_CLARIFICATION } from "../../../../shared/maintenance/confidencePolicy.ts"
 import type {
   ClassificationEntities,
   ClarificationPrompt,
@@ -13,6 +14,9 @@ function looksLikeWaterIssue(entities: ClassificationEntities, ruleHits: RuleHit
   if (ruleHits.some((h) => h.trade === "plumbing" || h.trade === "roofing")) return true
   return false
 }
+
+/** Vague report: learn the problem before a category or vendor. Photo is invited, not required. */
+export const VAGUE_MAINTENANCE_QUESTION = LOW_CONFIDENCE_CLARIFICATION.question
 
 /** One targeted clarification question — perfect grammar, no mirroring. */
 export function buildClarificationPrompt(params: {
@@ -103,8 +107,7 @@ export function buildClarificationPrompt(params: {
   return {
     field: "general",
     reason: "low_confidence",
-    question:
-      "Thanks for the update. Could you tell me which fixture or appliance is having the problem, and which room it's in?",
+    question: VAGUE_MAINTENANCE_QUESTION,
   }
 }
 

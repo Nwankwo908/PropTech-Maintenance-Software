@@ -71,7 +71,9 @@ Deno.test("vague A repair intake asks symptom before room/photo/confirm", () => 
     preferred_contact_method: "text",
   })
   assertEquals(planned.diagnostic_question_type, "symptom_clarify")
-  assertMatch(planned.diagnostic_question ?? "", /what needs to be fixed/i)
+  assertMatch(planned.diagnostic_question ?? "", /what's broken and what's happening/i)
+  assertMatch(planned.diagnostic_question ?? "", /a photo can help too/i)
+  assertEquals(/required|must send|reply skip/i.test(planned.diagnostic_question ?? ""), false)
   assertEquals(planned.step === "awaiting_confirm", false)
 })
 

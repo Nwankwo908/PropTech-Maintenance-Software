@@ -25,6 +25,7 @@ export const SYSTEM_SAFETY_NOTES = {
   doorAtRisk: "Door may be stuck, hanging loose, or at risk of falling",
   doorSafe: "Door is not hanging or at risk of falling",
   dangerousTemp: "Home is becoming dangerously hot or cold",
+  heatIllness: "Someone in the home may be unwell from the heat",
   electricalHazard: "Sparks, smoke, or burning smell reported",
   structuralWater: "Water coming through structural damage",
   structuralCollapse: "Possible collapse or sagging",

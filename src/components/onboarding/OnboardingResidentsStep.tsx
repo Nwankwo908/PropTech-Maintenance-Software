@@ -49,6 +49,7 @@ export type OnboardingResidentsStepProps = {
   defaultBuilding?: string
   showBackButton: boolean
   saving: boolean
+  companyName?: string | null
   editContinueLabel?: string
   onBack: () => void
 }
@@ -62,6 +63,7 @@ export function OnboardingResidentsStep({
   defaultBuilding = '',
   showBackButton,
   saving,
+  companyName,
   editContinueLabel,
   onBack,
 }: OnboardingResidentsStepProps) {
@@ -108,6 +110,13 @@ export function OnboardingResidentsStep({
                     <OnboardingSendSwitch
                       enabled={Boolean(form.sendOnboardingOnComplete)}
                       disabled={!form.phone.trim()}
+                      messagePreview={{
+                        kind: 'resident',
+                        name: form.fullName,
+                        phone: form.phone,
+                        email: form.email,
+                        companyName,
+                      }}
                       onChange={(sendOnboardingOnComplete) =>
                         updateResidentForm(form.id, { sendOnboardingOnComplete })
                       }

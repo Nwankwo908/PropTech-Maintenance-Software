@@ -5,7 +5,7 @@ import {
 } from '@/lib/limitedAlphaMessageLanes'
 
 const WELCOME =
-  'Hi Sebastian — this is your property management team.\n\n🏠 NEED A REPAIR?\nReply YES to activate maintenance requests and important home updates.\n\n📲 SAVE THIS NUMBER\nSave us as "Ulo Assistant" so you can easily find us when you need help.\n\nOnce activated, just text this number anytime you need a repair or have a question about your home.\n\nNO — Opt out | HELP — Help | STOP — Unsubscribe\nMsg & data rates may apply.'
+  "Hi Sebastian! Meet Ulo, your Oak Properties's text assistant for your home.\n\n🏡 Need something for your home? Just text Ulo.\n\nFrom reporting repairs to getting property updates and reminders, Ulo helps you get the information and assistance you need, all through text.\n\n📲 Save this number as Ulo Assistant so you can easily find us when you need help.\n\nReply YES to activate | NO to opt out | HELP for help | STOP to unsubscribe. Msg & data rates may apply."
 
 describe('looksLikeNonOnboardingInboundSms', () => {
   it('ignores YES/START activation replies', () => {
@@ -72,9 +72,7 @@ describe('classifyLimitedAlphaMessageLane', () => {
   })
 
   it('detects tenant welcome copy', () => {
-    expect(WELCOME.toLowerCase()).toContain(
-      'reply yes to activate maintenance requests and important home updates',
-    )
+    expect(WELCOME.toLowerCase()).toContain('reply yes to activate | no to opt out')
     expect(looksLikeNonOnboardingInboundSms(WELCOME)).toBe(false)
   })
 })

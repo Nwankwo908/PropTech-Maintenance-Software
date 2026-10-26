@@ -249,7 +249,7 @@ export function tenantSmsComplianceFooter(): string {
 
 /**
  * Compose the post-onboarding welcome/activation SMS.
- * Leads with the YES ask and saving the number, then how to use the thread.
+ * Introduces Ulo, then the YES / NO / HELP / STOP line.
  */
 export { composeTenantWelcomeSms } from "../../../../shared/outreach/inviteMessages.ts"
 

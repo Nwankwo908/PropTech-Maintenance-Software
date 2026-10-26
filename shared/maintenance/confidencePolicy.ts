@@ -86,7 +86,7 @@ export const LOW_CONFIDENCE_CLARIFICATION = {
   field: 'general',
   reason: 'low_confidence',
   question:
-    "Thanks for reaching out. Could you tell me what's going on — for example a leak, no heat, something electrical, or another problem — and which room it's in?",
+    "Can you tell me what's broken and what's happening? A photo can help too.",
 }
 
 export type ConfidencePolicyInput = {

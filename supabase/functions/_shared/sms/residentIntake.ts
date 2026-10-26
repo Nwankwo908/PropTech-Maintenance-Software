@@ -8,6 +8,7 @@ import {
   MAINTENANCE_CLASSIFICATION_EVENTS,
 } from "../maintenance_classification/mod.ts"
 import type { ClassificationResult, ClassifyMaintenanceSmsContext } from "../maintenance_classification/types.ts"
+import { VAGUE_MAINTENANCE_QUESTION } from "../maintenance_classification/clarification.ts"
 import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
@@ -178,7 +179,7 @@ function questionForStep(state: SmsIntakeState, step: IntakeStep): string {
   if (step === "classification_clarification") {
     return (
       state.clarification_question?.trim() ||
-      "Thanks for the update. Could you tell me which fixture or appliance is having the problem, and which room it's in?"
+      VAGUE_MAINTENANCE_QUESTION
     )
   }
   if (step === "diagnostic") {

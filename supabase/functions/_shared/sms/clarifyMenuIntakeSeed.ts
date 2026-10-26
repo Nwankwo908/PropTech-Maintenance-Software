@@ -93,6 +93,7 @@ export function isVagueTicketDescription(text: string): boolean {
   const t = text.trim()
   if (!t) return true
   if (inferIssueTypeFromText(t)) return false
+  if (/^something(?:'s| is) broken[.!?]*$/i.test(t)) return true
   if (looksLikeBareRepairRequest(t)) return true
   // Classifier sometimes sanitizes to "A repair is needed."
   if (/^a\s+repair(\s+is\s+needed)?[.!]?$/i.test(t)) return true

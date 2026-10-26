@@ -16,19 +16,25 @@ export function LeaseScanSummary({ review, processing }: { review: LeaseScanRevi
   const unit = review.pageCount === 1 ? (section ? 'text section' : 'page') : (section ? 'text sections' : 'pages')
   const needReview = LEASE_FIELD_NAMES.filter(name => review.fields[name].needsReview).length
   const scanned = !processing && review.coverageComplete && review.pageCount > 0
-  const showReview = !processing && needReview > 0
+  const showReview = scanned && needReview > 0
 
   return <section className="mt-3" aria-label="Lease scan">
-    <p className="text-sm font-semibold text-[#101828]">{scanned ? 'Lease scanned' : processing ? 'Checking this lease' : 'Lease scan incomplete'}</p>
-    <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-[#64748b]">
-      <span>{checked} of {review.pageCount} {unit} checked</span>
-      {showReview ? (
-        <span className="inline-flex items-center gap-1 text-[#b54708]">
-          <span aria-hidden>·</span>
-          <AttentionIcon />
-          {needReview} {needReview === 1 ? 'detail' : 'details'} to review
-        </span>
-      ) : null}
+    <p className={`text-sm text-[#101828] ${processing || scanned ? 'font-semibold' : 'font-medium'}`}>
+      {processing ? 'Checking this lease' : scanned ? 'Lease scanned' : 'Your lease is ready for review'}
     </p>
+    {processing || scanned ? (
+      <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-[#64748b]">
+        <span>{checked} of {review.pageCount} {unit} checked</span>
+        {showReview ? (
+          <span className="inline-flex items-center gap-1 text-[#b54708]">
+            <span aria-hidden>·</span>
+            <AttentionIcon />
+            {needReview} {needReview === 1 ? 'detail' : 'details'} to review
+          </span>
+        ) : null}
+      </p>
+    ) : (
+      <p className="mt-1 text-xs text-[#64748b]">Check the extracted details on the next step.</p>
+    )}
   </section>
 }

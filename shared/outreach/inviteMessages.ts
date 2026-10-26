@@ -11,22 +11,15 @@ export function composeTenantWelcomeSms(params: {
   tenantName?: string | null
   companyName?: string | null
 }): string {
-  const first = firstNameOf(params.tenantName)
-  const company = params.companyName?.trim()
-  const greeting = first ? `Hi ${first}` : 'Hi there'
-  const team = company
-    ? `this is the property management team at ${company}.`
-    : 'this is your property management team.'
+  const first = firstNameOf(params.tenantName) ?? 'there'
+  const company = params.companyName?.trim() || 'property management team'
 
   return (
-    `${greeting} — ${team}\n\n` +
-    `🏠 NEED A REPAIR?\n` +
-    `Reply YES to activate maintenance requests and important home updates.\n\n` +
-    `📲 SAVE THIS NUMBER\n` +
-    `Save us as "Ulo Assistant" so you can easily find us when you need help.\n\n` +
-    `Once activated, just text this number anytime you need a repair or have a question about your home.\n\n` +
-    `NO — Opt out | HELP — Help | STOP — Unsubscribe\n` +
-    `Msg & data rates may apply.`
+    `Hi ${first}! Meet Ulo, your ${company}'s text assistant for your home.\n\n` +
+    `🏡 Need something for your home? Just text Ulo.\n\n` +
+    `From reporting repairs to getting property updates and reminders, Ulo helps you get the information and assistance you need, all through text.\n\n` +
+    `📲 Save this number as Ulo Assistant so you can easily find us when you need help.\n\n` +
+    `Reply YES to activate | NO to opt out | HELP for help | STOP to unsubscribe. Msg & data rates may apply.`
   )
 }
 

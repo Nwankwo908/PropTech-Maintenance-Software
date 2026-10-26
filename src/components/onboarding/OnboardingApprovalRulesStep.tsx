@@ -59,6 +59,8 @@ export type OnboardingApprovalRulesStepProps = {
   showNotificationPreferences?: boolean
   /** Fast-track uses default marketplace dispatch rules without asking. */
   showMarketplacePreference?: boolean
+  /** When false, the emergency list stays fixed and the change link stays hidden. */
+  allowEmergencyCustomization?: boolean
   continueLabel?: string
   onBack: () => void
   onContinue: (rules: OnboardingApprovalRules) => void
@@ -70,6 +72,7 @@ export function OnboardingApprovalRulesStep({
   showBack,
   showNotificationPreferences = false,
   showMarketplacePreference = true,
+  allowEmergencyCustomization = true,
   continueLabel = 'Continue',
   onBack,
   onContinue,
@@ -78,6 +81,7 @@ export function OnboardingApprovalRulesStep({
     normalizeOnboardingApprovalRules(initialRules),
   )
   const [error, setError] = useState<string | null>(null)
+  const [editingEmergencies, setEditingEmergencies] = useState(false)
 
   function patch(next: Partial<OnboardingApprovalRules>) {
     setRules((prev) => ({ ...prev, ...next }))
@@ -93,6 +97,18 @@ export function OnboardingApprovalRulesStep({
       return { ...prev, emergencyTypes }
     })
     setError(null)
+  }
+
+  function saveEmergencyPreferences() {
+    const normalized = normalizeOnboardingApprovalRules(rules)
+    const check = validateOnboardingApprovalRules(normalized)
+    if (!check.ok) {
+      setError(`Please set: ${check.missing.join(', ')}.`)
+      return
+    }
+    setRules(normalized)
+    setError(null)
+    setEditingEmergencies(false)
   }
 
   function handleContinue() {
@@ -115,38 +131,70 @@ export function OnboardingApprovalRulesStep({
         Maintenance approval rules
       </h2>
       <p className="mt-2 text-[14px] leading-6 text-[#6b7280]">
-        Tell Ulo what counts as an emergency and how to handle after-hours work. Smart defaults
-        are selected — change anything that doesn’t fit your portfolio.
+        Decide when after-hours repairs need your approval. We’ve selected recommended settings
+        you can adjust.
       </p>
 
       <div className="mt-8 space-y-8">
         <div>
-          <h3 className="text-[15px] font-semibold text-[#111827]">Emergency definition</h3>
+          <h3 className="text-[15px] font-semibold text-[#111827]">
+            Ulo flags these issues as emergencies
+          </h3>
           <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
-            Select which situations Ulo should treat as emergencies.
+            You’ll be alerted right away when a tenant reports one of these issues.
           </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {EMERGENCY_TYPE_OPTIONS.map((option) => {
-              const checked = rules.emergencyTypes.includes(option.id)
-              return (
-                <label
-                  key={option.id}
-                  className={[
-                    'flex cursor-pointer items-center gap-3 rounded-[10px] border px-3 py-2.5',
-                    checked ? 'border-[#186179]/40 bg-[#f0f7fa]' : 'border-[#e5e7eb] bg-white',
-                  ].join(' ')}
+          {editingEmergencies ? (
+            <div className="mt-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {EMERGENCY_TYPE_OPTIONS.map((option) => {
+                  const checked = rules.emergencyTypes.includes(option.id)
+                  return (
+                    <label
+                      key={option.id}
+                      className={[
+                        'flex cursor-pointer items-center gap-3 rounded-[10px] border px-3 py-2.5',
+                        checked ? 'border-[#186179]/40 bg-[#f0f7fa]' : 'border-[#e5e7eb] bg-white',
+                      ].join(' ')}
+                    >
+                      <input
+                        type="checkbox"
+                        className={checkboxInputClassName}
+                        checked={checked}
+                        onChange={() => toggleEmergency(option.id)}
+                      />
+                      <span className="text-[14px] font-medium text-[#111827]">{option.label}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={saveEmergencyPreferences}
+                className="mt-3 rounded-[8px] border border-[#186179] px-3 py-1.5 text-[13px] font-medium text-[#186179] hover:bg-[#f0f7fa]"
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <>
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-[14px] leading-6 text-[#111827]">
+                {EMERGENCY_TYPE_OPTIONS.filter((option) =>
+                  rules.emergencyTypes.includes(option.id),
+                ).map((option) => (
+                  <li key={option.id}>{option.label}</li>
+                ))}
+              </ul>
+              {allowEmergencyCustomization ? (
+                <button
+                  type="button"
+                  onClick={() => setEditingEmergencies(true)}
+                  className="sa-link mt-3 text-[13px] font-medium text-[#186179] hover:underline"
                 >
-                  <input
-                    type="checkbox"
-                    className={checkboxInputClassName}
-                    checked={checked}
-                    onChange={() => toggleEmergency(option.id)}
-                  />
-                  <span className="text-[14px] font-medium text-[#111827]">{option.label}</span>
-                </label>
-              )
-            })}
-          </div>
+                  + Change emergency preferences
+                </button>
+              ) : null}
+            </>
+          )}
         </div>
 
         <div>

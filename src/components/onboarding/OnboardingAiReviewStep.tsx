@@ -905,6 +905,13 @@ export function OnboardingAiReviewStep({
       <OnboardingSendSwitch
         enabled={Boolean(resident.sendOnboardingOnComplete)}
         disabled={!hasPhone}
+        messagePreview={{
+          kind: 'resident',
+          name: resident.fullName,
+          phone: resident.phone,
+          email: resident.email,
+          companyName: review.account?.companyName,
+        }}
         onChange={(sendOnboardingOnComplete) =>
           patchResident(resident.id, { sendOnboardingOnComplete })
         }
@@ -1284,6 +1291,13 @@ export function OnboardingAiReviewStep({
                   <OnboardingSendSwitch
                     enabled={Boolean(item.sendOnboardingOnComplete)}
                     disabled={!item.phone.trim()}
+                    messagePreview={{
+                      kind: 'resident',
+                      name: item.fullName,
+                      phone: item.phone,
+                      email: item.email,
+                      companyName: review.account?.companyName,
+                    }}
                     onChange={(sendOnboardingOnComplete) =>
                       patchTenant(item, { sendOnboardingOnComplete })
                     }
@@ -1480,6 +1494,13 @@ export function OnboardingAiReviewStep({
                   variant="vendor"
                   enabled={Boolean(item.sendOnboardingOnComplete)}
                   disabled={!item.phone.trim() && !item.email.trim()}
+                  messagePreview={{
+                    kind: 'vendor',
+                    name: item.name,
+                    phone: item.phone,
+                    email: item.email,
+                    companyName: review.account?.companyName,
+                  }}
                   onChange={(sendOnboardingOnComplete) =>
                     patchVendor(item.id, { sendOnboardingOnComplete })
                   }

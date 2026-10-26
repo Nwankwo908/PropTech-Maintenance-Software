@@ -202,6 +202,12 @@ Deno.test("clarification for vague text does not assume water", () => {
     !/water coming from a sink/i.test(prompt?.question ?? ""),
     "does not ask water source for non-water vagueness",
   )
+  assertEqual(
+    prompt?.question,
+    "Can you tell me what's broken and what's happening? A photo can help too.",
+    "asks what is happening and invites a photo",
+  )
+  assertTrue(!/required|must send/i.test(prompt?.question ?? ""), "photo is not required")
 })
 
 Deno.test("typo slang path still classifies plumbing", async () => {
@@ -431,6 +437,11 @@ Deno.test("landlord envelope does not become matching or safety source of truth"
   assertEqual(vague.clarificationRequired, true, "ops clarify")
   assertEqual(vague.landlordTriage.confidence, "LOW", "envelope low")
   assertEqual(vague.landlordTriage.clarification_needed, true, "envelope clarify")
+  assertEqual(
+    vague.clarification?.question,
+    "Can you tell me what's broken and what's happening? A photo can help too.",
+    "vague question invites a photo and does not pick a category",
+  )
   assertTrue(Boolean(vague.landlordTriage.clarification_question?.includes("?")), "question")
   assertTrue(
     vague.landlordTriage.urgency === "MEDIUM" ||

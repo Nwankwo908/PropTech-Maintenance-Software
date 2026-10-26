@@ -325,6 +325,13 @@ export function OnboardingReviewStep({
                         variant="vendor"
                         enabled={Boolean(vendor.sendOnboardingOnComplete)}
                         disabled={!vendor.phone.trim() && !vendor.email.trim()}
+                        messagePreview={{
+                          kind: 'vendor',
+                          name: vendor.name,
+                          phone: vendor.phone,
+                          email: vendor.email,
+                          companyName,
+                        }}
                         onChange={(enabled) => onVendorOnboardingChange(vendor.id, enabled)}
                         aria-label={
                           vendor.phone.trim() || vendor.email.trim()
@@ -356,9 +363,14 @@ export function OnboardingReviewStep({
                       <OnboardingSendSwitch
                         enabled={Boolean(resident.sendOnboardingOnComplete)}
                         disabled={!resident.phone.trim()}
-                        onChange={(enabled) =>
-                          onResidentOnboardingChange(resident.id, enabled)
-                        }
+                        messagePreview={{
+                          kind: 'resident',
+                          name: resident.fullName,
+                          phone: resident.phone,
+                          email: resident.email,
+                          companyName,
+                        }}
+                        onChange={(enabled) => onResidentOnboardingChange(resident.id, enabled)}
                         aria-label={
                           resident.phone.trim()
                             ? `Send invite to ${resident.fullName} when setup completes`

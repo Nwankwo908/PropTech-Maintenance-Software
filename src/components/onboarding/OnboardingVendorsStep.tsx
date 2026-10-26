@@ -45,6 +45,7 @@ export type OnboardingVendorsStepProps = {
   saveDeps: OnboardingVendorsStepSaveDeps
   showBackButton: boolean
   saving: boolean
+  companyName?: string | null
   editContinueLabel?: string
   onBack: () => void
 }
@@ -55,6 +56,7 @@ export function OnboardingVendorsStep({
   saveDeps,
   showBackButton,
   saving,
+  companyName,
   editContinueLabel,
   onBack,
 }: OnboardingVendorsStepProps) {
@@ -102,6 +104,13 @@ export function OnboardingVendorsStep({
                       variant="vendor"
                       enabled={Boolean(form.sendOnboardingOnComplete)}
                       disabled={!form.phone.trim() && !form.email.trim()}
+                      messagePreview={{
+                        kind: 'vendor',
+                        name: form.name,
+                        phone: form.phone,
+                        email: form.email,
+                        companyName,
+                      }}
                       onChange={(sendOnboardingOnComplete) =>
                         updateVendorForm(form.id, { sendOnboardingOnComplete })
                       }

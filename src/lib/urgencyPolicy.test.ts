@@ -51,6 +51,24 @@ describe('resolveUrgencyPolicy', () => {
     expect(
       resolveUrgencyPolicy({ text: 'AC not working', outdoorTempF: 72 }).band,
     ).toBe('medium')
+    const hotAc = resolveUrgencyPolicy({ text: 'AC not working', outdoorTempF: 95 })
+    expect(hotAc.band).toBe('emergency')
+    expect(hotAc.leaveImmediately).toBe(false)
+  })
+
+  it('treats heat illness as an immediate emergency', () => {
+    const danger = resolveUrgencyPolicy({
+      text: "It's 100 inside and my son feels dizzy. The AC won't turn on.",
+      outdoorTempF: 95,
+    })
+    expect(danger.band).toBe('emergency')
+    expect(danger.leaveImmediately).toBe(true)
+    expect(
+      resolveUrgencyPolicy({
+        text: 'About 78 inside, everyone is fine, and it is blowing warm air.',
+        outdoorTempF: 95,
+      }).leaveImmediately,
+    ).toBe(false)
   })
 
   it('escalates no hot water after 24 hours', () => {

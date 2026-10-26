@@ -362,6 +362,8 @@ export function isTenantOnboardingInvite(text: string): boolean {
     /reach us by text anytime you need a repair/i.test(text) ||
     /once activated, just text this number anytime you need a repair/i.test(text) ||
     /save us as ["“]ulo assistant["”]/i.test(text) ||
+    /save this number as ulo assistant/i.test(text) ||
+    /meet ulo, your /i.test(text) ||
     /we'll text you here about your maintenance requests/i.test(text) ||
     /you'?re all set, thank you\. we'll text you here/i.test(text)
   )

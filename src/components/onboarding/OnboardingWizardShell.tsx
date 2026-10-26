@@ -380,6 +380,7 @@ export function OnboardingWizardShell() {
               saveDeps={{ ...stepSaveDeps, setVendorForms }}
               showBackButton={showBackButton}
               saving={saving}
+              companyName={state.accountSetup.companyName}
               editContinueLabel={editContinueLabel}
               onBack={() => void handleBack()}
             />
@@ -404,6 +405,7 @@ export function OnboardingWizardShell() {
               }
               showBackButton={showBackButton}
               saving={saving}
+              companyName={state.accountSetup.companyName}
               editContinueLabel={editContinueLabel}
               onBack={() => void handleBack()}
             />

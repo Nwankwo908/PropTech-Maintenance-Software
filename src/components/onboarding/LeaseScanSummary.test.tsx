@@ -40,8 +40,9 @@ it('says when only the opening pages of a longer lease were checked', () => {
   review.pagesReviewed = [1, 2, 3, 4]
   review.coverageComplete = false
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Lease scan incomplete')
-  expect(html).toContain('4 of 12 pages checked')
+  expect(html).toContain('Your lease is ready for review')
+  expect(html).toContain('Check the extracted details on the next step.')
+  expect(html).not.toContain('4 of 12 pages checked')
   expect(html).not.toContain('12 of 12')
   expect(html).not.toContain('Morgan Tenant')
   expect(html).not.toContain('1500')
@@ -52,8 +53,9 @@ it('counts every page that was checked and does not turn a coverage gap into a f
   for (const field of Object.values(raw.fields)) field.confidence = 100
   const { review } = normalizeLeaseScan(raw, ['', ''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Lease scan incomplete')
-  expect(html).toContain('1 of 2 pages checked')
+  expect(html).toContain('Your lease is ready for review')
+  expect(html).toContain('Check the extracted details on the next step.')
+  expect(html).not.toContain('1 of 2 pages checked')
   expect(html).not.toContain('to review')
   expect(html).not.toContain('Page coverage needs review')
   expect(html).not.toContain('Unverified reading')

@@ -143,7 +143,82 @@ Deno.test("no hot water asks whole-home vs one fixture", () => {
   assertEqual(next.questionType, "plumbing_hot_water_scope", "type")
 })
 
-Deno.test("HVAC asks diagnostic behavior and not for a photo first", () => {
+Deno.test("vague something is broken asks what is happening before a category", () => {
+  const planned = applyQuestionPlan({
+    initial_message: "Something is broken.",
+    description: "Something is broken.",
+    preferred_contact_method: "text",
+  })
+  assertEqual(planned.diagnostic_question_type, "symptom_clarify", "clarify first")
+  assertEqual(planned.vendor_trade ?? null, null, "no vendor yet")
+  assertMatch(
+    planned.diagnostic_question ?? "",
+    /what's broken and what's happening/i,
+    "asks what is happening",
+  )
+  assertMatch(planned.diagnostic_question ?? "", /a photo can help too/i, "invites a photo")
+  assertEqual(/required|must send|reply skip/i.test(planned.diagnostic_question ?? ""), false, "photo optional")
+})
+
+Deno.test("AC failure at 95F asks about indoor heat before troubleshooting", () => {
+  const next = determineNextMaintenanceQuestion({
+    issue_type: "HVAC",
+    vendor_trade: "hvac",
+    primary_category: "hvac",
+    initial_message: "The AC isn't working.",
+    description: "The AC isn't working.",
+    outdoor_temp_f: 95,
+  })
+  assertEqual(next.shouldAsk, true, "asks")
+  if (!next.shouldAsk) return
+  assertEqual(next.questionType, "hvac_heat_check", "heat context first")
+  assertEqual(
+    next.question,
+    "How hot is it inside, and is anyone feeling unwell? Is the AC blowing warm air or not turning on at all?",
+    "copy",
+  )
+})
+
+Deno.test("AC heat reply that someone is unwell skips more troubleshooting", () => {
+  const after = applyDiagnosticAnswer({
+    issue_type: "HVAC",
+    vendor_trade: "hvac",
+    primary_category: "hvac",
+    initial_message: "The AC isn't working.",
+    description: "The AC isn't working.",
+    outdoor_temp_f: 95,
+    diagnostic_question_type: "hvac_heat_check",
+    preferred_contact_method: "text",
+  }, "It's 100 inside and my son feels dizzy. The AC won't turn on.")
+  assertEqual(after.diagnostic_facts?.hvac_immediate_danger, "yes", "danger")
+  assertEqual(after.issue_type, "HVAC", "same issue")
+  assertEqual(after.vendor_trade, "hvac", "same trade")
+  assertMatch(after.description ?? "", /son feels dizzy/i, "answer saved")
+  const planned = applyQuestionPlan(after)
+  assertEqual(planned.diagnostic_question_type, undefined, "no more questions")
+  assertEqual(planned.step, "awaiting_confirm", "confirm without troubleshooting")
+})
+
+Deno.test("AC heat reply that everyone is fine does not ask those questions again", () => {
+  const after = applyDiagnosticAnswer({
+    issue_type: "HVAC",
+    vendor_trade: "hvac",
+    primary_category: "hvac",
+    initial_message: "The AC isn't working.",
+    description: "The AC isn't working.",
+    outdoor_temp_f: 95,
+    diagnostic_question_type: "hvac_heat_check",
+    asked_question_types: ["hvac_heat_check"],
+    preferred_contact_method: "text",
+  }, "About 78 inside, everyone is fine, and it is blowing warm air.")
+  assertEqual(after.diagnostic_facts?.hvac_immediate_danger, undefined, "not danger")
+  const planned = applyQuestionPlan(after)
+  assertEqual(planned.diagnostic_question_type === "hvac_heat_check", false, "not repeated")
+  assertEqual(planned.diagnostic_question_type === "hvac_behavior", false, "behavior already answered")
+  assertEqual(planned.diagnostic_question_type === "self_fix", false, "no troubleshooting")
+})
+
+Deno.test("mild AC still asks how the system is behaving", () => {
   const next = determineNextMaintenanceQuestion({
     issue_type: "HVAC",
     vendor_trade: "hvac",

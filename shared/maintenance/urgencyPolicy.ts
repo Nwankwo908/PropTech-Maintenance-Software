@@ -43,6 +43,28 @@ const NO_HEAT_RE =
 const NO_COOLING_RE =
   /\b(no\s+cool(?:ing)?|ac\s+(?:not|isn'?t|n'?t)\s+working|air\s*condition(?:er|ing)?\s+(?:not|isn'?t)|won'?t\s+cool|blowing\s+warm)\b/
 
+/**
+ * Heat illness or distress. A plain AC failure in hot weather is habitability,
+ * not this — that stays on the outdoor-temperature rule.
+ */
+export function indicatesImmediateHeatDanger(text: string): boolean {
+  const hay = haystack(text)
+  const severe =
+    /\b(heat\s*stroke|heat\s*exhaustion|can'?t\s+breathe|cannot\s+breathe|trouble\s+breathing|short\s+of\s+breath|chest\s+pain|passed\s+out|unconscious|vomit(?:ing)?|lethargic|unresponsive|dangerously\s+hot)\b/
+      .test(hay)
+  const distress =
+    /\b(dizzy|faint(?:ed|ing)?|nause(?:a|ous)|feeling\s+unwell|feel(?:s|ing)?\s+(?:sick|ill|unwell)|not\s+feeling\s+well)\b/
+      .test(hay)
+  if (!severe && !distress) return false
+  if (severe) return true
+  const negated =
+    /\b(no\s*one|nobody)\b[^.]{0,48}\b(unwell|sick|ill|dizzy|faint)\b/.test(hay) ||
+    /\b(feeling|feels)\s+(?:fine|ok|okay|alright)\b/.test(hay) ||
+    /\b(?:everyone|we|i)\s+(?:is|am|are|'m|'re)\s+(?:fine|ok|okay)\b/.test(hay) ||
+    /\b(?:we'?re|i'?m)\s+(?:ok|okay|fine)\b/.test(hay)
+  return !negated
+}
+
 /** Heat / cooling bands need outdoor °F. Other issues do not. */
 export function descriptionNeedsOutdoorTemp(text: string): boolean {
   const hay = haystack(text)
@@ -124,6 +146,16 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
       'Gas smell — leave the unit immediately and call the gas utility from outside if you have not already.',
       hay,
       'gas',
+      { leaveImmediately: true },
+    )
+  }
+
+  if (indicatesImmediateHeatDanger(hay)) {
+    return result(
+      'emergency',
+      'Someone may be unwell from the heat. Move to a cooler place, and call 911 if it is not safe to stay.',
+      hay,
+      'habitability',
       { leaveImmediately: true },
     )
   }
