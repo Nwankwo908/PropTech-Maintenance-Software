@@ -84,3 +84,58 @@ Deno.test("three items build the example from the batch ids only", () => {
   assertEquals(sms.includes("SNOOZE"), false)
   assertEquals(sms.includes("SKIP"), false)
 })
+
+Deno.test("one item can include a single quick-fix line before YES/NO", () => {
+  const sms = buildLandlordPickBatchSms([
+    {
+      displayId: 102,
+      issue: "Kitchen outlets dead",
+      vendorName: "Bright Electric",
+      windowLabel: "Wed AM",
+      selfFixLine: "Tenant already tried the GFCI reset — still out.",
+    },
+  ])
+  assertStringIncludes(sms, "Tenant already tried the GFCI reset — still out.")
+  assertStringIncludes(sms, "Reply YES to approve or NO to decline.")
+  assertEquals(sms.includes("Quick check"), false)
+})
+
+Deno.test("a vacant quick check keeps the YES/NO line", () => {
+  const sms = buildLandlordPickBatchSms([
+    {
+      displayId: 102,
+      issue: "Kitchen outlets dead",
+      vendorName: "Bright Electric",
+      selfFixLine: "Quick check first: press RESET on the outlet by the sink. Reply FIXED if it works.",
+    },
+  ])
+  assertStringIncludes(sms, "Quick check first: press RESET on the outlet by the sink. Reply FIXED if it works.")
+  assertStringIncludes(sms, "Reply YES to approve or NO to decline.")
+})
+
+Deno.test("a batch of 3 has no tip lines", () => {
+  const sms = buildLandlordPickBatchSms([
+    {
+      displayId: 102,
+      issue: "Kitchen outlets dead",
+      vendorName: "Bright Electric",
+      selfFixLine: "Tenant already tried the GFCI reset — still out.",
+    },
+    {
+      displayId: 105,
+      issue: "Slow sink",
+      vendorName: "Handy Co",
+      selfFixLine: "Quick check: pull out the stopper and rinse it. Reply FIXED if the sink drains.",
+    },
+    {
+      displayId: 106,
+      issue: "Washer",
+      vendorName: "Handy Co",
+      selfFixLine: "Quick check: close the lid, pick a cycle, and test the outlet. Reply FIXED if it starts.",
+    },
+  ])
+  assertEquals(sms.includes("GFCI"), false)
+  assertEquals(sms.includes("Quick check"), false)
+  assertEquals(sms.includes("FIXED"), false)
+  assertStringIncludes(sms, "Reply like: 102 yes, 105 no. Or YES ALL.")
+})

@@ -250,3 +250,36 @@ Deno.test("legacy skip on a tenant request now sends other options", () => {
   }])
   assertEquals((plan.lines[0]?.text ?? "").includes("can't skip"), false)
 })
+
+Deno.test("FIXED closes one item without a display id and leaves self open", () => {
+  const only = [candidate(102, "reactive")]
+  const fixed = executeDecisionPlan({
+    candidates: only,
+    parsed: parseDecisionReply("FIXED", [{ displayId: 102, ticketClass: "reactive" }], now, tz),
+  })
+  assertEquals(fixed.mutations, [{ kind: "fixed", ticketId: "ticket-102", displayId: 102 }])
+  assertEquals(fixed.lines[0]?.text, "Got it — closed. No vendor booked.")
+
+  const self = executeDecisionPlan({
+    candidates: only,
+    parsed: parseDecisionReply("102 self", [{ displayId: 102, ticketClass: "reactive" }], now, tz),
+  })
+  assertEquals(self.mutations, [{ kind: "self", ticketId: "ticket-102", displayId: 102 }])
+  assertEquals(self.lines[0]?.text, "Got it — marked for you to handle.")
+  assertEquals(self.mutations[0]?.kind === "fixed", false)
+})
+
+Deno.test("bare FIXED with two open items asks which one", () => {
+  const candidates = [candidate(101, "reactive"), candidate(103, "reactive")]
+  const plan = executeDecisionPlan({
+    candidates,
+    parsed: parseDecisionReply(
+      "FIXED",
+      candidates.map((row) => ({ displayId: row.displayId, ticketClass: row.ticketClass })),
+      now,
+      tz,
+    ),
+  })
+  assertEquals(plan.mutations, [])
+  assertEquals(plan.question, "Which one is fixed? Reply with the number, like 1 FIXED.")
+})

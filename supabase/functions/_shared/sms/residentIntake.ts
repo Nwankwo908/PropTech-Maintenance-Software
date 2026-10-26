@@ -37,6 +37,8 @@ import {
 import type { WorkflowContext, WorkflowResult } from "./workflow_types.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import { submitSmsMaintenanceRequest } from "./submitSmsMaintenanceRequest.ts"
+import { loadSuggestQuickFixes } from "./selfFixPrefs.ts"
+import { TENANT_SELF_FIX_CLOSE_SMS } from "../../../../shared/maintenance/selfFixTips.ts"
 import {
   isVagueTicketDescription,
   looksLikeBareRepairRequest,
@@ -857,6 +859,12 @@ export async function processResidentMaintenanceIntake(
   }
 
   let state = await loadIntakeState(supabase, ctx.conversationId)
+  if (state.self_fix_enabled == null) {
+    state = {
+      ...state,
+      self_fix_enabled: await loadSuggestQuickFixes(supabase, ctx.landlordId),
+    }
+  }
   const isFresh = !state.step || state.step === "submitted" ||
     shouldRestartLegacyQuestionnaire(state.step as IntakeStep | undefined, body)
 
@@ -1378,6 +1386,38 @@ export async function processResidentMaintenanceIntake(
   state = result.state
   if (step === "diagnostic") {
     state = await refreshClassificationFromFollowUp(state, ctx.interpretation?.smsContext)
+    if (state.diagnostic_facts?.self_fix_result === "fixed") {
+      try {
+        const { ticketId } = await submitSmsMaintenanceRequest(supabase, {
+          landlordId: ctx.landlordId,
+          conversationId: ctx.conversationId,
+          residentId,
+          intake: state,
+          closeAs: "tenant_self_fix",
+        })
+        const submitted: SmsIntakeState = { ...state, step: "submitted" }
+        await saveIntakeState(supabase, ctx.conversationId, submitted)
+        return {
+          route: "resident_maintenance_intake",
+          replyHint: TENANT_SELF_FIX_CLOSE_SMS,
+          metadata: {
+            submitted: true,
+            ticketId,
+            intakeStep: "submitted",
+            resolution: "tenant_self_fix",
+            landlordApprovalSkipped: true,
+          },
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error("[sms-intake] self-fix close failed", message)
+        return {
+          route: "resident_maintenance_intake",
+          replyHint: INTAKE_SUBMIT_FAILED_SMS,
+          metadata: { submitError: message, selfFix: true },
+        }
+      }
+    }
     state = applyQuestionPlan(state)
   }
   state = sanitizeIntakeState(state)
@@ -1391,6 +1431,20 @@ export async function processResidentMaintenanceIntake(
   }
 
   state = await persistEarlyTicket(supabase, ctx, state)
+  const selfFixResult = state.diagnostic_facts?.self_fix_result
+  if (state.draft_ticket_id && selfFixResult && selfFixResult !== "fixed") {
+    const { error: selfFixSaveError } = await supabase
+      .from("maintenance_requests")
+      .update({
+        self_fix_tip: state.diagnostic_facts?.self_fix_tip ?? null,
+        self_fix_result: selfFixResult,
+      })
+      .eq("id", state.draft_ticket_id)
+      .eq("landlord_id", ctx.landlordId)
+    if (selfFixSaveError) {
+      console.warn("[sms-intake] self-fix facts not saved", selfFixSaveError.message)
+    }
+  }
   console.info("[sms-intake] advanced", {
     conversationId: ctx.conversationId,
     step: state.step,

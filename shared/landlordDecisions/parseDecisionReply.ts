@@ -5,7 +5,7 @@
 
 export type TicketClass = "reactive" | "proactive"
 
-export type DecisionAction = "yes" | "no" | "options" | "self" | "snooze" | "skip"
+export type DecisionAction = "yes" | "no" | "options" | "self" | "fixed" | "snooze" | "skip"
 
 export type DecisionCandidate = {
   displayId: number
@@ -47,6 +47,8 @@ const ACTION_WORDS: Record<string, DecisionAction> = {
   alternative: "options",
   self: "self",
   myself: "self",
+  fixed: "fixed",
+  resolved: "fixed",
   // Legacy power-user words — still parsed, never shown in outbound copy.
   skip: "skip",
   pass: "skip",
@@ -127,6 +129,11 @@ function splitSegments(body: string): string[] {
 
 function isYesAllSegment(segment: string): boolean {
   return /^(yes\s+all|yes\s+to\s+all)$/i.test(segment.trim())
+}
+
+/** Bare FIXED applies only when exactly one item is open. */
+export function isBareFixedPhrase(segment: string): boolean {
+  return /^(fixed|it'?s fixed|its fixed|resolved|works now|all good)$/i.test(segment.trim())
 }
 
 function mapAction(word: string): DecisionAction | null {
@@ -223,6 +230,18 @@ export function parseDecisionReply(
         intents.set(candidates[0]!.displayId, {
           displayId: candidates[0]!.displayId,
           action: "no",
+        })
+      } else {
+        unclear.push(segment)
+      }
+      continue
+    }
+
+    if (isBareFixedPhrase(segment)) {
+      if (candidates.length === 1) {
+        intents.set(candidates[0]!.displayId, {
+          displayId: candidates[0]!.displayId,
+          action: "fixed",
         })
       } else {
         unclear.push(segment)

@@ -18,6 +18,9 @@ import { landlordPickReplyMayExecute } from "../../../shared/landlordDecisions/b
 import { yesAllNeedsConfirm } from "../../../shared/landlordDecisions/batchMessage.ts"
 import { upsertSmsIdentityForPhone } from "./sms/inbound_db.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
+import { closeOpenAsksForTicket } from "./closeOpenAsksForTicket.ts"
+import { sendOutboundSms } from "./sms/adapters.ts"
+import { landlordFixedTenantSms } from "../../../shared/maintenance/selfFixTips.ts"
 import {
   AWAITING_LANDLORD_VENDOR_CHOICE,
   confirmDurableLandlordChoiceTrigger,
@@ -313,7 +316,7 @@ async function applyMutation(
     conversationId: string
     messageId: string
     mutation: {
-      kind: "book" | "snooze" | "self" | "skip" | "options"
+      kind: "book" | "snooze" | "self" | "fixed" | "skip" | "options"
       ticketId: string
       displayId: number
       until?: string
@@ -355,6 +358,25 @@ async function applyMutation(
       .eq("vendor_notify_error", AWAITING)
       .select("id")
     updated = data
+  } else if (params.mutation.kind === "fixed") {
+    const { data } = await supabase
+      .from("maintenance_requests")
+      .update({
+        vendor_work_status: "completed",
+        resolution: "landlord_self_fix",
+        self_fix_result: "fixed",
+        completed_at: params.now.toISOString(),
+        assigned_vendor_id: null,
+        landlord_handled_at: params.now.toISOString(),
+        vendor_notify_error: null,
+        awaiting_landlord_choice_at: null,
+        landlord_vendor_choice_resolved_at: params.now.toISOString(),
+      })
+      .eq("id", params.mutation.ticketId)
+      .eq("landlord_id", params.landlordId)
+      .eq("vendor_notify_error", AWAITING)
+      .select("id")
+    updated = data
   } else if (params.mutation.kind === "self") {
     const { data } = await supabase
       .from("maintenance_requests")
@@ -390,6 +412,7 @@ async function applyMutation(
     book: `Booked #${params.mutation.displayId} with the vendor on the list.`,
     snooze: `Snoozed #${params.mutation.displayId}.`,
     self: `Marked #${params.mutation.displayId} for the landlord to handle.`,
+    fixed: "Closed as fixed. No vendor booked.",
     skip: `Skipped proactive request #${params.mutation.displayId}.`,
     options: `Landlord asked for other options on #${params.mutation.displayId}.`,
   }
@@ -404,5 +427,39 @@ async function applyMutation(
     vendorId: params.mutation.kind === "book" ? params.snapshot?.vendor_id ?? undefined : undefined,
     metadata: { message: messages[params.mutation.kind] ?? "Recorded a landlord decision." },
   })
+  if (params.mutation.kind === "fixed") {
+    try {
+      await closeOpenAsksForTicket(supabase, params.mutation.ticketId, "landlord_self_fix")
+    } catch (error) {
+      console.error("[landlord-decision] close asks after fixed", error)
+    }
+    try {
+      await textTenantLandlordFixed(supabase, {
+        landlordId: params.landlordId,
+        ticketId: params.mutation.ticketId,
+        issue: params.snapshot?.issue,
+      })
+    } catch (error) {
+      console.error("[landlord-decision] tenant fixed text", error)
+    }
+  }
   return true
+}
+
+async function textTenantLandlordFixed(
+  supabase: SupabaseClient,
+  params: { landlordId: string; ticketId: string; issue?: string | null },
+): Promise<void> {
+  const { data: ticket } = await supabase
+    .from("maintenance_requests")
+    .select("resident_phone, issue_headline, description")
+    .eq("id", params.ticketId)
+    .eq("landlord_id", params.landlordId)
+    .maybeSingle()
+  const phone = typeof ticket?.resident_phone === "string" ? ticket.resident_phone.trim() : ""
+  if (!phone) return
+  const issue = params.issue?.trim() ||
+    (typeof ticket?.issue_headline === "string" ? ticket.issue_headline.trim() : "") ||
+    "repair"
+  await sendOutboundSms(phone, landlordFixedTenantSms(issue), { landlordId: params.landlordId })
 }

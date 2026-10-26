@@ -156,3 +156,27 @@ Deno.test("LLM proposals below 0.8, unknown ids, and skip on reactive are droppe
     { displayId: 104, action: "skip" },
   ])
 })
+
+const one: DecisionCandidate[] = [{ displayId: 102, ticketClass: "reactive" }]
+
+Deno.test("fixed, it's fixed, and resolved map to fixed on one open item", () => {
+  for (const body of ["fixed", "it's fixed", "resolved", "works now", "all good", "FIXED"]) {
+    const parsed = parseDecisionReply(body, one, now, tz)
+    assertEquals(parsed.intents, [{ displayId: 102, action: "fixed" }], body)
+    assertEquals(parsed.unclear, [], body)
+  }
+})
+
+Deno.test("bare FIXED with two open items asks which", () => {
+  const parsed = parseDecisionReply("FIXED", three.slice(0, 2), now, tz)
+  assertEquals(parsed.intents, [])
+  assertEquals(parsed.unclear, ["FIXED"])
+})
+
+Deno.test("LLM proposals accept fixed", () => {
+  const accepted = filterLlmDecisionProposals(
+    [{ display_id: 102, action: "fixed", confidence: 0.9 }],
+    one,
+  )
+  assertEquals(accepted, [{ displayId: 102, action: "fixed" }])
+})

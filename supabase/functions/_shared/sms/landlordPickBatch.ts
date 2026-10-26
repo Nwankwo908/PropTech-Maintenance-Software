@@ -13,6 +13,7 @@ import {
 } from "../../../../shared/landlordDecisions/batchMessage.ts"
 import { pickBatchVendorProposal } from "../../../../shared/landlordDecisions/batchVendorFit.ts"
 import { resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { selfFixLineForTicket } from "./selfFixPrefs.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { isVendorMatchableForDispatch } from "../vendor_assignment.ts"
 import { countVendorWeeklyAssignments } from "../vendor_capacity.ts"
@@ -209,6 +210,15 @@ export async function routeNonUrgentTicketIntoPickBatch(
     }
   })
   const overflow = Math.max(0, rows.length - LANDLORD_PICK_BATCH_LIMIT)
+  if (items.length === 1 && items[0]) {
+    const line = await selfFixLineForTicket(
+      supabase,
+      params.landlordId,
+      items[0].ticketId,
+      items[0].issue,
+    )
+    if (line) items[0].selfFixLine = line
+  }
   const body = buildLandlordPickBatchSms(items, overflow, { propertyCount })
 
   const { phones } = await resolveLandlordOpsPhones(supabase, params.landlordId)

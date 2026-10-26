@@ -28,6 +28,8 @@ export type NotificationDeliveryPreferences = {
 export type NotificationSettingsState = {
   delivery: NotificationDeliveryPreferences
   categories: NotificationEventCategory[]
+  /** Suggest a quick fix before a vendor is booked. Default on. */
+  suggestQuickFixes: boolean
 }
 
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -65,6 +67,7 @@ function event(
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettingsState = {
+  suggestQuickFixes: true,
   delivery: {
     primaryChannel: 'email',
     fallbackChannel: 'sms',
@@ -277,6 +280,7 @@ export function normalizeNotificationSettings(
   parsed: Partial<NotificationSettingsState>,
 ): NotificationSettingsState {
   return {
+    suggestQuickFixes: parsed.suggestQuickFixes !== false,
     delivery: {
       ...DEFAULT_NOTIFICATION_SETTINGS.delivery,
       ...parsed.delivery,

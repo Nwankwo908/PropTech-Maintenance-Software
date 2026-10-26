@@ -124,6 +124,10 @@ export type SmsIntakeState = {
   diagnostic_question?: string
   asked_question_types?: string[]
   diagnostic_facts?: Record<string, string>
+  /** Landlord setting. Missing means tips stay on. */
+  self_fix_enabled?: boolean
+  /** home_check or inspection skips self-fix tips. */
+  intake_origin?: string
   /** Durable maintenance_requests id minted mid-intake (before final confirm). */
   draft_ticket_id?: string
   /**

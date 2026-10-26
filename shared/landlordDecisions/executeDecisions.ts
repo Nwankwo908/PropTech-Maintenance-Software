@@ -2,7 +2,13 @@
  * Validates parser/LLM intents against the latest batch snapshot and plans
  * state transitions. Callers apply the mutations; this module does no I/O.
  */
-import type { DecisionAction, DecisionIntent, ParseDecisionReplyResult, TicketClass } from "./parseDecisionReply.ts"
+import {
+  isBareFixedPhrase,
+  type DecisionAction,
+  type DecisionIntent,
+  type ParseDecisionReplyResult,
+  type TicketClass,
+} from "./parseDecisionReply.ts"
 
 export type BatchCandidate = {
   ticketId: string
@@ -32,6 +38,7 @@ export type DecisionMutation =
   | { kind: "book"; ticketId: string; displayId: number }
   | { kind: "snooze"; ticketId: string; displayId: number; until: string }
   | { kind: "self"; ticketId: string; displayId: number }
+  | { kind: "fixed"; ticketId: string; displayId: number }
   | { kind: "skip"; ticketId: string; displayId: number }
   | { kind: "options"; ticketId: string; displayId: number }
 
@@ -153,6 +160,14 @@ function lineFor(
       text: showId
         ? `#${candidate.displayId} snoozed to ${formatSnoozeLabel(until)}.`
         : `Got it — snoozed to ${formatSnoozeLabel(until)}.`,
+    }
+  }
+  if (intent.action === "fixed") {
+    return {
+      mutation: { kind: "fixed", ticketId: candidate.ticketId, displayId: candidate.displayId },
+      text: showId
+        ? `Got it — #${candidate.displayId} closed. No vendor booked.`
+        : "Got it — closed. No vendor booked.",
     }
   }
   if (intent.action === "self") {
@@ -307,6 +322,10 @@ export function executeDecisionPlan(input: {
           ? `What should I do with #${candidate.displayId} (${issue})? Reply YES or NO.`
           : `What should I do with that request (${issue})? Reply YES or NO.`
       }
+      continue
+    }
+    if (isBareFixedPhrase(segment) && !question && openCandidates(input.candidates).length > 1) {
+      question = "Which one is fixed? Reply with the number, like 1 FIXED."
       continue
     }
     const id = unknownIdFromSegment(segment, known)

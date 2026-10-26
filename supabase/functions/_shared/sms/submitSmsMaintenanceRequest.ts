@@ -5,6 +5,11 @@ import {
   resolveTicketSlaMinutes,
 } from "../landlordNotificationPrefs.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import {
+  selfFixTipById,
+  tenantSelfFixActivityMessage,
+} from "../../../../shared/maintenance/selfFixTips.ts"
 import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
 import { notifyResidentSubmitted } from "../../submit-maintenance-request/resident_notify.ts"
@@ -101,6 +106,8 @@ export async function submitSmsMaintenanceRequest(
      * Falls back to normal trade pick if the vendor is no longer ACTIVE.
      */
     preferVendorId?: string | null
+    /** Tenant already fixed it. Complete the ticket and skip vendor dispatch. */
+    closeAs?: "tenant_self_fix"
   },
 ): Promise<{ ticketId: string; vendorId: string | null; vendorAssigned: boolean }> {
   const { data: resident, error: residentErr } = await supabase
@@ -163,7 +170,17 @@ export async function submitSmsMaintenanceRequest(
     severity: dbSeverity,
     estimated_minutes: estimatedMinutes,
     due_at: dueAt.toISOString(),
-    vendor_work_status: "unassigned",
+    vendor_work_status: params.closeAs === "tenant_self_fix" ? "completed" : "unassigned",
+    ...(params.closeAs === "tenant_self_fix"
+      ? {
+        resolution: "tenant_self_fix",
+        self_fix_tip: params.intake.diagnostic_facts?.self_fix_tip ?? null,
+        self_fix_result: "fixed",
+        completed_at: new Date().toISOString(),
+        vendor_notify_error: null,
+        awaiting_landlord_choice_at: null,
+      }
+      : {}),
     resident_availability_text: residentAvailability,
     resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
   }
@@ -274,7 +291,8 @@ export async function submitSmsMaintenanceRequest(
   const descPrev =
     description.length > 200 ? `${description.slice(0, 197)}…` : description
 
-  try {
+  const closedByTenant = params.closeAs === "tenant_self_fix"
+  if (!closedByTenant) try {
     await notifyResidentSubmitted(supabase, {
       ticketId,
       recipientName: row.full_name?.trim() || "Resident",
@@ -292,7 +310,7 @@ export async function submitSmsMaintenanceRequest(
   let vendorAssigned = false
   let assignedVendorId: string | null = null
   let needsVendorEscalation = false
-  try {
+  if (!closedByTenant) try {
     const outcome = await dispatchConfirmedMaintenanceTicket(supabase, {
       ticketId,
       priority,
@@ -338,12 +356,42 @@ export async function submitSmsMaintenanceRequest(
       needsVendorEscalation,
     })
     maintenanceWorkflowRunId = started.workflowRunId
+    if (closedByTenant && maintenanceWorkflowRunId) {
+      await updateWorkflowRun(supabase, maintenanceWorkflowRunId, {
+        status: "completed",
+        currentStep: "tenant_self_fix",
+        completedAt: new Date().toISOString(),
+        pipelineStage: "log",
+        eventMessage: "Tenant fixed it. No vendor needed.",
+        eventStep: "tenant_self_fix",
+      })
+    }
   } catch (e) {
     console.error("[sms-intake] maintenance_request workflow", e)
   }
 
   try {
-    await logGraphEvent(supabase, {
+    if (closedByTenant) {
+      const tip = selfFixTipById(params.intake.diagnostic_facts?.self_fix_tip)
+      await recordActivityLog(supabase, {
+        landlordId: params.landlordId,
+        eventType: "maintenance.tenant_self_fix",
+        source: "sms",
+        actorType: "resident",
+        actorId: params.residentId,
+        residentId: params.residentId,
+        maintenanceRequestId: ticketId,
+        conversationId: params.conversationId,
+        workflowRunId: maintenanceWorkflowRunId ?? intakeRunId,
+        workflowTemplateId: "maintenance_intake",
+        metadata: {
+          message: tip
+            ? tenantSelfFixActivityMessage(tip)
+            : "Tenant fixed it — no vendor needed.",
+          resolution: "tenant_self_fix",
+        },
+      })
+    } else await logGraphEvent(supabase, {
       landlord_id: params.landlordId,
     event_type: "maintenance.request_submitted",
     source: "sms",

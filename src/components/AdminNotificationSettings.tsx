@@ -286,12 +286,14 @@ export function AdminNotificationSettings() {
   )
   const [testDeliveryGuideRunId, setTestDeliveryGuideRunId] = useState(0)
   const [saved, setSaved] = useState<NotificationSettingsState>(() => ({
+    suggestQuickFixes: DEFAULT_NOTIFICATION_SETTINGS.suggestQuickFixes,
     delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery },
     categories: JSON.parse(
       JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS.categories),
     ) as NotificationEventCategory[],
   }))
   const [draft, setDraft] = useState<NotificationSettingsState>(() => ({
+    suggestQuickFixes: DEFAULT_NOTIFICATION_SETTINGS.suggestQuickFixes,
     delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery },
     categories: JSON.parse(
       JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS.categories),
@@ -380,6 +382,7 @@ export function AdminNotificationSettings() {
 
   function handleRestoreDefaults() {
     const restored: NotificationSettingsState = {
+      suggestQuickFixes: true,
       delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery },
       categories: JSON.parse(
         JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS.categories),
@@ -548,6 +551,25 @@ export function AdminNotificationSettings() {
                   <SelectChevron />
                 </div>
               </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
+              <div>
+                <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
+                  Suggest quick fixes before booking a vendor
+                </p>
+                <p className="mt-0.5 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
+                  For common safe problems, ask the resident to try one short step first.
+                </p>
+              </div>
+              <ToggleSwitch
+                id="suggest-quick-fixes"
+                checked={draft.suggestQuickFixes !== false}
+                onChange={(suggestQuickFixes) =>
+                  setDraft((current) => ({ ...current, suggestQuickFixes }))
+                }
+                label="Suggest quick fixes before booking a vendor"
+              />
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">

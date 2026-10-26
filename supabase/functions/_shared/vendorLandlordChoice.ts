@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isConfirmedDurableInboundTrigger } from "../../../shared/ops/vendorChoiceTriggerAudit.ts"
+import { selfFixLineForTicket } from "./sms/selfFixPrefs.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { formatWorkOrderRef, vendorCompanyName } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
@@ -512,6 +513,8 @@ export function buildLandlordVendorChoiceSms(input: {
   propertyType?: string | null
   /** Landlord-facing #101. WO-XXXX stays on the Ref line. */
   displayId?: number | null
+  /** One quick-fix line. Omitted when empty. */
+  selfFixLine?: string | null
 }): string {
   const available = input.reason === "availability"
   const rematch = rematchReasonLine(input.reason)
@@ -548,6 +551,8 @@ export function buildLandlordVendorChoiceSms(input: {
     const estimate = only?.estimateNote?.trim()
     if (window) lines.push(window)
     if (estimate) lines.push(estimate)
+    const tip = input.selfFixLine?.trim()
+    if (tip) lines.push("", tip)
     lines.push("", landlordYesChoiceReplyHint(name))
   } else {
     lines.push("")
@@ -561,6 +566,8 @@ export function buildLandlordVendorChoiceSms(input: {
       else if (anyEstimate) lines.push("No estimate provided")
       if (index < input.options.length - 1) lines.push("")
     })
+    const tip = input.selfFixLine?.trim()
+    if (tip) lines.push("", tip)
     lines.push("", landlordVendorChoiceReplyHint(input.options.length))
   }
 
@@ -1080,6 +1087,7 @@ export async function notifyLandlordVendorChoice(
       issueHeadline,
       locationLabel,
       displayId,
+      selfFixLine: await selfFixLineForTicket(supabase, params.landlordId, params.ticketId, issueHeadline),
     })
   }
 

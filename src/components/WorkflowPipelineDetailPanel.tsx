@@ -18,6 +18,9 @@ import {
   type MoveOutAdminAction,
 } from '@/lib/moveOutWorkflow'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import { findSelfFixTip, selfFixTipById } from '@shared/maintenance/selfFixTips'
+import { loadNotificationSettingsForAccount } from '@/lib/notificationSettings'
 import {
   WORKFLOW_KANBAN_STAGES,
   WORKFLOW_STAGE_LABEL,
@@ -481,6 +484,10 @@ export function WorkflowPipelineDetailPanel({
   const [visitSaving, setVisitSaving] = useState(false)
   const [visitError, setVisitError] = useState<string | null>(null)
   const [visitSaved, setVisitSaved] = useState<string | null>(null)
+  const [selfFixFacts, setSelfFixFacts] = useState<{ tip: string; result: string; status: string } | null>(null)
+  const [quickFixesEnabled, setQuickFixesEnabled] = useState(true)
+  const [markingFixed, setMarkingFixed] = useState(false)
+  const [markFixedError, setMarkFixedError] = useState<string | null>(null)
 
   const stageMoveCard = useMemo(
     () => (detail ? detailToStageMoveCard(detail) : null),
@@ -509,6 +516,66 @@ export function WorkflowPipelineDetailPanel({
     }
     return names
   }, [vendorOptions, currentVendorName])
+
+  useEffect(() => {
+    if (!open) return
+    const landlordId = getActiveLandlordId()
+    if (!landlordId) return
+    let cancelled = false
+    void loadNotificationSettingsForAccount(landlordId)
+      .then((settings) => {
+        if (!cancelled) setQuickFixesEnabled(settings.suggestQuickFixes !== false)
+      })
+      .catch(() => {
+        if (!cancelled) setQuickFixesEnabled(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  useEffect(() => {
+    const ticketId = detail?.maintenanceRequestId
+    if (!open || !ticketId || !supabase) {
+      setSelfFixFacts(null)
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from('maintenance_requests')
+      .select('self_fix_tip, self_fix_result, vendor_work_status')
+      .eq('id', ticketId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        setSelfFixFacts({
+          tip: typeof data.self_fix_tip === 'string' ? data.self_fix_tip : '',
+          result: typeof data.self_fix_result === 'string' ? data.self_fix_result : '',
+          status: typeof data.vendor_work_status === 'string' ? data.vendor_work_status : '',
+        })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, detail?.maintenanceRequestId])
+
+  const quickFixTip = useMemo(() => {
+    if (!detail?.isMaintenanceWorkflow || detail.inspectionGroup) return null
+    const status = (selfFixFacts?.status ?? '').toLowerCase()
+    if (status === 'completed' || status === 'cancelled' || status === 'archived') return null
+    return findSelfFixTip({
+      text: `${detail.title}\n${detail.description}`,
+      tipsEnabled: quickFixesEnabled,
+      origin: /home check/i.test(detail.title) ? 'home_check' : null,
+      diagnosticFacts: selfFixFacts?.result
+        ? {
+          self_fix_tip: selfFixFacts.tip,
+          self_fix_result: selfFixFacts.result,
+          self_fix_tried: selfFixFacts.result === 'not_fixed' ? selfFixFacts.tip : '',
+        }
+        : undefined,
+    })
+  }, [detail, selfFixFacts, quickFixesEnabled])
 
   useEffect(() => {
     if (!open || !canOverrideVendor) return
@@ -731,6 +798,50 @@ export function WorkflowPipelineDetailPanel({
     } finally {
       setDeleteSaving(false)
     }
+  }
+
+  const markQuickFixDone = () => {
+    const ticketId = detail?.maintenanceRequestId
+    const landlordId = getActiveLandlordId()
+    if (!ticketId || !landlordId || !supabase || !quickFixTip) return
+    setMarkingFixed(true)
+    setMarkFixedError(null)
+    const now = new Date().toISOString()
+    void (async () => {
+      try {
+        const { error } = await supabase
+          .from('maintenance_requests')
+          .update({
+            vendor_work_status: 'completed',
+            resolution: 'landlord_self_fix',
+            self_fix_tip: quickFixTip.id,
+            self_fix_result: 'fixed',
+            completed_at: now,
+            vendor_notify_error: null,
+            awaiting_landlord_choice_at: null,
+            landlord_vendor_choice_resolved_at: now,
+          })
+          .eq('id', ticketId)
+          .eq('landlord_id', landlordId)
+        if (error) {
+          setMarkFixedError(error.message || 'Could not close this request.')
+          return
+        }
+        await recordActivityLog({
+          landlordId,
+          eventType: 'maintenance.landlord_self_fix',
+          source: 'dashboard',
+          actorType: 'landlord',
+          maintenanceRequestId: ticketId,
+          workflowRunId: detail?.runId,
+          metadata: { message: 'Closed as fixed. No vendor booked.' },
+        })
+        setSelfFixFacts({ tip: quickFixTip.id, result: 'fixed', status: 'completed' })
+        onWorkflowUpdated?.()
+      } finally {
+        setMarkingFixed(false)
+      }
+    })()
   }
 
   if (!open) return null
@@ -1060,6 +1171,35 @@ export function WorkflowPipelineDetailPanel({
                 </p>
                 {detail.statusContext ? (
                   <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">{detail.statusContext}</p>
+                ) : null}
+                {quickFixTip ? (
+                  <div className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+                    {selfFixFacts?.result === 'not_fixed' ? (
+                      <p className="text-[14px] leading-5 text-[#364153]">
+                        Tenant tried: {selfFixTipById(selfFixFacts.tip)?.label ?? quickFixTip.label} — didn't work
+                      </p>
+                    ) : (
+                      <>
+                        <h4 className="text-[14px] font-semibold text-[#0a0a0a]">Quick fix to try</h4>
+                        <ol className="mt-2 list-decimal space-y-1 pl-5 text-[14px] leading-5 text-[#364153]">
+                          {quickFixTip.steps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                        {markFixedError ? (
+                          <p className="mt-2 text-[13px] text-[#b52a00]">{markFixedError}</p>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={markingFixed}
+                          onClick={markQuickFixDone}
+                          className="sa-press mt-3 inline-flex cursor-pointer items-center rounded-[8px] bg-[#0d0f11] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                        >
+                          {markingFixed ? 'Saving…' : 'Mark fixed'}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 ) : null}
                 <div className="mt-5 border-t border-[#f3f4f6] pt-5">
                   {stageMove.error || vendorSaveError ? (

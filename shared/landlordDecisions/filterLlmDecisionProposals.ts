@@ -9,6 +9,7 @@ const ALLOWED: ReadonlySet<DecisionAction> = new Set([
   "no",
   "options",
   "self",
+  "fixed",
   "snooze",
   "skip",
 ])

@@ -3,6 +3,10 @@
  * Ask only when the answer would change safety handling, routing, or next steps.
  */
 import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import {
+  classifySelfFixReply,
+  shouldOfferSelfFix,
+} from "../../../../shared/maintenance/selfFixTips.ts"
 import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
 import { detectRecurringIssueSignal } from "../../../../shared/maintenance/recurringIssueSignal.ts"
 import {
@@ -52,6 +56,7 @@ export type MaintenanceQuestionType =
   | "duration_material"
   | "photo"
   | "unit_entry"
+  | "self_fix"
 
 export type NextMaintenanceQuestion =
   | {
@@ -59,6 +64,7 @@ export type NextMaintenanceQuestion =
     questionType: MaintenanceQuestionType
     question: string
     step: IntakeStep
+    tipId?: string
   }
   | { shouldAsk: false }
 
@@ -336,6 +342,14 @@ function photoQuestion(state: SmsIntakeState, hay: string): NextMaintenanceQuest
     question,
     step: "photo",
   }
+}
+
+function readyForSelfFix(state: SmsIntakeState, hay: string): boolean {
+  const issueKnown = Boolean(state.issue_type || state.vendor_trade || state.primary_category)
+  if (!issueKnown) return false
+  if (state.room_or_area?.trim()) return true
+  if (isHvac(state, hay) || isLock(state, hay)) return true
+  return asked(state, "room_or_area")
 }
 
 export function determineNextMaintenanceQuestion(
@@ -700,6 +714,31 @@ function resolveNextMaintenanceQuestion(
   }
 
   if (
+    readyForSelfFix(state, hay) &&
+    !asked(state, "self_fix") &&
+    !fact(state, "self_fix_result")
+  ) {
+    const tip = shouldOfferSelfFix({
+      text: hay,
+      trade: state.vendor_trade || state.issue_type,
+      issueType: state.issue_type,
+      outdoorTempF: state.outdoor_temp_f,
+      diagnosticFacts: state.diagnostic_facts,
+      tipsEnabled: state.self_fix_enabled !== false,
+      origin: state.intake_origin,
+    })
+    if (tip) {
+      return {
+        shouldAsk: true,
+        questionType: "self_fix",
+        question: tip.tenantAsk,
+        step: "diagnostic",
+        tipId: tip.id,
+      }
+    }
+  }
+
+  if (
     !asked(state, "photo") &&
     (state.photo_urls?.length ?? 0) === 0 &&
     isDoorComplaint(state, hay) &&
@@ -777,11 +816,14 @@ export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
       diagnostic_question: undefined,
     }
   }
+  const facts = { ...(prepared.diagnostic_facts ?? {}) }
+  if (next.tipId) facts.self_fix_tip = next.tipId
   return {
     ...prepared,
     step: next.step,
     diagnostic_question_type: next.questionType,
     diagnostic_question: next.question,
+    diagnostic_facts: facts,
   }
 }
 
@@ -799,6 +841,13 @@ export function applyDiagnosticAnswer(
   }
 
   const facts = { ...(state.diagnostic_facts ?? {}), [type]: answer }
+  if (type === "self_fix") {
+    const result = classifySelfFixReply(answer)
+    facts.self_fix_result = result
+    if (result === "not_fixed" && facts.self_fix_tip) {
+      facts.self_fix_tried = facts.self_fix_tip
+    }
+  }
   let safety = state.safety_concerns
   let room = state.room_or_area
   let firstNoticed = state.first_noticed
