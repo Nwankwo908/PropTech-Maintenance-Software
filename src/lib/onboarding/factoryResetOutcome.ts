@@ -7,6 +7,10 @@
  */
 import type { LandlordOnboardingState } from './types'
 
+/** Confirm copy for Factory reset, and the Get Started notice when a wipe is required. */
+export const FACTORY_RESET_CONFIRM_MESSAGE =
+  'Factory reset deletes your portfolio data and returns you to setup so you can upload documents again.'
+
 export type OpsPurgePath =
   | 'purge_landlord_portfolio'
   | 'purge_empty_landlord_operations'

@@ -110,3 +110,23 @@ describe('Limited Alpha 1 capabilities', () => {
     ).toBe(true)
   })
 })
+
+describe('self-service Limited Alpha profiles', () => {
+  const first = 'a13a0000-1234-4567-89ab-123456789abc'
+  const second = 'a13a0000-5678-4abc-9123-123456789abc'
+  it('allows each private profile to onboard with operational features and payments off', () => {
+    for (const id of [first, second]) {
+      expect(isLimitedAlphaLandlord(id)).toBe(true)
+      expect(isOnboardingLandlordId(id)).toBe(true)
+      expect(landlordHasVendorMarketplace(id)).toBe(true)
+      expect(landlordUsesTwilioSms(id)).toBe(true)
+      expect(landlordHasPayments(id)).toBe(false)
+    }
+  })
+  it('does not expand seeded-account identity checks or accept malformed namespaces', () => {
+    expect(isLimitedAlpha1Landlord(first)).toBe(false)
+    expect(isLimitedAlpha2Landlord(first)).toBe(false)
+    expect(isLimitedAlphaLandlord('a13a0000-not-a-uuid')).toBe(false)
+    expect(isOnboardingLandlordId('068daf53-07e4-4493-bd7f-6106e3c8c62f')).toBe(false)
+  })
+})

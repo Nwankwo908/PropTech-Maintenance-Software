@@ -14,6 +14,11 @@ import {
 import { pickBatchVendorProposal } from "../../../../shared/landlordDecisions/batchVendorFit.ts"
 import { resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { selfFixLineForTicket } from "./selfFixPrefs.ts"
+import {
+  landlordApprovalMediaFallbackLine,
+  landlordApprovalMediaLine,
+  loadTicketResidentMedia,
+} from "./landlordApprovalMedia.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { isVendorMatchableForDispatch } from "../vendor_assignment.ts"
 import { countVendorWeeklyAssignments } from "../vendor_capacity.ts"
@@ -210,6 +215,9 @@ export async function routeNonUrgentTicketIntoPickBatch(
     }
   })
   const overflow = Math.max(0, rows.length - LANDLORD_PICK_BATCH_LIMIT)
+  let mediaRefs: string[] = []
+  let mediaUrls: string[] = []
+  let fallbackBody: string | null = null
   if (items.length === 1 && items[0]) {
     const line = await selfFixLineForTicket(
       supabase,
@@ -218,8 +226,25 @@ export async function routeNonUrgentTicketIntoPickBatch(
       items[0].issue,
     )
     if (line) items[0].selfFixLine = line
+    const media = await loadTicketResidentMedia(supabase, items[0].ticketId)
+    mediaRefs = media.refs
+    mediaUrls = media.urls
+    if (media.urls.length > 0) {
+      items[0].residentMediaLine = landlordApprovalMediaLine(media.refs)
+    } else if (media.storedRefs.length > 0) {
+      items[0].residentMediaLine = landlordApprovalMediaFallbackLine(media.storedRefs)
+    }
   }
   const body = buildLandlordPickBatchSms(items, overflow, { propertyCount })
+  if (items.length === 1 && items[0] && mediaUrls.length > 0) {
+    const attached = items[0].residentMediaLine
+    const fallback = landlordApprovalMediaFallbackLine(mediaRefs)
+    if (attached && fallback) {
+      items[0].residentMediaLine = fallback
+      fallbackBody = buildLandlordPickBatchSms(items, overflow, { propertyCount })
+      items[0].residentMediaLine = attached
+    }
+  }
 
   const { phones } = await resolveLandlordOpsPhones(supabase, params.landlordId)
   if (phones.length === 0) return "fallback"
@@ -231,6 +256,9 @@ export async function routeNonUrgentTicketIntoPickBatch(
       phone,
       opsPhones: phones,
       body,
+      fallbackBody,
+      mediaRefs,
+      mediaUrls,
       items,
       now,
     })
@@ -245,7 +273,9 @@ export async function routeNonUrgentTicketIntoPickBatch(
       actorType: "system",
       maintenanceRequestId: params.ticketId,
       metadata: {
-        message: `Texted ${items.length} requests that need a decision.`,
+        message: mediaUrls.length > 0
+          ? "Texted 1 request that needs a decision, with the resident's photo or video."
+          : `Texted ${items.length} requests that need a decision.`,
       },
     })
     return "batched"
@@ -266,6 +296,9 @@ async function sendOrQueueBatch(
     phone: string
     opsPhones: string[]
     body: string
+    fallbackBody: string | null
+    mediaRefs: string[]
+    mediaUrls: string[]
     items: BatchItemDraft[]
     now: Date
   },
@@ -335,11 +368,23 @@ async function sendOrQueueBatch(
     landlordId: params.landlordId,
     lineProvider: main?.provider,
   })
-  const sendResult = await provider.sendMessage({
+  let sentBody = params.body
+  let sentMedia = params.mediaRefs
+  let sendResult = await provider.sendMessage({
     to: phone,
     body: params.body,
     from: main?.phone_number,
+    mediaUrls: params.mediaUrls.length > 0 ? params.mediaUrls : undefined,
   })
+  if (sendResult.error && params.mediaUrls.length > 0 && params.fallbackBody) {
+    sentBody = params.fallbackBody
+    sentMedia = []
+    sendResult = await provider.sendMessage({
+      to: phone,
+      body: params.fallbackBody,
+      from: main?.phone_number,
+    })
+  }
   if (sendResult.error) return "fallback"
 
   const identity = await upsertSmsIdentityForPhone(supabase, {
@@ -367,8 +412,8 @@ async function sendOrQueueBatch(
         direction: "outbound",
         from_number: normalizeSmsPhone(main.phone_number ?? "unknown"),
         to_number: phone,
-        body: params.body,
-        media_urls: [],
+        body: sentBody,
+        media_urls: sentMedia,
         provider: sendResult.provider ?? "twilio",
         provider_message_sid: sendResult.providerMessageSid ?? sendResult.messageId ??
           `landlord-pick-batch:${batch.id}`,

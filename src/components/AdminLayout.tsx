@@ -34,6 +34,7 @@ import {
   clearOnboardingResetGuard,
   isOnboardingLandlordAccount,
   markOnboardingResetInProgress,
+  FACTORY_RESET_CONFIRM_MESSAGE,
   reportFactoryResetFailureToUser,
   reportFactoryResetSuccessToConsole,
   restartNewLandlordOnboarding,
@@ -161,7 +162,7 @@ function AdminTopBar() {
   async function handleResetOnboarding() {
     if (resettingOnboarding) return
     const confirmed = window.confirm(
-      'Factory reset?\n\nThis permanently deletes all properties, residents, vendors, work orders, and SMS threads for this account, and returns you to the start of setup.',
+      FACTORY_RESET_CONFIRM_MESSAGE,
     )
     if (!confirmed) return
 

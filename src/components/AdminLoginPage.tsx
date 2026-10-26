@@ -1,3 +1,4 @@
+import { markLimitedAlphaSignupIntent } from '@/lib/limitedAlphaSignup'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
@@ -193,6 +194,7 @@ export function AdminLoginPage() {
     try {
       // Local and production: PKCE via Supabase. Chrome localhost implicit
       // id_tokens fail nonce checks ("Google sign-in could not be verified").
+      if (isGetStarted) markLimitedAlphaSignupIntent()
       await startAdminGoogleOAuthRedirect()
     } catch (err) {
       setError(googleIdTokenAuthErrorMessage(err) ?? getErrorMessage(err, 'Sign in failed'))

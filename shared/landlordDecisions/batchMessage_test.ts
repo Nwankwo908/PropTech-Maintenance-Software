@@ -26,6 +26,41 @@ Deno.test("one item uses a single ask and does not invent example ids", () => {
   assertEquals(sms.includes("hold the appointment"), false)
 })
 
+Deno.test("one item includes the resident photo line before the reply", () => {
+  const sms = buildLandlordPickBatchSms([
+    {
+      displayId: 102,
+      issue: "Bedroom sink leak",
+      vendorName: "Handy Co",
+      ticketClass: "reactive",
+      residentMediaLine: "The resident sent this photo.",
+    },
+  ])
+  assertStringIncludes(sms, "The resident sent this photo.")
+  assertEquals(
+    sms.indexOf("The resident sent this photo.") < sms.indexOf("Reply YES"),
+    true,
+  )
+})
+
+Deno.test("a multi-item batch leaves resident photos off the shared text", () => {
+  const sms = buildLandlordPickBatchSms([
+    {
+      displayId: 101,
+      issue: "Sink leak",
+      vendorName: "Handy Co",
+      residentMediaLine: "The resident sent this photo.",
+    },
+    {
+      displayId: 102,
+      issue: "Outlet out",
+      vendorName: "Handy Co",
+      residentMediaLine: "The resident sent this video.",
+    },
+  ])
+  assertEquals(sms.includes("The resident sent"), false)
+})
+
 Deno.test("one proactive item uses YES/NO and still has no display id", () => {
   const sms = buildLandlordPickBatchSms([
     {

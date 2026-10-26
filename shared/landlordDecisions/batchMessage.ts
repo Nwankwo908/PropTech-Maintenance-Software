@@ -21,6 +21,8 @@ export type LandlordPickBatchItem = {
   ticketClass?: LandlordPickTicketClass | null
   /** One quick-fix line. Ignored when the batch has more than one item. */
   selfFixLine?: string | null
+  /** One line when a resident photo or video is on this text. Single-item only. */
+  residentMediaLine?: string | null
 }
 
 export type LandlordPickBatchSmsOptions = {
@@ -104,10 +106,12 @@ function singleAskSms(item: LandlordPickBatchItem, includeAddress: boolean): str
     formatEstimateRange(item.costLow, item.costHigh),
   ].filter(Boolean).join(" · ")
   const tip = item.selfFixLine?.trim()
+  const media = item.residentMediaLine?.trim()
   return [
     `Ulo: Approval needed: ${issue}${where}.`,
     vendorLine,
     tip,
+    media,
     singleAskReply(item.ticketClass),
   ].filter(Boolean).join("\n")
 }

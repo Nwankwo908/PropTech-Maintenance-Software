@@ -280,7 +280,7 @@ export function buildVendorAvailabilityAskSms(
   }
   return (
     `What's your earliest availability${forJob}? ` +
-    "Reply with a day and arrival window (e.g. Wed 9am–12pm) or an exact time (e.g. Wed at 10am)."
+    (wo ? `Reply ${wo} with a day and arrival window (e.g. ${wo} Wed 9am–12pm).` : "Reply with a day and arrival window (e.g. Wed 9am–12pm) or an exact time (e.g. Wed at 10am).")
   )
 }
 

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { FACTORY_RESET_CONFIRM_MESSAGE } from './factoryResetOutcome'
 import { requireOnboardingLandlord } from './scope'
 
 export type StartFreshOnboardingRunResult =
@@ -39,7 +40,8 @@ export async function startFreshOnboardingRun(input: {
       error,
       'Could not start a fresh setup. Your previous portfolio was left unchanged.',
     )
-    return { ok: false, error: message }
+    const blocked = /live work orders, payments, inspections, or equipment records/i.test(message)
+    return { ok: false, error: blocked ? FACTORY_RESET_CONFIRM_MESSAGE : message }
   }
 
   const row = (data ?? {}) as { session_id?: string; started_at?: string }

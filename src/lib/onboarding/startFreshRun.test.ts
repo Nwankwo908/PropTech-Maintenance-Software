@@ -67,7 +67,9 @@ describe('startFreshOnboardingRun', () => {
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      expect(result.error).toMatch(/live work orders|left unchanged|Could not start/i)
+      expect(result.error).toBe(
+        'Factory reset deletes your portfolio data and returns you to setup so you can upload documents again.',
+      )
     }
   })
 

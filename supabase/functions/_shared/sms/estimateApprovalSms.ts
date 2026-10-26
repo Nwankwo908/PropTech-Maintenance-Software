@@ -1,3 +1,4 @@
+import { estimateReplyRef } from "./questionReplyRef.ts"
 /**
  * Landlord SMS when a vendor submits an estimate that needs approval.
  */
@@ -13,6 +14,7 @@ function money(n: number): string {
 }
 
 export function buildLandlordEstimateApprovalSms(input: {
+  estimateId?: string
   vendorName: string
   workOrderRef: string
   unit?: string | null
@@ -29,7 +31,10 @@ export function buildLandlordEstimateApprovalSms(input: {
   landlordFirstName?: string | null
 }): string {
   const vendor = input.vendorName.trim() || "A vendor"
-  const opening = landlordAskOpening(input.landlordFirstName, "estimate needs approval")
+  const opening = landlordAskOpening(
+    input.landlordFirstName,
+    "estimate needs approval",
+  )
   const summary = landlordAskSummaryLine({
     locationLabel: input.locationLabel,
     unit: input.unit,
@@ -51,7 +56,16 @@ export function buildLandlordEstimateApprovalSms(input: {
       "This amount is above your usual review threshold — please take a look soon.",
     )
   }
-  lines.push("", landlordApproveDeclineReplyHint())
+  lines.push(
+    "",
+    input.estimateId
+      ? `Reply ${
+        estimateReplyRef(input.estimateId)
+      } APPROVE to approve this estimate, or ${
+        estimateReplyRef(input.estimateId)
+      } DECLINE to request a revision.`
+      : landlordApproveDeclineReplyHint(),
+  )
 
   const approve = input.approveUrl?.trim() ?? ""
   const reject = input.rejectUrl?.trim() ?? ""

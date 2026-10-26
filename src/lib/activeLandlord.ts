@@ -1,3 +1,4 @@
+import { isStaffAdminEmail } from '@shared/admin/staffAllowlist'
 /**
  * Active landlord account resolution.
  *
@@ -22,6 +23,7 @@
  */
 
 import {
+  isSelfServiceLimitedAlphaLandlord,
   EMPTY_LANDLORD_ID,
   FULL_ALPHA_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
@@ -78,6 +80,7 @@ const TRY_DEMO_WELCOME_SEEN_KEY = 'ulo.tryDemoWelcomeSeen'
 
 /** Landlord bound to the signed-in account email (null for staff logins). */
 let sessionLandlordId: string | null = null
+let sessionLandlordLabel: string | null = null
 
 export function setSessionLandlordFromEmail(email: string | null | undefined): void {
   sessionLandlordId = seededLandlordIdForEmail(email)
@@ -87,7 +90,9 @@ export function setSessionLandlordFromEmail(email: string | null | undefined): v
 export async function bindSessionLandlordFromEmail(
   email: string | null | undefined,
 ): Promise<void> {
+  sessionLandlordLabel = null
   const normalized = email?.trim().toLowerCase() ?? ''
+  sessionLandlordId = null
   if (!normalized) {
     sessionLandlordId = null
     return
@@ -99,7 +104,15 @@ export async function bindSessionLandlordFromEmail(
   }
   const { landlordIdForPortalMemberEmail } = await import('@/lib/landlordPortalMembers')
   const memberLandlordId = await landlordIdForPortalMemberEmail(normalized)
+  if (!memberLandlordId && !isStaffAdminEmail(normalized)) {
+    throw new Error('Could not resolve your private profile. Please sign in again.')
+  }
   sessionLandlordId = memberLandlordId ? canonicalizeLandlordId(memberLandlordId) : null
+  if (memberLandlordId && isSelfServiceLimitedAlphaLandlord(memberLandlordId)) {
+    const { supabase } = await import('@/lib/supabase')
+    const result = await supabase?.from('limited_alpha_signup_profiles').select('alpha_number').eq('landlord_id', memberLandlordId).maybeSingle()
+    if (result?.data?.alpha_number) sessionLandlordLabel = `Limited Alpha ${result.data.alpha_number}`
+  }
 }
 
 export function getSessionLandlordId(): string | null {
@@ -138,7 +151,7 @@ export function getActiveLandlordKind(): LandlordAccountKind {
   const id = getActiveLandlordId()
   if (id === DEMO_LANDLORD_ID) return 'demo'
   if (id === EMPTY_LANDLORD_ID) return 'empty'
-  if (id === LIMITED_ALPHA_1_LANDLORD_ID || id === LIMITED_ALPHA_2_LANDLORD_ID) {
+  if (isSelfServiceLimitedAlphaLandlord(id) || id === LIMITED_ALPHA_1_LANDLORD_ID || id === LIMITED_ALPHA_2_LANDLORD_ID) {
     return 'limited_alpha'
   }
   return 'default'
@@ -146,7 +159,7 @@ export function getActiveLandlordKind(): LandlordAccountKind {
 
 export function getActiveLandlordLabel(): string {
   const id = getActiveLandlordId()
-  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label ?? 'Limited Alpha 1'
+  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label ?? (isSelfServiceLimitedAlphaLandlord(id) ? sessionLandlordLabel || 'Limited Alpha' : 'Limited Alpha 1')
 }
 
 export function isDemoAccountActive(): boolean {

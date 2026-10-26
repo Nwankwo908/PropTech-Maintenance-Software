@@ -1,3 +1,8 @@
+import {
+  estimateRefBounds,
+  estimateReplyRef,
+  parseQuestionReplyRef,
+} from "./questionReplyRef.ts"
 /**
  * Landlord / ops reply APPROVE or DECLINE on an estimate notify thread
  * (or any conversation awaiting an estimate decision).
@@ -16,9 +21,9 @@ import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
 import { resolveLandlordIdForAccountOrOpsPhone } from "./landlordAccountPhone.ts"
 import {
   listPendingEstimatesForLandlord,
+  type PendingLandlordEstimate,
   replyForEstimateTerminalStatus,
   sendLandlordEstimateDisambiguationSms,
-  type PendingLandlordEstimate,
 } from "./landlordEstimateNotify.ts"
 import {
   matchShortReplyToken,
@@ -169,7 +174,10 @@ function readAwaitingDisambiguation(
   return out.length > 0 ? out : null
 }
 
-function parseDisambiguationIndex(body: string, optionCount: number): number | null {
+function parseDisambiguationIndex(
+  body: string,
+  optionCount: number,
+): number | null {
   const trimmed = body.trim()
   if (!/^\d{1,2}$/.test(trimmed)) return null
   const n = Number(trimmed)
@@ -480,6 +488,11 @@ export async function tryHandleEstimateDecisionInbound(
     fromPhone?: string | null
   },
 ): Promise<EstimateDecisionInboundResult> {
+  const explicitQuestion = parseQuestionReplyRef(params.body)
+  if (explicitQuestion?.kind === "schedule") return { handled: false }
+  if (explicitQuestion?.kind === "estimate") {
+    params = { ...params, body: explicitQuestion.body }
+  }
   // Real vendor threads must not approve estimates by SMS.
   if (params.identityType === "vendor") return { handled: false }
 
@@ -498,7 +511,7 @@ export async function tryHandleEstimateDecisionInbound(
       : {}
 
   const disambiguation = readAwaitingDisambiguation(priorIntake)
-  if (disambiguation) {
+  if (disambiguation && !explicitQuestion) {
     const idx = parseDisambiguationIndex(params.body, disambiguation.length)
     if (idx != null) {
       const chosen = disambiguation[idx]!
@@ -506,7 +519,9 @@ export async function tryHandleEstimateDecisionInbound(
         const raw = priorIntake.awaiting_estimate_disambiguation
         if (!raw || typeof raw !== "object") return null
         const a = (raw as Record<string, unknown>).action
-        if (a === "approve" || a === "reject") return a as EstimateDecisionKeyword
+        if (a === "approve" || a === "reject") {
+          return a as EstimateDecisionKeyword
+        }
         return null
       })()
       const action =
@@ -595,6 +610,55 @@ export async function tryHandleEstimateDecisionInbound(
   }
 
   let awaiting = readAwaitingEstimateDecision(priorIntake)
+  if (explicitQuestion?.kind === "estimate") {
+    // References choose one immutable estimate version, never the latest revision.
+    // Authorization is still the resolved landlord identity/account, not the code.
+    if (
+      params.identityType !== "landlord" &&
+      conv.conversation_type !== "landlord_update"
+    ) {
+      return {
+        handled: true,
+        clarified: true,
+        estimateId: "",
+        replyBody:
+          "Please use the landlord approval link to answer that estimate question.",
+      }
+    }
+    const bounds = estimateRefBounds(explicitQuestion.ref)
+    const { data: matches, error } = await supabase.from(
+      "maintenance_estimates",
+    )
+      .select("id, maintenance_request_id, landlord_action_token, status")
+      .eq("landlord_id", landlordId).gte("id", bounds.lower).lte(
+        "id",
+        bounds.upper,
+      ).limit(2)
+    if (error || !matches || matches.length !== 1) {
+      return {
+        handled: true,
+        clarified: true,
+        estimateId: "",
+        replyBody:
+          "I couldn't match that question to one estimate on your account. Please use its approval link; I haven't approved or declined anything.",
+      }
+    }
+    const exact = matches[0]
+    if (exact.status !== "pending_approval") {
+      return {
+        handled: true,
+        clarified: true,
+        estimateId: exact.id,
+        replyBody: replyForEstimateTerminalStatus(exact.status) ||
+          "That estimate question is no longer open. Please use the current estimate's reference.",
+      }
+    }
+    awaiting = {
+      estimateId: exact.id,
+      ticketId: exact.maintenance_request_id,
+      actionToken: exact.landlord_action_token,
+    }
+  }
 
   // Mislabeled resident on resident_intake: only honor an explicit pending ask.
   if (params.identityType === "resident" && !awaiting && !disambiguation) {
@@ -661,7 +725,10 @@ export async function tryHandleEstimateDecisionInbound(
     if (cross && cross !== "ambiguous") {
       awaiting = cross
     } else {
-      const pending = await listPendingEstimatesForLandlord(supabase, landlordId)
+      const pending = await listPendingEstimatesForLandlord(
+        supabase,
+        landlordId,
+      )
 
       const disambiguate = async (
         options: PendingLandlordEstimate[],
@@ -770,7 +837,9 @@ export async function tryHandleEstimateDecisionInbound(
           .limit(1)
           .maybeSingle()
         if (latest?.id) {
-          const terminal = replyForEstimateTerminalStatus(String(latest.status))
+          const terminal = replyForEstimateTerminalStatus(
+            String(latest.status),
+          )
           if (terminal) {
             return {
               handled: true,
@@ -822,12 +891,54 @@ export async function tryHandleEstimateDecisionInbound(
     }
   }
 
+  if (!explicitQuestion) {
+    const open = await listPendingEstimatesForLandlord(supabase, landlordId)
+    if (open.length > 1) {
+      return {
+        handled: true,
+        clarified: true,
+        estimateId: "",
+        replyBody: "Which estimate are you answering?\n" +
+          open.map((e) =>
+            `${estimateReplyRef(e.estimateId)}: ${
+              e.propertyLabel || e.unit || formatWorkOrderRef(e.ticketId)
+            } — $${e.totalCost.toFixed(2)}. Reply ${
+              estimateReplyRef(e.estimateId)
+            } APPROVE or DECLINE.`
+          ).join("\n"),
+      }
+    }
+  }
+  if (!explicitQuestion && awaiting.ticketId) {
+    const { data: revisions, error } = await supabase.from(
+      "maintenance_estimates",
+    )
+      .select("id").eq("landlord_id", landlordId)
+      .eq("maintenance_request_id", awaiting.ticketId).eq(
+        "status",
+        "superseded",
+      ).limit(1)
+    if (error || revisions?.length) {
+      return {
+        handled: true,
+        clarified: true,
+        estimateId: awaiting.estimateId,
+        replyBody:
+          `This job has a revised estimate. Please review the current amount, then reply ${
+            estimateReplyRef(awaiting.estimateId)
+          } APPROVE or ${
+            estimateReplyRef(awaiting.estimateId)
+          } DECLINE. I haven't applied your earlier reply.`,
+      }
+    }
+  }
+
   let actionToken = awaiting.actionToken?.trim() || current.actionToken || ""
   if (!actionToken) {
     return { handled: false }
   }
 
-  return await applyDecision(supabase, {
+  const decision = await applyDecision(supabase, {
     landlordId,
     conversationId: params.conversationId,
     priorIntake,
@@ -836,6 +947,14 @@ export async function tryHandleEstimateDecisionInbound(
     actionToken,
     ticketId: awaiting.ticketId ?? current.ticketId,
   })
+  return explicitQuestion
+    ? {
+      ...decision,
+      replyBody: `${decision.replyBody} ${explicitQuestion.ref}${
+        awaiting.ticketId ? ` · ${formatWorkOrderRef(awaiting.ticketId)}` : ""
+      }`,
+    }
+    : decision
 }
 
 /** Test helper — exposed for unit coverage of account-level selection. */

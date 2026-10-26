@@ -357,7 +357,17 @@ function jobMatchesIssueHints(job: VendorActiveJob, body: string): boolean {
   }
 
   const bodyTokens = tokenizeIssueText(body).filter((t) =>
-    !["repair", "repairs", "complete", "finished", "approval", "need", "needs", "extra", "parts"]
+    ![
+      "repair",
+      "repairs",
+      "complete",
+      "finished",
+      "approval",
+      "need",
+      "needs",
+      "extra",
+      "parts",
+    ]
       .includes(t)
   )
   const jobTokens = new Set(tokenizeIssueText(desc || hay))
@@ -387,6 +397,22 @@ export function matchActiveJobsFromReply(
   jobs: VendorActiveJob[],
 ): JobMatchResult {
   if (jobs.length === 0) return { kind: "none" }
+  const explicitRefs = [...body.matchAll(/\bWO[- ]?([0-9A-Fa-f]{4})\b/gi)].map(
+    (m) => `WO-${m[1].toUpperCase()}`,
+  )
+  if (explicitRefs.length) {
+    const distinct = [...new Set(explicitRefs)]
+    if (distinct.length !== 1) return { kind: "ambiguous", jobs }
+    const hits = jobs.filter((j) =>
+      workOrderRefMatchesTicket(distinct[0], j.ticketId)
+    )
+    if (hits.length === 1) {
+      return { kind: "unique", job: hits[0], boundBy: "wo_ref" }
+    }
+    return hits.length > 1
+      ? { kind: "ambiguous", jobs: hits }
+      : { kind: "none" }
+  }
   if (jobs.length === 1) {
     return { kind: "unique", job: jobs[0], boundBy: "single_open_job" }
   }

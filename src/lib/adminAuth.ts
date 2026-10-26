@@ -1,3 +1,4 @@
+import { ensureMyLimitedAlphaProfile, hasLimitedAlphaSignupIntent, markLimitedAlphaSignupIntent } from '@/lib/limitedAlphaSignup'
 import type { Session } from '@supabase/supabase-js'
 import {
   isPortalAdminEmailAllowed,
@@ -33,7 +34,11 @@ export async function isAdminEmailAllowedAsync(loginIdOrEmail: string): Promise<
 export async function isAdminSessionAllowed(session: Session | null): Promise<boolean> {
   const email = emailFromAuthSession(session)
   if (!email) return false
-  return isAdminEmailAllowedAsync(email)
+  if (await isAdminEmailAllowedAsync(email)) return true
+  if (session && (session.user.user_metadata?.limited_alpha_signup === true || hasLimitedAlphaSignupIntent())) {
+    try { await ensureMyLimitedAlphaProfile(session.user.id); return true } catch { return false }
+  }
+  return false
 }
 
 /** Email on the Auth user: `email`, then Google identity / metadata (id-token sign-in). */
@@ -84,15 +89,15 @@ export async function sendAdminEmailOtp(
 ): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
   const createUser = options?.createUser === true
-  // New accounts (Get Started) stay on the portal allowlist. Returning logins
-  // skip it so existing auth users can request a code.
   if (createUser) {
-    await assertAdminEmailAllowed(loginId)
+    clearTryDemoVisitor()
+    clearTryDemoWelcomePending()
+    markLimitedAlphaSignupIntent()
   }
   const email = loginIdToEmail(loginId)
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { shouldCreateUser: createUser },
+    options: { shouldCreateUser: createUser, ...(createUser ? { data: { limited_alpha_signup: true } } : {}) },
   })
   if (error) {
     throw new Error(getErrorMessage(error, 'Could not send a sign-in code. Please try again.'))
@@ -105,7 +110,7 @@ export async function verifyAdminEmailOtp(
   options?: { requireAllowlist?: boolean },
 ): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
-  if (options?.requireAllowlist !== false) {
+  if (options?.requireAllowlist !== false && !hasLimitedAlphaSignupIntent()) {
     await assertAdminEmailAllowed(loginId)
   }
   const email = loginIdToEmail(loginId)
@@ -126,6 +131,7 @@ export async function verifyAdminEmailOtp(
 
 export async function startAdminGoogleOAuthRedirect(): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
+  if (hasLimitedAlphaSignupIntent()) { clearTryDemoVisitor(); clearTryDemoWelcomePending() }
   const host = window.location.hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (host === 'ulohome.io' || host === 'app.ulohome.io') {
     markAdminGoogleOAuthIntent()

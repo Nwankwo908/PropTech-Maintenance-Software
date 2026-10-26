@@ -146,6 +146,7 @@ export {
 } from './fastTrackTicketPolicy'
 
 export {
+  FACTORY_RESET_CONFIRM_MESSAGE,
   formatFactoryResetFailureAlert,
   reportFactoryResetFailureToUser,
   reportFactoryResetSuccessToConsole,

@@ -1,3 +1,8 @@
+import {
+  addScheduleQuestion,
+  removeScheduleQuestion,
+  selectScheduleQuestion,
+} from "./questionReplyRef.ts"
 /**
  * Ask the resident to approve a vendor-proposed appointment window before
  * locking the schedule and sending the vendor job-detail link.
@@ -37,10 +42,7 @@ import {
   hasTenantScheduleTimeCue,
 } from "./tenantSchedulePreferredWindow.ts"
 import { matchShortReplyToken } from "./shortReplyTokens.ts"
-import {
-  landlordRecipients,
-  recordSmsNoRecipients,
-} from "../smsRecipients.ts"
+import { landlordRecipients, recordSmsNoRecipients } from "../smsRecipients.ts"
 
 export {
   extractTenantSchedulePreferredWindow,
@@ -69,6 +71,8 @@ export function buildTenantScheduleAskSms(input: {
   residentName: string
   vendorName: string
   windowText: string
+  replyRef?: string
+  workOrderRef?: string
 }): string {
   const who = firstName(input.residentName)
   const vendor = input.vendorName.trim() || "the vendor"
@@ -78,7 +82,10 @@ export function buildTenantScheduleAskSms(input: {
     "",
     `${vendor} proposed an arrival window of ${when}. Does that work for you?`,
     "",
-    "Reply YES to confirm, or NO with another day/time (e.g. Thu 2–4pm).",
+    input.replyRef
+      ? `Reply ${input.replyRef} YES to confirm, or ${input.replyRef} NO with another day/time.`
+      : "Reply YES to confirm, or NO with another day/time (e.g. Thu 2–4pm).",
+    ...(input.workOrderRef ? [input.workOrderRef] : []),
   ].join("\n")
 }
 
@@ -311,9 +318,13 @@ async function clearAwaitingScheduleConfirmation(
   supabase: SupabaseClient,
   conversationId: string,
   priorIntake: Record<string, unknown>,
+  question?: Record<string, unknown>,
 ): Promise<void> {
-  const next = { ...priorIntake }
-  delete next[AWAITING_SCHEDULE_CONFIRM_KEY]
+  const next = removeScheduleQuestion(
+    priorIntake,
+    question ??
+      priorIntake[AWAITING_SCHEDULE_CONFIRM_KEY] as Record<string, unknown>,
+  )
   await supabase
     .from("sms_conversations")
     .update({
@@ -396,10 +407,7 @@ async function writeAwaitingScheduleConfirmation(
       updated_at: new Date().toISOString(),
       status: "open",
       maintenance_request_id: params.ticketId,
-      intake_state: {
-        ...prior,
-        [AWAITING_SCHEDULE_CONFIRM_KEY]: params.pending,
-      },
+      intake_state: addScheduleQuestion(prior, params.pending),
     })
     .eq("id", params.conversationId)
   if (error) return { ok: false, error: error.message }
@@ -491,13 +499,20 @@ export async function askTenantScheduleConfirmation(
     ticketId: params.ticketId,
   })
 
+  const replyRef = `S-${
+    crypto.randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()
+  }`
   const body = buildTenantScheduleAskSms({
+    replyRef,
+    workOrderRef: formatWorkOrderRef(params.ticketId),
     residentName: String(ticket.resident_name ?? ""),
     vendorName,
     windowText: params.windowText,
   })
 
   const pendingAsk = {
+    reply_ref: replyRef,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     ticket_id: params.ticketId,
     vendor_id: params.vendorId,
     vendor_conversation_id: params.vendorConversationId,
@@ -675,30 +690,53 @@ export async function tryHandleTenantScheduleConfirmInbound(
     .from("sms_conversations")
     .select("id, intake_state, maintenance_request_id")
     .eq("id", params.conversationId)
+    .eq("landlord_id", params.landlordId)
     .maybeSingle()
   if (!conv) return { handled: false }
 
-  const prior =
-    conv.intake_state && typeof conv.intake_state === "object"
-      ? (conv.intake_state as Record<string, unknown>)
-      : {}
-  const pending = readAwaitingScheduleConfirmation(prior)
+  const prior = conv.intake_state && typeof conv.intake_state === "object"
+    ? (conv.intake_state as Record<string, unknown>)
+    : {}
+  const selected = selectScheduleQuestion(prior, params.body)
+  if (selected.kind === "clarify") {
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: "",
+      replyBody: selected.body,
+    }
+  }
+  if (selected.kind === "none") return { handled: false }
+  const pending = readAwaitingScheduleConfirmation({
+    [AWAITING_SCHEDULE_CONFIRM_KEY]: selected.question,
+  })
   if (!pending) return { handled: false }
+  const replyBody = selected.body
 
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
-    .select("vendor_work_status")
+    .select("vendor_work_status, assigned_vendor_id")
+    .eq("landlord_id", params.landlordId)
     .eq("id", pending.ticketId)
     .maybeSingle()
-  const workStatus =
-    typeof ticketRow?.vendor_work_status === "string"
-      ? ticketRow.vendor_work_status
-      : ""
+  if (!ticketRow) {
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody:
+        "I couldn't verify that visit on your account. Please ask for a fresh visit proposal; I haven't changed the schedule.",
+    }
+  }
+  const workStatus = typeof ticketRow?.vendor_work_status === "string"
+    ? ticketRow.vendor_work_status
+    : ""
   if (ticketStatusBlocksScheduleAsks(workStatus)) {
     await clearAwaitingScheduleConfirmation(
       supabase,
       params.conversationId,
       prior,
+      selected.question,
     )
     return {
       handled: true,
@@ -710,9 +748,23 @@ export async function tryHandleTenantScheduleConfirmInbound(
     }
   }
 
+  if (
+    (ticketRow.assigned_vendor_id &&
+      ticketRow.assigned_vendor_id !== pending.vendorId) ||
+    (pending.scheduledAt && Date.parse(pending.scheduledAt) <= Date.now())
+  ) {
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody:
+        "That visit proposal is no longer current. Please ask the property team for a fresh proposal; I haven't changed the schedule.",
+    }
+  }
+
   // While a window is pending, bare day/time (or "No Wed 2pm") is a counter-propose.
-  let decision = parseTenantScheduleDecision(params.body)
-  if (!decision && hasTenantScheduleTimeCue(params.body)) {
+  let decision = parseTenantScheduleDecision(replyBody)
+  if (!decision && hasTenantScheduleTimeCue(replyBody)) {
     decision = "counter_propose"
   }
   if (!decision) {
@@ -728,12 +780,16 @@ export async function tryHandleTenantScheduleConfirmInbound(
     }
   }
 
-  const preferredWindow =
-    decision === "counter_propose"
-      ? extractTenantSchedulePreferredWindow(params.body)
-      : null
+  const preferredWindow = decision === "counter_propose"
+    ? extractTenantSchedulePreferredWindow(replyBody)
+    : null
 
-  await clearAwaitingScheduleConfirmation(supabase, params.conversationId, prior)
+  await clearAwaitingScheduleConfirmation(
+    supabase,
+    params.conversationId,
+    prior,
+    selected.question,
+  )
 
   const at = new Date().toISOString()
   const isReschedule = pending.kind === "reschedule"
@@ -835,7 +891,10 @@ export async function tryHandleTenantScheduleConfirmInbound(
       handled: true,
       action: "accept",
       ticketId: pending.ticketId,
-      replyBody: buildTenantScheduleAcceptedSms(pending.windowText),
+      replyBody: buildTenantScheduleAcceptedSms(pending.windowText) +
+        (selected.question.reply_ref
+          ? ` ${workOrderRef} · ${selected.question.reply_ref}`
+          : ""),
     }
   }
 
@@ -859,8 +918,8 @@ export async function tryHandleTenantScheduleConfirmInbound(
       .eq("id", pending.ticketId)
   }
 
-  const laterSameDay =
-    decision === "counter_propose" && isLaterSameDayCounter(params.body)
+  const laterSameDay = decision === "counter_propose" &&
+    isLaterSameDayCounter(replyBody)
   let laterSameDayReply: string | null = null
 
   if (pending.vendorConversationId) {
@@ -994,6 +1053,10 @@ export async function tryHandleTenantScheduleConfirmInbound(
     handled: true,
     action: decision,
     ticketId: pending.ticketId,
-    replyBody: laterSameDayReply ?? buildTenantScheduleDeclinedSms(preferredWindow),
+    replyBody:
+      (laterSameDayReply ?? buildTenantScheduleDeclinedSms(preferredWindow)) +
+      (selected.question.reply_ref
+        ? ` ${workOrderRef} · ${selected.question.reply_ref}`
+        : ""),
   }
 }

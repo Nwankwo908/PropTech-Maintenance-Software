@@ -100,6 +100,77 @@ async function deleteInScopedRows(
 }
 
 /**
+ * Home Checks reference assessments, workflow runs, tickets, and properties
+ * without cascade. Release those links before the rest of the wipe.
+ * Browser policies often hide these tables; a permission error is ignored so
+ * purge_landlord_portfolio can do the same deletes.
+ */
+async function clearHomeChecksForFactoryReset(
+  landlordId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) {
+    return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
+  }
+
+  const { data, error } = await supabase
+    .from('home_checks')
+    .select('id')
+    .eq('landlord_id', landlordId)
+  if (error) {
+    if (isIgnorableScopedDeleteError(error.message, true)) return { ok: true }
+    return { ok: false, error: getErrorMessage(error, 'Could not clear Home Checks before factory reset.') }
+  }
+
+  const ids = ((data ?? []) as { id?: string }[])
+    .map((row) => String(row.id ?? ''))
+    .filter(Boolean)
+  if (ids.length === 0) return { ok: true }
+
+  const photoClear = await supabase
+    .from('property_inspection_photos')
+    .update({ home_check_id: null })
+    .in('home_check_id', ids)
+  if (photoClear.error && !isIgnorableScopedDeleteError(photoClear.error.message, true)) {
+    return {
+      ok: false,
+      error: getErrorMessage(photoClear.error, 'Could not clear Home Check photos before factory reset.'),
+    }
+  }
+
+  const linkedPhotos = await deleteInScopedRows('home_check_photos', 'check_id', ids)
+  if (!linkedPhotos.ok && linkedPhotos.error && !isIgnorableScopedDeleteError(linkedPhotos.error, true)) {
+    return { ok: false, error: linkedPhotos.error }
+  }
+  const events = await deleteInScopedRows('home_check_events', 'check_id', ids)
+  if (!events.ok && events.error && !isIgnorableScopedDeleteError(events.error, true)) {
+    return { ok: false, error: events.error }
+  }
+
+  const assets = await supabase
+    .from('unit_assets')
+    .update({ home_check_id: null })
+    .eq('landlord_id', landlordId)
+    .not('home_check_id', 'is', null)
+  if (assets.error && !isIgnorableScopedDeleteError(assets.error.message, true)) {
+    return {
+      ok: false,
+      error: getErrorMessage(assets.error, 'Could not release equipment linked to Home Checks.'),
+    }
+  }
+
+  const issues = await supabase
+    .from('home_checks')
+    .update({ issue_ticket_id: null })
+    .eq('landlord_id', landlordId)
+    .not('issue_ticket_id', 'is', null)
+  if (issues.error && !isIgnorableScopedDeleteError(issues.error.message, true)) {
+    return { ok: false, error: getErrorMessage(issues.error, 'Could not clear Home Checks before factory reset.') }
+  }
+
+  return deleteLandlordScopedRows('home_checks', landlordId, { bestEffort: true })
+}
+
+/**
  * Delete graph/SMS rows for a landlord that are NOT tied to a current portfolio
  * resident/vendor. Keeps legitimately-created rows (e.g. tenant activation welcome
  * texts) while stripping unscoped import leftovers. Client fallback mirror of the
@@ -258,9 +329,18 @@ export async function purgeOnboardingImportedOperations(
       }
       return { ok: true, opsPurgePath: 'purge_landlord_portfolio' }
     }
-    if (!/Could not find the function|PGRST202|404/i.test(alphaPurgeError.message)) {
-      console.warn('[landlordOnboarding] purge_landlord_portfolio', alphaPurgeError.message)
+    const portfolioRpcMissing = /Could not find the function|PGRST202|404/i.test(alphaPurgeError.message)
+    const portfolioRpcTimedOut = /statement timeout|canceling statement due to statement timeout|57014|timed out|timeout/i.test(
+      alphaPurgeError.message,
+    )
+    if (!portfolioRpcMissing && !portfolioRpcTimedOut) {
+      return {
+        ok: false,
+        error: getErrorMessage(alphaPurgeError, 'Could not clear the portfolio.'),
+        opsPurgePath: 'purge_landlord_portfolio',
+      }
     }
+    console.warn('[landlordOnboarding] purge_landlord_portfolio', alphaPurgeError.message)
     // Full portfolio RPC often times out on huge activity-feed tables. Clear the
     // bell sources with the dedicated batched RPC before client_fallback continues.
     const { error: feedRpcError } = await supabase.rpc('purge_landlord_activity_feed', {
@@ -303,6 +383,15 @@ export async function purgeOnboardingImportedOperations(
   }
 
   const opsPurgePath: OpsPurgePath = 'client_fallback'
+
+  const homeChecksCleared = await clearHomeChecksForFactoryReset(scope.landlordId)
+  if (!homeChecksCleared.ok) {
+    return {
+      ok: false,
+      error: homeChecksCleared.error ?? 'Could not clear Home Checks before factory reset.',
+      opsPurgePath,
+    }
+  }
 
   const { data: ticketRows, error: ticketLoadError } = await supabase
     .from('maintenance_requests')
@@ -369,6 +458,7 @@ export async function purgeOnboardingImportedOperations(
     ...graphSmsDeletes,
     await deleteLandlordScopedRows('workflow_events', scope.landlordId),
     await deleteLandlordScopedRows('workflow_runs', scope.landlordId),
+    await deleteLandlordScopedRows('work_order_terminations', scope.landlordId, { bestEffort: true }),
     await deleteLandlordScopedRows('maintenance_requests', scope.landlordId),
   ]
 

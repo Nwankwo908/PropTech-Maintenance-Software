@@ -1,28 +1,29 @@
+import { isBareYesOrNoShortReply } from "./shortReplyArbitration.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   findActiveLandlordMainNumber,
+  type LandlordSmsNumberRow,
   resolveLandlordId,
   resolveOutboundLandlordSmsLine,
-  type LandlordSmsNumberRow,
 } from "./landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
   normalizeSmsPhone,
-  upsertSmsIdentityForPhone,
   type SmsIdentityRow,
+  upsertSmsIdentityForPhone,
 } from "./inbound_db.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
   extractWorkOrderRefFromSms,
-  workOrderRefMatchesTicket,
   type VendorOpenJobSmsLine,
+  workOrderRefMatchesTicket,
 } from "../vendor_outreach_copy.ts"
 import {
   listVendorActiveJobs,
   matchActiveJobsFromReply,
-  withPendingVendorJobOffer,
   type VendorActiveJob,
+  withPendingVendorJobOffer,
 } from "./vendorWorkOrderClarification.ts"
 
 export type VendorAlertSendResult =
@@ -275,7 +276,10 @@ export async function sendVendorJobAlert(
     return { ok: false, error: message }
   }
 
-  const senderNumber = await resolveVendorAlertSenderNumber(supabase, landlordId)
+  const senderNumber = await resolveVendorAlertSenderNumber(
+    supabase,
+    landlordId,
+  )
   if (!senderNumber) {
     return {
       ok: false,
@@ -579,6 +583,34 @@ export async function resolveVendorTicketForInbound(
 ): Promise<ResolveVendorTicketForInboundResult> {
   const openJobs = params.openJobs ??
     (await listVendorActiveJobs(supabase, params.vendorId))
+
+  // An explicit reference always beats the latest conversation/FSM pin.
+  // Never redirect a reply for an old job onto the only remaining open job.
+  const explicitRefs = [
+    ...params.inboundBody.matchAll(/\bWO[- ]?([0-9A-Fa-f]{4})\b/gi),
+  ]
+  if (explicitRefs.length) {
+    const match = matchActiveJobsFromReply(params.inboundBody, openJobs)
+    if (match.kind === "unique") {
+      return {
+        ok: true,
+        ticketId: match.job.ticketId,
+        boundBy: "wo_ref",
+        openJobs,
+      }
+    }
+    return {
+      ok: false,
+      reason: match.kind === "ambiguous"
+        ? "need_work_order"
+        : "unknown_work_order",
+      openJobs,
+    }
+  }
+
+  if (openJobs.length > 1 && isBareYesOrNoShortReply(params.inboundBody)) {
+    return { ok: false, reason: "need_work_order", openJobs }
+  }
 
   const scheduleTicketId = params.scheduleTicketId?.trim() || null
   if (scheduleTicketId) {

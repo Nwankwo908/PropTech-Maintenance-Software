@@ -45,13 +45,18 @@ export const ONBOARDING_LANDLORD_IDS = [
 
 export function isOnboardingLandlordId(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
-  return (ONBOARDING_LANDLORD_IDS as readonly string[]).includes(id)
+  return isSelfServiceLimitedAlphaLandlord(id) || (ONBOARDING_LANDLORD_IDS as readonly string[]).includes(id)
+}
+
+/** Reserved UUID namespace assigned only by verified self-service provisioning. */
+export function isSelfServiceLimitedAlphaLandlord(landlordId: string | null | undefined): boolean {
+  return /^a13a0000-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test((landlordId ?? '').trim())
 }
 
 /** True Limited Alpha account ids only (not Demo). */
 export function isLimitedAlphaLandlord(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
-  return (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
+  return isSelfServiceLimitedAlphaLandlord(id) || (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
 }
 
 /** Disposable lease-import accounts. Not Limited Alpha 1 or 2. */

@@ -732,6 +732,7 @@ export async function notifyLandlordEstimatePending(
   })()
 
   const smsBody = buildLandlordEstimateApprovalSms({
+    estimateId: params.estimateId,
     vendorName: params.vendorName,
     workOrderRef: wo,
     // Do not pass bare unit as locationLabel — "1" looks like a reply choice.

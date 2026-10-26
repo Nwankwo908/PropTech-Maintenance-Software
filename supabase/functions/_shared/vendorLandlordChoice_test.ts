@@ -205,6 +205,26 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
   assertEquals(one.indexOf("563 Springdale"), one.indexOf("Hi Alex") + "Hi Alex — vendor needed\n\n".length)
   assertEquals(one.includes("can take the dripping faucet at"), false)
 
+  const withPhoto = buildLandlordVendorChoiceSms({
+    landlordFirstName: "Alex",
+    companyName: "Ulo Homes",
+    workOrderRef: "WO-E6F7",
+    unit: "1",
+    tradeLabel: "plumbing",
+    issueHeadline: "dripping faucet",
+    locationLabel: "563 Springdale Circle",
+    residentMediaLine: "The resident sent this video.",
+    options: [
+      { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
+    ],
+  })
+  assertStringIncludes(withPhoto, "The resident sent this video.")
+  assertEquals(
+    withPhoto.indexOf("The resident sent this video.") <
+      withPhoto.indexOf("Reply YES"),
+    true,
+  )
+
   const two = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",
     companyName: "Ulo Homes",

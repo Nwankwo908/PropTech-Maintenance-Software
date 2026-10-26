@@ -1,3 +1,7 @@
+import {
+  hasQuestionReplyRef,
+  parseQuestionReplyRef,
+} from "./questionReplyRef.ts"
 /**
  * Inbound SMS specialist registry — first match wins (lower priority runs first).
  *
@@ -34,7 +38,10 @@ import {
   buildAmbiguousYesPendingAsksSms,
   tryHandleInvoicePaidConfirmationInbound,
 } from "./invoicePaidConfirmation.ts"
-import { shouldClarifyAmbiguousYesPendingAsks, shouldYieldRentReplyToSpecificPendingAsk } from "./shortReplyArbitration.ts"
+import {
+  shouldClarifyAmbiguousYesPendingAsks,
+  shouldYieldRentReplyToSpecificPendingAsk,
+} from "./shortReplyArbitration.ts"
 import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import {
   canHandleStaffReply,
@@ -1020,21 +1027,33 @@ export const INBOUND_SMS_HANDLERS_UNUSED: Readonly<
 } as const
 
 export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
-  { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
+  {
+    id: "compliance_stop_help",
+    priority: 5,
+    try: tryComplianceStopHelpHandler,
+  },
   { id: "landlord_pick_batch", priority: 6, try: tryLandlordPickBatchHandler },
   { id: "pm_service_yes_hvac", priority: 7, try: tryPmServiceYesHvacHandler },
   { id: "staff_reply", priority: 9, try: tryStaffReplyHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
   { id: "property_choice", priority: 20.5, try: tryPropertyChoiceHandler },
-  { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
+  {
+    id: "landlord_vendor_choice",
+    priority: 21,
+    try: tryLandlordVendorChoiceHandler,
+  },
   // After vendor-choice / estimate so "1" / "YES" pending asks win over list replies.
   {
     id: "daily_priorities_reply",
     priority: 22,
     try: tryDailyPrioritiesReplyHandler,
   },
-  { id: "landlord_rent_receipt", priority: 23, try: tryLandlordRentReceiptHandler },
+  {
+    id: "landlord_rent_receipt",
+    priority: 23,
+    try: tryLandlordRentReceiptHandler,
+  },
   {
     id: "tenant_rent_report_confirmation",
     priority: 24,
@@ -1101,6 +1120,31 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
 export async function tryInboundSmsHandlers(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
+  // Explicit older-question replies bypass unrelated staff/activation claimants.
+  // The selected handler still validates identity, account, version and status.
+  if (hasQuestionReplyRef(ctx.inbound.body)) {
+    const question = parseQuestionReplyRef(ctx.inbound.body)
+    if (question) {
+      const handler = INBOUND_SMS_HANDLERS.find((h) =>
+        h.id ===
+          (question.kind === "schedule"
+            ? "schedule_confirm"
+            : "estimate_decision")
+      )!
+      const result = await handler.try(ctx)
+      if (result.handled) return result
+    }
+    return {
+      handled: true,
+      workflowRoute: "question_reference_clarify",
+      reply: {
+        body:
+          "I couldn't apply that reply. Include one open question reference and your answer, or ask for the current question. Nothing has been changed.",
+        source: "question_reference_clarify",
+        skipGenericFallback: true,
+      },
+    }
+  }
   // Multiple specific bare-YES pending asks → clarify instead of priority race.
   // Blanket claimants (rent-pause PAID token) are not counted — they yield.
   const { data: conv } = await ctx.supabase

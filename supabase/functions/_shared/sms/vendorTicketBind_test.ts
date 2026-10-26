@@ -52,7 +52,10 @@ Deno.test("extractWorkOrderRefFromSms finds WO tokens", () => {
 })
 
 Deno.test("stripWorkOrderRefFromSms leaves availability text", () => {
-  assertEquals(stripWorkOrderRefFromSms("WO-3B00 Wed 9am–12pm"), "Wed 9am–12pm")
+  assertEquals(
+    stripWorkOrderRefFromSms("WO-3B00 Wed 9am–12pm"),
+    "Wed 9am–12pm",
+  )
   assertEquals(stripWorkOrderRefFromSms("YES WO-3B00"), "YES")
 })
 
@@ -64,8 +67,14 @@ Deno.test("workOrderRefMatchesTicket uses formatWorkOrderRef", () => {
 Deno.test("buildVendorWorkOrderClarifySms uses numbered options", () => {
   const body = buildVendorWorkOrderClarifySms([JOB_A, JOB_B, JOB_C])
   assertEquals(body.includes("multiple active work orders"), true)
-  assertEquals(body.includes("1. WO-3B00 — Unit 101 — Leaking faucet in kitchen"), true)
-  assertEquals(body.includes("2. WO-9F3C — Unit 205 — Water heater not heating"), true)
+  assertEquals(
+    body.includes("1. WO-3B00 — Unit 101 — Leaking faucet in kitchen"),
+    true,
+  )
+  assertEquals(
+    body.includes("2. WO-9F3C — Unit 205 — Water heater not heating"),
+    true,
+  )
   assertEquals(body.includes("Reply with the number or work-order ID."), true)
 })
 
@@ -75,20 +84,32 @@ Deno.test("matchActiveJobsFromReply — WO / unit / issue", () => {
   assertEquals(byWo.kind, "unique")
   if (byWo.kind === "unique") assertEquals(byWo.job.ticketId, JOB_B.ticketId)
 
-  const byUnit = matchActiveJobsFromReply("I can visit Unit 205 tomorrow.", jobs)
+  const byUnit = matchActiveJobsFromReply(
+    "I can visit Unit 205 tomorrow.",
+    jobs,
+  )
   assertEquals(byUnit.kind, "unique")
-  if (byUnit.kind === "unique") assertEquals(byUnit.job.ticketId, JOB_B.ticketId)
+  if (byUnit.kind === "unique") {
+    assertEquals(byUnit.job.ticketId, JOB_B.ticketId)
+  }
 
-  const byIssue = matchActiveJobsFromReply("The water heater job is complete.", jobs)
+  const byIssue = matchActiveJobsFromReply(
+    "The water heater job is complete.",
+    jobs,
+  )
   assertEquals(byIssue.kind, "unique")
-  if (byIssue.kind === "unique") assertEquals(byIssue.job.ticketId, JOB_B.ticketId)
+  if (byIssue.kind === "unique") {
+    assertEquals(byIssue.job.ticketId, JOB_B.ticketId)
+  }
 
   const byFaucet = matchActiveJobsFromReply(
     "I need approval for the faucet repair.",
     jobs,
   )
   assertEquals(byFaucet.kind, "unique")
-  if (byFaucet.kind === "unique") assertEquals(byFaucet.job.ticketId, JOB_A.ticketId)
+  if (byFaucet.kind === "unique") {
+    assertEquals(byFaucet.job.ticketId, JOB_A.ticketId)
+  }
 
   const ambiguous = matchActiveJobsFromReply("YES", jobs)
   assertEquals(ambiguous.kind, "none")
@@ -104,7 +125,10 @@ Deno.test("resolveClarificationSelection — number / WO / unit / issue", () => 
     candidateWorkOrderIds: jobs.map((j) => j.ticketId),
   })
 
-  assertEquals(resolveClarificationSelection("2", pending, jobs), JOB_B.ticketId)
+  assertEquals(
+    resolveClarificationSelection("2", pending, jobs),
+    JOB_B.ticketId,
+  )
   assertEquals(
     resolveClarificationSelection("WO-3B00", pending, jobs),
     JOB_A.ticketId,
@@ -183,8 +207,9 @@ function mockOpenJobsSupabase(
             })
           },
           then(
-            resolve: (value: { data: Array<{ id: string }>; error: null }) =>
-              unknown,
+            resolve: (
+              value: { data: Array<{ id: string }>; error: null },
+            ) => unknown,
           ) {
             return Promise.resolve({ data: [{ id: "vendor-1" }], error: null })
               .then(resolve)
@@ -301,7 +326,7 @@ Deno.test("resolveVendorTicketForInbound binds conversation pin when roster quer
   }
 })
 
-Deno.test("resolveVendorTicketForInbound binds thread pin for bare YES among multiple jobs", async () => {
+Deno.test("resolveVendorTicketForInbound clarifies instead of thread pin for bare YES among multiple jobs", async () => {
   const supabase = mockOpenJobsSupabase([JOB_A, JOB_B]) as never
   const resolved = await resolveVendorTicketForInbound(supabase, {
     vendorId: "vendor-1",
@@ -309,11 +334,8 @@ Deno.test("resolveVendorTicketForInbound binds thread pin for bare YES among mul
     conversationTicketId: JOB_B.ticketId,
     openJobs: [JOB_A, JOB_B],
   })
-  assertEquals(resolved.ok, true)
-  if (resolved.ok) {
-    assertEquals(resolved.ticketId, JOB_B.ticketId)
-    assertEquals(resolved.boundBy, "conversation_pin")
-  }
+  assertEquals(resolved.ok, false)
+  if (!resolved.ok) assertEquals(resolved.reason, "need_work_order")
 })
 
 Deno.test("resolveVendorTicketForInbound prefers unit match over conversation pin", async () => {
@@ -328,5 +350,47 @@ Deno.test("resolveVendorTicketForInbound prefers unit match over conversation pi
   if (resolved.ok) {
     assertEquals(resolved.ticketId, JOB_B.ticketId)
     assertEquals(resolved.boundBy, "unit")
+  }
+})
+
+Deno.test("older explicit vendor job beats latest FSM and conversation pin", async () => {
+  const resolved = await resolveVendorTicketForInbound({} as never, {
+    vendorId: "sim-vendor",
+    inboundBody: "WO-3B00 YES",
+    scheduleTicketId: JOB_B.ticketId,
+    conversationTicketId: JOB_B.ticketId,
+    openJobs: [JOB_A, JOB_B],
+  })
+  assertEquals(resolved.ok, true)
+  if (resolved.ok) assertEquals(resolved.ticketId, JOB_A.ticketId)
+})
+
+Deno.test("unknown or closed reference cannot fall back to sole remaining vendor job", async () => {
+  const resolved = await resolveVendorTicketForInbound({} as never, {
+    vendorId: "sim-vendor",
+    inboundBody: "WO-FFFF YES",
+    scheduleTicketId: JOB_A.ticketId,
+    openJobs: [JOB_A],
+  })
+  assertEquals(resolved.ok, false)
+  assertEquals(matchActiveJobsFromReply("WO-FFFF YES", [JOB_A]).kind, "none")
+})
+
+Deno.test("colliding or multiple explicit vendor job references require clarification", async () => {
+  for (
+    const jobs of [[JOB_A, {
+      ...JOB_A,
+      ticketId: JOB_A.ticketId.slice(0, -1) + "9",
+    }], [JOB_A, JOB_B]]
+  ) {
+    const body = jobs[1].ticketId === JOB_B.ticketId
+      ? "WO-3B00 WO-9F3C YES"
+      : "WO-3B00 YES"
+    const result = await resolveVendorTicketForInbound({} as never, {
+      vendorId: "sim-vendor",
+      inboundBody: body,
+      openJobs: jobs,
+    })
+    assertEquals(result.ok, false)
   }
 })

@@ -156,6 +156,6 @@ export function shouldClarifyAmbiguousYesPendingAsks(input: {
   intakeState: unknown
   body: string
 }): boolean {
-  if (!isBareYesShortReply(input.body)) return false
+  if (!isBareYesOrNoShortReply(input.body)) return false
   return listSpecificYesNoPendingAsks(input.intakeState).length >= 2
 }

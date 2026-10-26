@@ -5,6 +5,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isConfirmedDurableInboundTrigger } from "../../../shared/ops/vendorChoiceTriggerAudit.ts"
 import { selfFixLineForTicket } from "./sms/selfFixPrefs.ts"
+import {
+  landlordApprovalMediaFallbackLine,
+  landlordApprovalMediaLine,
+  loadTicketResidentMedia,
+} from "./sms/landlordApprovalMedia.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { formatWorkOrderRef, vendorCompanyName } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
@@ -515,6 +520,8 @@ export function buildLandlordVendorChoiceSms(input: {
   displayId?: number | null
   /** One quick-fix line. Omitted when empty. */
   selfFixLine?: string | null
+  /** One line when a resident photo or video is on this text. */
+  residentMediaLine?: string | null
 }): string {
   const available = input.reason === "availability"
   const rematch = rematchReasonLine(input.reason)
@@ -553,6 +560,8 @@ export function buildLandlordVendorChoiceSms(input: {
     if (estimate) lines.push(estimate)
     const tip = input.selfFixLine?.trim()
     if (tip) lines.push("", tip)
+    const media = input.residentMediaLine?.trim()
+    if (media) lines.push("", media)
     lines.push("", landlordYesChoiceReplyHint(name))
   } else {
     lines.push("")
@@ -568,6 +577,8 @@ export function buildLandlordVendorChoiceSms(input: {
     })
     const tip = input.selfFixLine?.trim()
     if (tip) lines.push("", tip)
+    const media = input.residentMediaLine?.trim()
+    if (media) lines.push("", media)
     lines.push("", landlordVendorChoiceReplyHint(input.options.length))
   }
 
@@ -872,6 +883,7 @@ export async function persistLandlordChoiceSms(
     landlordId: string
     phone: string
     body: string
+    mediaRefs?: string[]
     awaiting: AwaitingVendorChoice
     providerMessageSid: string
     provider: string
@@ -905,7 +917,7 @@ export async function persistLandlordChoiceSms(
     from_number: normalizeSmsPhone(params.fromNumber),
     to_number: normalizeSmsPhone(params.phone),
     body: params.body,
-    media_urls: [],
+    media_urls: params.mediaRefs ?? [],
     provider: params.provider,
     provider_message_sid: params.providerMessageSid,
     provider_status: "sent",
@@ -1059,6 +1071,8 @@ export async function notifyLandlordVendorChoice(
   }
 
   let smsBody: string
+  let approvalMedia = { storedRefs: [] as string[], refs: [] as string[], urls: [] as string[] }
+  let fallbackBody: string | null = null
   if (isVisit) {
     const { buildLandlordInspectionVisitChoiceSms } = await import(
       "./vendorAvailabilityProbe.ts"
@@ -1075,7 +1089,17 @@ export async function notifyLandlordVendorChoice(
       workOrderRef: wo,
     })
   } else {
-    smsBody = buildLandlordVendorChoiceSms({
+    approvalMedia = await loadTicketResidentMedia(supabase, params.ticketId)
+    const mediaLine = approvalMedia.urls.length > 0
+      ? landlordApprovalMediaLine(approvalMedia.refs)
+      : landlordApprovalMediaFallbackLine(approvalMedia.storedRefs)
+    const selfFixLine = await selfFixLineForTicket(
+      supabase,
+      params.landlordId,
+      params.ticketId,
+      issueHeadline,
+    )
+    const choiceSms = {
       landlordFirstName,
       companyName: companyName || null,
       workOrderRef: wo,
@@ -1087,8 +1111,19 @@ export async function notifyLandlordVendorChoice(
       issueHeadline,
       locationLabel,
       displayId,
-      selfFixLine: await selfFixLineForTicket(supabase, params.landlordId, params.ticketId, issueHeadline),
+      selfFixLine,
+    }
+    smsBody = buildLandlordVendorChoiceSms({
+      ...choiceSms,
+      residentMediaLine: mediaLine,
     })
+    const fallbackLine = landlordApprovalMediaFallbackLine(approvalMedia.refs)
+    if (approvalMedia.urls.length > 0 && mediaLine && fallbackLine && fallbackLine !== mediaLine) {
+      fallbackBody = buildLandlordVendorChoiceSms({
+        ...choiceSms,
+        residentMediaLine: fallbackLine,
+      })
+    }
   }
 
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
@@ -1110,11 +1145,23 @@ export async function notifyLandlordVendorChoice(
     inspectionReportId: params.inspectionReportId ?? null,
   }
   for (const phone of phones) {
-    const sendResult = await provider.sendMessage({
+    let sentBody = smsBody
+    let sentMedia = approvalMedia.refs
+    let sendResult = await provider.sendMessage({
       to: phone,
       body: smsBody,
       from: main?.phone_number,
+      mediaUrls: approvalMedia.urls.length > 0 ? approvalMedia.urls : undefined,
     })
+    if (sendResult.error && approvalMedia.urls.length > 0 && fallbackBody) {
+      sentBody = fallbackBody
+      sentMedia = []
+      sendResult = await provider.sendMessage({
+        to: phone,
+        body: fallbackBody,
+        from: main?.phone_number,
+      })
+    }
     if (sendResult.error) {
       console.error("[vendor-choice] landlord SMS", phone, sendResult.error)
       continue
@@ -1124,7 +1171,8 @@ export async function notifyLandlordVendorChoice(
       await persistLandlordChoiceSms(supabase, {
         landlordId: params.landlordId,
         phone,
-        body: smsBody,
+        body: sentBody,
+        mediaRefs: sentMedia,
         awaiting,
         providerMessageSid:
           sendResult.providerMessageSid ??
@@ -1143,6 +1191,14 @@ export async function notifyLandlordVendorChoice(
     params.reason === "no_response" ||
     params.reason === "declined" ||
     params.reason === "noshow"
+  const asked = isVisit
+    ? `Asked the landlord to confirm the inspection visit (${visitTicketIds.length} items) with ${names}.`
+    : rematch
+    ? `Asked the landlord to confirm a replacement vendor for ${wo}: ${names}.`
+    : `Asked the landlord to confirm vendor assignment for ${wo}: ${names}.`
+  const withMedia = !isVisit && approvalMedia.urls.length > 0
+    ? `${asked} The resident's photo or video is on that text.`
+    : asked
   await recordActivityLog(supabase, {
     landlordId: params.landlordId,
     eventType: "maintenance.vendor_choice_asked",
@@ -1150,11 +1206,7 @@ export async function notifyLandlordVendorChoice(
     actorType: "system",
     maintenanceRequestId: params.ticketId,
     metadata: {
-      message: isVisit
-        ? `Asked the landlord to confirm the inspection visit (${visitTicketIds.length} items) with ${names}.`
-        : rematch
-        ? `Asked the landlord to confirm a replacement vendor for ${wo}: ${names}.`
-        : `Asked the landlord to confirm vendor assignment for ${wo}: ${names}.`,
+      message: withMedia,
       option_ids: choiceOptions.map((row) => row.id),
       reason: params.reason ?? "assign",
       visit_ticket_ids: visitTicketIds.length > 0 ? visitTicketIds : undefined,
