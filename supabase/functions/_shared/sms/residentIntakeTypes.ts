@@ -13,7 +13,11 @@ import {
   buildIntakeUnderstandingConfirm,
   detectRecurringIssueSignal,
 } from "../../../../shared/maintenance/recurringIssueSignal.ts"
-import { stripSystemIntakeText, tenantAuthoredText } from "./intakeSystemText.ts"
+import {
+  SYSTEM_SAFETY_NOTES,
+  stripSystemIntakeText,
+  tenantAuthoredText,
+} from "./intakeSystemText.ts"
 import { isDistinctResidentAvailability } from "./residentAvailabilityExtract.ts"
 import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
 import type { PrimaryCategory } from "../../../../shared/maintenance/primaryCategories.ts"
@@ -900,9 +904,10 @@ export function buildIntakeDescription(state: SmsIntakeState): string {
     const room = resolveRoomLabel(state)
     if (room) parts.push(`Affected area: ${room}.`)
   }
-  if (state.safety_concerns?.trim()) {
-    parts.push(`Safety concerns: ${state.safety_concerns.trim()}.`)
-  }
+  const safetyLine = state.safety_concerns?.trim()
+    ? safetyConfirmationSentence(state.safety_concerns, tenantAuthoredText(state))
+    : null
+  if (safetyLine) parts.push(safetyLine)
   if (state.first_noticed?.trim()) {
     parts.push(`First noticed: ${state.first_noticed.trim()}.`)
   }
@@ -975,6 +980,154 @@ function isCleanDiagnosticFact(value: string, state: SmsIntakeState): boolean {
   return true
 }
 
+function finishSentence(text: string): string {
+  const trimmed = text.replace(/\s+/g, " ").trim()
+  if (!trimmed) return ""
+  const capped = /^[a-z]/.test(trimmed)
+    ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+    : trimmed
+  return /[.!?]$/.test(capped) ? capped : `${capped}.`
+}
+
+/** Indoor °F the resident stated. Outdoor readings and unstated numbers are left out. */
+function statedIndoorTempF(text: string): number | null {
+  const patterns = [
+    /\b(\d{2,3})\s*(?:degrees?(?:\s*f(?:ahrenheit)?)?|°\s*f?|f\b)?\s*(?:inside|indoors?|in here|in the (?:house|home|apartment|unit))\b/i,
+    /\b(?:inside|indoors?|in here|in the (?:house|home|apartment|unit))\s*(?:is|was|it's|its|at|of|about|around)?\s*(\d{2,3})\b/i,
+    /\b(?:indoor temperature|temperature inside)\s*(?:is|was|of|about|around)?\s*(\d{2,3})\b/i,
+  ]
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    const value = match ? Number(match[1]) : NaN
+    if (value >= 40 && value <= 120) return value
+  }
+  return null
+}
+
+/** Wellness in the resident's words. Returns null when they did not say. */
+function statedWellnessSentence(text: string): string | null {
+  const hay = text.toLowerCase()
+  const negated =
+    /\b(no\s*one|nobody)\b[^.]{0,48}\b(unwell|sick|ill|dizzy|faint)\b/.test(hay) ||
+    /\b(?:everyone|we|i)\s+(?:is|am|are|'m|'re)\s+(?:fine|ok|okay)\b/.test(hay) ||
+    /\b(?:feeling|feels)\s+(?:fine|ok|okay|alright)\b/.test(hay)
+  if (negated && /\b(fine|ok|okay|no\s*one|nobody)\b/.test(hay)) {
+    return "No one in the home feels unwell."
+  }
+  if (/\bdizzy\b/.test(hay)) return "Someone in the home feels dizzy."
+  if (/\bfaint(?:ed|ing)?\b/.test(hay)) return "Someone in the home feels faint."
+  if (/\bnause(?:a|ous)\b/.test(hay)) return "Someone in the home feels nauseous."
+  if (/\b(?:unwell|feeling\s+sick|feels\s+sick|feeling\s+ill|feels\s+ill)\b/.test(hay)) {
+    return "Someone in the home feels unwell."
+  }
+  return null
+}
+
+function safetyConfirmationSentence(note: string, authored: string): string | null {
+  const trimmed = note.trim()
+  if (!trimmed || trimmed === SYSTEM_SAFETY_NOTES.noneReported) return null
+  if (trimmed === SYSTEM_SAFETY_NOTES.heatIllness) {
+    return statedWellnessSentence(authored)
+  }
+  const known: Record<string, string> = {
+    [SYSTEM_SAFETY_NOTES.overflowNo]: "Water is not actively overflowing.",
+    [SYSTEM_SAFETY_NOTES.overflowYes]: "Water is actively overflowing or leaking.",
+    [SYSTEM_SAFETY_NOTES.cannotSecure]: "The home cannot be secured.",
+    [SYSTEM_SAFETY_NOTES.canSecure]: "The home can be secured.",
+    [SYSTEM_SAFETY_NOTES.doorAtRisk]: "The door may be stuck, hanging loose, or at risk of falling.",
+    [SYSTEM_SAFETY_NOTES.doorSafe]: "The door is not hanging or at risk of falling.",
+    [SYSTEM_SAFETY_NOTES.dangerousTemp]: "The temperature in the home feels dangerous.",
+    [SYSTEM_SAFETY_NOTES.electricalHazard]: "Sparks, smoke, or a burning smell were reported.",
+    [SYSTEM_SAFETY_NOTES.structuralWater]: "Water is coming through the damaged area.",
+    [SYSTEM_SAFETY_NOTES.structuralCollapse]: "There may be sagging or a risk of collapse.",
+    [SYSTEM_SAFETY_NOTES.applianceLeak]: "The appliance is leaking water.",
+  }
+  return known[trimmed] ?? finishSentence(trimmed)
+}
+
+function factConfirmationSentence(key: string, value: string): string | null {
+  const trimmed = value.replace(/\s+/g, " ").trim()
+  if (!trimmed) return null
+  const lower = trimmed.toLowerCase()
+  if (key === "hvac_behavior") {
+    if (lower === "not turning on") return "The AC is not turning on."
+    if (lower === "blowing warm air") return "The AC is blowing warm air."
+    return finishSentence(`The AC is ${trimmed}`)
+  }
+  if (key === "plumbing_hot_water_scope" || key === "plumbing_water_outage_scope") {
+    if (lower === "everywhere in the home") return "The water is out everywhere in the home."
+    if (/^(?:only|just) the kitchen(?: sink)?$/.test(lower)) return "This is only at the kitchen."
+    return finishSentence(trimmed)
+  }
+  if (key === "electrical_scope") {
+    if (/^(?:only|just) the /.test(lower)) return finishSentence(`${trimmed} is affected`)
+    return finishSentence(trimmed)
+  }
+  if (key === "door_part") {
+    const part = trimmed.replace(/^the\s+/i, "")
+    return finishSentence(`The problem is the ${part}`)
+  }
+  if (key === "pest_frequency") {
+    if (lower === "repeatedly") return "This has been happening repeatedly."
+    return finishSentence(trimmed)
+  }
+  return finishSentence(trimmed)
+}
+
+/** Complete, resident-provided lines for the confirmation. No guessed details. */
+export function confirmationDetailLines(state: SmsIntakeState): string[] {
+  const authored = tenantAuthoredText(state)
+  const facts = state.diagnostic_facts ?? {}
+  const lines: string[] = []
+  const seen = new Set<string>()
+  const add = (line: string | null) => {
+    if (!line) return
+    const key = line.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    lines.push(line)
+  }
+
+  const behavior = facts.hvac_behavior?.trim()
+  if (behavior && isCleanDiagnosticFact(behavior, state)) {
+    add(factConfirmationSentence("hvac_behavior", behavior))
+  }
+  const temp = statedIndoorTempF(authored)
+  if (temp != null) add(`The indoor temperature is ${temp}°F.`)
+  add(statedWellnessSentence(authored))
+
+  const safety = state.safety_concerns?.trim()
+  if (safety && isCleanDiagnosticFact(safety, state)) {
+    const line = safetyConfirmationSentence(safety, authored)
+    if (line && line !== statedWellnessSentence(authored)) add(line)
+  }
+
+  for (const key of [
+    "plumbing_hot_water_scope",
+    "plumbing_water_outage_scope",
+    "electrical_scope",
+    "appliance_symptom",
+    "door_part",
+  ] as const) {
+    const value = facts[key]?.trim()
+    if (value && isCleanDiagnosticFact(value, state)) {
+      add(factConfirmationSentence(key, value))
+    }
+  }
+
+  const recurringPriorVisit = Boolean(state.prior_related_ticket_id?.trim())
+  const frequencyLanguage =
+    Boolean(state.resident_reported_recurring) || detectRecurringIssueSignal(authored)
+  if (!recurringPriorVisit && !frequencyLanguage) {
+    const pestFreq = facts.pest_frequency?.trim()
+    if (pestFreq && isCleanDiagnosticFact(pestFreq, state)) {
+      add(factConfirmationSentence("pest_frequency", pestFreq))
+    }
+  }
+
+  return lines
+}
+
 export function buildConfirmationSummary(state: SmsIntakeState): string {
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   const facts = state.diagnostic_facts ?? {}
@@ -982,8 +1135,6 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   // Only claim a prior visit when a real prior ticket was attached — language
   // like "repeatedly" alone can mean frequency, not ticket history.
   const recurringPriorVisit = Boolean(state.prior_related_ticket_id?.trim())
-  const frequencyLanguage =
-    Boolean(state.resident_reported_recurring) || detectRecurringIssueSignal(authored)
 
   const header = pending.length >= 2
     ? "Got it. Here are the requests:"
@@ -1014,47 +1165,24 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     bullets.push(`• Recurring issue — ${issue} has come up before`)
   }
 
-  const safety = state.safety_concerns?.trim()
-  if (safety && isCleanDiagnosticFact(safety, state)) {
-    bullets.push(`• ${safety}`)
-  }
-
-  for (const key of [
-    "hvac_behavior",
-    "plumbing_hot_water_scope",
-    "plumbing_water_outage_scope",
-    "electrical_scope",
-    "appliance_symptom",
-    "door_part",
-  ] as const) {
-    const value = facts[key]?.trim()
-    if (value && isCleanDiagnosticFact(value, state)) {
-      bullets.push(`• ${value}`)
-    }
-  }
-
-  // Pest frequency: never dump raw narrative; prior-visit bullet already covers it.
-  if (!recurringPriorVisit && !frequencyLanguage) {
-    const pestFreq = facts.pest_frequency?.trim()
-    if (pestFreq && isCleanDiagnosticFact(pestFreq, state)) {
-      bullets.push(`• ${pestFreq}`)
-    }
+  for (const line of confirmationDetailLines(state)) {
+    bullets.push(`• ${line}`)
   }
 
   if (facts.unit_entry?.trim()) {
     const entry = facts.unit_entry.trim()
     const lower = entry.toLowerCase()
     if (/^(y|yes)\b/.test(lower)) {
-      bullets.push("• OK to enter if not home")
+      bullets.push("• It's OK to enter if no one is home.")
     } else if (/^(n|no)\b/.test(lower)) {
-      bullets.push("• Do not enter if not home")
+      bullets.push("• Do not enter if no one is home.")
     } else if (
       lower === "not_sure" ||
       /^(not\s+sure|unsure)\b/.test(lower)
     ) {
-      bullets.push("• Entry if not home: unconfirmed — confirm in person")
+      bullets.push("• It isn't confirmed whether someone can enter if no one is home.")
     } else if (isCleanDiagnosticFact(entry, state)) {
-      bullets.push(`• Entry if not home: ${entry}`)
+      bullets.push(`• ${finishSentence(`Entry if no one is home: ${entry}`)}`)
     }
   }
 
@@ -1080,10 +1208,10 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     const line = /^(today|yesterday|this morning|this afternoon|last night|last week)/i.test(noticed)
       ? `Started ${noticed.charAt(0).toLowerCase()}${noticed.slice(1)}`
       : `Started ${noticed}`
-    bullets.push(`• ${line}`)
+    bullets.push(`• ${finishSentence(line)}`)
   }
 
-  // Order: issue → safety tip → structured bullets → CTA
+  // Order: issue → safety tip → request details → CTA
   return [
     header,
     "",
@@ -1091,6 +1219,7 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     handlingTip ? "" : null,
     handlingTip,
     bullets.length ? "" : null,
+    bullets.length ? "Request details:" : null,
     ...bullets,
     "",
     "Reply YES to submit, or reply with any changes.",

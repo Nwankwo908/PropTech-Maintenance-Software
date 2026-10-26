@@ -493,6 +493,31 @@ Deno.test("appliance leak follow-up switches into water-damage safety copy", () 
   )
 })
 
+Deno.test("heat confirmation states complete resident details", () => {
+  const sms = buildConfirmationSummary({
+    issue_type: "HVAC",
+    vendor_trade: "hvac",
+    primary_category: "hvac",
+    initial_message: "The AC isn't working.",
+    description:
+      "The AC isn't working\nTenant update: It's 100 inside and my son feels dizzy. The AC won't turn on.",
+    outdoor_temp_f: 95,
+    safety_concerns: "Someone in the home may be unwell from the heat",
+    diagnostic_facts: {
+      hvac_behavior: "not turning on",
+      hvac_immediate_danger: "yes",
+    },
+    preferred_contact_method: "text",
+  })
+  assertMatch(sms, /Request details:/, "details header")
+  assertMatch(sms, /• The AC is not turning on\./, "behavior")
+  assertMatch(sms, /• The indoor temperature is 100°F\./, "indoor temp")
+  assertMatch(sms, /• Someone in the home feels dizzy\./, "wellness")
+  assertEqual(/not turning on$/m.test(sms), false, "no fragment")
+  assertEqual(/may be unwell from the heat/i.test(sms), false, "no generic heat note")
+  assertEqual(/\b95\b/.test(sms), false, "outdoor temp is not a resident detail")
+})
+
 Deno.test("confirmation is tenant-facing and omits priority chips", () => {
   const sms = buildConfirmationSummary({
     issue_type: "plumbing",

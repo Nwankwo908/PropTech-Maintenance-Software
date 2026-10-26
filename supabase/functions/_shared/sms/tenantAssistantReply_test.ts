@@ -78,12 +78,21 @@ Deno.test("Emergency safety SMS mentions 911 and staff alert", () => {
     leaveImmediately: true,
   })
   assertEquals(leave.includes("911"), true)
-  assertEquals(leave.toLowerCase().includes("alerting the property team"), true)
+  assertEquals(leave.toLowerCase().includes("couldn't reach the property team"), true)
+  assertEquals(leave.toLowerCase().includes("i'm alerting"), false)
+
+  const delivered = buildEmergencySafetySms({
+    firstName: "Alex",
+    leaveImmediately: true,
+    teamAlerted: true,
+  })
+  assertEquals(delivered.toLowerCase().includes("i've alerted the property team"), true)
 
   const urgent = buildEmergencySafetySms({
     firstName: "Sam",
     leaveImmediately: false,
     reason: "No heat in freezing conditions.",
+    teamAlerted: true,
   })
   assertEquals(urgent.includes("911"), true)
   assertEquals(urgent.includes("No heat"), true)
@@ -95,10 +104,11 @@ Deno.test("Same-day urgency SMS alerts the team without 911", () => {
     reason: "An overflowing fixture needs same-day response.",
     handlingTip:
       "Until help arrives: if you can safely reach the shutoff valve, turn it off.",
+    teamAlerted: true,
   })
   assertEquals(sms.includes("911"), false)
   assertEquals(sms.toLowerCase().includes("same-day"), true)
-  assertEquals(sms.toLowerCase().includes("alerted the property team"), true)
+  assertEquals(sms.toLowerCase().includes("i've alerted the property team"), true)
   assertEquals(sms.includes("overflowing fixture"), true)
   assertEquals(sms.toLowerCase().includes("shutoff"), true)
 })

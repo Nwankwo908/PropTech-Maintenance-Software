@@ -149,7 +149,7 @@ Deno.test("Byron: pre-submit confirmation omits fake Availability and raw first 
   assertMatch(sms, /Recurring issue — .+ has come up before/i, "recurring fact")
   assertEquals(/Repeatedly this isn't the first time/i.test(sms), false, "no raw recurring quote")
   assertMatch(sms, /Until help arrives/i, "safety tip")
-  assertMatch(sms, /OK to enter if not home/i, "entry mapped")
+  assertMatch(sms, /It's OK to enter if no one is home/i, "entry mapped")
   assertMatch(sms, /Photo attached/i, "photo")
 
   const issueIdx = sms.search(/pest control/i)

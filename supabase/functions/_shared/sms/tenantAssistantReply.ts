@@ -140,12 +140,21 @@ export function buildEscalatedOtherSms(firstName: string, kind: AssistantOtherKi
   ].join("\n")
 }
 
+/** Resident-facing line for a property-team alert, after delivery is known. */
+export function propertyTeamAlertSentence(delivered: boolean): string {
+  return delivered
+    ? "I've alerted the property team so they can help as quickly as possible."
+    : "I couldn't reach the property team just now."
+}
+
 /** Life-safety opener when the resident must leave / call 911 (gas, fire). */
 export function buildEmergencySafetySms(input: {
   firstName: string
   leaveImmediately: boolean
   reason?: string | null
   handlingTip?: string | null
+  /** True only after a text or email to the property team was delivered. */
+  teamAlerted?: boolean
 }): string {
   const who = input.firstName.trim() || "there"
   const lines = [`Hi ${who},`, ""]
@@ -159,9 +168,7 @@ export function buildEmergencySafetySms(input: {
     )
   }
   lines.push("")
-  lines.push(
-    "I'm alerting the property team now so they can help as quickly as possible.",
-  )
+  lines.push(propertyTeamAlertSentence(input.teamAlerted === true))
   if (input.reason?.trim()) {
     lines.push("")
     lines.push(input.reason.trim())
@@ -182,6 +189,8 @@ export function buildSameDayUrgencySms(input: {
   firstName: string
   reason?: string | null
   handlingTip?: string | null
+  /** True only after a text or email to the property team was delivered. */
+  teamAlerted?: boolean
 }): string {
   const who = input.firstName.trim() || "there"
   const lines = [
@@ -189,7 +198,9 @@ export function buildSameDayUrgencySms(input: {
     "",
     "Thanks for letting us know — this needs same-day attention.",
     "",
-    "I've alerted the property team so they can help quickly.",
+    input.teamAlerted === true
+      ? "I've alerted the property team so they can help quickly."
+      : "I couldn't reach the property team just now.",
   ]
   if (input.reason?.trim()) {
     lines.push("")

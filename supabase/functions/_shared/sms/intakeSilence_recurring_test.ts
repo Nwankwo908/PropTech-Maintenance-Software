@@ -115,7 +115,7 @@ Deno.test("unit_entry NOT SURE unblocks intake", () => {
   const planned = applyQuestionPlan(answered)
   assertEquals(planned.step, "awaiting_confirm")
   const sms = buildConfirmationSummary(planned)
-  assertMatch(sms, /Entry if not home: unconfirmed/i)
+  assertMatch(sms, /isn't confirmed whether someone can enter/i)
 })
 
 Deno.test("Mark Henry silence: one nudge then resolve, never repeat nudge", () => {

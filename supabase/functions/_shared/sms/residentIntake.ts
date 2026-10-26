@@ -619,6 +619,35 @@ async function prependEmergencySafetyIfNeeded(
       .trim()
       .split(/\s+/)[0] || "there"
 
+  let teamAlerted = false
+  try {
+    const alert = await notifyLandlordNeedsAttention(supabase, {
+      landlordId: ctx.landlordId,
+      kind: "workflow_escalated",
+      headline: urgencyPolicy.leaveImmediately
+        ? "Emergency reported over text"
+        : "Same-day maintenance reported over text",
+      detail: (state.description || state.initial_message || urgencyPolicy.reason)
+        .trim()
+        .slice(0, 200),
+      // Keyed to the intake and tier, not the message, so answering more
+      // questions cannot re-alert even if the state write is lost.
+      idempotencyKey:
+        `sms-emergency:${ctx.conversationId}:${state.draft_ticket_id ?? "intake"}:${tier}`,
+      maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
+      unitId: ctx.identity.unit_id ?? null,
+      residentId,
+    })
+    teamAlerted = alert.smsSent.length > 0 ||
+      alert.emailSent.length > 0 ||
+      alert.reason === "already_sent"
+  } catch (err) {
+    console.error(
+      "[sms-intake] property team alert",
+      err instanceof Error ? err.message : String(err),
+    )
+  }
+
   const tip = intakeCategoryHandlingTip(state)
   const safety = urgencyPolicy.leaveImmediately
     ? buildEmergencySafetySms({
@@ -626,30 +655,22 @@ async function prependEmergencySafetyIfNeeded(
       leaveImmediately: true,
       reason: null,
       handlingTip: tip,
+      teamAlerted,
     })
     : buildSameDayUrgencySms({
       firstName: first,
       reason: urgencyPolicy.reason,
       handlingTip: tip,
+      teamAlerted,
     })
 
-  void notifyLandlordNeedsAttention(supabase, {
-    landlordId: ctx.landlordId,
-    kind: "workflow_escalated",
-    headline: urgencyPolicy.leaveImmediately
-      ? "Emergency reported over text"
-      : "Same-day maintenance reported over text",
-    detail: (state.description || state.initial_message || urgencyPolicy.reason)
-      .trim()
-      .slice(0, 200),
-    // Keyed to the intake and tier, not the message, so answering more
-    // questions cannot re-alert even if the state write is lost.
-    idempotencyKey:
-      `sms-emergency:${ctx.conversationId}:${state.draft_ticket_id ?? "intake"}:${tier}`,
-    maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
-    unitId: ctx.identity.unit_id ?? null,
-    residentId,
-  })
+  const alertMessage = teamAlerted
+    ? urgencyPolicy.leaveImmediately
+      ? "Alerted the property team about an emergency reported over text."
+      : "Alerted the property team about a same-day maintenance issue over text."
+    : urgencyPolicy.leaveImmediately
+      ? "Could not reach the property team about an emergency reported over text."
+      : "Could not reach the property team about a same-day maintenance issue over text."
   await recordActivityLog(supabase, {
     landlordId: ctx.landlordId,
     eventType: "sms.emergency_alerted",
@@ -663,11 +684,10 @@ async function prependEmergencySafetyIfNeeded(
     messageId: ctx.messageId,
     workflowTemplateId: "maintenance_intake",
     metadata: {
-      message: urgencyPolicy.leaveImmediately
-        ? "Alerted the property team about an emergency reported over text."
-        : "Alerted the property team about a same-day maintenance issue over text.",
+      message: alertMessage,
       leave_immediately: urgencyPolicy.leaveImmediately,
       urgency_reason: urgencyPolicy.reason,
+      team_alerted: teamAlerted,
     },
   })
   return { outbound: `${safety}\n\n${replyHint}`, emergency: true }
