@@ -3,7 +3,10 @@ import {
   applyQuestionPlan,
   determineNextMaintenanceQuestion,
 } from "./determineNextMaintenanceQuestion.ts"
-import { buildConfirmationSummary } from "./residentIntakeTypes.ts"
+import {
+  buildConfirmationSummary,
+  canReuseUnassignedTicketForIntake,
+} from "./residentIntakeTypes.ts"
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {
@@ -515,7 +518,26 @@ Deno.test("heat confirmation states complete resident details", () => {
   assertMatch(sms, /• Someone in the home feels dizzy\./, "wellness")
   assertEqual(/not turning on$/m.test(sms), false, "no fragment")
   assertEqual(/may be unwell from the heat/i.test(sms), false, "no generic heat note")
+  assertEqual(/Until help arrives/i.test(sms), false, "no troubleshooting tip")
   assertEqual(/\b95\b/.test(sms), false, "outdoor temp is not a resident detail")
+})
+
+Deno.test("a different trade does not reuse an unassigned work order", () => {
+  assertEqual(canReuseUnassignedTicketForIntake({
+    ticketIssueCategory: "plumbing",
+    intakeIssueCategory: "hvac",
+    vendorWorkStatus: "unassigned",
+  }), false, "hvac does not overwrite plumbing")
+  assertEqual(canReuseUnassignedTicketForIntake({
+    ticketIssueCategory: "plumbing",
+    intakeIssueCategory: "plumbing",
+    vendorWorkStatus: "unassigned",
+  }), true, "same trade draft can update")
+  assertEqual(canReuseUnassignedTicketForIntake({
+    ticketIssueCategory: "hvac",
+    intakeIssueCategory: "hvac",
+    vendorWorkStatus: "accepted",
+  }), false, "accepted work is not a draft")
 })
 
 Deno.test("confirmation is tenant-facing and omits priority chips", () => {

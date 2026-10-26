@@ -17,6 +17,7 @@ import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispa
 import type { SmsIntakeState } from "./residentIntakeTypes.ts"
 import {
   buildIntakeDescription,
+  canReuseUnassignedTicketForIntake,
   entryOkIfAbsentFromIntake,
   resolveIntakeIssueCategory,
   severityToDb,
@@ -58,13 +59,40 @@ async function rehostSmsPhotos(
   return rehosted.filter((path) => !/^https?:\/\//i.test(path))
 }
 
+async function reusableDraftTicketId(
+  supabase: SupabaseClient,
+  ticketId: string,
+  intakeCategory: string,
+): Promise<string | null> {
+  const { data: ticket } = await supabase
+    .from("maintenance_requests")
+    .select("id, vendor_work_status, issue_category")
+    .eq("id", ticketId)
+    .maybeSingle()
+  if (!ticket?.id) return null
+  const category = issueCategoryToVendorTrade(
+    typeof ticket.issue_category === "string" ? ticket.issue_category : null,
+  )
+  if (!canReuseUnassignedTicketForIntake({
+    ticketIssueCategory: category,
+    intakeIssueCategory: intakeCategory,
+    vendorWorkStatus: typeof ticket.vendor_work_status === "string"
+      ? ticket.vendor_work_status
+      : null,
+  })) {
+    return null
+  }
+  return ticket.id as string
+}
+
 async function resolveExistingDraftTicketId(
   supabase: SupabaseClient,
   conversationId: string,
   intake: SmsIntakeState,
 ): Promise<string | null> {
+  const intakeCategory = issueCategoryToVendorTrade(resolveIntakeIssueCategory(intake))
   const fromIntake = intake.draft_ticket_id?.trim()
-  if (fromIntake) return fromIntake
+  if (fromIntake) return await reusableDraftTicketId(supabase, fromIntake, intakeCategory)
 
   const { data: convo } = await supabase
     .from("sms_conversations")
@@ -77,19 +105,7 @@ async function resolveExistingDraftTicketId(
       ? convo.maintenance_request_id.trim()
       : ""
   if (!linked) return null
-
-  // Only reuse if still an open unassigned draft (not a prior completed job).
-  const { data: ticket } = await supabase
-    .from("maintenance_requests")
-    .select("id, vendor_work_status")
-    .eq("id", linked)
-    .maybeSingle()
-
-  const status = String(ticket?.vendor_work_status ?? "").toLowerCase()
-  if (ticket?.id && (status === "unassigned" || status === "")) {
-    return ticket.id as string
-  }
-  return null
+  return await reusableDraftTicketId(supabase, linked, intakeCategory)
 }
 
 export async function submitSmsMaintenanceRequest(

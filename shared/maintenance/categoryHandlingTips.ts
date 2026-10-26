@@ -4,6 +4,7 @@
  * Keep copy plain-language (Ulo writing standard) — no jargon or IDs.
  */
 import { matchesWaterOutage } from './deterministicRules.ts'
+import { indicatesImmediateHeatDanger } from './urgencyPolicy.ts'
 
 export type CategoryHandlingTipInput = {
   primaryCategory?: string | null
@@ -96,9 +97,26 @@ export function categoryLabelForSms(input: CategoryHandlingTipInput): string {
  * One SMS-safe tip on what the resident can do safely while waiting.
  * Returns null when we have nothing useful to add.
  */
+function residentIsUnwell(input: CategoryHandlingTipInput): boolean {
+  if ((input.diagnosticFacts?.hvac_immediate_danger ?? "").trim().toLowerCase() === "yes") {
+    return true
+  }
+  if (/someone in the home may be unwell from the heat/i.test(input.safetyConcerns ?? "")) {
+    return true
+  }
+  const text = [
+    input.text,
+    input.safetyConcerns,
+    ...Object.values(input.diagnosticFacts ?? {}),
+  ].filter(Boolean).join(" ")
+  return indicatesImmediateHeatDanger(text)
+}
+
 export function resolveCategoryHandlingTip(
   input: CategoryHandlingTipInput,
 ): string | null {
+  // Distress already has safety guidance. Do not add thermostat or other troubleshooting.
+  if (residentIsUnwell(input)) return null
   const key = categoryKey(input)
   const text = haystack(input)
   const overflowYes = (value?: string) => /^y(es)?\b/i.test(value?.trim() ?? "")

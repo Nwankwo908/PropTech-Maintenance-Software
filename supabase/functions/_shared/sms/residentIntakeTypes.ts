@@ -1075,6 +1075,24 @@ function factConfirmationSentence(key: string, value: string): string | null {
 }
 
 /** Complete, resident-provided lines for the confirmation. No guessed details. */
+/**
+ * An unassigned ticket may be updated only when it is the same kind of issue.
+ * A different trade, such as plumbing then HVAC, must become its own work order.
+ */
+export function canReuseUnassignedTicketForIntake(params: {
+  ticketIssueCategory: string | null | undefined
+  intakeIssueCategory: string | null | undefined
+  vendorWorkStatus: string | null | undefined
+}): boolean {
+  const status = (params.vendorWorkStatus ?? "").trim().toLowerCase()
+  if (status !== "unassigned" && status !== "") return false
+  const ticket = (params.ticketIssueCategory ?? "").trim().toLowerCase()
+  const intake = (params.intakeIssueCategory ?? "").trim().toLowerCase()
+  if (!ticket || !intake) return false
+  return ticket === intake
+}
+
+/** Complete, resident-provided lines for the confirmation. No guessed details. */
 export function confirmationDetailLines(state: SmsIntakeState): string[] {
   const authored = tenantAuthoredText(state)
   const facts = state.diagnostic_facts ?? {}

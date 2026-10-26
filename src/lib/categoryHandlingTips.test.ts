@@ -23,6 +23,16 @@ describe("resolveCategoryHandlingTip", () => {
     expect(tip).toMatch(/don't keep flushing|drain cleaner/i)
   })
 
+  it("skips troubleshooting when someone is unwell from the heat", () => {
+    const tip = resolveCategoryHandlingTip({
+      primaryCategory: "hvac",
+      text: "The AC isn't working. It's 100 inside and my son feels dizzy.",
+      diagnosticFacts: { hvac_immediate_danger: "yes", hvac_behavior: "not turning on" },
+      safetyConcerns: "Someone in the home may be unwell from the heat",
+    })
+    expect(tip).toBeNull()
+  })
+
   it("recommends thermostat check for HVAC", () => {
     const tip = resolveCategoryHandlingTip({
       primaryCategory: "hvac",
