@@ -12,7 +12,7 @@ import { startMoveOutWorkflow } from "../engine/startWorkflow.ts"
 import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
 import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 import { resolveUnitByIdOrLabel } from "../unitVacancy.ts"
-import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
+import { residentRequestRef } from "./residentRequestRef.ts"
 import { queueWorkOrderContext } from "../workOrderContext.ts"
 import { sendVendorJobAlert } from "./vendorSmsRouting.ts"
 import { findResidentLeaseDocumentUrl } from "./residentLeaseDocument.ts"
@@ -115,6 +115,7 @@ type OpenTicket = {
   issue_category: string | null
   created_at: string | null
   updated_at: string | null
+  resident_request_ref?: string | null
 }
 
 function firstName(name: string | null | undefined): string {
@@ -295,7 +296,7 @@ async function loadOpenTickets(
     .filter((id): id is string => Boolean(id))
 
   const select =
-    "id, unit, unit_id, property_id, description, vendor_work_status, scheduled_at, scheduled_window_text, assigned_vendor_id, access_instructions, priority, issue_category, created_at, resident_id, resident_user_id, resident_phone"
+    "id, unit, unit_id, property_id, description, vendor_work_status, scheduled_at, scheduled_window_text, assigned_vendor_id, access_instructions, priority, issue_category, created_at, resident_id, resident_user_id, resident_phone, resident_request_ref"
 
   const rows: OpenTicket[] = []
   const seen = new Set<string>()
@@ -350,6 +351,9 @@ async function loadOpenTickets(
       issue_category: typeof row.issue_category === "string" ? row.issue_category : null,
       created_at: typeof row.created_at === "string" ? row.created_at : null,
       updated_at: null,
+      resident_request_ref: typeof row.resident_request_ref === "string"
+        ? row.resident_request_ref
+        : null,
     })
   }
 
@@ -716,10 +720,14 @@ function closedDateFromTicket(ticket: OpenTicket): string | null {
   return formatTicketClosedDate(ticket.updated_at ?? null)
 }
 
+function tenantRef(ticket: { id: string; resident_request_ref?: string | null }): string {
+  return residentRequestRef(ticket.id, ticket.resident_request_ref)
+}
+
 function repairLabelForConfirm(ticket: OpenTicket): string {
   const label = shortTicketLabel(ticket)
   if (label && label.toLowerCase() !== "open request") return label
-  return formatWorkOrderRef(ticket.id)
+  return tenantRef(ticket)
 }
 
 async function handleLeaseInfo(
@@ -1078,7 +1086,7 @@ async function handleMaintenanceStatus(
       pending_ticket_update_media: [],
     })
   } else {
-    const wo = formatWorkOrderRef(ticket.id)
+    const wo = tenantRef(ticket)
     if (when) {
       lines.push(`The visit for ${wo} is set for ${when}.`)
       if (vendor) lines.push(`${vendor} is assigned to this job.`)
@@ -1095,7 +1103,7 @@ async function handleMaintenanceStatus(
   await logOutcome(ctx, {
     eventType: "sms.maintenance_status_answered",
     message: ticket
-      ? `Shared the status of ${formatWorkOrderRef(ticket.id)} with the resident.`
+      ? `Shared the status of ${tenantRef(ticket)} with the resident.`
       : "Resident asked for a repair update; no open work order was on file.",
     workflowRunId: runId,
     maintenanceRequestId: ticket?.id ?? null,
@@ -1220,7 +1228,7 @@ async function handleMaintenanceUpdate(
     })
     await logOutcome(ctx, {
       eventType: "sms.maintenance_related_clarify",
-      message: `Asked whether a new symptom belongs with ${formatWorkOrderRef(ticket.id)}.`,
+      message: `Asked whether a new symptom belongs with ${tenantRef(ticket)}.`,
       maintenanceRequestId: ticket.id,
     })
     return handled(
@@ -1315,7 +1323,7 @@ async function handleMaintenanceUpdate(
       const notifyVendor = ticket.assigned_vendor_id &&
         (applyKind === "reopen" || applyKind === "worse" || applyKind === "no_show")
       if (notifyVendor && ticket.assigned_vendor_id) {
-        const wo = formatWorkOrderRef(ticket.id)
+        const wo = tenantRef(ticket)
         const vendorBody = applyKind === "reopen"
           ? `Hi, this is the property management team.\n\nUpdate for work order ${wo}.\n\nThe resident said the repair wasn't fixed. Please follow up on this job.\n\n${note.slice(0, 200)}`
           : applyKind === "no_show"
@@ -1347,16 +1355,16 @@ async function handleMaintenanceUpdate(
           ? "sms.maintenance_reopened"
           : "sms.maintenance_update_applied",
         message: applyKind === "reopen"
-          ? `Reopened ${formatWorkOrderRef(ticket.id)} after the resident said it wasn't fixed.`
-          : `Added the resident's update to ${formatWorkOrderRef(ticket.id)}.`,
+          ? `Reopened ${tenantRef(ticket)} after the resident said it wasn't fixed.`
+          : `Added the resident's update to ${tenantRef(ticket)}.`,
         maintenanceRequestId: ticket.id,
         extra: { kind: applyKind },
       })
       return handled(
         "sms_maintenance_update",
         applyKind === "reopen"
-          ? `Thanks — I reopened ${formatWorkOrderRef(ticket.id)} and let the team know it still isn't fixed.`
-          : `Thanks — I added that to ${formatWorkOrderRef(ticket.id)}. We'll keep you posted.`,
+          ? `Thanks — I reopened ${tenantRef(ticket)} and let the team know it still isn't fixed.`
+          : `Thanks — I added that to ${tenantRef(ticket)}. We'll keep you posted.`,
       )
     }
     await patchIntakeState(ctx.supabase, ctx.conversationId, {
@@ -1413,21 +1421,21 @@ async function handleMaintenanceUpdate(
   })
   await logOutcome(ctx, {
     eventType: "sms.maintenance_update_noted",
-    message: `Noted a possible ${kind} for ${formatWorkOrderRef(ticket.id)}; waiting for the resident to confirm.`,
+    message: `Noted a possible ${kind} for ${tenantRef(ticket)}; waiting for the resident to confirm.`,
     maintenanceRequestId: ticket.id,
     extra: { kind },
   })
   const ask = kind === "reopen"
-    ? `I can reopen ${formatWorkOrderRef(ticket.id)} because this still isn't fixed.`
+    ? `I can reopen ${tenantRef(ticket)} because this still isn't fixed.`
     : kind === "worse"
-    ? `I can add this to ${formatWorkOrderRef(ticket.id)} and mark it more urgent.`
+    ? `I can add this to ${tenantRef(ticket)} and mark it more urgent.`
     : kind === "no_show"
-    ? `I can add this to ${formatWorkOrderRef(ticket.id)} and let the team know nobody showed up.`
+    ? `I can add this to ${tenantRef(ticket)} and let the team know nobody showed up.`
     : kind === "photo"
-    ? `I can attach that photo to ${formatWorkOrderRef(ticket.id)}.`
+    ? `I can attach that photo to ${tenantRef(ticket)}.`
     : kind === "correction"
-    ? `I can correct ${formatWorkOrderRef(ticket.id)} with that detail.`
-    : `I can add this to ${formatWorkOrderRef(ticket.id)}:`
+    ? `I can correct ${tenantRef(ticket)} with that detail.`
+    : `I can add this to ${tenantRef(ticket)}:`
   return handled(
     "sms_maintenance_update",
     [
@@ -1508,7 +1516,7 @@ async function handleScheduleChange(
   await logOutcome(ctx, {
     eventType: "sms.schedule_change_requested",
     message: ticket
-      ? `Resident asked to change the visit time for ${formatWorkOrderRef(ticket.id)}.`
+      ? `Resident asked to change the visit time for ${tenantRef(ticket)}.`
       : "Resident asked to change a visit time. No open appointment was on file.",
     workflowRunId: runId,
     maintenanceRequestId: ticket?.id ?? null,
@@ -1520,8 +1528,8 @@ async function handleScheduleChange(
       "",
       ticket
         ? vendorNotified
-          ? `I've let the vendor know that ${formatWorkOrderRef(ticket.id)} no longer works for you. They'll propose a new time and we'll text you to confirm.`
-          : `I've passed your request to change the visit for ${formatWorkOrderRef(ticket.id)} to the property team. They'll follow up here.`
+          ? `I've let the vendor know that ${tenantRef(ticket)} no longer works for you. They'll propose a new time and we'll text you to confirm.`
+          : `I've passed your request to change the visit for ${tenantRef(ticket)} to the property team. They'll follow up here.`
         : "I've passed your request to the property team. They'll follow up here about scheduling.",
       preferredDay ? `I noted you'd prefer ${preferredDay}.` : "",
     ].filter(Boolean).join("\n"),
@@ -1565,7 +1573,7 @@ async function handleAccessInstruction(
   }
 
   if (ticket?.assigned_vendor_id) {
-    const wo = formatWorkOrderRef(ticket.id)
+    const wo = tenantRef(ticket)
     const kindLine = accessKind === "restrict"
       ? "The resident asked that you not enter unless they are home."
       : accessKind === "allow"
@@ -1603,7 +1611,7 @@ async function handleAccessInstruction(
   await logOutcome(ctx, {
     eventType: "sms.access_instruction_saved",
     message: ticket
-      ? `Saved access notes on ${formatWorkOrderRef(ticket.id)}.`
+      ? `Saved access notes on ${tenantRef(ticket)}.`
       : "Saved the resident's access notes on this text thread.",
     workflowRunId: runId,
     maintenanceRequestId: ticket?.id ?? null,
@@ -1617,7 +1625,7 @@ async function handleAccessInstruction(
       "This is the property management team.",
       "",
       ticket
-        ? `Thanks — I saved that access note on ${formatWorkOrderRef(ticket.id)}${ticket.assigned_vendor_id ? " and let the vendor know" : ""}.`
+        ? `Thanks — I saved that access note on ${tenantRef(ticket)}${ticket.assigned_vendor_id ? " and let the vendor know" : ""}.`
         : "Thanks — I saved that access note for the property team.",
     ].join("\n"),
   )
@@ -1663,7 +1671,7 @@ async function executeResidentTicketCancel(
       landlordId: ctx.landlordId,
       kind: "workflow_escalated",
       headline: "Resident asked to cancel a repair already in progress",
-      detail: `${formatWorkOrderRef(ticket.id)} is ${vendorStatusLabel(ticket.vendor_work_status)}.`,
+      detail: `${tenantRef(ticket)} is ${vendorStatusLabel(ticket.vendor_work_status)}.`,
       idempotencyKey: `ticket-cancel-review:${ticket.id}:${ctx.messageId}`,
       maintenanceRequestId: ticket.id,
       residentId: ctx.identity.resident_id,
@@ -1671,7 +1679,7 @@ async function executeResidentTicketCancel(
     })
     await logOutcome(ctx, {
       eventType: "sms.maintenance_cancel_needs_review",
-      message: `Resident asked to cancel ${formatWorkOrderRef(ticket.id)}, but work is already in progress.`,
+      message: `Resident asked to cancel ${tenantRef(ticket)}, but work is already in progress.`,
       maintenanceRequestId: ticket.id,
     })
     return handled(
@@ -1723,7 +1731,7 @@ async function executeResidentTicketCancel(
   }
   await logOutcome(ctx, {
     eventType: "sms.maintenance_cancelled",
-    message: `Closed ${formatWorkOrderRef(ticket.id)} after the resident confirmed over text.`,
+    message: `Closed ${tenantRef(ticket)} after the resident confirmed over text.`,
     maintenanceRequestId: ticket.id,
     extra: {
       closure_source: "tenant_sms",
@@ -1827,7 +1835,7 @@ async function handleCancel(
 
     await logOutcome(ctx, {
       eventType: "sms.maintenance_cancel_noted",
-      message: `Asked the resident again to confirm cancel for ${formatWorkOrderRef(ticket.id)}.`,
+      message: `Asked the resident again to confirm cancel for ${tenantRef(ticket)}.`,
       maintenanceRequestId: ticket.id,
     })
     return handled(
@@ -1837,7 +1845,7 @@ async function handleCancel(
         "",
         "This is the property management team.",
         "",
-        `I can still cancel ${formatWorkOrderRef(ticket.id)} if you no longer need this repair.`,
+        `I can still cancel ${tenantRef(ticket)} if you no longer need this repair.`,
         "",
         "Reply YES to cancel it, or NO to leave it open.",
       ].join("\n"),
@@ -1913,7 +1921,7 @@ async function handleCancel(
   })
   await logOutcome(ctx, {
     eventType: "sms.maintenance_cancel_noted",
-    message: `Noted a cancel request for ${formatWorkOrderRef(ticket.id)}; waiting for the resident to confirm.`,
+    message: `Noted a cancel request for ${tenantRef(ticket)}; waiting for the resident to confirm.`,
     maintenanceRequestId: ticket.id,
   })
   return handled(
@@ -1923,7 +1931,7 @@ async function handleCancel(
       "",
       "This is the property management team.",
       "",
-      `I can cancel ${formatWorkOrderRef(ticket.id)} if you no longer need this repair.`,
+      `I can cancel ${tenantRef(ticket)} if you no longer need this repair.`,
       "",
       "Reply YES to cancel it, or NO to leave it open.",
     ].join("\n"),

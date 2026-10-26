@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "./delivery.ts"
 import { sendOutboundSms } from "./sms/adapters.ts"
+import { ensureResidentRequestRef } from "./sms/residentRequestRef.ts"
 import { formatBareUnitLabel } from "./properties/unitLabelDisplay.ts"
+import { buildResidentRequestConfirmationSms } from "../../../shared/maintenance/residentRequestRef.ts"
 
 export type ResidentNotifyEvent =
   | "ticket_submitted"
@@ -84,7 +86,7 @@ function subjectForEvent(event: ResidentNotifyEvent): string {
 function buildEmail(
   event: ResidentNotifyEvent,
   recipientName: string,
-  ticketId: string,
+  requestRef: string,
   ctx: {
     unit?: string
     propertyType?: string | null
@@ -125,7 +127,7 @@ function buildEmail(
         (unitLine ? `${unitLine}\n` : "") +
         (pri ? `Priority: ${pri}\n` : "") +
         (desc ? `\nSummary:\n${desc}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
     case "vendor_assigned":
       bodyText =
@@ -133,7 +135,7 @@ function buildEmail(
         (vendor ? `: ${vendor}` : "") +
         ".\n\n" +
         (unitLine ? `${unitLine}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
     case "vendor_accepted":
       bodyText =
@@ -141,7 +143,7 @@ function buildEmail(
         (vendor ? `: ${vendor}` : "") +
         ".\n\n" +
         (unitLine ? `${unitLine}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
     case "schedule_confirmed":
       bodyText =
@@ -150,14 +152,14 @@ function buildEmail(
         (when ? ` for ${when}` : "") +
         ".\n\n" +
         (unitLine ? `${unitLine}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
     case "repair_in_progress":
       bodyText =
         `Hi ${name},\n\nWork is now in progress on your maintenance request.\n\n` +
         (vendor ? `Vendor: ${vendor}\n` : "") +
         (unitLine ? `${unitLine}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
     case "repair_completed":
       bodyText =
@@ -165,7 +167,7 @@ function buildEmail(
         (photoReceipt ? ` ${photoReceipt}` : "") +
         ` If anything still needs attention, please contact your property office.\n\n` +
         (unitLine ? `${unitLine}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
     case "vendor_no_show":
       bodyText =
@@ -174,7 +176,7 @@ function buildEmail(
         (when ? ` (${when})` : "") +
         `. We're finding another vendor for you and will text you with an update.\n\n` +
         (unitLine ? `${unitLine}\n` : "") +
-        `\nReference: ${ticketId}\n`
+        `\nRef: ${requestRef}\n`
       break
   }
 
@@ -216,7 +218,7 @@ function buildEmail(
   ${vendor && event === "repair_in_progress"
     ? `<p>Vendor: <strong>${escapeHtml(vendor)}</strong></p>`
     : ""}
-  <p style="font-size:12px;color:#6a7282;">Reference: ${escapeHtml(ticketId)}</p>
+  <p style="font-size:12px;color:#6a7282;">Ref: ${escapeHtml(requestRef)}</p>
 </body>
 </html>`.trim()
 
@@ -225,17 +227,19 @@ function buildEmail(
 
 function buildSms(
   event: ResidentNotifyEvent,
-  ticketId: string,
+  requestRef: string,
   ctx: {
     unit?: string
     vendorName?: string
     scheduleWindow?: string
     completionPhotoCount?: number
+    requestPhrase?: string | null
+    vendorWillContact?: boolean
   },
 ): string {
   const vendor = ctx.vendorName?.trim()
   const when = ctx.scheduleWindow?.trim()
-  const ref = `Ref: ${ticketId}`
+  const ref = `Ref: ${requestRef}`
   const photoCount =
     typeof ctx.completionPhotoCount === "number" && ctx.completionPhotoCount > 0
       ? ctx.completionPhotoCount
@@ -243,9 +247,12 @@ function buildSms(
   switch (event) {
     case "ticket_submitted":
       return truncate(
-        `Thanks for letting us know! We've got your maintenance request and ` +
-          `we're on it. We'll text you right here with any updates. ${ref}`,
-        300,
+        buildResidentRequestConfirmationSms({
+          requestRef,
+          requestPhrase: ctx.requestPhrase,
+          vendorWillContact: ctx.vendorWillContact === true,
+        }),
+        320,
       )
     case "vendor_assigned":
       return truncate(
@@ -361,6 +368,17 @@ export type ResidentNotifyInput = {
   scheduleWindow?: string
   /** Vendor before/after photos at close (repair_completed). */
   completionPhotoCount?: number
+  /** Stored short ref. Looked up when omitted. */
+  requestRef?: string | null
+  /** Friendly request name, such as "AC repair". */
+  requestPhrase?: string | null
+  /** True only when a vendor is already assigned to contact the resident. */
+  vendorWillContact?: boolean
+  /**
+   * SMS intake already replies with the confirmation. Skip the second text.
+   * Email still sends when the resident's channel includes it.
+   */
+  suppressSms?: boolean
 }
 
 /**
@@ -373,7 +391,9 @@ export async function notifyResident(
 ): Promise<void> {
   const ch = normalizeResidentNotificationChannel(input.notificationChannel)
   const wantEmail = ch === "email" || ch === "both"
-  const wantSms = ch === "sms" || ch === "both"
+  const wantSms = (ch === "sms" || ch === "both") && input.suppressSms !== true
+  const requestRef = input.requestRef?.trim() ||
+    await ensureResidentRequestRef(supabase, input.ticketId)
 
   const email = input.recipientEmail.trim()
   const phoneE164 = normalizePhoneFlexible(input.recipientPhone)
@@ -411,7 +431,7 @@ export async function notifyResident(
   const { text, html } = buildEmail(
     input.event,
     input.recipientName,
-    input.ticketId,
+    requestRef,
     {
       unit: input.unit,
       priority: input.priority,
@@ -481,11 +501,13 @@ export async function notifyResident(
     return
   }
 
-  const smsBody = buildSms(input.event, input.ticketId, {
+  const smsBody = buildSms(input.event, requestRef, {
     unit: input.unit,
     vendorName: input.vendorName,
     scheduleWindow: input.scheduleWindow,
     completionPhotoCount: input.completionPhotoCount,
+    requestPhrase: input.requestPhrase,
+    vendorWillContact: input.vendorWillContact,
   })
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")

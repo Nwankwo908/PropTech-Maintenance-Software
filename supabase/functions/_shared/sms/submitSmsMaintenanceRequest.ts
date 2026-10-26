@@ -13,6 +13,7 @@ import {
 import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
 import { notifyResidentSubmitted } from "../../submit-maintenance-request/resident_notify.ts"
+import { ensureResidentRequestRef } from "./residentRequestRef.ts"
 import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispatch.ts"
 import type { SmsIntakeState } from "./residentIntakeTypes.ts"
 import {
@@ -125,7 +126,12 @@ export async function submitSmsMaintenanceRequest(
     /** Tenant already fixed it. Complete the ticket and skip vendor dispatch. */
     closeAs?: "tenant_self_fix"
   },
-): Promise<{ ticketId: string; vendorId: string | null; vendorAssigned: boolean }> {
+): Promise<{
+  ticketId: string
+  requestRef: string
+  vendorId: string | null
+  vendorAssigned: boolean
+}> {
   const { data: resident, error: residentErr } = await supabase
     .from("users")
     .select("id, full_name, email, phone, unit")
@@ -307,10 +313,14 @@ export async function submitSmsMaintenanceRequest(
   const descPrev =
     description.length > 200 ? `${description.slice(0, 197)}…` : description
 
+  const requestRef = await ensureResidentRequestRef(supabase, ticketId)
+
   const closedByTenant = params.closeAs === "tenant_self_fix"
+  // The intake reply is the one tenant confirmation. This call must not send a second SMS.
   if (!closedByTenant) try {
     await notifyResidentSubmitted(supabase, {
       ticketId,
+      requestRef,
       recipientName: row.full_name?.trim() || "Resident",
       recipientEmail: row.email,
       recipientPhone: row.phone,
@@ -318,6 +328,7 @@ export async function submitSmsMaintenanceRequest(
       unit,
       priority,
       descriptionPreview: descPrev,
+      suppressSms: true,
     })
   } catch (e) {
     console.error("[sms-intake] resident notify failed", e)
@@ -450,5 +461,5 @@ export async function submitSmsMaintenanceRequest(
     earlyTicketFinalized: !created,
   })
 
-  return { ticketId, vendorId: assignedVendorId, vendorAssigned }
+  return { ticketId, requestRef, vendorId: assignedVendorId, vendorAssigned }
 }

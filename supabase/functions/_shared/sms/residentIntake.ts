@@ -1208,6 +1208,7 @@ export async function processResidentMaintenanceIntake(
       if (multiIssues.length >= 2) {
         try {
           const ticketIds: string[] = []
+          const requestRefs: string[] = []
           let allVendorsAssigned = true
           // Same unit + same trade → reuse the first assigned vendor.
           const vendorByTrade = new Map<string, string>()
@@ -1220,7 +1221,7 @@ export async function processResidentMaintenanceIntake(
             const preferVendorId = tradeKey
               ? vendorByTrade.get(tradeKey) ?? null
               : null
-            const { ticketId, vendorId, vendorAssigned } =
+            const { ticketId, requestRef, vendorId, vendorAssigned } =
               await submitSmsMaintenanceRequest(supabase, {
                 landlordId: ctx.landlordId,
                 conversationId: ctx.conversationId,
@@ -1230,6 +1231,7 @@ export async function processResidentMaintenanceIntake(
                 preferVendorId,
               })
             ticketIds.push(ticketId)
+            requestRefs.push(requestRef)
             await attachAiClassificationLogToTicket(supabase, {
               landlordId: ctx.landlordId,
               conversationId: ctx.conversationId,
@@ -1255,7 +1257,10 @@ export async function processResidentMaintenanceIntake(
               ticketIds,
               allVendorsAssigned,
               companyName,
-              { handlingTip: intakeCategoryHandlingTip(state) },
+              {
+                handlingTip: intakeCategoryHandlingTip(state),
+                requestRefs,
+              },
             ),
             metadata: {
               submitted: true,
@@ -1276,7 +1281,7 @@ export async function processResidentMaintenanceIntake(
       }
 
       try {
-        const { ticketId, vendorAssigned } = await submitSmsMaintenanceRequest(
+        const { ticketId, requestRef, vendorAssigned } = await submitSmsMaintenanceRequest(
           supabase,
           {
             landlordId: ctx.landlordId,
@@ -1292,6 +1297,8 @@ export async function processResidentMaintenanceIntake(
           route: "resident_maintenance_intake",
           replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned, companyName, {
             categoryLabel: intakeCategoryLabel(state),
+            sourceText: state.description || state.initial_message,
+            requestRef,
             handlingTip: intakeCategoryHandlingTip(state),
           }),
           metadata: { submitted: true, ticketId, intakeStep: "submitted" },

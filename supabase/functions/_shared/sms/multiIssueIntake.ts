@@ -12,6 +12,12 @@ import { matchDeterministicRules } from "../maintenance_classification/determini
 import { hasProblemSignal } from "../../../../shared/maintenance/deterministicRules.ts"
 import { generateIssueSummary } from "../../../../shared/maintenance/generateIssueSummary.ts"
 import type { ClassificationResult, VendorTrade } from "../maintenance_classification/types.ts"
+import {
+  buildResidentRequestConfirmationSms,
+  buildResidentRequestsConfirmationSms,
+  residentRequestPhrase,
+  residentRequestRef,
+} from "../../../../shared/maintenance/residentRequestRef.ts"
 import { applyQuestionPlan } from "./determineNextMaintenanceQuestion.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import {
@@ -593,43 +599,40 @@ export function beginMultiIssueSharedIntake(
 
 export function buildRequestSubmittedSms(
   ticketId: string,
-  _vendorAssigned = true,
+  vendorAssigned = false,
   _companyName?: string | null,
   opts?: {
     categoryLabel?: string | null
+    sourceText?: string | null
+    requestRef?: string | null
     handlingTip?: string | null
   },
 ): string {
-  const ref = ticketId.slice(0, 8).toUpperCase()
-  const category = opts?.categoryLabel?.trim() || "maintenance"
-  const tip = opts?.handlingTip?.trim()
-  const tipBlock = tip ? `\n\n${tip}` : ""
-  return (
-    `Got it. We've logged a ${category} request for your unit. A vendor will be in touch to schedule.` +
-    tipBlock +
-    `\n\nRequest ${ref}`
-  )
+  return buildResidentRequestConfirmationSms({
+    requestRef: opts?.requestRef?.trim() || residentRequestRef(ticketId),
+    requestPhrase: residentRequestPhrase(opts?.categoryLabel, opts?.sourceText),
+    vendorWillContact: vendorAssigned,
+    handlingTip: opts?.handlingTip,
+  })
 }
 
 export function buildMultiIssueSubmittedSms(
   ticketIds: string[],
-  _vendorAssigned = true,
+  vendorAssigned = false,
   _companyName?: string | null,
   opts?: {
     handlingTip?: string | null
+    requestRefs?: string[] | null
   },
 ): string {
-  const refs = ticketIds
-    .map((id) => id.slice(0, 8).toUpperCase())
-    .join(", ")
-  const n = ticketIds.length
-  const tip = opts?.handlingTip?.trim()
-  const tipBlock = tip ? `\n\n${tip}` : ""
-  return (
-    `Got it. We've logged ${n} maintenance request${n === 1 ? "" : "s"} for your unit. A vendor will be in touch to schedule.` +
-    tipBlock +
-    `\n\nRequest ${refs}`
-  )
+  const refs = opts?.requestRefs?.length
+    ? opts.requestRefs
+    : ticketIds.map((id) => residentRequestRef(id))
+  return buildResidentRequestsConfirmationSms({
+    requestRefs: refs,
+    vendorWillContact: vendorAssigned,
+    handlingTip: opts?.handlingTip,
+  })
 }
 
 export const INTAKE_SUBMIT_FAILED_SMS =

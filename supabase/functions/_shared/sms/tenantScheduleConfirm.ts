@@ -10,7 +10,7 @@ import {
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
+import { ensureResidentRequestRef } from "./residentRequestRef.ts"
 import { confirmVendorSchedule } from "../vendor_job_schedule.ts"
 import {
   buildResidentScheduleAlreadyAdvancedSms,
@@ -504,7 +504,7 @@ export async function askTenantScheduleConfirmation(
   }`
   const body = buildTenantScheduleAskSms({
     replyRef,
-    workOrderRef: formatWorkOrderRef(params.ticketId),
+    workOrderRef: `Ref: ${await ensureResidentRequestRef(supabase, params.ticketId)}`,
     residentName: String(ticket.resident_name ?? ""),
     vendorName,
     windowText: params.windowText,
@@ -743,7 +743,7 @@ export async function tryHandleTenantScheduleConfirmInbound(
       clarified: true,
       ticketId: pending.ticketId,
       replyBody: buildResidentScheduleAlreadyAdvancedSms({
-        workOrderRef: formatWorkOrderRef(pending.ticketId),
+        workOrderRef: `Ref: ${await ensureResidentRequestRef(supabase, pending.ticketId)}`,
       }),
     }
   }
@@ -775,7 +775,7 @@ export async function tryHandleTenantScheduleConfirmInbound(
       ticketId: pending.ticketId,
       replyBody: buildScheduleConfirmClarifySms({
         windowText: pending.windowText,
-        workOrderRef: formatWorkOrderRef(pending.ticketId),
+        workOrderRef: `Ref: ${await ensureResidentRequestRef(supabase, pending.ticketId)}`,
       }),
     }
   }
@@ -793,7 +793,7 @@ export async function tryHandleTenantScheduleConfirmInbound(
 
   const at = new Date().toISOString()
   const isReschedule = pending.kind === "reschedule"
-  const workOrderRef = formatWorkOrderRef(pending.ticketId)
+  const workOrderRef = `Ref: ${await ensureResidentRequestRef(supabase, pending.ticketId)}`
   const newTimeLabel = formatRescheduleTimeLabel(
     pending.scheduledAt,
     pending.windowText,

@@ -390,7 +390,7 @@ export async function processIntakeSilenceFollowUps(
       try {
         // Prefer auto-submit when the plan is ready; otherwise leave at next ask.
         if (next.step === "awaiting_confirm") {
-          const { ticketId } = await submitSmsMaintenanceRequest(supabase, {
+          const { ticketId, requestRef } = await submitSmsMaintenanceRequest(supabase, {
             landlordId: snapshot.landlordId,
             conversationId: row.id,
             residentId,
@@ -414,7 +414,9 @@ export async function processIntakeSilenceFollowUps(
                 conversationId: row.id,
                 landlordId: snapshot.landlordId,
                 toPhone: phone,
-                body: decision.body,
+                body: decision.body.includes("Ref:")
+                  ? decision.body
+                  : `${decision.body}\n\nRef: ${requestRef}`,
                 source: "intake_silence_resolve",
               })
             } else if (gate.decision.action === "hold_quiet_hours") {

@@ -151,32 +151,50 @@ Deno.test("beginMultiIssueSharedIntake enters wizard, keeps pending issues", () 
   )
 })
 
-Deno.test("buildRequestSubmittedSms does not ask the tenant to call the manager", () => {
-  const noVendor = buildRequestSubmittedSms("abc12345-uuid", false)
-  assertMatch(noVendor, /We've logged a maintenance request/i)
-  assertMatch(noVendor, /vendor will be in touch to schedule/i)
-  assertEquals(/property manager/i.test(noVendor), false)
-  assertEquals(/You're all set/i.test(noVendor), false)
+Deno.test("buildRequestSubmittedSms sends one short ref and does not promise a vendor", () => {
+  const noVendor = buildRequestSubmittedSms(
+    "30a0b8cc-4284-42a7-8139-b59e219219f0",
+    false,
+    null,
+    {
+      categoryLabel: "HVAC",
+      sourceText: "The AC isn't working",
+    },
+  )
+  assertEquals(
+    noVendor,
+    "Thanks! We've received your AC repair request. We'll text you here with updates.\n\nRef: 30A0B8CC",
+  )
+  assertEquals(/vendor will be in touch/i.test(noVendor), false)
+  assertEquals(noVendor.includes("30a0b8cc-4284"), false)
 
-  const named = buildRequestSubmittedSms("abc12345-uuid", true, "Kendo Properties", {
+  const named = buildRequestSubmittedSms("abc12345-1111-4000-8000-000000000001", true, "Kendo Properties", {
     categoryLabel: "plumbing",
     handlingTip:
       "Until help arrives: if you can safely reach the shutoff valve, turn it off.",
   })
-  assertMatch(named, /We've logged a plumbing request/i)
+  assertMatch(named, /We've received your plumbing request/i)
+  assertMatch(named, /Your vendor will be in touch to schedule/i)
   assertMatch(named, /shutoff valve/i)
-  assertMatch(named, /Request ABC12345/)
+  assertMatch(named, /Ref: ABC12345/)
+  assertEquals(/property manager/i.test(named), false)
 
   assertEquals(/property manager/i.test(INTAKE_SUBMIT_FAILED_SMS), false)
 })
 
-Deno.test("buildMultiIssueSubmittedSms follows up with schedule copy", () => {
-  const body = buildMultiIssueSubmittedSms(["aaaaaaaa", "bbbbbbbb"], false, null, {
-    handlingTip: "Until help arrives: avoid using the affected area.",
-  })
-  assertMatch(body, /We've logged 2 maintenance requests/i)
-  assertMatch(body, /vendor will be in touch to schedule/i)
+Deno.test("buildMultiIssueSubmittedSms is one confirmation with a ref per request", () => {
+  const body = buildMultiIssueSubmittedSms(
+    ["aaaaaaaa-1111-4000-8000-000000000001", "bbbbbbbb-2222-4000-8000-000000000002"],
+    false,
+    null,
+    { handlingTip: "Until help arrives: avoid using the affected area." },
+  )
+  assertMatch(body, /We've received your 2 maintenance requests/i)
+  assertMatch(body, /We'll text you here with updates/i)
+  assertEquals(/vendor will be in touch/i.test(body), false)
   assertMatch(body, /Until help arrives/i)
+  assertMatch(body, /Ref: AAAAAAAA/)
+  assertMatch(body, /Ref: BBBBBBBB/)
   assertEquals(/You're all set/i.test(body), false)
 })
 
