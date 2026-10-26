@@ -720,18 +720,16 @@ export function formatExternalVendorSmsLine(row: {
     typeof row.reviewCount === "number" && Number.isFinite(row.reviewCount)
       ? Math.max(0, Math.round(row.reviewCount))
       : null
-  const stars =
+  const score =
     rating == null
       ? null
-      : `${Number.isInteger(rating) ? String(rating) : rating.toFixed(1)} ${
-          rating === 1 ? "star" : "stars"
-        }`
+      : `${Number.isInteger(rating) ? String(rating) : rating.toFixed(1)}/5`
   const reviewBit =
     reviews == null
       ? null
       : `(${reviews.toLocaleString("en-US")} ${reviews === 1 ? "review" : "reviews"})`
-  const social = [stars, reviewBit].filter(Boolean).join(" ")
-  return social ? `${name} · ${social}` : name
+  const social = [score, reviewBit].filter(Boolean).join(" ")
+  return social ? `${name}, ${social}` : name
 }
 
 export function choiceOptionsFromExternalSuggestions(
@@ -764,10 +762,10 @@ export function choiceOptionsFromExternalSuggestions(
 export function landlordNumberedChoiceReplyHint(count: number): string {
   // Attention copy still wants the short "and we'll contact them" form.
   if (count <= 0) return ""
-  if (count === 1) return "Reply 1 and we'll contact them."
-  if (count === 2) return "Reply 1 or 2 and we'll contact them."
+  if (count === 1) return "Reply 1 and we'll contact that vendor."
+  if (count === 2) return "Reply 1 or 2 and we'll contact that vendor."
   const nums = Array.from({ length: count }, (_, i) => String(i + 1))
-  return `Reply ${nums.slice(0, -1).join(", ")}, or ${nums[nums.length - 1]} and we'll contact them.`
+  return `Reply ${nums.slice(0, -1).join(", ")}, or ${nums[nums.length - 1]} and we'll contact that vendor.`
 }
 
 /** Vendor-choice SMS reply line — WO/address optional for multi-pending threads. */

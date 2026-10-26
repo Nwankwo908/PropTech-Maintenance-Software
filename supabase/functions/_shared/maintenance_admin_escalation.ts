@@ -18,6 +18,7 @@ import {
   supersedeOpenLandlordVendorAskForTicket,
 } from "./openLandlordVendorAsk.ts"
 import { loadPropertyLocationFromTable } from "./properties/propertyLocation.ts"
+import { ensureResidentRequestRef } from "./sms/residentRequestRef.ts"
 import {
   choiceOptionsFromExternalSuggestions,
   formatExternalVendorSmsLine,
@@ -203,7 +204,7 @@ export async function escalateMaintenanceNeedsVendor(
     const { data: ticketRow } = await supabase
       .from("maintenance_requests")
       .select(
-        "unit, building, description, issue_category, issue_headline, created_at, urgency, priority",
+        "unit, building, description, issue_category, issue_headline, created_at, urgency, priority, property_id, resident_request_ref",
       )
       .eq("id", ticket.id)
       .maybeSingle()
@@ -223,7 +224,20 @@ export async function escalateMaintenanceNeedsVendor(
       typeof ticketRow?.issue_headline === "string" ? ticketRow.issue_headline : ""
     const createdAt =
       typeof ticketRow?.created_at === "string" ? ticketRow.created_at : ""
+    const propertyId =
+      typeof ticketRow?.property_id === "string" ? ticketRow.property_id.trim() : ""
+    let propertyType: string | null = null
+    if (propertyId) {
+      const { data: propertyRow } = await supabase
+        .from("properties")
+        .select("property_type")
+        .eq("id", propertyId)
+        .maybeSingle()
+      propertyType =
+        typeof propertyRow?.property_type === "string" ? propertyRow.property_type : null
+    }
     const location = await loadPropertyLocationFromTable(supabase, landlordId, {
+      propertyId: propertyId || null,
       building: building || null,
     })
     const street = location?.streetAddress?.trim() || building || ""
@@ -231,10 +245,25 @@ export async function escalateMaintenanceNeedsVendor(
       issueHeadline,
       street,
     })
+    const repairSentence = repair
+      ? `${repair.charAt(0).toUpperCase()}${repair.slice(1)}.`
+      : ""
+    let requestRef =
+      typeof ticketRow?.resident_request_ref === "string"
+        ? ticketRow.resident_request_ref.trim()
+        : ""
+    if (!requestRef) {
+      try {
+        requestRef = await ensureResidentRequestRef(supabase, ticket.id)
+      } catch {
+        requestRef = ""
+      }
+    }
     const locationLine = formatAttentionLocationLine({
       street: location?.streetAddress,
       building,
       unit,
+      propertyType,
       reportedAgo: formatReportedAgo(createdAt),
     })
     let nextSteps: string[] = []
@@ -280,33 +309,28 @@ export async function escalateMaintenanceNeedsVendor(
     if (closedPriorAsk || opts.closeOpenAskFirst === true) {
       const place = street || "this property"
       headline = previousVendorName
-        ? `${previousVendorName} can't take this — ${repair}`
-        : `Vendor unavailable — ${repair}`
-      whyLine = nextSteps.length
-        ? `${vendorLabel} can't take the job at ${place} after all. Nearby options:`
-        : `${vendorLabel} can't take the job at ${place} after all.`
+        ? `${previousVendorName} can't take this`
+        : "Vendor unavailable"
+      whyLine = `${vendorLabel} can't take the job at ${place} after all.`
     } else if (opts.escalationReason === "vendor_declined_no_vendor") {
-      headline = `Vendor declined — ${repair}`
-      whyLine = nextSteps.length
-        ? "No one on your preferred list can take this right now. Nearby vendors:"
-        : "No one on your preferred list can take this right now."
+      headline = "Vendor declined"
+      whyLine = "No one on your preferred list can take this right now."
     } else {
-      headline = `No vendor found — ${repair}`
-      whyLine = nextSteps.length
-        ? "No one on your preferred list can take this right now. Nearby vendors:"
-        : "No one on your preferred list can take this right now."
+      headline = "No vendor found"
+      whyLine = "No one on your preferred list can take this right now."
     }
 
     const attention = await notifyLandlordNeedsAttention(supabase, {
       landlordId,
       kind: "assign_vendor",
       headline,
-      detail: locationLine,
+      detail: repairSentence,
       locationLine,
       whyLine,
       nextSteps,
       choiceReplyHint,
       vendorChoice,
+      requestRef: requestRef || null,
       idempotencyKey: `assign_vendor:${ticket.id}:${opts.escalationReason}`,
       maintenanceRequestId: ticket.id,
       workflowRunId: run?.id ?? null,

@@ -4,6 +4,12 @@
  * Prefer these helpers over concatenating window.location.origin + path.
  */
 
+import {
+  findVendorTicketToken,
+  isResidentRequestRefToken,
+  isUuidTicketToken,
+} from '../../shared/maintenance/findVendorLink'
+
 export const DEFAULT_ULO_APP_ORIGIN = 'https://app.ulohome.io'
 
 /** Normalize a host or URL into `https://…` with no trailing slash. */
@@ -135,9 +141,20 @@ export const uloAppUrl = {
     return absolute ? joinOriginPath(uloAppOrigin(), suffix) : suffix
   },
 
-  /** Overview → Find External Vendor for a work order. */
-  findExternalVendor(ticketId: string, absolute = true): string {
-    const id = encodeURIComponent(ticketId.trim())
+  /**
+   * Overview → Find External Vendor for a work order.
+   * Pass `{ requestRef }` to use the short resident ref instead of the UUID.
+   * The admin session still has to resolve that ref to the landlord's ticket.
+   */
+  findExternalVendor(
+    ticketId: string,
+    absoluteOrOptions: boolean | { absolute?: boolean; requestRef?: string | null } = true,
+  ): string {
+    const absolute = typeof absoluteOrOptions === 'boolean'
+      ? absoluteOrOptions
+      : absoluteOrOptions.absolute !== false
+    const requestRef = typeof absoluteOrOptions === 'object' ? absoluteOrOptions.requestRef : null
+    const id = encodeURIComponent(findVendorTicketToken(ticketId, requestRef))
     const path = `/admin?findVendor=1&ticket=${id}`
     return absolute ? joinOriginPath(uloAppOrigin(), path) : path
   },
@@ -183,6 +200,39 @@ export function findExternalVendorTicketFromSearch(search: string): string | nul
   if (params.get(FIND_EXTERNAL_VENDOR_QUERY.flag) !== '1') return null
   const ticketId = params.get(FIND_EXTERNAL_VENDOR_QUERY.ticket)?.trim() ?? ''
   return ticketId || null
+}
+
+/** UUID opens directly. A short ref resolves only for the signed-in landlord. */
+export async function resolveFindVendorTicketId(
+  supabase: {
+    from: (table: string) => {
+      select: (columns: string) => {
+        eq: (column: string, value: string) => {
+          eq: (column: string, value: string) => {
+            maybeSingle: () => PromiseLike<{
+              data: { id?: string } | null
+              error: { message?: string } | null
+            }>
+          }
+        }
+      }
+    }
+  },
+  landlordId: string,
+  token: string,
+): Promise<string | null> {
+  const value = token.trim()
+  if (!value) return null
+  if (isUuidTicketToken(value)) return value
+  if (!isResidentRequestRefToken(value) || !landlordId.trim()) return null
+  const { data, error } = await supabase
+    .from('maintenance_requests')
+    .select('id')
+    .eq('landlord_id', landlordId)
+    .eq('resident_request_ref', value.toUpperCase())
+    .maybeSingle()
+  if (error || !data?.id) return null
+  return String(data.id)
 }
 
 /** Thumbtack OAuth redirect on `/admin?code=&state=`. */

@@ -323,7 +323,7 @@ Deno.test("external suggestions become numbered SMS choices", () => {
   assertEquals(parseLandlordVendorChoice("4", options), null)
   assertEquals(
     landlordNumberedChoiceReplyHint(3),
-    "Reply 1, 2, or 3 and we'll contact them.",
+    "Reply 1, 2, or 3 and we'll contact that vendor.",
   )
   assertEquals(
     formatExternalVendorSmsLine({
@@ -331,11 +331,26 @@ Deno.test("external suggestions become numbered SMS choices", () => {
       rating: 4.5,
       reviewCount: 100,
     }),
-    "Rapid Plumb Co. · 4.5 stars (100 reviews)",
+    "Rapid Plumb Co., 4.5/5 (100 reviews)",
   )
   assertEquals(
     formatExternalVendorSmsLine({ name: "Solo Pro", rating: 1, reviewCount: 1 }),
-    "Solo Pro · 1 star (1 review)",
+    "Solo Pro, 1/5 (1 review)",
+  )
+  const hvac = choiceOptionsFromExternalSuggestions(
+    [
+      { name: "Kay's Affordable HVAC&R", providerRef: "kay" },
+      { name: "ATS Heating & Cooling, Inc.", providerRef: "ats" },
+      { name: "BlueSky Comfort Air conditioning", providerRef: "blue" },
+    ],
+    3,
+  )
+  assertEquals(parseLandlordVendorChoice("1", hvac)?.name, "Kay's Affordable HVAC&R")
+  assertEquals(parseLandlordVendorChoice("2", hvac)?.name, "ATS Heating & Cooling, Inc.")
+  assertEquals(parseLandlordVendorChoice("3", hvac)?.name, "BlueSky Comfort Air conditioning")
+  assertEquals(
+    formatExternalVendorSmsLine({ name: hvac[0]!.name, rating: 4.6, reviewCount: 135 }),
+    "Kay's Affordable HVAC&R, 4.6/5 (135 reviews)",
   )
   assertEquals(formatExternalVendorSmsLine({ name: "No stats" }), "No stats")
 })

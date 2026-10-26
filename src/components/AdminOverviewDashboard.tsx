@@ -49,7 +49,7 @@ import type { RecommendedActionWorkOrderItem } from '@/components/RecommendedAct
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
-import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
+import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY, resolveFindVendorTicketId } from '@/lib/uloAppUrl'
 import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import {
@@ -1808,16 +1808,24 @@ export function AdminOverviewDashboard() {
 
   useEffect(() => {
     if (loading) return
-    const ticketId = findExternalVendorTicketFromSearch(location.search)
-    if (!ticketId) return
-    if (findVendorDeepLinkHandledRef.current === ticketId) return
-    findVendorDeepLinkHandledRef.current = ticketId
-    openEscalatedRailForTicket(ticketId, { openFindVendor: true })
-    const next = new URLSearchParams(location.search)
-    next.delete(FIND_EXTERNAL_VENDOR_QUERY.flag)
-    next.delete(FIND_EXTERNAL_VENDOR_QUERY.ticket)
-    const qs = next.toString()
-    navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true })
+    const token = findExternalVendorTicketFromSearch(location.search)
+    if (!token) return
+    let cancelled = false
+    void (async () => {
+      const ticketId = await resolveFindVendorTicketId(supabase, getActiveLandlordId(), token)
+      if (cancelled || !ticketId) return
+      if (findVendorDeepLinkHandledRef.current === ticketId) return
+      findVendorDeepLinkHandledRef.current = ticketId
+      openEscalatedRailForTicket(ticketId, { openFindVendor: true })
+      const next = new URLSearchParams(location.search)
+      next.delete(FIND_EXTERNAL_VENDOR_QUERY.flag)
+      next.delete(FIND_EXTERNAL_VENDOR_QUERY.ticket)
+      const qs = next.toString()
+      navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true })
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [loading, location.pathname, location.search, navigate, openEscalatedRailForTicket])
 
   const openEscalatedRailForRun = useCallback((runId: string, preferExternalVendor = false) => {

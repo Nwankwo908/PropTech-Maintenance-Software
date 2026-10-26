@@ -79,16 +79,21 @@ Use this shape for landlord attention SMS/email (`buildLandlordAttentionSms`). I
 
 SMS:
 ```
-Ulo: no vendor found — leaking kitchen faucet
+Ulo: No vendor found
 
-14 Maple Ave · Unit 1 · reported 2h ago
+The leaking kitchen faucet.
 
-No one on your preferred list can take this right now. Nearby vendors:
-1 — Rapid Plumb Co. · 4.9 stars (218 reviews)
-2 — Metro Plumbing Services · 4.6 stars (142 reviews)
-3 — Apex Pipe & Drain · 4.8 stars (96 reviews)
+14 Maple Ave, Unit 1, reported 2h ago
+Ref: 676FE1DD
 
-Reply 1, 2, or 3 and we'll contact them.
+No one on your preferred list can take this right now.
+
+Nearby vendors:
+1. Rapid Plumb Co., 4.9/5 (218 reviews)
+2. Metro Plumbing Services, 4.6/5 (142 reviews)
+3. Apex Pipe & Drain, 4.8/5 (96 reviews)
+
+Reply 1, 2, or 3 and we'll contact that vendor.
 
 Details:
 {link}

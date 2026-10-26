@@ -6,6 +6,8 @@
  * do not concatenate APP_URL + path in feature code.
  */
 
+import { findVendorTicketToken } from "../../../shared/maintenance/findVendorLink.ts"
+
 export const DEFAULT_ULO_APP_ORIGIN = "https://app.ulohome.io"
 
 export type UloAppOriginOptions = {
@@ -189,9 +191,9 @@ export const uloAppUrl = {
   /** Overview → Find External Vendor for a work order. */
   findExternalVendor(
     ticketId: string,
-    options?: UloAppOriginOptions,
+    options?: UloAppOriginOptions & { requestRef?: string | null },
   ): string {
-    const id = encodeURIComponent(ticketId.trim())
+    const id = encodeURIComponent(findVendorTicketToken(ticketId, options?.requestRef))
     return joinOriginPath(
       uloAppOrigin(options),
       `/admin?findVendor=1&ticket=${id}`,

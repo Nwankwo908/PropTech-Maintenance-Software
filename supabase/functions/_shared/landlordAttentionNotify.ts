@@ -71,6 +71,8 @@ export type NotifyLandlordAttentionParams = {
   unitId?: string | null
   residentId?: string | null
   propertyId?: string | null
+  /** Short resident ref, e.g. 30A0B8CC. Shown as Ref: when set. */
+  requestRef?: string | null
   /** When true, omit the trailing "Ref: WO-…" line (assign-vendor landlord texts). */
   omitWorkOrderRef?: boolean
   /** Life-safety and unknown-address emergencies send now, including during quiet hours. */
@@ -95,9 +97,13 @@ function attentionDashboardUrl(params: NotifyLandlordAttentionParams): string {
   const ticketId = params.maintenanceRequestId?.trim() ?? ""
   if (
     ticketId &&
-    (params.kind === "assign_vendor" || params.kind === "external_vendor_replied")
+    (params.kind === "assign_vendor" ||
+      params.kind === "external_vendor_replied" ||
+      params.kind === "workflow_escalated")
   ) {
-    return uloAppUrl.findExternalVendor(ticketId)
+    return uloAppUrl.findExternalVendor(ticketId, {
+      requestRef: params.requestRef,
+    })
   }
   return uloAppUrl.admin()
 }
@@ -133,7 +139,7 @@ export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[]
     case "weather_alert":
       return ["Open the checklist in Ulo", "Schedule a check for homes that are not ready"]
     default:
-      return ["Open Ulo to decide next"]
+      return []
   }
 }
 
@@ -203,10 +209,10 @@ export function shortRepairLabel(
   const headline = (opts?.issueHeadline ?? "").trim().replace(/\s+/g, " ")
   const trade = tradePhraseFromCategory(issueCategory)
 
-  const line = (description ?? "").trim().split("\n")[0]?.trim() ?? ""
-  const cleaned = line.replace(/\s+/g, " ").replace(/[.;]+$/g, "")
-  if (cleaned && cleaned.length <= 72 && !/^wo-/i.test(cleaned)) {
-    return cleaned.charAt(0).toLowerCase() + cleaned.slice(1)
+  const rawLine = (description ?? "").trim().split("\n")[0]?.trim().replace(/\s+/g, " ") ?? ""
+  const sentence = rawLine.split(/(?<=[.!?])\s+/)[0]?.replace(/[.!?]+$/g, "").trim() ?? ""
+  if (sentence && sentence.length <= 72 && !/^wo-/i.test(sentence)) {
+    return sentence.charAt(0).toLowerCase() + sentence.slice(1)
   }
 
   // No usable description — prefer "Pest control at {street}" over "this repair".
@@ -236,7 +242,7 @@ export function formatAttentionLocationLine(parts: {
   const place = (parts.street ?? "").trim() || (parts.building ?? "").trim()
   const unitBit = formatUnitReference(parts.unit, parts.propertyType)
   const ago = (parts.reportedAgo ?? "").trim()
-  return [place, unitBit, ago].filter(Boolean).join(" · ")
+  return [place, unitBit, ago].filter(Boolean).join(", ")
 }
 
 type AttentionCopyInput = {
@@ -249,6 +255,8 @@ type AttentionCopyInput = {
   choiceReplyHint?: string | null
   dashboardUrl: string
   actionLabel?: string
+  /** Short resident ref. Printed as `Ref: 30A0B8CC` when set. */
+  requestRef?: string | null
   workOrderRef?: string | null
   /** When set with kind invoice_ready, SMS uses YES/NO paid-confirmation copy. */
   invoicePaid?: {
@@ -280,9 +288,64 @@ function attentionCopyParts(input: AttentionCopyInput) {
     : input.kind
       ? defaultAttentionNextSteps(input.kind)
       : []
-  const numbered = steps.map((s, i) => `${i + 1} — ${s}`).join("\n")
   const choiceReplyHint = (input.choiceReplyHint ?? "").trim()
-  return { headline, locationLine, whyLine, numbered, choiceReplyHint }
+  // Numbers only when that reply selects a vendor. Other steps stay plain lines.
+  const numbered = choiceReplyHint
+    ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+    : steps.join("\n")
+  const summary = (input.detail ?? "").trim()
+  const place = locationLine
+  const summaryLine = summary && summary !== place ? summary : ""
+  const shownPlace = place || (summaryLine ? "" : summary)
+  const requestRef = (input.requestRef ?? "").trim()
+  return {
+    headline,
+    locationLine: shownPlace,
+    summaryLine,
+    whyLine,
+    numbered,
+    choiceReplyHint,
+    requestRef,
+  }
+}
+
+function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | null): string {
+  const {
+    headline,
+    locationLine,
+    summaryLine,
+    whyLine,
+    numbered,
+    choiceReplyHint,
+    requestRef,
+  } = attentionCopyParts(input)
+  const refLine = requestRef
+    ? `Ref: ${requestRef.toUpperCase()}`
+    : input.kind === "assign_vendor"
+      ? ""
+      : landlordAskRefLine(workOrderRef)
+  const nearby = choiceReplyHint && numbered ? "Nearby vendors:" : ""
+  return [
+    `Ulo: ${headline}`,
+    "",
+    summaryLine || null,
+    summaryLine ? "" : null,
+    locationLine || null,
+    refLine || null,
+    (summaryLine || locationLine || refLine) && whyLine ? "" : null,
+    whyLine || null,
+    numbered ? "" : null,
+    nearby || null,
+    numbered || null,
+    choiceReplyHint ? "" : null,
+    choiceReplyHint || null,
+    "",
+    "Details:",
+    input.dashboardUrl,
+  ]
+    .filter((line): line is string => line != null)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
 }
 
 export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
@@ -301,26 +364,7 @@ export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
       workOrderRef,
     })
   }
-  const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
-    attentionCopyParts(input)
-  // Assign-vendor landlord texts never trail a WO ref — the Details link is enough.
-  const ref =
-    input.kind === "assign_vendor" ? "" : landlordAskRefLine(workOrderRef)
-  return [
-    `Ulo: ${headline}`,
-    "",
-    locationLine || null,
-    whyLine || null,
-    numbered ? `\n${numbered}` : null,
-    choiceReplyHint ? `\n${choiceReplyHint}` : null,
-    "",
-    "Details:",
-    input.dashboardUrl,
-    ref ? `\n${ref}` : null,
-  ]
-    .filter((line): line is string => line != null)
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
+  return composeAttentionText(input, workOrderRef)
 }
 
 /**
@@ -479,40 +523,28 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
     }
   }
 
-  const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
+  const { headline, locationLine, summaryLine, whyLine, numbered, choiceReplyHint, requestRef } =
     attentionCopyParts(input)
   const actionLabel =
     input.actionLabel?.trim() ||
     attentionEmailActionLabel(input.kind ?? "assign_vendor")
-  const ref =
-    input.kind === "assign_vendor" ? "" : landlordAskRefLine(workOrderRef)
-  const text = [
-    `Ulo: ${headline}`,
-    "",
-    locationLine || null,
-    whyLine || null,
-    numbered ? `\n${numbered}` : null,
-    choiceReplyHint ? `\n${choiceReplyHint}` : null,
-    "",
-    "Details:",
-    input.dashboardUrl,
-    ref ? `\n${ref}` : null,
-  ]
-    .filter((line): line is string => line != null)
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
+  const text = composeAttentionText(input, workOrderRef)
+  const refLine = requestRef ? `Ref: ${requestRef.toUpperCase()}` : ""
 
-  const htmlSteps = numbered
-    ? `<ol style="padding-left:1.2em;">${numbered
-      .split("\n")
-      .map((line) => line.replace(/^\d+\s—\s/, "").trim())
-      .filter(Boolean)
-      .map((s) => `<li>${escapeHtml(s)}</li>`)
-      .join("")}</ol>`
-    : ""
+  const stepLines = numbered
+    .split("\n")
+    .map((line) => line.replace(/^\d+\.\s/, "").replace(/^\d+\s—\s/, "").trim())
+    .filter(Boolean)
+  const htmlSteps = stepLines.length === 0
+    ? ""
+    : choiceReplyHint
+      ? `<ol style="padding-left:1.2em;">${stepLines.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>`
+      : stepLines.map((s) => `<p>${escapeHtml(s)}</p>`).join("")
 
   const html = `<p><strong>Ulo: ${escapeHtml(headline)}</strong></p>
+${summaryLine ? `<p>${escapeHtml(summaryLine)}</p>` : ""}
 ${locationLine ? `<p>${escapeHtml(locationLine)}</p>` : ""}
+${refLine ? `<p>${escapeHtml(refLine)}</p>` : ""}
 ${whyLine ? `<p>${escapeHtml(whyLine)}</p>` : ""}
 ${htmlSteps}
 ${choiceReplyHint ? `<p>${escapeHtml(choiceReplyHint)}</p>` : ""}
@@ -821,6 +853,7 @@ export async function notifyLandlordNeedsAttention(
       (params.pmServiceAsk ? "Reply YES HVAC to approve this service." : null),
     dashboardUrl,
     actionLabel: attentionEmailActionLabel(params.kind),
+    requestRef: params.requestRef,
     invoicePaid,
     workOrderRef:
       params.omitWorkOrderRef === true || params.kind === "assign_vendor"

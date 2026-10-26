@@ -11,7 +11,12 @@ import type { ClassificationResult, ClassifyMaintenanceSmsContext } from "../mai
 import { VAGUE_MAINTENANCE_QUESTION } from "../maintenance_classification/clarification.ts"
 import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
-import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import {
+  formatAttentionLocationLine,
+  notifyLandlordNeedsAttention,
+} from "../landlordAttentionNotify.ts"
+import { summarizeEmergencyForLandlord } from "../../../../shared/maintenance/emergencyLandlordSummary.ts"
+import { ensureResidentRequestRef } from "./residentRequestRef.ts"
 import {
   findActiveWorkflowRun,
   updateWorkflowRun,
@@ -568,6 +573,54 @@ async function finishIntakeQuestion(
   }
 }
 
+async function landlordEmergencyPlace(
+  supabase: SupabaseClient,
+  landlordId: string,
+  _conversationId: string,
+  ticketId: string | null,
+): Promise<{ locationLine: string | null }> {
+  let propertyId = ""
+  let unitLabel = ""
+  if (ticketId) {
+    const { data: ticket } = await supabase
+      .from("maintenance_requests")
+      .select("property_id, unit")
+      .eq("id", ticketId)
+      .maybeSingle()
+    propertyId = typeof ticket?.property_id === "string" ? ticket.property_id : ""
+    unitLabel = typeof ticket?.unit === "string" ? ticket.unit : ""
+  }
+  let street = ""
+  let propertyType: string | null = null
+  if (propertyId) {
+    const { data: property } = await supabase
+      .from("properties")
+      .select("street_address, property_type")
+      .eq("id", propertyId)
+      .eq("landlord_id", landlordId)
+      .maybeSingle()
+    street = typeof property?.street_address === "string" ? property.street_address.trim() : ""
+    propertyType = typeof property?.property_type === "string" ? property.property_type : null
+  }
+  if (!street) {
+    const { data: only } = await supabase
+      .from("properties")
+      .select("street_address, property_type")
+      .eq("landlord_id", landlordId)
+      .limit(2)
+    if (only?.length === 1) {
+      street = typeof only[0]?.street_address === "string" ? only[0].street_address.trim() : ""
+      propertyType = typeof only[0]?.property_type === "string" ? only[0].property_type : null
+    }
+  }
+  const line = formatAttentionLocationLine({
+    street,
+    unit: unitLabel,
+    propertyType,
+  })
+  return { locationLine: line || null }
+}
+
 /**
  * When urgency policy says emergency:
  * - Life-safety (leave immediately) → 911 banner + landlord alert
@@ -621,15 +674,27 @@ async function prependEmergencySafetyIfNeeded(
 
   let teamAlerted = false
   try {
+    const ticketId = state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null
+    const report = (state.description || state.initial_message || "").trim()
+    const place = await landlordEmergencyPlace(supabase, ctx.landlordId, ctx.conversationId, ticketId)
+    let requestRef: string | null = null
+    if (ticketId) {
+      try {
+        requestRef = await ensureResidentRequestRef(supabase, ticketId)
+      } catch {
+        requestRef = null
+      }
+    }
     const alert = await notifyLandlordNeedsAttention(supabase, {
       landlordId: ctx.landlordId,
       kind: "workflow_escalated",
-      headline: urgencyPolicy.leaveImmediately
-        ? "Emergency reported over text"
-        : "Same-day maintenance reported over text",
-      detail: (state.description || state.initial_message || urgencyPolicy.reason)
-        .trim()
-        .slice(0, 200),
+      isCritical: urgencyPolicy.leaveImmediately === true,
+      headline: urgencyPolicy.leaveImmediately ? "Emergency" : "Same-day request",
+      detail: summarizeEmergencyForLandlord(report || urgencyPolicy.reason),
+      locationLine: place.locationLine,
+      requestRef,
+      whyLine: "No reply is needed. We'll text you with updates.",
+      nextSteps: [],
       // Keyed to the intake and tier, not the message, so answering more
       // questions cannot re-alert even if the state write is lost.
       idempotencyKey:
