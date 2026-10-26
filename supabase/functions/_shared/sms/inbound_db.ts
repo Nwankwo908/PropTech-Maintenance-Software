@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   DEMO_LANDLORD_ID,
   isDemoLandlord,
-  landlordUsesLimitedAlphaSurface,
+  landlordMayUseSharedAlphaLine,
 } from "../../../../shared/landlordCapabilities.ts"
 import {
   landlordAllowedOnReceivingLine,
@@ -478,7 +478,7 @@ export async function resolveLandlordIdForSharedTwilioInbound(
       sharedLine: true,
       lineOwnerLandlordId: lineOwner,
       landlordId: id,
-      usesSharedLine: landlordUsesLimitedAlphaSurface(id),
+      usesSharedLine: landlordMayUseSharedAlphaLine(id),
     }))
 
   const decision = resolveInboundAccount({

@@ -95,6 +95,32 @@ export function isLimitedAlpha2Landlord(landlordId: string | null | undefined): 
   return (landlordId ?? '').trim() === LIMITED_ALPHA_2_LANDLORD_ID
 }
 
+/**
+ * Temporary shared-line access for the disposable maintenance-test landlord.
+ * The Alpha number stays owned by its existing account. Remove this id after
+ * the maintenance phone tests.
+ */
+export const TEMPORARY_SHARED_ALPHA_LINE_LANDLORD_IDS = [
+  'd15a0000-0000-4000-8000-000000000001',
+] as const
+
+export function isTemporarySharedAlphaLineLandlord(
+  landlordId: string | null | undefined,
+): boolean {
+  const id = (landlordId ?? '').trim()
+  return (TEMPORARY_SHARED_ALPHA_LINE_LANDLORD_IDS as readonly string[]).includes(id)
+}
+
+/**
+ * Accounts that may send and receive on the shared Limited Alpha Twilio number.
+ * Does not change payments or the rest of the Limited Alpha product surface.
+ */
+export function landlordMayUseSharedAlphaLine(
+  landlordId: string | null | undefined,
+): boolean {
+  return landlordUsesLimitedAlphaSurface(landlordId) || isTemporarySharedAlphaLineLandlord(landlordId)
+}
+
 /** Production Twilio DID used as Limited Alpha 1 and 2's shared landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
@@ -130,7 +156,7 @@ export function resolveSmsIntakeNumber(params: {
   phone?: string | null
   provider?: string | null
 }): string {
-  if (landlordUsesLimitedAlphaSurface(params.landlordId)) {
+  if (landlordMayUseSharedAlphaLine(params.landlordId)) {
     return LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
   }
   const phone = (params.phone ?? '').trim()

@@ -14,7 +14,9 @@ import {
   isRetiredSmsIntakeNumber,
   isUloPlatformSmsNumber,
   isLimitedAlphaTwilioSmsNumber,
+  isTemporarySharedAlphaLineLandlord,
   landlordHasPayments,
+  landlordMayUseSharedAlphaLine,
   landlordHasVendorMarketplace,
   landlordUsesTwilioSms,
   pickSettingsTestSmsDestination,
@@ -108,6 +110,24 @@ describe('Limited Alpha 1 capabilities', () => {
         eventType: 'vendor.assigned',
       }),
     ).toBe(true)
+  })
+})
+
+describe('temporary shared Alpha line access', () => {
+  const testLandlord = 'd15a0000-0000-4000-8000-000000000001'
+  const otherDisposable = 'd15a0000-0000-4000-8000-000000000099'
+
+  it('lets only the maintenance test landlord use the shared number', () => {
+    expect(isTemporarySharedAlphaLineLandlord(testLandlord)).toBe(true)
+    expect(isTemporarySharedAlphaLineLandlord(otherDisposable)).toBe(false)
+    expect(landlordMayUseSharedAlphaLine(testLandlord)).toBe(true)
+    expect(landlordMayUseSharedAlphaLine(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(landlordMayUseSharedAlphaLine(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
+    expect(landlordMayUseSharedAlphaLine('de300000-0000-4000-8000-000000000001')).toBe(true)
+    expect(landlordMayUseSharedAlphaLine(FULL_ALPHA_LANDLORD_ID)).toBe(false)
+    expect(isLimitedAlphaLandlord(testLandlord)).toBe(false)
+    expect(landlordHasPayments(testLandlord)).toBe(true)
+    expect(resolveSmsIntakeNumber({ landlordId: testLandlord })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
   })
 })
 

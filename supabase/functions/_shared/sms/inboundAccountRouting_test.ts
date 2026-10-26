@@ -3,7 +3,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   DEMO_LANDLORD_ID,
-  landlordUsesLimitedAlphaSurface,
+  landlordMayUseSharedAlphaLine,
 } from "../../../../shared/landlordCapabilities.ts"
 import {
   landlordAllowedOnReceivingLine,
@@ -14,14 +14,15 @@ const LA1 = "de300000-0000-4000-8000-000000000003"
 const LA2 = "de300000-0000-4000-8000-000000000004"
 const DEMO = DEMO_LANDLORD_ID
 const DISPOSABLE = "d15a0000-0000-4000-8000-000000000001"
-const SHARED = [LA1, LA2, DEMO]
+const OTHER_DISPOSABLE = "d15a0000-0000-4000-8000-000000000099"
+const SHARED = [LA1, LA2, DEMO, DISPOSABLE]
 
 function allowed(id: string, sharedLine: boolean, owner: string): boolean {
   return landlordAllowedOnReceivingLine({
     sharedLine,
     lineOwnerLandlordId: owner,
     landlordId: id,
-    usesSharedLine: landlordUsesLimitedAlphaSurface(id),
+    usesSharedLine: landlordMayUseSharedAlphaLine(id),
   })
 }
 
@@ -74,12 +75,25 @@ Deno.test("a dedicated line cannot use another account's identity or history", (
   assertEquals(decision.landlordId, null)
 })
 
-Deno.test("shared-line scope keeps Limited Alpha accounts and excludes other landlords", () => {
-  const permitted = [LA1, LA2, DEMO, DISPOSABLE].filter((id) => allowed(id, true, LA1))
+Deno.test("shared-line scope keeps Alpha and Demo and one temporary test landlord", () => {
+  const permitted = [LA1, LA2, DEMO, DISPOSABLE, OTHER_DISPOSABLE].filter((id) => allowed(id, true, LA1))
   assertEquals(permitted.includes(LA1), true)
   assertEquals(permitted.includes(LA2), true)
   assertEquals(permitted.includes(DEMO), true)
-  assertEquals(permitted.includes(DISPOSABLE), false)
+  assertEquals(permitted.includes(DISPOSABLE), true)
+  assertEquals(permitted.includes(OTHER_DISPOSABLE), false)
+})
+
+Deno.test("the temporary test assignment beats old Demo history on the shared line", () => {
+  const permitted = [LA1, LA2, DEMO, DISPOSABLE].filter((id) => allowed(id, true, LA1))
+  const decision = resolveInboundAccount({
+    permittedLandlordIds: permitted,
+    explicit: [{ landlordId: DISPOSABLE }],
+    history: [{ landlordId: DEMO, at: "2026-10-21T23:53:00.000Z" }],
+    disconnectedLandlordIds: [DEMO],
+  })
+  assertEquals(decision.reason, "explicit")
+  assertEquals(decision.landlordId, DISPOSABLE)
 })
 
 Deno.test("history fallback selects the one recent account when no identity exists", () => {
@@ -109,14 +123,14 @@ Deno.test("tied history timestamps are ambiguous", () => {
 })
 
 Deno.test("an assignment outside the receiving line blocks old history without crossing accounts", () => {
-  const permitted = [LA1, LA2, DEMO, DISPOSABLE].filter((id) => allowed(id, true, LA1))
+  const permitted = [LA1, LA2, DEMO, DISPOSABLE, OTHER_DISPOSABLE].filter((id) => allowed(id, true, LA1))
   const decision = resolveInboundAccount({
     permittedLandlordIds: permitted,
-    explicit: [{ landlordId: DISPOSABLE }],
+    explicit: [{ landlordId: OTHER_DISPOSABLE }],
     history: [{ landlordId: DEMO, at: "2026-10-21T23:53:00.000Z" }],
   })
   assertEquals(decision.reason, "assigned_elsewhere")
   assertEquals(decision.landlordId, null)
-  assertEquals(decision.landlordId === DISPOSABLE, false)
+  assertEquals(decision.landlordId === OTHER_DISPOSABLE, false)
   assertEquals(decision.landlordId === DEMO, false)
 })
