@@ -2,7 +2,14 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   DEMO_LANDLORD_ID,
   isDemoLandlord,
+  landlordUsesLimitedAlphaSurface,
 } from "../../../../shared/landlordCapabilities.ts"
+import {
+  landlordAllowedOnReceivingLine,
+  resolveInboundAccount,
+  type InboundExplicitAssignment,
+  type InboundHistoryMatch,
+} from "./inboundAccountRouting.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { claimPoolNumberByPhone } from "./smsNumberPool.ts"
 import { smsIdentityAllowsTypePatch } from "./smsIdentityUpgrade.ts"
@@ -272,60 +279,6 @@ export function preferNonDemoWhenChoosingUnique(
   return null
 }
 
-async function resolveLandlordFromRecentOutboundToPhone(
-  supabase: SupabaseClient,
-  fromNumber: string,
-): Promise<string | null> {
-  const variants = phoneLookupVariants(fromNumber)
-  if (variants.length === 0) return null
-
-  const { data, error } = await supabase
-    .from("sms_messages")
-    .select("landlord_id, created_at")
-    .eq("direction", "outbound")
-    .in("to_number", variants)
-    .not("landlord_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(5)
-
-  if (error) {
-    console.error(
-      "[sms-inbound] shared Twilio recent-outbound lookup",
-      error.message,
-    )
-    return null
-  }
-
-  return pickLandlordIdFromRecentOutboundRows(data ?? [])
-}
-
-async function resolveLandlordFromRecentOpenConversation(
-  supabase: SupabaseClient,
-  fromNumber: string,
-): Promise<string | null> {
-  const variants = phoneLookupVariants(fromNumber)
-  if (variants.length === 0) return null
-
-  const { data, error } = await supabase
-    .from("sms_conversations")
-    .select("landlord_id, updated_at")
-    .in("external_phone_number", variants)
-    .in("status", [...SHARED_DID_OPEN_CONVERSATION_STATUSES])
-    .not("landlord_id", "is", null)
-    .order("updated_at", { ascending: false })
-    .limit(5)
-
-  if (error) {
-    console.error(
-      "[sms-inbound] shared Twilio recent-conversation lookup",
-      error.message,
-    )
-    return null
-  }
-
-  return pickLandlordIdFromRecentConversationRows(data ?? [])
-}
-
 /**
  * True when this phone is bound to a non-Demo resident or vendor roster row.
  * Used to block Try Demo from hijacking legitimate portfolio traffic.
@@ -373,25 +326,34 @@ export async function phoneHasNonDemoRosterBinding(
   return (vendors ?? []).length > 0
 }
 
+function landlordIdsFromRows(
+  rows: Array<{ landlord_id?: string | null }> | null | undefined,
+): string[] {
+  return (rows ?? [])
+    .map((row) => String(row.landlord_id ?? "").trim())
+    .filter(Boolean)
+}
+
 /**
- * When Limited Alpha 1 and 2 share a Twilio DID, route inbound by **sender +
- * trusted context** (recent outbound / open conversation), not DID ownership.
- *
- * Priority: waiting activation → recent outbound to phone → recent open
- * conversation → unique vendor → landlord/ops phone → unique sms_identity →
- * unique resident users. Never DID-owner fallback. Never prefer Demo solely
- * because it also matches the phone.
+ * Shared Limited Alpha line: the receiving number's permitted accounts come
+ * first. A current resident, vendor, identity, or account phone beats message
+ * history. History is a fallback only when this phone has no current
+ * assignment. Closed conversations and disconnected accounts cannot restore
+ * an old association. Ambiguous or out-of-scope results stay unresolved so
+ * the caller can clarify. Never falls back to the line owner.
  */
 export async function resolveLandlordIdForSharedTwilioInbound(
   supabase: SupabaseClient,
   fromNumber: string,
-  _fallbackLandlordId?: string,
+  lineOwnerLandlordId?: string | null,
 ): Promise<string | null> {
   const variants = phoneLookupVariants(fromNumber)
   if (variants.length === 0) return null
+  const lineOwner = (lineOwnerLandlordId ?? "").trim()
 
-  // Prefer a waiting activation resident — YES/NO must land on the portfolio that
-  // sent the welcome text, even when the DID is owned by the other Alpha account.
+  const explicit: InboundExplicitAssignment[] = []
+  const history: InboundHistoryMatch[] = []
+
   const { data: waitingUsers, error: waitingErr } = await supabase
     .from("users")
     .select("landlord_id")
@@ -399,89 +361,11 @@ export async function resolveLandlordIdForSharedTwilioInbound(
     .eq("activation_status", "waiting")
     .not("landlord_id", "is", null)
     .limit(8)
-
   if (waitingErr) {
     console.error("[sms-inbound] shared Twilio waiting-resident lookup", waitingErr.message)
   } else {
-    const waitingIds = (waitingUsers ?? [])
-      .map((row) => String(row.landlord_id ?? "").trim())
-      .filter(Boolean)
-    const waitingId =
-      uniqueLandlordIdFromRows(waitingUsers ?? []) ??
-      preferNonDemoWhenChoosingUnique(waitingIds)
-    if (waitingId) return waitingId
+    for (const id of landlordIdsFromRows(waitingUsers)) explicit.push({ landlordId: id })
   }
-
-  // Trusted context: who last texted this phone, then most recent open thread.
-  const recentOutboundLandlord = await resolveLandlordFromRecentOutboundToPhone(
-    supabase,
-    fromNumber,
-  )
-  if (recentOutboundLandlord) return recentOutboundLandlord
-
-  const recentConversationLandlord =
-    await resolveLandlordFromRecentOpenConversation(supabase, fromNumber)
-  if (recentConversationLandlord) return recentConversationLandlord
-
-  // Vendors before sms_identities: a mis-routed unknown-contact reply can create
-  // an Alpha-1 identity for an Alpha-2 vendor phone; roster must win.
-  const { data: vendors, error: vendorErr } = await supabase
-    .from("vendors")
-    .select("landlord_id")
-    .in("phone", variants)
-    .not("landlord_id", "is", null)
-    .limit(8)
-
-  if (vendorErr) {
-    console.error("[sms-inbound] shared Twilio vendor lookup", vendorErr.message)
-  } else {
-    const vendorIds = (vendors ?? [])
-      .map((row) => String(row.landlord_id ?? "").trim())
-      .filter(Boolean)
-    const vendorLandlordId =
-      uniqueLandlordIdFromRows(vendors ?? []) ??
-      preferNonDemoWhenChoosingUnique(vendorIds)
-    if (vendorLandlordId) return vendorLandlordId
-  }
-
-  // Property-team / landlord account + ops phones (YES / 1-2-3 vendor choice, etc.).
-  // Same matcher resolvePhoneIdentity uses — one ownership rule.
-  const { resolveLandlordIdForAccountOrOpsPhone } = await import(
-    "./landlordAccountPhone.ts"
-  )
-  const opsLandlordId = await resolveLandlordIdForAccountOrOpsPhone(
-    supabase,
-    fromNumber,
-  )
-  if (opsLandlordId) return opsLandlordId
-
-  const { data: identities, error } = await supabase
-    .from("sms_identities")
-    .select("landlord_id, resident_id, vendor_id")
-    .in("phone_number", variants)
-    .not("landlord_id", "is", null)
-    .limit(16)
-
-  if (error) {
-    console.error("[sms-inbound] shared Twilio identity lookup", error.message)
-    return null
-  }
-
-  // Prefer linked identities (resident_id / vendor_id) over stale unlinked rows.
-  const linkedIdentities = (identities ?? []).filter(
-    (row) =>
-      Boolean(String(row.resident_id ?? "").trim()) ||
-      Boolean(String(row.vendor_id ?? "").trim()),
-  )
-  const identityPool =
-    linkedIdentities.length > 0 ? linkedIdentities : (identities ?? [])
-  const identityIds = identityPool
-    .map((row) => String(row.landlord_id ?? "").trim())
-    .filter(Boolean)
-  const identityLandlordId =
-    uniqueLandlordIdFromRows(identityPool) ??
-    preferNonDemoWhenChoosingUnique(identityIds)
-  if (identityLandlordId) return identityLandlordId
 
   const { data: users, error: usersErr } = await supabase
     .from("users")
@@ -489,19 +373,124 @@ export async function resolveLandlordIdForSharedTwilioInbound(
     .in("phone", variants)
     .not("landlord_id", "is", null)
     .limit(8)
-
   if (usersErr) {
     console.error("[sms-inbound] shared Twilio user lookup", usersErr.message)
-    return null
+  } else {
+    for (const id of landlordIdsFromRows(users)) explicit.push({ landlordId: id })
   }
 
-  const userIds = (users ?? [])
-    .map((row) => String(row.landlord_id ?? "").trim())
-    .filter(Boolean)
-  return (
-    uniqueLandlordIdFromRows(users ?? []) ??
-    preferNonDemoWhenChoosingUnique(userIds)
+  const { data: vendors, error: vendorErr } = await supabase
+    .from("vendors")
+    .select("landlord_id")
+    .in("phone", variants)
+    .not("landlord_id", "is", null)
+    .limit(8)
+  if (vendorErr) {
+    console.error("[sms-inbound] shared Twilio vendor lookup", vendorErr.message)
+  } else {
+    for (const id of landlordIdsFromRows(vendors)) explicit.push({ landlordId: id })
+  }
+
+  const { resolveLandlordIdForAccountOrOpsPhone } = await import(
+    "./landlordAccountPhone.ts"
   )
+  const opsLandlordId = await resolveLandlordIdForAccountOrOpsPhone(supabase, fromNumber)
+  if (opsLandlordId) explicit.push({ landlordId: opsLandlordId })
+
+  const { data: identities, error: identityErr } = await supabase
+    .from("sms_identities")
+    .select("landlord_id, identity_type")
+    .in("phone_number", variants)
+    .not("landlord_id", "is", null)
+    .limit(16)
+  if (identityErr) {
+    console.error("[sms-inbound] shared Twilio identity lookup", identityErr.message)
+  } else {
+    for (const row of identities ?? []) {
+      const type = String(row.identity_type ?? "").trim()
+      if (type !== "resident" && type !== "vendor" && type !== "landlord") continue
+      const id = String(row.landlord_id ?? "").trim()
+      if (id) explicit.push({ landlordId: id })
+    }
+  }
+
+  const { data: outbound, error: outboundErr } = await supabase
+    .from("sms_messages")
+    .select("landlord_id, created_at")
+    .eq("direction", "outbound")
+    .in("to_number", variants)
+    .not("landlord_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(5)
+  if (outboundErr) {
+    console.error("[sms-inbound] shared Twilio recent-outbound lookup", outboundErr.message)
+  } else {
+    for (const row of outbound ?? []) {
+      const id = String(row.landlord_id ?? "").trim()
+      if (id) history.push({ landlordId: id, at: String(row.created_at ?? "") })
+    }
+  }
+
+  const { data: conversations, error: conversationErr } = await supabase
+    .from("sms_conversations")
+    .select("landlord_id, updated_at, status")
+    .in("external_phone_number", variants)
+    .not("landlord_id", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(8)
+  if (conversationErr) {
+    console.error("[sms-inbound] shared Twilio recent-conversation lookup", conversationErr.message)
+  } else {
+    for (const row of conversations ?? []) {
+      const id = String(row.landlord_id ?? "").trim()
+      if (!id) continue
+      const status = String(row.status ?? "").trim()
+      const closed = !SHARED_DID_OPEN_CONVERSATION_STATUSES.includes(
+        status as (typeof SHARED_DID_OPEN_CONVERSATION_STATUSES)[number],
+      )
+      history.push({
+        landlordId: id,
+        at: String(row.updated_at ?? ""),
+        closed,
+      })
+    }
+  }
+
+  const disconnectedLandlordIds: string[] = []
+  const { data: disconnects, error: disconnectErr } = await supabase
+    .from("sms_phone_account_disconnects")
+    .select("landlord_id")
+    .in("phone_number", variants)
+  if (disconnectErr) {
+    console.warn("[sms-inbound] phone disconnect lookup", disconnectErr.message)
+  } else {
+    disconnectedLandlordIds.push(...landlordIdsFromRows(disconnects))
+  }
+
+  const candidateIds = [
+    ...explicit.map((row) => row.landlordId),
+    ...history.map((row) => row.landlordId),
+    ...disconnectedLandlordIds,
+    lineOwner,
+  ]
+  const permittedLandlordIds = [...new Set(candidateIds.map((id) => id.trim()).filter(Boolean))]
+    .filter((id) => landlordAllowedOnReceivingLine({
+      sharedLine: true,
+      lineOwnerLandlordId: lineOwner,
+      landlordId: id,
+      usesSharedLine: landlordUsesLimitedAlphaSurface(id),
+    }))
+
+  const decision = resolveInboundAccount({
+    permittedLandlordIds,
+    explicit,
+    history,
+    disconnectedLandlordIds,
+  })
+  if (decision.reason === "explicit" || decision.reason === "history") {
+    return decision.landlordId
+  }
+  return null
 }
 
 function pickCanonicalSmsIdentity(
