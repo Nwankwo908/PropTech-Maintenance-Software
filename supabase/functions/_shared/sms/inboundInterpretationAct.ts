@@ -39,6 +39,7 @@ import {
 } from "./rentBillingInquiry.ts"
 import { isStorageMediaPath, normalizeMediaRefs } from "./media.ts"
 import { hasStrongRepairAsk } from "../../../../shared/maintenance/tenantInspectionNotice.ts"
+import { buildResidentRepairClosedSms } from "../../../../shared/maintenance/residentRepairClosedSms.ts"
 import {
   buildEscalatedOtherSms,
   buildSmallTalkDuringIntakeSms,
@@ -1741,7 +1742,10 @@ async function executeResidentTicketCancel(
   })
   return handled(
     "sms_maintenance_cancel",
-    `Got it — I've marked your ${label} as closed. If the problem comes back, just text me.`,
+    buildResidentRepairClosedSms({
+      description: ticket.description,
+      requestRef: tenantRef(ticket),
+    }),
   )
 }
 
