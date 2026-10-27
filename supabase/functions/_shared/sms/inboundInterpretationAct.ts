@@ -22,7 +22,9 @@ import type {
 } from "./inboundHandlerTypes.ts"
 import {
   accessInstructionKind,
-  extractWeekdayPreference,
+  hasClearNewVisitWindow,
+  isPartialRescheduleWindow,
+  offeredVisitWeekday,
   formatRentDueDayLabel,
   interpretInboundSms,
   looksLikeCancelRepair,
@@ -69,6 +71,10 @@ import {
   isNegativeReply,
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
+import {
+  extractTenantSchedulePreferredWindow,
+  RESCHEDULE_WINDOW_ASK,
+} from "./tenantSchedulePreferredWindow.ts"
 import { closeWorkOrderCancelledByResident } from "./cancelResidentWorkOrder.ts"
 import { pendingIntakeQuestion, releaseMaintenanceIntakePin } from "./residentIntake.ts"
 import {
@@ -1453,19 +1459,84 @@ async function handleMaintenanceUpdate(
   )
 }
 
+function reschedulePreferenceText(
+  body: string,
+  stored: string | null | undefined,
+): string | null {
+  if (hasClearNewVisitWindow(body)) return body.trim()
+  const saved = stored?.trim() ?? ""
+  if (saved && hasClearNewVisitWindow(saved)) return saved
+  return null
+}
+
+async function askForRescheduleWindow(
+  ctx: InboundSmsHandlerContext,
+  ticket: OpenTicket,
+  residentName: string | null,
+): Promise<InboundSmsHandlerResult> {
+  const who = firstName(residentName)
+  await patchIntakeState(ctx.supabase, ctx.conversationId, {
+    awaiting_reschedule_window: true,
+    pending_reschedule_ticket_id: ticket.id,
+    pending_reschedule_preference: undefined,
+    awaiting_which_request: false,
+    pending_which_request_ids: undefined,
+    pending_which_request_intent: undefined,
+  })
+  await logOutcome(ctx, {
+    eventType: "sms.reschedule_window_requested",
+    message: "Asked the resident what day and time works better.",
+    maintenanceRequestId: ticket.id,
+  })
+  return handled(
+    "sms_reschedule_window",
+    [`Hi ${who},`, "", RESCHEDULE_WINDOW_ASK].join("\n"),
+  )
+}
+
 async function handleScheduleChange(
   ctx: InboundSmsHandlerContext,
   intake: SmsIntakeState,
   activeIntake: boolean,
   tickets: OpenTicket[],
   residentName: string | null,
+  selectedTicketId?: string | null,
 ): Promise<InboundSmsHandlerResult> {
   const who = firstName(residentName)
-  const ticket = pickOpenTicket(tickets) ?? tickets[0] ?? null
-  const preferredDay = extractWeekdayPreference(ctx.inbound.body)
+  const preference = reschedulePreferenceText(
+    ctx.inbound.body,
+    intake.pending_reschedule_preference,
+  )
+  const preferredDay = offeredVisitWeekday(preference ?? ctx.inbound.body)
+  const visits = tickets.filter((row) =>
+    isActiveMaintenanceTicketStatus(row.vendor_work_status) &&
+    Boolean(row.scheduled_window_text?.trim() || row.scheduled_at?.trim())
+  )
+  const chosenId = selectedTicketId?.trim() || ""
+  let ticket: OpenTicket | null = chosenId
+    ? visits.find((row) => row.id === chosenId) ?? null
+    : null
+  if (!ticket && !chosenId && visits.length === 1) ticket = visits[0]
+  if (!ticket && visits.length > 1) {
+    if (preference) {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        pending_reschedule_preference: preference,
+      })
+    }
+    return handleWhichRequestClarify(
+      ctx,
+      tickets,
+      visits.map((row) => row.id),
+      residentName,
+      "schedule_change",
+    )
+  }
+  if (ticket && !preference) {
+    return askForRescheduleWindow(ctx, ticket, residentName)
+  }
   const detail = [
     preferredDay ? `Preferred day: ${preferredDay}.` : null,
-    ctx.inbound.body.trim().slice(0, 160),
+    (preference ?? ctx.inbound.body).trim().slice(0, 160),
   ].filter(Boolean).join(" ")
   const runId = await maybeReleaseIntake(
     ctx.supabase,
@@ -1479,7 +1550,12 @@ async function handleScheduleChange(
   let vendorNotified = false
   let previousTimeLabel: string | null = null
   let vendorNotifyReason: string | null = null
-  if (ticket?.id) {
+  if (ticket?.id && preference) {
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {
+      awaiting_reschedule_window: false,
+      pending_reschedule_ticket_id: undefined,
+      pending_reschedule_preference: undefined,
+    })
     const { beginTenantInitiatedReschedule } = await import(
       "./vendorRescheduleSms.ts"
     )
@@ -1487,7 +1563,7 @@ async function handleScheduleChange(
       landlordId: ctx.landlordId,
       ticketId: ticket.id,
       conversationId: ctx.conversationId,
-      residentMessage: ctx.inbound.body,
+      residentMessage: preference,
     })
     vendorNotified = reschedule.vendorNotified
     previousTimeLabel = reschedule.previousTimeLabel
@@ -1523,6 +1599,9 @@ async function handleScheduleChange(
     workflowRunId: runId,
     maintenanceRequestId: ticket?.id ?? null,
   })
+  const preferenceLabel = preference
+    ? extractTenantSchedulePreferredWindow(preference) ?? preference
+    : ""
   return handled(
     "sms_schedule_change",
     [
@@ -1530,11 +1609,10 @@ async function handleScheduleChange(
       "",
       ticket
         ? vendorNotified
-          ? `I've let the vendor know that ${tenantRef(ticket)} no longer works for you. They'll propose a new time and we'll text you to confirm.`
-          : `I've passed your request to change the visit for ${tenantRef(ticket)} to the property team. They'll follow up here.`
+          ? `Thanks. I'll check ${preferenceLabel} with the vendor. We'll text you once they confirm a time.`
+          : `I've passed ${preferenceLabel} to the property team. We'll text you once a time is confirmed.`
         : "I've passed your request to the property team. They'll follow up here about scheduling.",
-      preferredDay ? `I noted you'd prefer ${preferredDay}.` : "",
-    ].filter(Boolean).join("\n"),
+    ].join("\n"),
   )
 }
 
@@ -2404,11 +2482,10 @@ async function loadLastOutboundBody(
 
 function whichRequestPendingIntent(
   intent: TenantSmsIntent | null,
-): "maintenance_cancel" | "maintenance_update" | "maintenance_status" {
+): NonNullable<SmsIntakeState["pending_which_request_intent"]> {
   if (intent === "maintenance_cancel") return "maintenance_cancel"
-  if (intent === "maintenance_status" || intent === "schedule_change") {
-    return "maintenance_status"
-  }
+  if (intent === "schedule_change") return "schedule_change"
+  if (intent === "maintenance_status") return "maintenance_status"
   return "maintenance_update"
 }
 
@@ -2435,9 +2512,14 @@ async function handleWhichRequestClarify(
   if (labels.length === 0) {
     labels = dedupeTicketsByRequestLabel(source).slice(0, 4)
   }
-  const list = labels.map((row) => `• ${shortTicketLabel(row)}`).join("\n")
+  const visitAsk = intent === "schedule_change"
+  const list = labels.map((row) => {
+    const when = visitAsk ? row.scheduled_window_text?.trim() : ""
+    const name = shortTicketLabel(row)
+    return `• ${when ? `${name} (${when})` : name}`
+  }).join("\n")
   const cancel = intent === "maintenance_cancel"
-  const statusAsk = intent === "maintenance_status" || intent === "schedule_change"
+  const statusAsk = intent === "maintenance_status"
   await patchIntakeState(ctx.supabase, ctx.conversationId, {
     awaiting_which_request: true,
     pending_which_request_ids: labels.map((row) => row.id),
@@ -2459,6 +2541,8 @@ async function handleWhichRequestClarify(
       "",
       cancel
         ? "You have more than one open request. Which one do you want to cancel?"
+        : visitAsk
+        ? "You have more than one upcoming visit. Which one do you want to change?"
         : statusAsk
         ? "Which repair are you asking about?"
         : "You have more than one open request. Which one do you mean?",
@@ -2499,6 +2583,7 @@ export async function tryHandleInterpretedInbound(
       pending.awaitingTicketCancelConfirm ||
       pending.awaitingMoveOutConfirm ||
       intake.awaiting_which_request === true ||
+      intake.awaiting_reschedule_window === true ||
       intake.awaiting_related_confirm === true ||
       (pending.activeIntake === true && isAffirmativeReply(ctx.inbound.body)),
   })
@@ -2549,6 +2634,48 @@ export async function tryHandleInterpretedInbound(
         interpretation.intent === "maintenance_status")
     ? interpretation.intent
     : null
+
+  if (intake.awaiting_reschedule_window === true) {
+    if (hasClearNewVisitWindow(ctx.inbound.body)) {
+      const ticketId = intake.pending_reschedule_ticket_id ?? null
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        awaiting_reschedule_window: false,
+        pending_reschedule_ticket_id: undefined,
+        pending_reschedule_preference: undefined,
+      })
+      intake.awaiting_reschedule_window = false
+      intake.pending_reschedule_ticket_id = undefined
+      intake.pending_reschedule_preference = undefined
+      return handleScheduleChange(
+        ctx,
+        intake,
+        pending.activeIntake,
+        tickets,
+        profile?.full_name ?? null,
+        ticketId,
+      )
+    }
+    if (!relatedBreakoutIntent && isPartialRescheduleWindow(ctx.inbound.body)) {
+      const pendingVisit = tickets.find((row) =>
+        row.id === intake.pending_reschedule_ticket_id
+      )
+      if (pendingVisit) {
+        return askForRescheduleWindow(
+          ctx,
+          pendingVisit,
+          profile?.full_name ?? null,
+        )
+      }
+      return handled(
+        "sms_reschedule_window",
+        [
+          `Hi ${firstName(profile?.full_name ?? null)},`,
+          "",
+          RESCHEDULE_WINDOW_ASK,
+        ].join("\n"),
+      )
+    }
+  }
 
   // Stuck RELATED/SEPARATE must not trap rent/lease/other clear intents.
   if (intake.awaiting_related_confirm === true) {
@@ -2670,6 +2797,16 @@ export async function tryHandleInterpretedInbound(
       }
     }
   } else if (!interpretation.addressesPending) {
+    let scheduleTimeZone: string | undefined
+    if (interpretation.intent === "schedule_change") {
+      const { loadLandlordScheduleTimeZone } = await import(
+        "../landlordNotificationPrefs.ts"
+      )
+      scheduleTimeZone = await loadLandlordScheduleTimeZone(
+        ctx.supabase,
+        ctx.landlordId,
+      )
+    }
     const decision = resolveContextualFollowUp({
       body: ctx.inbound.body,
       hasMedia: (ctx.inbound.mediaUrls?.length ?? 0) > 0,
@@ -2679,11 +2816,25 @@ export async function tryHandleInterpretedInbound(
         description: row.description,
         vendor_work_status: row.vendor_work_status,
         issue_category: row.issue_category,
+        scheduled_window_text: row.scheduled_window_text,
+        scheduled_at: row.scheduled_at,
       })),
       activeIntake: pending.activeIntake,
+      now: new Date(),
+      timeZone: scheduleTimeZone,
     })
 
     if (decision.action === "clarify") {
+      if (
+        interpretation.intent === "schedule_change" &&
+        hasClearNewVisitWindow(ctx.inbound.body)
+      ) {
+        const preference = ctx.inbound.body.trim()
+        await patchIntakeState(ctx.supabase, ctx.conversationId, {
+          pending_reschedule_preference: preference,
+        })
+        intake.pending_reschedule_preference = preference
+      }
       return handleWhichRequestClarify(
         ctx,
         tickets,
@@ -2827,6 +2978,7 @@ export async function tryHandleInterpretedInbound(
         pending.activeIntake,
         preferTicket(tickets, interpretation.extractedSlots.ticket_id),
         profile?.full_name ?? null,
+        interpretation.extractedSlots.ticket_id,
       )
     case "access_instruction": {
       const kindRaw = interpretation.extractedSlots.access_kind

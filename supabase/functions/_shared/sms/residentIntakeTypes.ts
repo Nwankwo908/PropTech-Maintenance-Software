@@ -176,7 +176,15 @@ export type SmsIntakeState = {
   /** Waiting for the resident to name which of several open requests they mean. */
   awaiting_which_request?: boolean
   pending_which_request_ids?: string[]
-  pending_which_request_intent?: "maintenance_cancel" | "maintenance_update" | "maintenance_status"
+  pending_which_request_intent?:
+    | "maintenance_cancel"
+    | "maintenance_update"
+    | "maintenance_status"
+    | "schedule_change"
+  /** Waiting for a new day and time before a reschedule is sent to the vendor. */
+  awaiting_reschedule_window?: boolean
+  pending_reschedule_ticket_id?: string
+  pending_reschedule_preference?: string
   /** Waiting for RELATED vs SEPARATE when a new symptom may belong to an open job. */
   awaiting_related_confirm?: boolean
   pending_related_ticket_id?: string

@@ -1389,7 +1389,7 @@ export async function beginTenantInitiatedReschedule(
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, unit, building, assigned_vendor_id, scheduled_at, scheduled_window_text, schedule_confirmed_at, vendor_work_status, issue_category",
+      "id, landlord_id, unit, assigned_vendor_id, scheduled_at, scheduled_window_text, schedule_confirmed_at, vendor_work_status, issue_category",
     )
     .eq("id", params.ticketId)
     .maybeSingle()

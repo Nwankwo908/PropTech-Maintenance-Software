@@ -208,6 +208,9 @@ export async function handleTenantDistress(
   delete prior.awaiting_which_request
   delete prior.pending_which_request_ids
   delete prior.pending_which_request_intent
+  delete prior.awaiting_reschedule_window
+  delete prior.pending_reschedule_ticket_id
+  delete prior.pending_reschedule_preference
   delete prior.awaiting_related_confirm
   delete prior.clarify_menu_shown_at
   // Keep loop flag only if this inbound is not already clearing the frustration.

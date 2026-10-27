@@ -10,8 +10,10 @@ import {
   type IssueType,
 } from "./residentIntakeTypes.ts"
 import {
+  existingVisitDayHints,
   looksLikeCancelRepair,
   looksLikeMaintenanceStatusAsk,
+  looksLikeTenantScheduleChange,
   type TenantSmsIntent,
 } from "./inboundInterpretation.ts"
 import {
@@ -47,6 +49,8 @@ export type OpenRequestSummary = {
   description: string | null
   vendor_work_status: string | null
   issue_category?: string | null
+  scheduled_window_text?: string | null
+  scheduled_at?: string | null
 }
 
 export type ContextualFollowUpDecision =
@@ -72,9 +76,6 @@ const PHOTO =
 
 const CORRECTION =
   /\b(i meant|not the \w+|wrong (room|unit|place|area)|actually (it'?s|its|in) (the )?\w+|bathroom,? not the kitchen|kitchen,? not the bathroom)\b/i
-
-const SCHEDULE_FOLLOW_UP =
-  /\b(tomorrow (doesn'?t|does not|won'?t|will not) work|doesn'?t work for me|does not work for me|can they come|after \d{1,2}|before \d{1,2}|come after|come before)\b/i
 
 const FOLLOW_UP_PRONOUN =
   /\b(it'?s|its|the (leak|sink|ac|heater|repair|issue|problem)|that (repair|issue|problem|leak))\b/i
@@ -162,7 +163,7 @@ export function classifyFollowUpKind(
     return "photo"
   }
   if (CORRECTION.test(text)) return "correction"
-  if (SCHEDULE_FOLLOW_UP.test(text)) return "schedule"
+  if (looksLikeTenantScheduleChange(text)) return "schedule"
   if (/\b(getting worse|worse now|it'?s worse|its worse|getting (really )?bad)\b/i.test(text)) {
     return "worse"
   }
@@ -376,6 +377,8 @@ export function resolveContextualFollowUp(input: {
   intent: TenantSmsIntent | null
   openTickets: OpenRequestSummary[]
   activeIntake: boolean
+  now?: Date
+  timeZone?: string
 }): ContextualFollowUpDecision {
   const body = input.body.trim()
   const intent = input.intent
@@ -462,6 +465,7 @@ export function resolveContextualFollowUp(input: {
 
   if (
     intent !== "maintenance_cancel" &&
+    intent !== "schedule_change" &&
     open.length > 0 &&
     inferIssueTypeFromText(body) &&
     isDistinctNewIssue(body, open)
@@ -480,6 +484,9 @@ export function resolveContextualFollowUp(input: {
         slots: {},
         ...(matched.length === 1 ? { ticketId: matched[0].id } : {}),
       }
+    }
+    if (intent === "schedule_change") {
+      return scheduleVisitDecision(body, open, input.now, input.timeZone)
     }
     if (intent === "maintenance_update" || intent === "maintenance_cancel") {
       const kind = followKind
@@ -544,6 +551,9 @@ export function resolveContextualFollowUp(input: {
       }
       return { action: "new_issue" }
     }
+    if (kind === "schedule") {
+      return scheduleVisitDecision(body, pool, input.now, input.timeZone)
+    }
     return followUpForOpenTickets({
       intent: intentForKind(kind),
       slots: slotsForKind(kind, body),
@@ -597,6 +607,113 @@ export function resolveContextualFollowUp(input: {
     }
   }
   return { action: "new_issue" }
+}
+
+function isUpcomingVisit(row: OpenRequestSummary): boolean {
+  if (!isActiveMaintenanceTicketStatus(row.vendor_work_status)) return false
+  return Boolean(row.scheduled_window_text?.trim() || row.scheduled_at?.trim())
+}
+
+function zonedCalendar(
+  date: Date,
+  timeZone: string,
+): { ymd: string; weekday: string } | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "long",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date)
+    const value = (type: string) => parts.find((part) => part.type === type)?.value ?? ""
+    const ymd = `${value("year")}-${value("month")}-${value("day")}`
+    const weekday = value("weekday")
+    if (!weekday || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null
+    return { ymd, weekday }
+  } catch {
+    return null
+  }
+}
+
+function shiftYmd(ymd: string, days: number): string {
+  const [year, month, day] = ymd.split("-").map(Number)
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10)
+}
+
+function weekdayOfYmd(ymd: string, timeZone: string): string {
+  const [year, month, day] = ymd.split("-").map(Number)
+  return zonedCalendar(new Date(Date.UTC(year, month - 1, day, 16)), timeZone)?.weekday ?? ""
+}
+
+function visitMatchesDayHint(
+  visit: OpenRequestSummary,
+  hint: string,
+  now: Date,
+  timeZone: string,
+): boolean {
+  const windowText = (visit.scheduled_window_text ?? "").toLowerCase()
+  const scheduled = visit.scheduled_at ? new Date(visit.scheduled_at) : null
+  const when = scheduled && !Number.isNaN(scheduled.getTime())
+    ? zonedCalendar(scheduled, timeZone)
+    : null
+  const today = zonedCalendar(now, timeZone)
+  if (hint === "today" || hint === "tomorrow") {
+    if (!today) return false
+    const targetYmd = hint === "today" ? today.ymd : shiftYmd(today.ymd, 1)
+    const targetWeekday = weekdayOfYmd(targetYmd, timeZone).toLowerCase()
+    if (when) return when.ymd === targetYmd
+    return Boolean(targetWeekday) && windowText.includes(targetWeekday)
+  }
+  const day = hint.toLowerCase()
+  if (windowText.includes(day)) return true
+  return Boolean(when && when.weekday.toLowerCase() === day)
+}
+
+/**
+ * Pick the visit a reschedule is about.
+ * One upcoming visit is enough. Several visits wait for the resident to name one.
+ * Open repairs with no visit time are not choices.
+ */
+export function selectUpcomingVisitForReschedule(input: {
+  body: string
+  tickets: OpenRequestSummary[]
+  now?: Date
+  timeZone?: string
+}): { kind: "one"; ticketId: string } | { kind: "ask"; ticketIds: string[] } | { kind: "none" } {
+  const visits = input.tickets.filter(isUpcomingVisit)
+  if (visits.length === 0) return { kind: "none" }
+  const now = input.now ?? new Date()
+  const timeZone = input.timeZone?.trim() || "America/New_York"
+  const hints = existingVisitDayHints(input.body)
+  if (hints.length > 0) {
+    const matched = visits.filter((visit) =>
+      hints.some((hint) => visitMatchesDayHint(visit, hint, now, timeZone))
+    )
+    if (matched.length === 1) return { kind: "one", ticketId: matched[0].id }
+    if (matched.length > 1) return { kind: "ask", ticketIds: matched.map((row) => row.id) }
+  }
+  if (visits.length === 1) return { kind: "one", ticketId: visits[0].id }
+  return { kind: "ask", ticketIds: visits.map((row) => row.id) }
+}
+
+function scheduleVisitDecision(
+  body: string,
+  tickets: OpenRequestSummary[],
+  now?: Date,
+  timeZone?: string,
+): ContextualFollowUpDecision {
+  const choice = selectUpcomingVisitForReschedule({ body, tickets, now, timeZone })
+  if (choice.kind === "ask") return { action: "clarify", ticketIds: choice.ticketIds }
+  if (choice.kind === "one") {
+    return {
+      action: "follow_up",
+      intent: "schedule_change",
+      slots: {},
+      ticketId: choice.ticketId,
+    }
+  }
+  return { action: "follow_up", intent: "schedule_change", slots: {} }
 }
 
 function followUpForOpenTickets(input: {

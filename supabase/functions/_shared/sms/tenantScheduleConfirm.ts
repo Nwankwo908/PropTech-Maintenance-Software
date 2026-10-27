@@ -42,7 +42,12 @@ import { getSMSProviderForSend } from "./providerFactory.ts"
 import {
   extractTenantSchedulePreferredWindow,
   hasTenantScheduleTimeCue,
+  RESCHEDULE_WINDOW_ASK,
 } from "./tenantSchedulePreferredWindow.ts"
+import {
+  hasClearNewVisitWindow,
+  looksLikeTenantScheduleChange,
+} from "./inboundInterpretation.ts"
 import { matchShortReplyToken } from "./shortReplyTokens.ts"
 import { landlordRecipients, recordSmsNoRecipients } from "../smsRecipients.ts"
 
@@ -788,8 +793,28 @@ export async function tryHandleTenantScheduleConfirmInbound(
   if (!decision && hasTenantScheduleTimeCue(replyBody)) {
     decision = "counter_propose"
   }
-  if (!decision) {
+  if (!decision && !looksLikeTenantScheduleChange(replyBody)) {
     // Keep the pending ask — never fall through to a generic maintenance greeting.
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody: buildScheduleConfirmClarifySms({
+        windowText: pending.windowText,
+        workOrderRef: `Ref: ${await ensureResidentRequestRef(supabase, pending.ticketId)}`,
+      }),
+    }
+  }
+  if (decision !== "accept" && !hasClearNewVisitWindow(replyBody)) {
+    // A no, or a reschedule with no new time, waits here. The saved visit stays.
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody: RESCHEDULE_WINDOW_ASK,
+    }
+  }
+  if (!decision) {
     return {
       handled: true,
       clarified: true,

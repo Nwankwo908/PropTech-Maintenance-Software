@@ -8,6 +8,7 @@ import {
   looksLikeAdditionalIssue,
   matchOpenRequests,
   resolveContextualFollowUp,
+  selectUpcomingVisitForReschedule,
   shouldKeepActivePendingContext,
   type OpenRequestSummary,
 } from "./inboundContextualFollowUp.ts"
@@ -589,4 +590,84 @@ Deno.test("same-trade kitchen lights asks related vs separate", () => {
     assertEquals(decision.intent, "maintenance_update")
     assertEquals(decision.slots.needs_related_clarify, "true")
   }
+})
+
+const bathVisit: OpenRequestSummary = {
+  id: "bath",
+  description: "The light in the bedroom bathroom won't turn on.",
+  vendor_work_status: "accepted",
+  issue_category: "electrical",
+  scheduled_window_text: "Wednesday, Oct 28 between 9:00 AM and 12:00 PM",
+  scheduled_at: "2026-10-28T16:00:00.000Z",
+}
+
+const thursdayVisit: OpenRequestSummary = {
+  id: "thu",
+  description: "Kitchen sink is leaking",
+  vendor_work_status: "accepted",
+  issue_category: "plumbing",
+  scheduled_window_text: "Thursday, Oct 29 between 2:00 PM and 4:00 PM",
+  scheduled_at: "2026-10-29T18:00:00.000Z",
+}
+
+const unscheduled: OpenRequestSummary = {
+  id: "gas",
+  description: "I smell gas",
+  vendor_work_status: "unassigned",
+  issue_category: "gas",
+}
+
+const visitNow = new Date("2026-10-27T16:00:00.000Z")
+
+Deno.test("one upcoming visit is selected even when other repairs are open", () => {
+  for (const phrase of [
+    "Can we reschedule Wednesday?",
+    "Thursday 2–4 works better",
+    "I can't make tomorrow.",
+  ]) {
+    const decision = resolveContextualFollowUp({
+      body: phrase,
+      hasMedia: false,
+      intent: "schedule_change",
+      openTickets: [bathVisit, unscheduled, ac],
+      activeIntake: false,
+      now: visitNow,
+      timeZone: "America/New_York",
+    })
+    assertEquals(decision.action, "follow_up")
+    if (decision.action === "follow_up") {
+      assertEquals(decision.intent, "schedule_change")
+      assertEquals(decision.ticketId, "bath")
+    }
+  }
+})
+
+Deno.test("several upcoming visits are named before anything changes", () => {
+  const wednesday = selectUpcomingVisitForReschedule({
+    body: "Can we reschedule Wednesday?",
+    tickets: [bathVisit, thursdayVisit],
+    now: visitNow,
+    timeZone: "America/New_York",
+  })
+  assertEquals(wednesday, { kind: "one", ticketId: "bath" })
+
+  const preference = selectUpcomingVisitForReschedule({
+    body: "Thursday 2–4 works better",
+    tickets: [bathVisit, thursdayVisit],
+    now: visitNow,
+    timeZone: "America/New_York",
+  })
+  assertEquals(preference.kind, "ask")
+
+  const tomorrow = resolveContextualFollowUp({
+    body: "I can't make tomorrow.",
+    hasMedia: false,
+    intent: "schedule_change",
+    openTickets: [bathVisit, thursdayVisit, unscheduled],
+    activeIntake: false,
+    now: visitNow,
+    timeZone: "America/New_York",
+  })
+  assertEquals(tomorrow.action, "follow_up")
+  if (tomorrow.action === "follow_up") assertEquals(tomorrow.ticketId, "bath")
 })
