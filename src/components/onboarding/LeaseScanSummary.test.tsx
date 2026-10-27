@@ -17,16 +17,17 @@ it('waits until the scan finishes before saying the lease is ready', () => {
   expect(html).not.toContain('Morgan Tenant')
 })
 
-it('summarizes a finished scan as pages checked and details left to review', () => {
+it('tells you a finished scan is ready for review', () => {
   const raw = leaseFixture()
   raw.fields.monthly_rent.confidence = 100
   raw.fields.monthly_rent.quote = ''
   const { review } = normalizeLeaseScan(raw, [''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Lease scanned')
-  expect(html).toContain('1 of 1 page checked')
-  expect(html).toContain('1 detail to review')
-  expect(html).toContain('<svg')
+  expect(html).toContain('Your lease is ready for review')
+  expect(html).toContain('Check the extracted details on the next step.')
+  expect(html).not.toContain('Lease scanned')
+  expect(html).not.toContain('1 of 1 page checked')
+  expect(html).not.toContain('to review')
   expect(html).not.toContain('Morgan Tenant')
   expect(html).not.toContain('Unverified reading')
   expect(html).not.toContain('$1,500.00')
