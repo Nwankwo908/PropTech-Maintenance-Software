@@ -306,6 +306,38 @@ Deno.test("resolveVendorTicketForInbound allows single open job without WO", asy
   }
 })
 
+Deno.test("quoted work order on the offering thread binds when the roster list is empty", async () => {
+  const supabase = mockOpenJobsSupabase([], {
+    [JOB_A.ticketId]: {
+      assigned_vendor_id: "vendor-1",
+      vendor_work_status: "pending_accept",
+    },
+  }) as never
+  const resolved = await resolveVendorTicketForInbound(supabase, {
+    vendorId: "vendor-1",
+    inboundBody: "YES WO-3B00",
+    conversationTicketId: JOB_A.ticketId,
+    pendingOfferTicketId: JOB_A.ticketId,
+    openJobs: [],
+  })
+  assertEquals(resolved.ok, true)
+  if (resolved.ok) {
+    assertEquals(resolved.ticketId, JOB_A.ticketId)
+    assertEquals(resolved.boundBy, "conversation_pin")
+  }
+})
+
+Deno.test("a different quoted work order does not use the offering thread", async () => {
+  const resolved = await resolveVendorTicketForInbound({} as never, {
+    vendorId: "vendor-1",
+    inboundBody: "YES WO-FFFF",
+    conversationTicketId: JOB_A.ticketId,
+    openJobs: [],
+  })
+  assertEquals(resolved.ok, false)
+  if (!resolved.ok) assertEquals(resolved.reason, "unknown_work_order")
+})
+
 Deno.test("resolveVendorTicketForInbound binds conversation pin when roster query is empty", async () => {
   const supabase = mockOpenJobsSupabase([], {
     [JOB_A.ticketId]: {
