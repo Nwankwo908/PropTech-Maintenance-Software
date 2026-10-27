@@ -177,7 +177,7 @@ function isDirectProblem(text: string): boolean {
 export function problemSentence(problem: string, location: string | null): string {
   const opening = openingProblem(problem)
   if (!isDirectProblem(opening)) {
-    const phrase = generateIssueSummary(opening, { format: "summary", maxWords: 18 })
+    const phrase = generateIssueSummary(opening, { format: "title", maxChars: 80 })
       .replace(/^an?\s+/i, "")
     return ensureSentence(phrase || opening)
   }

@@ -28,8 +28,9 @@ const LIGHT = {
 Deno.test("bedroom answer to which bathroom names the bedroom bathroom", () => {
   const sms = buildConfirmationSummary(LIGHT)
   assertMatch(sms, /The light in the bedroom bathroom won't turn on\./)
-  assertMatch(sms, /The issue is limited to that room\./)
-  assertMatch(sms, /Staff or a vendor may enter if no one is home\./)
+  assertMatch(sms, /Request details:/)
+  assertMatch(sms, /• The issue is limited to that room\./)
+  assertMatch(sms, /• Staff or a vendor may enter if no one is home\./)
   assertEquals(/Electrical issue/i.test(sms), false)
   assertEquals(/Location: Bedroom/i.test(sms), false)
   assertEquals(confirmationClarification(LIGHT), null)

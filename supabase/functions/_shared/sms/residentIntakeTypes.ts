@@ -1238,17 +1238,13 @@ export function confirmationClarification(state: SmsIntakeState): string | null 
   }).clarification
 }
 
-function confirmationNarrative(state: SmsIntakeState): string {
+function confirmationIssueLine(state: SmsIntakeState): string {
   const reading = interpretConfirmedLocation({
     problem: state.initial_message || state.description,
     answer: state.room_or_area,
     question: state.location_question,
   })
-  return [
-    problemSentence(state.initial_message || state.description || "", reading.location),
-    scopeSentence(state.diagnostic_facts?.electrical_scope),
-    entrySentence(state.diagnostic_facts?.unit_entry),
-  ].filter(Boolean).join(" ")
+  return problemSentence(state.initial_message || state.description || "", reading.location)
 }
 
 export function buildConfirmationSummary(state: SmsIntakeState): string {
@@ -1276,7 +1272,7 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     }
   } else {
     const clarification = confirmationClarification(state)
-    issueLines.push(clarification || confirmationNarrative(state))
+    issueLines.push(clarification || confirmationIssueLine(state))
   }
 
   const handlingTip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
@@ -1284,15 +1280,21 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   const bullets: string[] = []
 
   if (recurringPriorVisit) {
-    const issue = issueSummaryBullet(state).replace(/\.$/, "").toLowerCase()
+    const issue = confirmationIssueLine(state).replace(/\.$/, "")
     bullets.push(`• Recurring issue — ${issue} has come up before`)
   }
+
+  const scope = scopeSentence(facts.electrical_scope)
+  if (scope) bullets.push(`• ${scope}`)
 
   for (const line of confirmationDetailLines(state)) {
     bullets.push(`• ${line}`)
   }
 
-  if (facts.unit_entry?.trim() && !entrySentence(facts.unit_entry)) {
+  const entry = entrySentence(facts.unit_entry)
+  if (entry) bullets.push(`• ${entry}`)
+
+  if (facts.unit_entry?.trim() && !entry) {
     const entry = facts.unit_entry.trim()
     if (isCleanDiagnosticFact(entry, state)) {
       bullets.push(`• ${finishSentence(`Entry if no one is home: ${entry}`)}`)
