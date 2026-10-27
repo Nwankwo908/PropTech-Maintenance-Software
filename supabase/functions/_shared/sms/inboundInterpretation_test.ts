@@ -421,6 +421,10 @@ Deno.test("reschedule asks only when a new day and time are missing", () => {
   }
 
   assertEquals(isPartialRescheduleWindow("The kitchen sink is leaking"), false)
+
+  const bareWindow = heuristicInterpretInbound("Thursday between 2pm and 4pm")
+  assertEquals(bareWindow.intent, "schedule_change")
+  assertEquals(bareWindow.extractedSlots.preferred_day, "Thursday")
 })
 
 Deno.test("access allow vs restrict", () => {

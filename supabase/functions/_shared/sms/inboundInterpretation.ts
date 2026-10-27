@@ -150,6 +150,7 @@ export function looksLikeTenantScheduleChange(text: string): boolean {
   const body = normalizeScheduleText(text)
   if (!body) return false
   if (SCHEDULE_CHANGE.test(body)) return true
+  if (hasClearNewVisitWindow(body)) return true
   return /\b(?:works|work) better\b/i.test(body) && hasTenantScheduleTimeCue(body)
 }
 
@@ -179,7 +180,15 @@ export function offeredVisitWeekday(text: string): string | null {
       "i",
     ),
   )
-  return directed ? weekdayName(directed[1]) : null
+  if (directed) return weekdayName(directed[1])
+  if (!NEW_VISIT_CLOCK.test(body)) return null
+  const hints = new Set(existingVisitDayHints(body).map((hint) => hint.toLowerCase()))
+  const weekdays = body.match(new RegExp(`\\b(${WEEKDAY_WORD})\\b`, "gi")) ?? []
+  for (const day of weekdays) {
+    const name = weekdayName(day)
+    if (!hints.has(name.toLowerCase())) return name
+  }
+  return null
 }
 
 /**

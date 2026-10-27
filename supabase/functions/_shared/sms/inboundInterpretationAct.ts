@@ -1551,11 +1551,6 @@ async function handleScheduleChange(
   let previousTimeLabel: string | null = null
   let vendorNotifyReason: string | null = null
   if (ticket?.id && preference) {
-    await patchIntakeState(ctx.supabase, ctx.conversationId, {
-      awaiting_reschedule_window: false,
-      pending_reschedule_ticket_id: undefined,
-      pending_reschedule_preference: undefined,
-    })
     const { beginTenantInitiatedReschedule } = await import(
       "./vendorRescheduleSms.ts"
     )
@@ -1568,6 +1563,19 @@ async function handleScheduleChange(
     vendorNotified = reschedule.vendorNotified
     previousTimeLabel = reschedule.previousTimeLabel
     vendorNotifyReason = reschedule.error ?? null
+    if (reschedule.ok) {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        awaiting_reschedule_window: false,
+        pending_reschedule_ticket_id: undefined,
+        pending_reschedule_preference: undefined,
+      })
+    } else {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        awaiting_reschedule_window: true,
+        pending_reschedule_ticket_id: ticket.id,
+        pending_reschedule_preference: preference,
+      })
+    }
   }
 
   void notifyLandlordNeedsAttention(ctx.supabase, {
