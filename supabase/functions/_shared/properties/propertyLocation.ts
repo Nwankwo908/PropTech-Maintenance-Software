@@ -36,6 +36,39 @@ function applyPropertyRow(
   if (zip) target.zipCode = zip
 }
 
+export type SolePropertyLocation = PropertyLocationFields & {
+  propertyType: string | null
+}
+
+/**
+ * Address when this landlord has exactly one property. Two or more properties
+ * return null so a missing ticket address is not guessed.
+ */
+export async function loadSoleLandlordPropertyLocation(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<SolePropertyLocation | null> {
+  const id = landlordId.trim()
+  if (!id) return null
+  const { data } = await supabase
+    .from("properties")
+    .select("street_address, city, state, zip_code, property_type")
+    .eq("landlord_id", id)
+    .limit(2)
+  if (!Array.isArray(data) || data.length !== 1) return null
+  const row = data[0] as PropertyRow & { property_type?: string | null }
+  const out: SolePropertyLocation = {
+    streetAddress: null,
+    city: null,
+    state: null,
+    zipCode: null,
+    propertyType: trimOrNull(row.property_type),
+  }
+  applyPropertyRow(out, row)
+  if (!out.streetAddress && !out.city && !out.state && !out.zipCode) return null
+  return out
+}
+
 /** Load address from canonical properties row by id or building name. */
 export async function loadPropertyLocationFromTable(
   supabase: SupabaseClient,

@@ -4,6 +4,11 @@ import type {
   ExternalVendorSearchInput,
 } from "../types.ts"
 import {
+  externalSearchCategoryForIssue,
+  GAS_LEAK_VENDOR_SEARCH_QUERIES,
+} from "../../../../../shared/maintenance/vendorOfferMatch.ts"
+import { isGasEmergencyText } from "../../../../../shared/maintenance/urgencyPolicy.ts"
+import {
   clampExternalVendorSearchLimit,
   EXTERNAL_VENDOR_SEARCH_LIMIT,
   EXTERNAL_VENDOR_SEARCH_RADIUS_MILES,
@@ -397,10 +402,15 @@ export function buildThumbtackFilteredUserQuery(input: ExternalVendorSearchInput
   return parts.join(". ") || "home repair"
 }
 
-function searchQueriesForInput(input: ExternalVendorSearchInput): string[] {
-  const primary = (input.tradeTerms || input.issueCategory || "home repair").trim()
+export function searchQueriesForInput(input: ExternalVendorSearchInput): string[] {
+  const issueText = `${input.jobDescription ?? ""}\n${input.textQuery ?? ""}`
+  if (isGasEmergencyText(issueText)) {
+    return [...GAS_LEAK_VENDOR_SEARCH_QUERIES]
+  }
+  const category = externalSearchCategoryForIssue(input.issueCategory, issueText)
+  const primary = (input.tradeTerms || category || "home repair").trim()
   const extras: string[] = []
-  const slug = (input.issueCategory ?? "").trim().toLowerCase()
+  const slug = (category ?? "").trim().toLowerCase()
   if (slug.includes("appliance")) extras.push("appliance repair", "oven repair")
   else if (slug.includes("plumb")) extras.push("plumber", "plumbing")
   else if (slug.includes("electric")) extras.push("electrician", "electrical")

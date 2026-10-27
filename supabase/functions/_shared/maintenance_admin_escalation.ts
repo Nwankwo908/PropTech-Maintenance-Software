@@ -17,7 +17,11 @@ import {
   loadOpenLandlordVendorAsk,
   supersedeOpenLandlordVendorAskForTicket,
 } from "./openLandlordVendorAsk.ts"
-import { loadPropertyLocationFromTable } from "./properties/propertyLocation.ts"
+import {
+  loadPropertyLocationFromTable,
+  loadSoleLandlordPropertyLocation,
+} from "./properties/propertyLocation.ts"
+import { vendorOfferMatchesIssue } from "../../../shared/maintenance/vendorOfferMatch.ts"
 import { ensureResidentRequestRef } from "./sms/residentRequestRef.ts"
 import {
   choiceOptionsFromExternalSuggestions,
@@ -240,7 +244,15 @@ export async function escalateMaintenanceNeedsVendor(
       propertyId: propertyId || null,
       building: building || null,
     })
-    const street = location?.streetAddress?.trim() || building || ""
+    let streetAddress = location?.streetAddress?.trim() || ""
+    if (!streetAddress && !building) {
+      const sole = await loadSoleLandlordPropertyLocation(supabase, landlordId)
+      if (sole?.streetAddress) {
+        streetAddress = sole.streetAddress
+        if (!propertyType) propertyType = sole.propertyType
+      }
+    }
+    const street = streetAddress || building || ""
     const repair = shortRepairLabel(description, issueCategory, {
       issueHeadline,
       street,
@@ -260,7 +272,7 @@ export async function escalateMaintenanceNeedsVendor(
       }
     }
     const locationLine = formatAttentionLocationLine({
-      street: location?.streetAddress,
+      street: streetAddress || null,
       building,
       unit,
       propertyType,
@@ -274,12 +286,17 @@ export async function escalateMaintenanceNeedsVendor(
         limit: 3,
       })
       if (!("error" in discovered)) {
-        const options = choiceOptionsFromExternalSuggestions(
-          discovered.suggestions,
-          3,
+        const appropriate = discovered.suggestions.filter((row) =>
+          vendorOfferMatchesIssue({
+            name: row.name,
+            tags: row.tags,
+            description: `${description}\n${issueHeadline}`,
+            issueCategory,
+          })
         )
+        const options = choiceOptionsFromExternalSuggestions(appropriate, 3)
         if (options.length > 0) {
-          const named = discovered.suggestions.filter((row) => row.name.trim())
+          const named = appropriate.filter((row) => row.name.trim())
           nextSteps = named.slice(0, options.length).map(formatExternalVendorSmsLine)
           choiceReplyHint = landlordNumberedChoiceReplyHint(options.length)
           const urgency =

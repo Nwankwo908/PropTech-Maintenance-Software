@@ -197,8 +197,8 @@ function tradePhraseFromCategory(issueCategory: string | null | undefined): stri
 }
 
 /**
- * Short landlord-facing repair label. Never falls back to "this repair" when
- * issue_headline, issue_category, or a street is available.
+ * Short landlord-facing repair label. Empty when the description, trade,
+ * headline, and street are all missing.
  */
 export function shortRepairLabel(
   description: string | null | undefined,
@@ -215,7 +215,6 @@ export function shortRepairLabel(
     return sentence.charAt(0).toLowerCase() + sentence.slice(1)
   }
 
-  // No usable description — prefer "Pest control at {street}" over "this repair".
   if (trade && street) return `${trade} at ${street}`
   if (headline && headline.length <= 72 && !/^wo-/i.test(headline)) {
     const lowered =
@@ -229,7 +228,7 @@ export function shortRepairLabel(
   }
   if (trade) return `${trade} repair`
   if (street) return `repair at ${street}`
-  return "this repair"
+  return ""
 }
 
 export function formatAttentionLocationLine(parts: {
@@ -278,8 +277,7 @@ function escapeHtml(value: string): string {
 
 function attentionCopyParts(input: AttentionCopyInput) {
   const headline = input.headline.trim()
-  const locationLine =
-    (input.locationLine ?? "").trim() || (input.detail ?? "").trim()
+  const locationLine = (input.locationLine ?? "").trim()
   const whyLine =
     input.whyLine == null
       ? input.whyLine === undefined
@@ -297,9 +295,9 @@ function attentionCopyParts(input: AttentionCopyInput) {
     ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
     : steps.join("\n")
   const summary = (input.detail ?? "").trim()
-  const place = locationLine
-  const summaryLine = summary && summary !== place ? summary : ""
-  const shownPlace = place || (summaryLine ? "" : summary)
+  const summaryLine =
+    summary && locationLine && sameStatement(summary, locationLine) ? "" : summary
+  const shownPlace = locationLine
   const requestRef = (input.requestRef ?? "").trim()
   return {
     headline,
@@ -324,6 +322,10 @@ function sameStatement(left: string, right: string): boolean {
   return normalize(left) === normalize(right)
 }
 
+const MISSING_ISSUE_SENTENCE = "The request did not include a description."
+const MISSING_PROPERTY_SENTENCE = "The property address was not included."
+const NO_NEARBY_VENDOR_SENTENCE = "No nearby vendor matched this kind of request."
+
 /** One paragraph. Readable when a phone drops line breaks. */
 function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | null): string {
   const {
@@ -340,10 +342,43 @@ function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | 
     : input.kind === "assign_vendor"
       ? ""
       : landlordAskRefLine(workOrderRef)
-  const sentences: string[] = [ensureSentence(`Ulo: ${headline}`)]
-  if (summaryLine && !sameStatement(summaryLine, headline)) {
-    sentences.push(ensureSentence(summaryLine))
+  const sentences: string[] = []
+  const push = (text: string) => {
+    const sentence = ensureSentence(text)
+    if (!sentence) return
+    if (sentences.some((existing) => sameStatement(existing, sentence))) return
+    if (sentences.length === 0) {
+      const body = sentence.replace(/^Ulo:\s*/i, "")
+      sentences.push(ensureSentence(`Ulo: ${body}`))
+      return
+    }
+    sentences.push(sentence)
   }
+
+  if (input.kind === "assign_vendor") {
+    push(summaryLine || MISSING_ISSUE_SENTENCE)
+    push(locationLine || MISSING_PROPERTY_SENTENCE)
+    push(headline)
+    if (choiceReplyHint && numbered) {
+      const options = numbered
+        .split("\n")
+        .map((line) => ensureSentence(line))
+        .filter(Boolean)
+        .join(" ")
+      if (options) sentences.push(`Nearby options: ${options}`)
+      push(choiceReplyHint)
+    } else if (numbered) {
+      for (const line of numbered.split("\n")) push(line)
+    } else {
+      push(NO_NEARBY_VENDOR_SENTENCE)
+    }
+    if (refLine) push(refLine)
+    sentences.push(`Details: ${input.dashboardUrl.trim()}`)
+    return sentences.filter(Boolean).join(" ")
+  }
+
+  push(headline)
+  if (summaryLine) push(summaryLine)
   if (choiceReplyHint && numbered) {
     const options = numbered
       .split("\n")
@@ -351,20 +386,13 @@ function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | 
       .filter(Boolean)
       .join(" ")
     if (options) sentences.push(`Nearby options: ${options}`)
-    sentences.push(ensureSentence(choiceReplyHint))
+    push(choiceReplyHint)
   }
-  if (locationLine && !sameStatement(locationLine, summaryLine) && !sameStatement(locationLine, headline)) {
-    sentences.push(ensureSentence(locationLine))
-  }
-  if (refLine) sentences.push(ensureSentence(refLine))
-  if (!choiceReplyHint && whyLine && !sameStatement(whyLine, headline)) {
-    sentences.push(ensureSentence(whyLine))
-  }
+  if (locationLine) push(locationLine)
+  if (refLine) push(refLine)
+  if (!choiceReplyHint && whyLine) push(whyLine)
   if (!choiceReplyHint && numbered) {
-    for (const line of numbered.split("\n")) {
-      const sentence = ensureSentence(line)
-      if (sentence) sentences.push(sentence)
-    }
+    for (const line of numbered.split("\n")) push(line)
   }
   sentences.push(`Details: ${input.dashboardUrl.trim()}`)
   return sentences.filter(Boolean).join(" ")

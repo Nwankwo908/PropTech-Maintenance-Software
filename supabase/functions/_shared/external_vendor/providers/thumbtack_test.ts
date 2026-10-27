@@ -8,6 +8,7 @@ import {
   thumbtackIdsFromListingUrl,
   thumbtackSearchContextForBusiness,
   buildThumbtackFilteredUserQuery,
+  searchQueriesForInput,
   mergeThumbtackOauthScopes,
   thumbtackOpenConversationError,
   thumbtackScopeAllowsMessaging,
@@ -16,6 +17,7 @@ import {
   normalizeThumbtackUtmSource,
   resolveThumbtackRequestFlowUrl,
 } from "../thumbtackRequestFlow.ts"
+import { vendorOfferMatchesIssue } from "../../../../../shared/maintenance/vendorOfferMatch.ts"
 
 Deno.test("extractZipFromLocation reads a 5-digit ZIP", () => {
   const zip = extractZipFromLocation("109 S Grove St, Newark, NJ 07112")
@@ -299,5 +301,51 @@ Deno.test("resolveThumbtackRequestFlowUrl builds embed URL from search ids", () 
       "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome&utm_medium=partnership"
   ) {
     throw new Error(String(url))
+  }
+})
+
+Deno.test("a gas smell is not searched as a handyman job", () => {
+  const queries = searchQueriesForInput({
+    issueCategory: "other",
+    searchLocation: "Newark, NJ 07102",
+    tradeTerms: "home maintenance repair",
+    textQuery: "home maintenance repair near Newark, NJ 07102",
+    jobDescription: "I smell gas in the kitchen",
+  })
+  if (queries.join("|") !== "gas leak repair|plumber") {
+    throw new Error(queries.join("|"))
+  }
+  for (const query of queries) {
+    if (/handyman|home repair|general/i.test(query)) {
+      throw new Error(query)
+    }
+  }
+})
+
+Deno.test("a gas smell is not offered to a general contractor", () => {
+  const issue = {
+    description: "I smell gas in the kitchen",
+    issueCategory: "other",
+  }
+  for (const name of [
+    "S&K General Contracting",
+    "Humble Hands Home LLC",
+    "ProService LLC",
+  ]) {
+    if (vendorOfferMatchesIssue({ name, ...issue })) {
+      throw new Error(name)
+    }
+  }
+  if (!vendorOfferMatchesIssue({ name: "Metro Plumbing", ...issue })) {
+    throw new Error("plumber should match a gas smell")
+  }
+  if (
+    !vendorOfferMatchesIssue({
+      name: "Rapid Plumb Co.",
+      description: "The kitchen faucet is leaking",
+      issueCategory: "plumbing",
+    })
+  ) {
+    throw new Error("plumbing jobs keep their vendors")
   }
 })

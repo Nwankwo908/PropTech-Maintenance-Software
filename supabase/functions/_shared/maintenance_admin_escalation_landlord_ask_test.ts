@@ -117,7 +117,7 @@ Deno.test("shortRepairLabel uses pest + street instead of this repair", () => {
     shortRepairLabel("", "pest", { street: "109 S Grove St" }),
     "Pest control at 109 S Grove St",
   )
-  assertEquals(shortRepairLabel("", null), "this repair")
+  assertEquals(shortRepairLabel("", null), "")
 })
 
 Deno.test("assign-vendor attention SMS omits Ref: WO line", () => {

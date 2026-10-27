@@ -16,6 +16,10 @@ import {
 import { mergeAndRankExternalHits, rosterNameKeys } from "./ranking.ts"
 import { buildExternalSearchQuery, normalizeIssueCategoryForSearch } from "./trade_terms.ts"
 import {
+  externalSearchCategoryForIssue,
+  vendorOfferMatchesIssue,
+} from "../../../../shared/maintenance/vendorOfferMatch.ts"
+import {
   propertyIdMatchingVendorBuilding,
   resolveExternalVendorSearchContext,
 } from "./search_location.ts"
@@ -156,13 +160,17 @@ export async function discoverExternalVendors(
     zip && !extractZipFromLocation(options.searchLocation)
       ? `${options.searchLocation.trim()} ${zip}`.trim()
       : options.searchLocation
-  const { tradeTerms, textQuery, searchLocation } = buildExternalSearchQuery(
+  const jobDescription = options.jobDescription?.trim() || null
+  const issueCategory = externalSearchCategoryForIssue(
     options.issueCategory,
+    jobDescription,
+  )
+  const { tradeTerms, textQuery, searchLocation } = buildExternalSearchQuery(
+    issueCategory,
     searchLocationWithZip,
   )
-  const jobDescription = options.jobDescription?.trim() || null
   const searchInput: ExternalVendorSearchInput = {
-    issueCategory: options.issueCategory,
+    issueCategory,
     searchLocation,
     tradeTerms,
     textQuery: jobDescription ? `${jobDescription}. ${textQuery}` : textQuery,
@@ -227,6 +235,14 @@ export async function discoverExternalVendors(
     limit: options.limit ?? EXTERNAL_VENDOR_SEARCH_LIMIT,
     excludeNameKeys,
   }).filter((row) => allowMock || isLiveExternalVendorSuggestion(row))
+    .filter((row) =>
+      vendorOfferMatchesIssue({
+        name: row.name,
+        tags: row.tags,
+        description: jobDescription,
+        issueCategory,
+      })
+    )
 
   return {
     suggestions,
@@ -372,7 +388,10 @@ export async function discoverExternalVendorsForTicket(
 
   const searchCategory = fromInspection.inspectionSearch
     ? "inspection"
-    : normalizeIssueCategoryForSearch(issueCategory)
+    : externalSearchCategoryForIssue(
+      normalizeIssueCategoryForSearch(issueCategory),
+      jobDescription,
+    )
   const { searchLocation, locationLabel, areaLabel } = await resolveExternalVendorSearchContext(
     supabase,
     { unit, building, landlordId, propertyId },
