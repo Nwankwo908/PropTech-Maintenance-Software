@@ -286,6 +286,9 @@ function pendingAnswerForStep(
   }
 
   if (step === "awaiting_confirm" || step === "awaiting_multi_issue_confirm") {
+    if (/^summary$/i.test(body.trim())) {
+      return { addressesPending: true, pendingAnswer: "summary" }
+    }
     if (isAffirmativeReply(body)) {
       return { addressesPending: true, pendingAnswer: "yes" }
     }
@@ -635,6 +638,17 @@ export function heuristicInterpretInbound(
   const recognition = recognizeInboundIntentSync(body, {
     activeIntake: pending.activeIntake,
   })
+  if (pendingMatch.pendingAnswer === "summary" && pendingMatch.addressesPending) {
+    return {
+      addressesPending: true,
+      pendingAnswer: "summary",
+      intent: "maintenance_new",
+      extractedSlots: {},
+      needsClarification: false,
+      source: "heuristic",
+      recognition,
+    }
+  }
   const guessed = heuristicIntent(body, pending, recognition, recentTurns)
   const withRecognition = (
     interpretation: InboundInterpretation,

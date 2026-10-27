@@ -1396,12 +1396,17 @@ export async function processResidentMaintenanceIntake(
       return finishIntakeQuestion(supabase, ctx, state, locationClarification)
     }
     if (/^summary$/i.test(body.trim())) {
-      return finishIntakeQuestion(
-        supabase,
-        ctx,
-        state,
-        buildConfirmationSummary(state),
-      )
+      const reprint: SmsIntakeState = {
+        ...state,
+        step: "awaiting_confirm",
+        clarify_menu_shown_at: undefined,
+      }
+      await saveIntakeState(supabase, ctx.conversationId, reprint)
+      return {
+        route: "resident_maintenance_intake",
+        replyHint: buildConfirmationSummary(reprint),
+        metadata: { intakeStep: "awaiting_confirm", summaryReprint: true },
+      }
     }
     if (isYesReply(body)) {
       const multiIssues = Array.isArray(state.pending_issues)

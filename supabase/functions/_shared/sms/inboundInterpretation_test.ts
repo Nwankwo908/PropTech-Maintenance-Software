@@ -437,6 +437,15 @@ Deno.test("summary YES stays on intake so the request can submit", () => {
   assertEquals(shouldHandleInterpretedIntent(interp, "YES", pending), false)
 })
 
+Deno.test("summary reprints the request and stays on intake", () => {
+  const pending = { intakeStep: "awaiting_confirm" as const, activeIntake: true }
+  const interp = heuristicInterpretInbound("Summary", pending)
+  assertEquals(interp.addressesPending, true)
+  assertEquals(interp.pendingAnswer, "summary")
+  assertEquals(interp.needsClarification, false)
+  assertEquals(shouldHandleInterpretedIntent(interp, "Summary", pending), false)
+})
+
 Deno.test("urgency answer continues intake; lease question does not", () => {
   const pending = {
     intakeStep: "urgency" as const,
