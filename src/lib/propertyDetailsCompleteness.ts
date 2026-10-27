@@ -82,6 +82,18 @@ function insuranceHasContent(profile: InsuranceProfileLite): boolean {
   )
 }
 
+/**
+ * Property Details → Insurance has the property's own policy (carrier, policy
+ * number, or a scanned binder). Stored in this browser only.
+ */
+export function propertyInsuranceProfileOnFile(building: string): boolean {
+  const name = building.trim()
+  if (!name) return false
+  const raw = readJson<Record<string, unknown>>(landlordScopedKey('ulo.propertyInsurance', name), {})
+  const text = (key: string) => (typeof raw[key] === 'string' ? (raw[key] as string).trim() : '')
+  return Boolean(text('carrier') || text('policyNumber') || text('binderFileName'))
+}
+
 function loadInsuranceHasContent(building: string): boolean {
   const raw = readJson<Record<string, unknown>>(
     landlordScopedKey('ulo.propertyInsurance', building),

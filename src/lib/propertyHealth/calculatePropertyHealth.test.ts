@@ -12,7 +12,7 @@ import {
   type CalculatePropertyHealthInput,
 } from '@/lib/propertyHealth/calculatePropertyHealth'
 
-const allDocs = { leaseOnFile: true, assetListComplete: true, lastJobPhotoReceipt: true }
+const allDocs = { leaseOnFile: true, assetListComplete: true, lastJobPhotoReceipt: true, insuranceOnFile: true }
 
 function input(partial: Partial<CalculatePropertyHealthInput> = {}): CalculatePropertyHealthInput {
   return {
@@ -44,8 +44,8 @@ describe('Vitals rubric points', () => {
     expect([8, 7, 6, 5, 4, 3, 0].map(vendorCoveragePoints)).toEqual([25, 18, 18, 10, 10, 0, 0])
   })
 
-  it('scores documentation by completed items', () => {
-    expect([3, 2, 1, 0].map(documentationPoints)).toEqual([25, 16, 8, 0])
+  it('weights the four documents equally', () => {
+    expect([4, 3, 2, 1, 0].map(documentationPoints)).toEqual([25, 19, 13, 6, 0])
   })
 
   it('maps score bands', () => {
@@ -74,15 +74,15 @@ describe('calculatePropertyHealth', () => {
         totalUnits: 10,
         occupiedUnits: 9,
         coveredTrades: ['plumbing', 'hvac', 'electrical', 'general', 'appliance_repair', 'locksmith'],
-        documentation: { leaseOnFile: true, assetListComplete: false, lastJobPhotoReceipt: true },
+        documentation: { leaseOnFile: true, assetListComplete: false, lastJobPhotoReceipt: true, insuranceOnFile: true },
       }),
     )
     expect(result.dimensions.open_items.points).toBe(10)
     expect(result.dimensions.occupancy.points).toBe(18)
     expect(result.dimensions.vendor_coverage.points).toBe(18)
-    expect(result.dimensions.documentation.points).toBe(16)
-    expect(result.score).toBe(62)
-    expect(result.rating).toBe('At Risk')
+    expect(result.dimensions.documentation.points).toBe(19)
+    expect(result.score).toBe(65)
+    expect(result.rating).toBe('Fair')
     expect(result.dimensions.vendor_coverage.detail).toBe(
       '6 of 8 trades covered · missing Pest Control and Roofing',
     )
@@ -94,13 +94,25 @@ describe('calculatePropertyHealth', () => {
       input({
         openItemCount: 1,
         coveredTrades: ['plumbing', 'hvac', 'electrical', 'general', 'appliance_repair', 'locksmith', 'roofing'],
-        documentation: { leaseOnFile: false, assetListComplete: true, lastJobPhotoReceipt: true },
+        documentation: { leaseOnFile: false, assetListComplete: true, lastJobPhotoReceipt: true, insuranceOnFile: true },
       }),
     )
     expect(result.gaps.map(formatPropertyHealthGap)).toEqual([
-      'Upload the lease → +9 pts',
       'Close 1 open action item → +7 pts',
       'Add Pest Control vendor → +7 pts',
+      'Upload the lease → +6 pts',
+    ])
+  })
+
+  it('counts insurance as one of four equal documents', () => {
+    const withoutInsurance = calculatePropertyHealth(
+      input({ documentation: { ...allDocs, insuranceOnFile: false } }),
+    )
+    expect(withoutInsurance.dimensions.documentation.points).toBe(19)
+    expect(withoutInsurance.score).toBe(94)
+    expect(withoutInsurance.dimensions.documentation.detail).toContain('Insurance missing')
+    expect(withoutInsurance.gaps.map(formatPropertyHealthGap)).toEqual([
+      'Upload the property insurance policy → +6 pts',
     ])
   })
 
@@ -130,7 +142,7 @@ describe('calculatePropertyHealth', () => {
 
   it('gives zero occupancy points and no lease gap math errors for an empty property', () => {
     const result = calculatePropertyHealth(
-      input({ totalUnits: 0, occupiedUnits: 0, documentation: { leaseOnFile: false, assetListComplete: false, lastJobPhotoReceipt: false } }),
+      input({ totalUnits: 0, occupiedUnits: 0, documentation: { leaseOnFile: false, assetListComplete: false, lastJobPhotoReceipt: false, insuranceOnFile: false } }),
     )
     expect(result.dimensions.occupancy.points).toBe(0)
     expect(result.dimensions.documentation.points).toBe(0)

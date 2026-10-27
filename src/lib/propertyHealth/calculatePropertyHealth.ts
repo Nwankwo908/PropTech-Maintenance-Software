@@ -2,6 +2,8 @@
  * Ulo Vitals — Property Score Rubric v1 (0–100).
  * Four dimensions × 25 points each:
  *   Open action items · Occupancy · Vendor coverage · Property documentation.
+ * Documentation counts four equal documents: lease, Home Check equipment,
+ * a photo on the last job, and the property's insurance policy.
  * Bands: Healthy 80+ · Fair 65–79 · At Risk 50–64 · Critical < 50.
  * Gaps surface as CTAs with the real points they would add (e.g. "Add HVAC vendor → +7 pts").
  */
@@ -59,6 +61,22 @@ export type PropertyHealthDocumentation = {
   assetListComplete: boolean
   /** The most recent completed job has a completion photo. */
   lastJobPhotoReceipt: boolean
+  /** The landlord's own insurance policy for this property is on file (not a vendor COI). */
+  insuranceOnFile: boolean
+}
+
+const DOCUMENT_KEYS = [
+  'leaseOnFile',
+  'assetListComplete',
+  'lastJobPhotoReceipt',
+  'insuranceOnFile',
+] as const satisfies readonly (keyof PropertyHealthDocumentation)[]
+
+/** Documents counted in the Documentation dimension, each weighted equally. */
+export const DOCUMENTATION_ITEM_COUNT = DOCUMENT_KEYS.length
+
+function completedDocumentCount(doc: PropertyHealthDocumentation): number {
+  return DOCUMENT_KEYS.filter((key) => doc[key]).length
 }
 
 export type CalculatePropertyHealthInput = {
@@ -121,11 +139,10 @@ export function vendorCoveragePoints(coveredTrades: number): number {
   return 0
 }
 
+/** Equal weight per document: 0 / 6 / 13 / 19 / 25 for 0–4 documents. */
 export function documentationPoints(completeCount: number): number {
-  if (completeCount >= 3) return 25
-  if (completeCount === 2) return 16
-  if (completeCount === 1) return 8
-  return 0
+  const done = Math.max(0, Math.min(DOCUMENTATION_ITEM_COUNT, Math.floor(completeCount)))
+  return Math.round((VITALS_DIMENSION_POINTS * done) / DOCUMENTATION_ITEM_COUNT)
 }
 
 export function propertyHealthRatingFromScore(score: number): PropertyHealthRating {
@@ -223,14 +240,17 @@ const DOCUMENT_ACTIONS: Record<keyof PropertyHealthDocumentation, string> = {
   leaseOnFile: 'Upload the lease',
   assetListComplete: 'Run a Home Check for the water heater and heating system',
   lastJobPhotoReceipt: 'Add a completion photo to the last job',
+  insuranceOnFile: 'Upload the property insurance policy',
 }
 
 function documentationGaps(doc: PropertyHealthDocumentation): PropertyHealthGap[] {
-  const complete = Number(doc.leaseOnFile) + Number(doc.assetListComplete) + Number(doc.lastJobPhotoReceipt)
+  const complete = completedDocumentCount(doc)
   const gain = documentationPoints(complete + 1) - documentationPoints(complete)
-  return (Object.keys(DOCUMENT_ACTIONS) as Array<keyof PropertyHealthDocumentation>)
-    .filter((key) => !doc[key])
-    .map((key) => ({ dimension: 'documentation' as const, action: DOCUMENT_ACTIONS[key], pointsGain: gain }))
+  return DOCUMENT_KEYS.filter((key) => !doc[key]).map((key) => ({
+    dimension: 'documentation' as const,
+    action: DOCUMENT_ACTIONS[key],
+    pointsGain: gain,
+  }))
 }
 
 function documentationDetail(doc: PropertyHealthDocumentation): string {
@@ -238,6 +258,7 @@ function documentationDetail(doc: PropertyHealthDocumentation): string {
     doc.leaseOnFile ? 'Lease on file' : 'Lease missing',
     doc.assetListComplete ? 'Home Check equipment recorded' : 'Home Check equipment missing',
     doc.lastJobPhotoReceipt ? 'Last job has a photo' : 'No photo on last job',
+    doc.insuranceOnFile ? 'Insurance on file' : 'Insurance missing',
   ]
   return parts.join(' · ')
 }
@@ -248,7 +269,7 @@ export function calculatePropertyHealth(input: CalculatePropertyHealthInput): Pr
   const occupied = Math.min(total, Math.max(0, Math.floor(input.occupiedUnits)))
   const covered = CORE_VENDOR_TRADES.filter((trade) => input.coveredTrades.includes(trade))
   const doc = input.documentation
-  const docComplete = Number(doc.leaseOnFile) + Number(doc.assetListComplete) + Number(doc.lastJobPhotoReceipt)
+  const docComplete = completedDocumentCount(doc)
   const missingTrades = CORE_VENDOR_TRADES.filter((trade) => !covered.includes(trade))
   const occupancyPct = total > 0 ? Math.round((occupied / total) * 100) : 0
 

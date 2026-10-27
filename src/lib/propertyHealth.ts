@@ -47,7 +47,7 @@ export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
 /** Property Health ⓘ popover intro — weights + missing-data rule. */
 export const PROPERTY_HEALTH_SCORE_INFO_DESCRIPTION =
-  'Your score adds four parts worth 25 points each: open action items, occupancy, vendor coverage across 8 core trades, and documentation (lease, Home Check equipment, photo on the last job). Healthy is 80+, Fair 65–79, At Risk 50–64, Critical below 50.'
+  'Your score adds four parts worth 25 points each: open action items, occupancy, vendor coverage across 8 core trades, and documentation (lease, Home Check equipment, photo on the last job and property insurance, equally weighted). Healthy is 80+, Fair 65–79, At Risk 50–64, Critical below 50.'
 
 export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history' | 'unknown_condition'
 
@@ -424,6 +424,8 @@ export type PropertyHealthInputs = {
   ticketExtras?: Record<string, PropertyHealthTicketExtras>
   /** Lease uploads, matched to current residents for the Documentation dimension. */
   leaseDocuments?: PropertyHealthLeaseLookup | null
+  /** The landlord's own property insurance policies (vendor COIs excluded). */
+  insuranceDocuments?: PropertyHealthInsuranceLookup | null
   /**
    * When set, open action items are counted as of this timestamp (used for the
    * month-over-month trend).
@@ -446,6 +448,11 @@ export type PropertyHealthLeaseLookup = {
     building: string
     email?: string | null
   }): boolean
+}
+
+/** Answers whether a property policy is on file for any of a property's names / addresses. */
+export type PropertyHealthInsuranceLookup = {
+  hasPolicyFor(propertyNames: string[]): boolean
 }
 
 export type PropertyHealthTicketExtras = {
@@ -1471,6 +1478,10 @@ export function computePropertyHealthScope(
       ),
       assetListComplete: hasCompleteHomeCheckAssetList(scopedAssets),
       lastJobPhotoReceipt: lastCompletedJobHasPhoto(scopedTickets, extras),
+      insuranceOnFile:
+        inputs.insuranceDocuments?.hasPolicyFor(
+          [scopeProperty?.name, scopeBuilding].filter((name): name is string => Boolean(name?.trim())),
+        ) ?? false,
     },
   })
 
@@ -1866,10 +1877,44 @@ export type PropertyHealthVitalsSignals = {
   vendors: PropertyHealthVendor[]
   ticketExtras: Record<string, PropertyHealthTicketExtras>
   leaseDocuments: PropertyHealthLeaseLookup | null
+  insuranceDocuments: PropertyHealthInsuranceLookup | null
 }
 
 export function emptyPropertyHealthVitalsSignals(): PropertyHealthVitalsSignals {
-  return { vendors: [], ticketExtras: {}, leaseDocuments: null }
+  return { vendors: [], ticketExtras: {}, leaseDocuments: null, insuranceDocuments: null }
+}
+
+const PROPERTY_POLICY_DOCUMENT_TYPES = new Set([
+  'dwelling_policy_declarations',
+  'homeowners_policy_declarations',
+  'commercial_property_policy',
+])
+
+/** Insured property addresses from uploaded property policies (never vendor COIs). */
+export function propertyPolicyAddressesFromUploads(documents: unknown[]): string[] {
+  const addresses: string[] = []
+  for (const doc of documents) {
+    if (!doc || typeof doc !== 'object') continue
+    const payload = (doc as { extractedPayload?: unknown }).extractedPayload
+    if (!payload || typeof payload !== 'object') continue
+    const policy = (payload as { dwellingPolicy?: unknown }).dwellingPolicy
+    if (!policy || typeof policy !== 'object') continue
+    const row = policy as { document_type?: unknown; insured_property_address?: unknown }
+    if (!PROPERTY_POLICY_DOCUMENT_TYPES.has(asString(row.document_type))) continue
+    const address = asString(row.insured_property_address)
+    if (address) addresses.push(address)
+  }
+  return addresses
+}
+
+/** A property policy matches when its insured address is the same place as the property. */
+export function insuredAddressMatchesProperty(insuredAddress: string, propertyNames: string[]): boolean {
+  const street = insuredAddress.split(',')[0]?.trim() ?? ''
+  return propertyNames.some(
+    (name) =>
+      buildingsLikelySamePlace(insuredAddress, name) ||
+      (street.length > 0 && buildingsLikelySamePlace(street, name.split(',')[0]?.trim() ?? name)),
+  )
 }
 
 async function fetchPropertyHealthVitalsSignals(
@@ -1878,7 +1923,7 @@ async function fetchPropertyHealthVitalsSignals(
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return emptyPropertyHealthVitalsSignals()
 
-  const [vendorResult, ticketResult, leaseResult] = await Promise.allSettled([
+  const [vendorResult, ticketResult, leaseResult, insuranceResult] = await Promise.allSettled([
     supabase
       .from('vendors')
       .select('id, category, active, roster_status')
@@ -1898,6 +1943,20 @@ async function fetchPropertyHealthVitalsSignals(
       const lookup: PropertyHealthLeaseLookup = {
         hasLeaseFor: (resident) =>
           collectResidentLeaseDocuments(pool.documents, resident, pool.review).length > 0,
+      }
+      return lookup
+    })(),
+    (async () => {
+      const [{ loadOnboardingDocumentArchive }, { propertyInsuranceProfileOnFile }] = await Promise.all([
+        import('@/lib/organizationSettings'),
+        import('@/lib/propertyDetailsCompleteness'),
+      ])
+      const archive = await loadOnboardingDocumentArchive(landlordId)
+      const insuredAddresses = propertyPolicyAddressesFromUploads(archive.documents)
+      const lookup: PropertyHealthInsuranceLookup = {
+        hasPolicyFor: (propertyNames) =>
+          propertyNames.some((name) => propertyInsuranceProfileOnFile(name)) ||
+          insuredAddresses.some((address) => insuredAddressMatchesProperty(address, propertyNames)),
       }
       return lookup
     })(),
@@ -1931,6 +1990,7 @@ async function fetchPropertyHealthVitalsSignals(
     vendors,
     ticketExtras,
     leaseDocuments: leaseResult.status === 'fulfilled' ? leaseResult.value : null,
+    insuranceDocuments: insuranceResult.status === 'fulfilled' ? insuranceResult.value : null,
   }
 }
 

@@ -157,7 +157,7 @@ describe('property activation vs health insights', () => {
     expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
   })
 
-  it('scores 100 Healthy with full vendor coverage, lease, Home Check equipment and a job photo', () => {
+  it('scores 100 Healthy with full vendor coverage, lease, Home Check equipment, a job photo and insurance', () => {
     const report = buildPropertyHealthReport({
       units: [activeUnit],
       tickets: [ticket('done', 'completed', { completedAt: new Date(now - 2 * DAY_MS).toISOString() })],
@@ -170,6 +170,7 @@ describe('property activation vs health insights', () => {
       vendors: allCoreVendors,
       ticketExtras: { done: { observationOnly: false, completionPhotoCount: 2 } },
       leaseDocuments: { hasLeaseFor: (resident) => resident.fullName === 'Tamara Jones' },
+      insuranceDocuments: { hasPolicyFor: (names) => names.includes('Sunset') },
       now,
     })
 
