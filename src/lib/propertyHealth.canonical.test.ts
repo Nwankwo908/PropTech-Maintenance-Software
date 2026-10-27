@@ -256,9 +256,10 @@ describe('buildPropertyHealthReport', () => {
     const row = resolveBuildingHealthRow(report, 'Sunset')
     expect(row?.building).toBe('Sunset')
     expect(row?.unitCount).toBe(1)
-    expect(row?.status).toBe('unknown')
-    expect(row?.score).toBeNull()
-    expect(row?.pendingReason).toBe('unknown_condition')
+    // Vitals: occupied, no open items, no vendors, no documentation → 25 + 25 = 50.
+    expect(row?.score).toBe(50)
+    expect(row?.status).toBe('at_risk')
+    expect(row?.pendingReason).toBeNull()
   })
 })
 

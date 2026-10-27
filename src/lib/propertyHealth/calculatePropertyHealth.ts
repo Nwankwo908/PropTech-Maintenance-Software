@@ -1,723 +1,311 @@
 /**
- * Deterministic Property Health engine (0–100).
- * Condition 40% · Maintenance 35% · Risk 25%.
- * Missing factors are unknown — never filled with a placeholder penalty.
- * Overall score is withheld until Condition has real data (inspections, systems, asset ages).
+ * Ulo Vitals — Property Score Rubric v1 (0–100).
+ * Four dimensions × 25 points each:
+ *   Open action items · Occupancy · Vendor coverage · Property documentation.
+ * Bands: Healthy 80+ · Fair 65–79 · At Risk 50–64 · Critical < 50.
+ * Gaps surface as CTAs with the real points they would add (e.g. "Add HVAC vendor → +7 pts").
  */
+import { normalizeVendorTrade, type VendorTradeSlug } from '@shared/maintenance/vendorTrades'
+
+export const VITALS_DIMENSION_POINTS = 25
 
 export const PROPERTY_HEALTH_CATEGORY_WEIGHTS = {
-  condition: 0.4,
-  maintenance: 0.35,
-  risk: 0.25,
+  open_items: 0.25,
+  occupancy: 0.25,
+  vendor_coverage: 0.25,
+  documentation: 0.25,
 } as const
 
 export type PropertyHealthCategoryId = keyof typeof PROPERTY_HEALTH_CATEGORY_WEIGHTS
 
-export type PropertyHealthRating =
-  | 'Excellent'
-  | 'Good'
-  | 'Fair'
-  | 'Needs Attention'
-  | 'High Risk'
-
-export const REPEAT_ISSUE_WINDOW_DAYS = 45
-
-const DAMAGE_LOOKBACK_MS = 24 * 30 * 24 * 60 * 60 * 1000
-const OPEN_AGE_PENALTY_DAYS = 14
-const USEFUL_LIFE_YEARS: Record<MajorSystemId, number> = {
-  roof: 25,
-  hvac: 15,
-  boiler: 15,
-  water_heater: 12,
-  electrical_panel: 30,
-  plumbing: 40,
+export const PROPERTY_HEALTH_CATEGORY_LABELS: Record<PropertyHealthCategoryId, string> = {
+  open_items: 'Open action items',
+  occupancy: 'Occupancy',
+  vendor_coverage: 'Vendor coverage',
+  documentation: 'Documentation',
 }
 
-const MAJOR_SYSTEM_LABELS: Record<MajorSystemId, string> = {
-  roof: 'Roof',
-  hvac: 'HVAC',
-  boiler: 'Boiler',
-  water_heater: 'Water heater',
-  electrical_panel: 'Electrical panel',
+export type PropertyHealthRating = 'Healthy' | 'Fair' | 'At Risk' | 'Critical'
+
+/** The 8 core trades a property must be covered for. */
+export const CORE_VENDOR_TRADES = [
+  'plumbing',
+  'hvac',
+  'electrical',
+  'appliance_repair',
+  'locksmith',
+  'pest_control',
+  'roofing',
+  'general',
+] as const satisfies readonly VendorTradeSlug[]
+
+export type CoreVendorTrade = (typeof CORE_VENDOR_TRADES)[number]
+
+export const CORE_VENDOR_TRADE_LABELS: Record<CoreVendorTrade, string> = {
   plumbing: 'Plumbing',
+  hvac: 'HVAC',
+  electrical: 'Electrical',
+  appliance_repair: 'Appliance',
+  locksmith: 'Locksmith',
+  pest_control: 'Pest Control',
+  roofing: 'Roofing',
+  general: 'General',
 }
 
-export type MajorSystemId = 'roof' | 'hvac' | 'boiler' | 'water_heater' | 'electrical_panel' | 'plumbing'
-
-export type PropertyHealthFactor = {
-  id: string
-  category: PropertyHealthCategoryId
-  label: string
-  status: 'known' | 'unknown'
-  deduction: number
-  explanation: string | null
-}
-
-export type PropertyHealthCategoryResult = {
-  score: number | null
-  weight: number
-  factors: PropertyHealthFactor[]
-}
-
-export type PropertyHealthIssue = {
-  category: PropertyHealthCategoryId
-  explanation: string
-  deduction: number
+export type PropertyHealthDocumentation = {
+  /** A lease is on file for every current resident at the property. */
+  leaseOnFile: boolean
+  /** Home Check equipment recorded: water heater and heating system. */
+  assetListComplete: boolean
+  /** The most recent completed job has a completion photo. */
+  lastJobPhotoReceipt: boolean
 }
 
 export type CalculatePropertyHealthInput = {
-  trackedUnits: Array<{ unitLabel: string; status: string }>
-  tickets: CalculatePropertyHealthTicket[]
-  pmTasks: Array<{ taskStatus: string; dueAt?: string | null }>
-  assets: CalculatePropertyHealthAsset[]
-  inspections: CalculatePropertyHealthInspection[]
-  damageReports: Array<{ createdAt: string; maintenanceRequestId?: string | null }>
-  now?: number
-  /** Open tickets created after this time are ignored (4-week delta proxy). */
-  openIssuesCreatedBeforeMs?: number
-  repeatWindowMs?: number
+  /** Open action items (proactive + reactive), status open. */
+  openItemCount: number
+  /** Units onboarded in Ulo for this property. */
+  totalUnits: number
+  /** Units with an active lease / current resident. */
+  occupiedUnits: number
+  /** Core trades with at least one active vendor. */
+  coveredTrades: readonly CoreVendorTrade[]
+  documentation: PropertyHealthDocumentation
 }
 
-export type CalculatePropertyHealthTicket = {
-  id: string
-  createdAt: string
-  unit: string
-  issueCategory: string | null
-  vendorWorkStatus: string
-  description?: string | null
-  urgency?: string | null
-  severity?: string | null
-  priority?: string | null
-  dueAt?: string | null
-  /**
-   * HQS / compliance inspection letter id when this WO was spawned from a
-   * landlord-initiated inspection batch. Excluded from the Repeat issues factor.
-   */
-  inspectionReportId?: string | null
+export type PropertyHealthDimension = {
+  id: PropertyHealthCategoryId
+  label: string
+  points: number
+  maxPoints: number
+  /** Plain-language status, e.g. "6 of 8 trades covered". */
+  detail: string
 }
 
-export type CalculatePropertyHealthAsset = {
-  applianceType: string
-  estimatedAgeYears: number | null
-  usefulLifeYears: number | null
-  replacementUrgency: string | null
-  condition: string | null
-  deficiencies?: Array<{ severity?: string | null; description?: string | null }>
-}
-
-export type CalculatePropertyHealthInspection = {
-  category: string | null
-  conditionRating: string | null
-  deficiencies?: Array<{ severity?: string | null; description?: string | null }>
+export type PropertyHealthGap = {
+  dimension: PropertyHealthCategoryId
+  /** CTA copy, e.g. "Add HVAC vendor". */
+  action: string
+  /** Points the action would add to the total score. */
+  pointsGain: number
 }
 
 export type PropertyHealthResult = {
-  score: number | null
-  rating: PropertyHealthRating | null
-  condition: PropertyHealthCategoryResult
-  maintenance: PropertyHealthCategoryResult
-  risk: PropertyHealthCategoryResult
-  dataCompleteness: number
-  topIssues: PropertyHealthIssue[]
+  score: number
+  rating: PropertyHealthRating
+  dimensions: Record<PropertyHealthCategoryId, PropertyHealthDimension>
+  /** Largest point gains first. */
+  gaps: PropertyHealthGap[]
 }
 
-const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled', 'deleted'])
-const VOIDED_WORK_STATUSES = new Set(['cancelled', 'deleted'])
+export function openItemsPoints(openItems: number): number {
+  if (openItems <= 0) return 25
+  if (openItems === 1) return 18
+  if (openItems <= 3) return 10
+  return 0
+}
 
-const PLANNED_FACTOR_IDS = [
-  'condition.roof',
-  'condition.hvac',
-  'condition.water_heater',
-  'condition.electrical_panel',
-  'condition.inspection',
-  'condition.smoke_co',
-  'maintenance.open',
-  'maintenance.overdue',
-  'maintenance.pm',
-  'maintenance.repeat',
-  'maintenance.leaks',
-  'risk.vacancy',
-  'risk.safety',
-  'risk.water_loss',
-  'risk.electrical_fire',
-  'risk.incidents',
-  'risk.smoke_co',
-] as const
+export function occupancyPoints(occupied: number, total: number): number {
+  if (total <= 0) return 0
+  const ratio = Math.min(1, Math.max(0, occupied) / total)
+  if (ratio >= 1) return 25
+  if (ratio >= 0.9) return 18
+  if (ratio >= 0.75) return 10
+  return 0
+}
+
+export function vendorCoveragePoints(coveredTrades: number): number {
+  if (coveredTrades >= 8) return 25
+  if (coveredTrades >= 6) return 18
+  if (coveredTrades >= 4) return 10
+  return 0
+}
+
+export function documentationPoints(completeCount: number): number {
+  if (completeCount >= 3) return 25
+  if (completeCount === 2) return 16
+  if (completeCount === 1) return 8
+  return 0
+}
 
 export function propertyHealthRatingFromScore(score: number): PropertyHealthRating {
-  if (score >= 90) return 'Excellent'
-  if (score >= 80) return 'Good'
-  if (score >= 70) return 'Fair'
-  if (score >= 60) return 'Needs Attention'
-  return 'High Risk'
+  if (score >= 80) return 'Healthy'
+  if (score >= 65) return 'Fair'
+  if (score >= 50) return 'At Risk'
+  return 'Critical'
 }
 
 export function clampHealthScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
-export function normalizeHealthUnitLabel(label: string): string {
-  return label
-    .toLowerCase()
-    .replace(/^(unit|apt|apartment|suite|ste|#)\s*/i, '')
-    .replace(/[\s.#-]+/g, '')
-    .trim()
+/** Map a vendor's free-text category (may list several trades) onto core trades. */
+export function coreTradesForVendorCategory(category: string | null | undefined): CoreVendorTrade[] {
+  const raw = (category ?? '').trim()
+  if (!raw) return []
+  const parts = raw.split(/\s*(?:,|\/|;|\||&|\band\b)\s*/i).filter(Boolean)
+  const found = new Set<CoreVendorTrade>()
+  for (const part of [raw, ...parts]) {
+    const slug = normalizeVendorTrade(part, { fallbackOther: false })
+    if (slug && (CORE_VENDOR_TRADES as readonly string[]).includes(slug)) {
+      found.add(slug as CoreVendorTrade)
+    }
+  }
+  return CORE_VENDOR_TRADES.filter((trade) => found.has(trade))
 }
 
-export function resolveMajorSystemId(raw: string | null | undefined): MajorSystemId | null {
-  const text = (raw ?? '').toLowerCase()
-  if (!text) return null
-  if (text.includes('roof')) return 'roof'
-  if (text.includes('electrical') || text.includes('panel') || text.includes('breaker')) {
-    return 'electrical_panel'
-  }
-  if (text.includes('water_heater') || text.includes('water heater') || text.includes('wh ')) {
-    return 'water_heater'
-  }
-  if (text.includes('boiler')) return 'boiler'
-  if (
-    text.includes('hvac') ||
-    text.includes('furnace') ||
-    text.includes('heat pump') ||
-    text.includes('air condition') ||
-    /\bac\b/.test(text)
-  ) {
-    return 'hvac'
-  }
-  if (text.includes('plumb') || text.includes('supply line') || text.includes('drain')) {
-    return 'plumbing'
+function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`
+}
+
+function listLabels(trades: readonly CoreVendorTrade[]): string {
+  const labels = trades.map((trade) => CORE_VENDOR_TRADE_LABELS[trade])
+  if (labels.length <= 1) return labels.join('')
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+}
+
+function openItemsGap(openItems: number): PropertyHealthGap | null {
+  if (openItems <= 0) return null
+  const current = openItemsPoints(openItems)
+  // Smallest number of closures that reaches the next band.
+  for (let close = 1; close <= openItems; close += 1) {
+    const gain = openItemsPoints(openItems - close) - current
+    if (gain > 0) {
+      return {
+        dimension: 'open_items',
+        action: close === 1 ? 'Close 1 open action item' : `Close ${close} open action items`,
+        pointsGain: gain,
+      }
+    }
   }
   return null
 }
 
-function isTicketOpen(ticket: CalculatePropertyHealthTicket): boolean {
-  return !CLOSED_WORK_STATUSES.has(ticket.vendorWorkStatus.toLowerCase())
-}
-
-function isVoided(ticket: CalculatePropertyHealthTicket): boolean {
-  return VOIDED_WORK_STATUSES.has(ticket.vendorWorkStatus.toLowerCase())
-}
-
-function haystack(ticket: CalculatePropertyHealthTicket): string {
-  return `${ticket.description ?? ''} ${ticket.issueCategory ?? ''}`.toLowerCase()
-}
-
-function isSevereOpen(ticket: CalculatePropertyHealthTicket): boolean {
-  const band = `${ticket.urgency ?? ''} ${ticket.severity ?? ''} ${ticket.priority ?? ''}`.toLowerCase()
-  return /\b(emergency|urgent|critical|high)\b/.test(band)
-}
-
-function looksLikeActiveLeak(ticket: CalculatePropertyHealthTicket): boolean {
-  const hay = haystack(ticket)
-  if (/\b(flood|flooding|water damage|soaking|active leak|uncontrolled leak)\b/.test(hay)) return true
-  if (/\bleak/.test(hay) && !/\b(drip(?:ping)? faucet|minor leak|slow leak)\b/.test(hay)) return true
-  return false
-}
-
-function looksLikeElectricalOrFireHazard(ticket: CalculatePropertyHealthTicket): boolean {
-  const hay = haystack(ticket)
-  return (
-    /\b(spark|sparks|sparking|burning smell|smoke|gas leak|gas smell|carbon monoxide|co alarm)\b/.test(
-      hay,
-    ) ||
-    (/\belectr/.test(hay) && isSevereOpen(ticket))
-  )
-}
-
-function parseTime(value: string | null | undefined): number | null {
-  if (!value?.trim()) return null
-  const ts = new Date(value).getTime()
-  return Number.isNaN(ts) ? null : ts
-}
-
-function conditionRatingDeduction(rating: string | null | undefined): number {
-  const r = (rating ?? '').toLowerCase()
-  if (r === 'unsafe') return 40
-  if (r === 'poor') return 25
-  if (r === 'fair') return 10
-  return 0
-}
-
-function systemAgeDeduction(ageYears: number, usefulLife: number): number {
-  if (!(usefulLife > 0) || !(ageYears >= 0)) return 0
-  const ratio = ageYears / usefulLife
-  if (ratio > 1) return 30
-  if (ratio >= 0.7) return 15
-  return 0
-}
-
-function maxDeduction(values: number[]): number {
-  return values.reduce((max, value) => Math.max(max, value), 0)
-}
-
-function scoreCondition(input: CalculatePropertyHealthInput): PropertyHealthCategoryResult {
-  const factors: PropertyHealthFactor[] = []
-  const systems = new Map<MajorSystemId, number[]>()
-
-  const addSystemDeduction = (id: MajorSystemId, amount: number) => {
-    const list = systems.get(id) ?? []
-    list.push(Math.max(0, amount))
-    systems.set(id, list)
-  }
-
-  let inspectionKnown = false
-  let inspectionDeduction = 0
-
-  for (const asset of input.assets) {
-    const system = resolveMajorSystemId(asset.applianceType)
-    if (!system) continue
-
-    const useful =
-      asset.usefulLifeYears != null && asset.usefulLifeYears > 0
-        ? asset.usefulLifeYears
-        : USEFUL_LIFE_YEARS[system]
-    const parts: number[] = []
-    if (asset.estimatedAgeYears != null && Number.isFinite(asset.estimatedAgeYears)) {
-      parts.push(systemAgeDeduction(asset.estimatedAgeYears, useful))
-    }
-    parts.push(conditionRatingDeduction(asset.condition))
-    if ((asset.replacementUrgency ?? '').toLowerCase() === 'immediate') parts.push(20)
-    const hasSafety = (asset.deficiencies ?? []).some(
-      (row) => (row.severity ?? '').toLowerCase() === 'safety_hazard',
-    )
-    if (hasSafety) parts.push(40)
-
-    const known =
-      asset.estimatedAgeYears != null ||
-      Boolean(asset.condition?.trim()) ||
-      Boolean(asset.replacementUrgency?.trim()) ||
-      (asset.deficiencies ?? []).length > 0
-    if (!known) continue
-    addSystemDeduction(system, Math.min(40, parts.reduce((sum, n) => sum + n, 0)))
-  }
-
-  for (const photo of input.inspections) {
-    const ratingDeduction = conditionRatingDeduction(photo.conditionRating)
-    const safety = (photo.deficiencies ?? []).some(
-      (row) => (row.severity ?? '').toLowerCase() === 'safety_hazard',
-    )
-    const system = resolveMajorSystemId(photo.category)
-    if (system) {
-      const extra = Math.min(40, ratingDeduction + (safety ? 40 : 0))
-      if (photo.conditionRating || safety) addSystemDeduction(system, extra)
-      continue
-    }
-    if (photo.conditionRating || safety) {
-      inspectionKnown = true
-      inspectionDeduction = Math.max(
-        inspectionDeduction,
-        Math.min(40, ratingDeduction + (safety ? 40 : 0)),
-      )
+function occupancyGap(occupied: number, total: number): PropertyHealthGap | null {
+  const vacant = Math.max(0, total - occupied)
+  if (total <= 0 || vacant === 0) return null
+  const current = occupancyPoints(occupied, total)
+  for (let fill = 1; fill <= vacant; fill += 1) {
+    const gain = occupancyPoints(occupied + fill, total) - current
+    if (gain > 0) {
+      return {
+        dimension: 'occupancy',
+        action: fill === 1 ? 'Lease 1 vacant unit' : `Lease ${fill} vacant units`,
+        pointsGain: gain,
+      }
     }
   }
-
-  const scoredSystems: MajorSystemId[] = []
-  for (const id of Object.keys(MAJOR_SYSTEM_LABELS) as MajorSystemId[]) {
-    const deductions = systems.get(id)
-    if (!deductions?.length) {
-      factors.push({
-        id: `condition.${id}`,
-        category: 'condition',
-        label: MAJOR_SYSTEM_LABELS[id],
-        status: 'unknown',
-        deduction: 0,
-        explanation: null,
-      })
-      continue
-    }
-    scoredSystems.push(id)
-    const deduction = Math.min(40, maxDeduction(deductions))
-    const explanation =
-      deduction >= 30
-        ? `${MAJOR_SYSTEM_LABELS[id]} is past or well beyond expected useful life, or was flagged unsafe`
-        : deduction >= 15
-          ? `${MAJOR_SYSTEM_LABELS[id]} is approaching expected replacement age`
-          : deduction > 0
-            ? `${MAJOR_SYSTEM_LABELS[id]} condition needs attention`
-            : null
-    factors.push({
-      id: `condition.${id}`,
-      category: 'condition',
-      label: MAJOR_SYSTEM_LABELS[id],
-      status: 'known',
-      deduction,
-      explanation,
-    })
-  }
-
-  if (inspectionKnown) {
-    factors.push({
-      id: 'condition.inspection',
-      category: 'condition',
-      label: 'Overall property condition',
-      status: 'known',
-      deduction: inspectionDeduction,
-      explanation:
-        inspectionDeduction > 0 ? 'Inspection noted poor or unsafe property condition' : null,
-    })
-  } else {
-    factors.push({
-      id: 'condition.inspection',
-      category: 'condition',
-      label: 'Overall property condition',
-      status: 'unknown',
-      deduction: 0,
-      explanation: null,
-    })
-  }
-
-  factors.push({
-    id: 'condition.smoke_co',
-    category: 'condition',
-    label: 'Smoke / CO detectors',
-    status: 'unknown',
-    deduction: 0,
-    explanation: null,
-  })
-
-  const knownScores: number[] = []
-  for (const id of scoredSystems) {
-    const factor = factors.find((row) => row.id === `condition.${id}`)
-    if (factor) knownScores.push(100 - factor.deduction)
-  }
-  if (inspectionKnown) knownScores.push(100 - inspectionDeduction)
-
-  return {
-    score: knownScores.length ? clampHealthScore(knownScores.reduce((a, b) => a + b, 0) / knownScores.length) : null,
-    weight: PROPERTY_HEALTH_CATEGORY_WEIGHTS.condition,
-    factors,
-  }
+  return null
 }
 
-function scoreMaintenance(
-  input: CalculatePropertyHealthInput,
-  now: number,
-  repeatWindowMs: number,
-): PropertyHealthCategoryResult {
-  const factors: PropertyHealthFactor[] = []
-  const createdCutoff = input.openIssuesCreatedBeforeMs
-  const openTickets = input.tickets.filter((ticket) => {
-    if (!isTicketOpen(ticket) || isVoided(ticket)) return false
-    if (createdCutoff == null) return true
-    const ts = parseTime(ticket.createdAt)
-    return ts != null && ts < createdCutoff
-  })
-
-  let routine = 0
-  let severe = 0
-  let leakCount = 0
-  let overdueCount = 0
-  let longRunning = 0
-
-  for (const ticket of openTickets) {
-    const leak = looksLikeActiveLeak(ticket)
-    if (leak) leakCount += 1
-    else if (isSevereOpen(ticket)) severe += 1
-    else routine += 1
-
-    const due = parseTime(ticket.dueAt ?? null)
-    if (due != null && due < now) overdueCount += 1
-
-    const created = parseTime(ticket.createdAt)
-    if (created != null && now - created >= OPEN_AGE_PENALTY_DAYS * 24 * 60 * 60 * 1000) {
-      longRunning += 1
+function vendorGap(covered: readonly CoreVendorTrade[]): PropertyHealthGap | null {
+  const missing = CORE_VENDOR_TRADES.filter((trade) => !covered.includes(trade))
+  if (missing.length === 0) return null
+  const current = vendorCoveragePoints(covered.length)
+  for (let add = 1; add <= missing.length; add += 1) {
+    const gain = vendorCoveragePoints(covered.length + add) - current
+    if (gain > 0) {
+      const trades = missing.slice(0, add)
+      return {
+        dimension: 'vendor_coverage',
+        action:
+          add === 1
+            ? `Add ${listLabels(trades)} vendor`
+            : `Add vendors for ${listLabels(trades)}`,
+        pointsGain: gain,
+      }
     }
   }
+  return null
+}
 
-  const openCapped = Math.min(56, Math.min(20, routine * 4) + Math.min(40, severe * 8))
-  const openExplanationParts: string[] = []
-  if (severe > 0) openExplanationParts.push(`${severe} urgent or critical open request${severe === 1 ? '' : 's'}`)
-  if (routine > 0) openExplanationParts.push(`${routine} open maintenance request${routine === 1 ? '' : 's'}`)
-  if (longRunning > 0) {
-    openExplanationParts.push(`${longRunning} open longer than ${OPEN_AGE_PENALTY_DAYS} days`)
+const DOCUMENT_ACTIONS: Record<keyof PropertyHealthDocumentation, string> = {
+  leaseOnFile: 'Upload the lease',
+  assetListComplete: 'Run a Home Check for the water heater and heating system',
+  lastJobPhotoReceipt: 'Add a completion photo to the last job',
+}
+
+function documentationGaps(doc: PropertyHealthDocumentation): PropertyHealthGap[] {
+  const complete = Number(doc.leaseOnFile) + Number(doc.assetListComplete) + Number(doc.lastJobPhotoReceipt)
+  const gain = documentationPoints(complete + 1) - documentationPoints(complete)
+  return (Object.keys(DOCUMENT_ACTIONS) as Array<keyof PropertyHealthDocumentation>)
+    .filter((key) => !doc[key])
+    .map((key) => ({ dimension: 'documentation' as const, action: DOCUMENT_ACTIONS[key], pointsGain: gain }))
+}
+
+function documentationDetail(doc: PropertyHealthDocumentation): string {
+  const parts = [
+    doc.leaseOnFile ? 'Lease on file' : 'Lease missing',
+    doc.assetListComplete ? 'Home Check equipment recorded' : 'Home Check equipment missing',
+    doc.lastJobPhotoReceipt ? 'Last job has a photo' : 'No photo on last job',
+  ]
+  return parts.join(' · ')
+}
+
+export function calculatePropertyHealth(input: CalculatePropertyHealthInput): PropertyHealthResult {
+  const openItems = Math.max(0, Math.floor(input.openItemCount))
+  const total = Math.max(0, Math.floor(input.totalUnits))
+  const occupied = Math.min(total, Math.max(0, Math.floor(input.occupiedUnits)))
+  const covered = CORE_VENDOR_TRADES.filter((trade) => input.coveredTrades.includes(trade))
+  const doc = input.documentation
+  const docComplete = Number(doc.leaseOnFile) + Number(doc.assetListComplete) + Number(doc.lastJobPhotoReceipt)
+  const missingTrades = CORE_VENDOR_TRADES.filter((trade) => !covered.includes(trade))
+  const occupancyPct = total > 0 ? Math.round((occupied / total) * 100) : 0
+
+  const dimensions: Record<PropertyHealthCategoryId, PropertyHealthDimension> = {
+    open_items: {
+      id: 'open_items',
+      label: PROPERTY_HEALTH_CATEGORY_LABELS.open_items,
+      points: openItemsPoints(openItems),
+      maxPoints: VITALS_DIMENSION_POINTS,
+      detail: openItems === 0 ? 'No open action items' : `${plural(openItems, 'open action item')}`,
+    },
+    occupancy: {
+      id: 'occupancy',
+      label: PROPERTY_HEALTH_CATEGORY_LABELS.occupancy,
+      points: occupancyPoints(occupied, total),
+      maxPoints: VITALS_DIMENSION_POINTS,
+      detail: `${occupied} of ${plural(total, 'unit')} occupied (${occupancyPct}%)`,
+    },
+    vendor_coverage: {
+      id: 'vendor_coverage',
+      label: PROPERTY_HEALTH_CATEGORY_LABELS.vendor_coverage,
+      points: vendorCoveragePoints(covered.length),
+      maxPoints: VITALS_DIMENSION_POINTS,
+      detail:
+        missingTrades.length === 0
+          ? 'All 8 core trades covered'
+          : `${covered.length} of 8 trades covered · missing ${listLabels(missingTrades)}`,
+    },
+    documentation: {
+      id: 'documentation',
+      label: PROPERTY_HEALTH_CATEGORY_LABELS.documentation,
+      points: documentationPoints(docComplete),
+      maxPoints: VITALS_DIMENSION_POINTS,
+      detail: documentationDetail(doc),
+    },
   }
 
-  factors.push({
-    id: 'maintenance.open',
-    category: 'maintenance',
-    label: 'Open work orders',
-    status: 'known',
-    deduction: Math.min(56, openCapped + Math.min(12, longRunning * 4)),
-    explanation: openExplanationParts[0]
-      ? openExplanationParts.join('; ')
-      : null,
-  })
-
-  const overdueDeduction = Math.min(18, overdueCount * 6)
-  factors.push({
-    id: 'maintenance.overdue',
-    category: 'maintenance',
-    label: 'Overdue repairs',
-    status: 'known',
-    deduction: overdueDeduction,
-    explanation:
-      overdueCount > 0
-        ? `${overdueCount} repair${overdueCount === 1 ? '' : 's'} past the response window`
-        : null,
-  })
-
-  const overduePm = input.pmTasks.filter((task) => {
-    const status = task.taskStatus.toLowerCase()
-    if (status === 'completed' || status === 'cancelled') return false
-    const due = parseTime(task.dueAt ?? null)
-    return due != null && due < now
-  }).length
-  const pmDeduction = Math.min(15, overduePm * 5)
-  factors.push({
-    id: 'maintenance.pm',
-    category: 'maintenance',
-    label: 'Preventive maintenance',
-    status: 'known',
-    deduction: pmDeduction,
-    explanation:
-      overduePm > 0
-        ? `${overduePm} preventive task${overduePm === 1 ? '' : 's'} overdue`
-        : null,
-  })
-
-  const windowStart = now - repeatWindowMs
-  const counts = new Map<string, { total: number; open: number }>()
-  for (const ticket of input.tickets) {
-    if (isVoided(ticket)) continue
-    // Inspection letter batches are one proactive sweep — not independent
-    // recurring reports. Keep them in open/leak counts; exclude from Repeat.
-    const inspectionReportId =
-      typeof ticket.inspectionReportId === 'string'
-        ? ticket.inspectionReportId.trim()
-        : ''
-    if (inspectionReportId) continue
-    const ts = parseTime(ticket.createdAt)
-    if (ts == null || ts < windowStart || ts > now) continue
-    const unitKey = normalizeHealthUnitLabel(ticket.unit)
-    if (!unitKey) continue
-    const category = (ticket.issueCategory ?? 'general').toLowerCase()
-    const key = `${unitKey}|${category}`
-    const entry = counts.get(key) ?? { total: 0, open: 0 }
-    entry.total += 1
-    if (isTicketOpen(ticket)) entry.open += 1
-    counts.set(key, entry)
-  }
-  let repeatGroups = 0
-  for (const entry of counts.values()) {
-    if (entry.total >= 2 && entry.open > 0) repeatGroups += 1
-  }
-  const repeatDeduction = repeatGroups > 0 ? 10 : 0
-  factors.push({
-    id: 'maintenance.repeat',
-    category: 'maintenance',
-    label: 'Repeat issues',
-    status: 'known',
-    deduction: repeatDeduction,
-    explanation:
-      repeatGroups > 0
-        ? `${repeatGroups} recurring issue${repeatGroups === 1 ? '' : 's'} still open`
-        : null,
-  })
-
-  const leakDeduction = Math.min(14, leakCount * 14)
-  factors.push({
-    id: 'maintenance.leaks',
-    category: 'maintenance',
-    label: 'Active leaks',
-    status: 'known',
-    deduction: leakDeduction > 14 ? 14 : leakDeduction,
-    explanation:
-      leakCount > 0
-        ? `${leakCount} unresolved leak or water-damage request${leakCount === 1 ? '' : 's'}`
-        : null,
-  })
-
-  const totalDeduction = Math.min(
-    100,
-    factors.reduce((sum, factor) => sum + factor.deduction, 0),
+  const score = clampHealthScore(
+    dimensions.open_items.points +
+      dimensions.occupancy.points +
+      dimensions.vendor_coverage.points +
+      dimensions.documentation.points,
   )
 
-  return {
-    score: clampHealthScore(100 - totalDeduction),
-    weight: PROPERTY_HEALTH_CATEGORY_WEIGHTS.maintenance,
-    factors,
-  }
+  const gaps = [
+    openItemsGap(openItems),
+    occupancyGap(occupied, total),
+    vendorGap(covered),
+    ...documentationGaps(doc),
+  ]
+    .filter((gap): gap is PropertyHealthGap => gap != null && gap.pointsGain > 0)
+    .sort((a, b) => b.pointsGain - a.pointsGain)
+
+  return { score, rating: propertyHealthRatingFromScore(score), dimensions, gaps }
 }
 
-function scoreRisk(
-  input: CalculatePropertyHealthInput,
-  now: number,
-): PropertyHealthCategoryResult {
-  const factors: PropertyHealthFactor[] = []
-  const createdCutoff = input.openIssuesCreatedBeforeMs
-  const openTickets = input.tickets.filter((ticket) => {
-    if (!isTicketOpen(ticket) || isVoided(ticket)) return false
-    if (createdCutoff == null) return true
-    const ts = parseTime(ticket.createdAt)
-    return ts != null && ts < createdCutoff
-  })
-
-  const vacant = input.trackedUnits.filter((unit) => unit.status.toLowerCase() === 'vacant').length
-  const vacancyDeduction = Math.min(12, vacant * 3)
-  factors.push({
-    id: 'risk.vacancy',
-    category: 'risk',
-    label: 'Vacancy',
-    status: 'known',
-    deduction: vacancyDeduction,
-    explanation: vacant > 0 ? `${vacant} vacant unit${vacant === 1 ? '' : 's'}` : null,
-  })
-
-  let inspectionSafety = 0
-  let inspectionSafetyKnown = false
-  for (const photo of input.inspections) {
-    const hits = (photo.deficiencies ?? []).filter(
-      (row) => (row.severity ?? '').toLowerCase() === 'safety_hazard',
-    )
-    if (photo.conditionRating || (photo.deficiencies ?? []).length > 0) {
-      inspectionSafetyKnown = true
-    }
-    inspectionSafety += hits.length
-  }
-  for (const asset of input.assets) {
-    const hits = (asset.deficiencies ?? []).filter(
-      (row) => (row.severity ?? '').toLowerCase() === 'safety_hazard',
-    )
-    if (hits.length > 0 || asset.condition) inspectionSafetyKnown = true
-    inspectionSafety += hits.length
-  }
-  const safetyDeduction = inspectionSafetyKnown ? Math.min(40, inspectionSafety * 20) : 0
-  factors.push({
-    id: 'risk.safety',
-    category: 'risk',
-    label: 'Safety hazards',
-    status: inspectionSafetyKnown ? 'known' : 'unknown',
-    deduction: safetyDeduction,
-    explanation:
-      inspectionSafety > 0
-        ? `${inspectionSafety} safety hazard${inspectionSafety === 1 ? '' : 's'} flagged on inspection`
-        : null,
-  })
-
-  const waterLoss = openTickets.filter(looksLikeActiveLeak).length
-  factors.push({
-    id: 'risk.water_loss',
-    category: 'risk',
-    label: 'Water-loss risk',
-    status: 'known',
-    deduction: waterLoss > 0 ? 15 : 0,
-    explanation: waterLoss > 0 ? 'Open water-loss or leak risk' : null,
-  })
-
-  const electricalFire = openTickets.filter(looksLikeElectricalOrFireHazard).length
-  factors.push({
-    id: 'risk.electrical_fire',
-    category: 'risk',
-    label: 'Electrical / fire risk',
-    status: 'known',
-    deduction: electricalFire > 0 ? 15 : 0,
-    explanation: electricalFire > 0 ? 'Open electrical, gas, or fire-related hazard' : null,
-  })
-
-  const damageCount = input.damageReports.filter((row) => {
-    const ts = parseTime(row.createdAt)
-    return ts != null && now - ts <= DAMAGE_LOOKBACK_MS && ts <= now
-  }).length
-  factors.push({
-    id: 'risk.incidents',
-    category: 'risk',
-    label: 'Property incidents',
-    status: 'known',
-    deduction: damageCount > 0 ? 10 : 0,
-    explanation:
-      damageCount > 0 ? 'Significant property-damage incident on record' : null,
-  })
-
-  factors.push({
-    id: 'risk.smoke_co',
-    category: 'risk',
-    label: 'Smoke / CO detector status',
-    status: 'unknown',
-    deduction: 0,
-    explanation: null,
-  })
-
-  const known = factors.filter((factor) => factor.status === 'known')
-  const totalDeduction = Math.min(
-    100,
-    known.reduce((sum, factor) => sum + factor.deduction, 0),
-  )
-
-  return {
-    score: known.length ? clampHealthScore(100 - totalDeduction) : null,
-    weight: PROPERTY_HEALTH_CATEGORY_WEIGHTS.risk,
-    factors,
-  }
-}
-
-function combineCategoryScores(
-  categories: PropertyHealthCategoryResult[],
-): number | null {
-  const present = categories.filter((category) => category.score != null)
-  if (present.length === 0) return null
-  const weightSum = present.reduce((sum, category) => sum + category.weight, 0)
-  if (weightSum <= 0) return null
-  const mixed = present.reduce(
-    (sum, category) => sum + (category.score ?? 0) * category.weight,
-    0,
-  )
-  return clampHealthScore(mixed / weightSum)
-}
-
-export function calculatePropertyHealth(
-  input: CalculatePropertyHealthInput,
-): PropertyHealthResult {
-  const now = input.now ?? Date.now()
-  const repeatWindowMs =
-    input.repeatWindowMs ?? REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000
-
-  const condition = scoreCondition(input)
-  const maintenance =
-    input.trackedUnits.length > 0
-      ? scoreMaintenance(input, now, repeatWindowMs)
-      : {
-          score: null as number | null,
-          weight: PROPERTY_HEALTH_CATEGORY_WEIGHTS.maintenance,
-          factors: [],
-        }
-  const risk =
-    input.trackedUnits.length > 0
-      ? scoreRisk(input, now)
-      : {
-          score: null as number | null,
-          weight: PROPERTY_HEALTH_CATEGORY_WEIGHTS.risk,
-          factors: [],
-        }
-
-  const score =
-    condition.score == null
-      ? null
-      : combineCategoryScores([condition, maintenance, risk])
-  const knownIds = new Set(
-    [...condition.factors, ...maintenance.factors, ...risk.factors]
-      .filter((factor) => factor.status === 'known')
-      .map((factor) => factor.id),
-  )
-  const completeness =
-    PLANNED_FACTOR_IDS.filter((id) => knownIds.has(id)).length / PLANNED_FACTOR_IDS.length
-
-  const topIssues = [...condition.factors, ...maintenance.factors, ...risk.factors]
-    .filter((factor) => factor.status === 'known' && factor.deduction > 0 && factor.explanation)
-    .sort((a, b) => b.deduction - a.deduction)
-    .slice(0, 4)
-    .map((factor) => ({
-      category: factor.category,
-      explanation: factor.explanation!,
-      deduction: factor.deduction,
-    }))
-
-  return {
-    score,
-    rating: score == null ? null : propertyHealthRatingFromScore(score),
-    condition,
-    maintenance,
-    risk,
-    dataCompleteness: Math.round(completeness * 100) / 100,
-    topIssues,
-  }
+/** CTA copy for a gap, e.g. "Add HVAC vendor → +7 pts". */
+export function formatPropertyHealthGap(gap: PropertyHealthGap): string {
+  return `${gap.action} → +${gap.pointsGain} pts`
 }

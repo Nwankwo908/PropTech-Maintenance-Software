@@ -3,14 +3,14 @@ import {
   buildPropertyHealthReport,
   hasPropertyHealthOperationalSignal,
   PROPERTY_HEALTH_OPS_MATURITY_DAYS,
-  PROPERTY_HEALTH_KPI_CAPTION,
-  resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
   shouldShowPropertyHealthScore,
   type PropertyHealthAsset,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
+  type PropertyHealthTicket,
   type PropertyHealthUnit,
+  type PropertyHealthVendor,
 } from '@/lib/propertyHealth'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -72,7 +72,37 @@ describe('hasPropertyHealthOperationalSignal', () => {
 })
 
 describe('property activation vs health insights', () => {
-  it('shows — / 100 and Unknown until condition data exists', () => {
+  const allCoreVendors: PropertyHealthVendor[] = [
+    'Plumbing',
+    'HVAC',
+    'Electrical',
+    'Appliance repair',
+    'Locksmith',
+    'Pest control',
+    'Roofing',
+    'Handyman',
+  ].map((category, index) => ({ id: `v${index}`, category, active: true, rosterStatus: 'active' }))
+
+  const homeCheckAssets: PropertyHealthAsset[] = [
+    { ...youngRoof, applianceType: 'water_heater' },
+    { ...youngRoof, applianceType: 'furnace' },
+  ]
+
+  function ticket(id: string, vendorWorkStatus: string, extra: Partial<PropertyHealthTicket> = {}): PropertyHealthTicket {
+    return {
+      id,
+      createdAt: new Date(now - 10 * DAY_MS).toISOString(),
+      unit: '101',
+      unitId: 'u1',
+      building: 'Sunset',
+      issueCategory: 'plumbing',
+      vendorWorkStatus,
+      assignedVendorId: null,
+      ...extra,
+    }
+  }
+
+  it('scores as soon as units are active — no condition gate', () => {
     const report = buildPropertyHealthReport({
       units: [activeUnit],
       tickets: [],
@@ -84,17 +114,18 @@ describe('property activation vs health insights', () => {
       now,
     })
 
-    expect(report.portfolio?.status).toBe('unknown')
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
+    // 25 (no open items) + 25 (fully occupied) + 0 (no vendors) + 0 (no documents)
+    expect(report.portfolio?.score).toBe(50)
+    expect(report.portfolio?.status).toBe('at_risk')
+    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
     expect(resolvePropertyHealthKpiValue(report.portfolio?.status, report.portfolio?.score, 'over100')).toBe(
-      '— / 100',
+      '50 / 100',
     )
-    expect(resolvePropertyHealthKpiCaption(report.portfolio)).toBe(
-      PROPERTY_HEALTH_KPI_CAPTION,
-    )
-    expect(report.buildings[0]?.components.find((c) => c.key === 'maintenance')?.score).toBe(100)
-    expect(report.buildings[0]?.components.find((c) => c.key === 'risk')?.score).toBe(100)
-    expect(report.buildings[0]?.components.find((c) => c.key === 'condition')?.isFallback).toBe(true)
+    expect(report.buildings[0]?.gaps?.[0]).toEqual({
+      dimension: 'vendor_coverage',
+      action: 'Add vendors for Plumbing, HVAC, Electrical and Appliance',
+      pointsGain: 10,
+    })
   })
 
   it('does not require a preventive-maintenance task to become Active', () => {
@@ -123,91 +154,66 @@ describe('property activation vs health insights', () => {
     })
 
     expect(hasPropertyHealthOperationalSignal([activeUnit], [], [], now)).toBe(false)
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
-    expect(report.portfolio?.status).toBe('unknown')
+    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
   })
 
-  it('does not treat a completed PM task as enough condition data for a numeric score', () => {
+  it('scores 100 Healthy with full vendor coverage, lease, Home Check equipment and a job photo', () => {
     const report = buildPropertyHealthReport({
       units: [activeUnit],
-      tickets: [],
-      pmTasks: [{ building: 'Sunset', unitLabel: '101', taskStatus: 'completed' }],
-      feedback: [],
-      vendorMetrics: [],
-      residents: [activatedResident],
-      now,
-    })
-
-    expect(report.portfolio?.status).toBe('unknown')
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
-    expect(report.portfolio?.score).toBeNull()
-  })
-
-  it('shows a numeric score once a building system (roof/HVAC) is on file', () => {
-    const report = buildPropertyHealthReport({
-      units: [activeUnit],
-      tickets: [],
+      tickets: [ticket('done', 'completed', { completedAt: new Date(now - 2 * DAY_MS).toISOString() })],
       pmTasks: [],
-      assets: [youngRoof],
+      assets: homeCheckAssets,
       feedback: [],
       vendorMetrics: [],
       residents: [activatedResident],
       canonicalProperties: [{ id: 'prop-sunset', name: 'Sunset' }],
+      vendors: allCoreVendors,
+      ticketExtras: { done: { observationOnly: false, completionPhotoCount: 2 } },
+      leaseDocuments: { hasLeaseFor: (resident) => resident.fullName === 'Tamara Jones' },
       now,
     })
 
-    expect(report.portfolio?.status).toBe('excellent')
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
-    expect(report.portfolio?.score).toBeGreaterThan(0)
-    expect(resolvePropertyHealthKpiValue(report.portfolio?.status, report.portfolio?.score, 'over100')).toMatch(
-      /\/ 100$/,
-    )
+    expect(report.portfolio?.score).toBe(100)
+    expect(report.portfolio?.status).toBe('healthy')
+    expect(report.buildings[0]?.gaps).toEqual([])
   })
 
-  it('rates an occupied property with known systems and no open issues as Excellent', () => {
-    const matureUnit = { ...activeUnit, trackedSinceMs: now - 40 * DAY_MS }
-    const report = buildPropertyHealthReport({
-      units: [matureUnit],
-      tickets: [],
-      pmTasks: [{ building: 'Sunset', unitLabel: '101', taskStatus: 'completed' }],
-      assets: [youngRoof],
-      feedback: [],
-      vendorMetrics: [],
-      residents: [activatedResident],
-      now,
-    })
-
-    expect(report.portfolio?.status).toBe('excellent')
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
-  })
-
-  it('does not treat cancelled work orders as ops history for the maturity helper', () => {
-    const cancelledTicket = {
-      id: 'cancelled-wo',
-      createdAt: new Date(now - 40 * DAY_MS).toISOString(),
-      unit: '101',
-      unitId: 'u1',
-      building: 'Sunset',
-      issueCategory: 'plumbing',
-      vendorWorkStatus: 'cancelled',
-      assignedVendorId: null,
-    }
+  it('ignores cancelled jobs and Home Check observations as open action items', () => {
     const report = buildPropertyHealthReport({
       units: [activeUnit],
-      tickets: [cancelledTicket],
+      tickets: [
+        ticket('cancelled', 'cancelled'),
+        ticket('home-check', 'pending_accept'),
+        ticket('real', 'pending_accept'),
+      ],
       pmTasks: [],
       feedback: [],
       vendorMetrics: [],
       residents: [activatedResident],
+      ticketExtras: { 'home-check': { observationOnly: true, completionPhotoCount: 0 } },
       now,
     })
 
-    expect(hasPropertyHealthOperationalSignal([activeUnit], [], [cancelledTicket], now)).toBe(
-      false,
-    )
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
-    expect(report.portfolio?.status).toBe('unknown')
-    expect(report.portfolio?.components.find((c) => c.key === 'maintenance')?.score).toBe(100)
+    const openItems = report.buildings[0]?.components.find((c) => c.key === 'open_items')
+    expect(openItems?.score).toBe(18)
+    expect(openItems?.detail).toContain('1 open action item')
+  })
+
+  it('does not count a lease when any current resident is missing one', () => {
+    const report = buildPropertyHealthReport({
+      units: [activeUnit, { ...activeUnit, id: 'u2', unitLabel: '102' }],
+      tickets: [],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      residents: [activatedResident, { ...activatedResident, id: 'res-2', fullName: 'Sam Lee', unit: '102' }],
+      leaseDocuments: { hasLeaseFor: (resident) => resident.fullName === 'Tamara Jones' },
+      now,
+    })
+
+    const documentation = report.buildings[0]?.components.find((c) => c.key === 'documentation')
+    expect(documentation?.score).toBe(0)
+    expect(documentation?.detail).toContain('Lease missing')
   })
 
   it('does not show Pending setup when a qualified tenant is already assigned', () => {
@@ -222,8 +228,8 @@ describe('property activation vs health insights', () => {
       now,
     })
 
-    expect(report.buildings[0]?.status).toBe('unknown')
-    expect(shouldShowPropertyHealthScore(report.buildings[0]?.status)).toBe(false)
+    expect(report.buildings[0]?.status).not.toBe('pending_setup')
+    expect(shouldShowPropertyHealthScore(report.buildings[0]?.status)).toBe(true)
   })
 
   it('does not show Pending setup when residents are on the property without matching unit labels', () => {

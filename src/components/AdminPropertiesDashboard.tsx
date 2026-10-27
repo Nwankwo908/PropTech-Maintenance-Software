@@ -33,6 +33,8 @@ import {
   type PropertyHealthPmTask,
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
+  emptyPropertyHealthVitalsSignals,
+  type PropertyHealthVitalsSignals,
 } from '@/lib/propertyHealth'
 import { fetchRecognizedMaintenanceSpend, sumRecognizedSpendBetween, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
@@ -289,6 +291,7 @@ export function AdminPropertiesDashboard() {
   const [healthAssets, setHealthAssets] = useState<PropertyHealthAsset[]>([])
   const [healthInspections, setHealthInspections] = useState<PropertyHealthInspection[]>([])
   const [healthDamageReports, setHealthDamageReports] = useState<PropertyHealthDamageReport[]>([])
+  const [healthVitals, setHealthVitals] = useState<PropertyHealthVitalsSignals>(emptyPropertyHealthVitalsSignals)
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -478,6 +481,7 @@ export function AdminPropertiesDashboard() {
       setHealthAssets(healthSignals.assets)
       setHealthInspections(healthSignals.inspections)
       setHealthDamageReports(healthSignals.damageReports)
+      setHealthVitals(healthSignals.vitals)
       setRecognizedSpend(recognizedSpendResult ?? [])
 
       if (!residentsResult.error) {
@@ -538,6 +542,7 @@ export function AdminPropertiesDashboard() {
       assets: healthAssets,
       inspections: healthInspections,
       damageReports: healthDamageReports,
+      ...healthVitals,
       residents,
       canonicalProperties: canonicalPropertiesForHealth,
       now,
@@ -545,7 +550,7 @@ export function AdminPropertiesDashboard() {
     // #region agent log
     // #endregion
     return report
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, healthVitals, residents, canonicalPropertiesForHealth, now])
 
   useEffect(() => {
     if (!showPropertyCardGuide || loading) return
