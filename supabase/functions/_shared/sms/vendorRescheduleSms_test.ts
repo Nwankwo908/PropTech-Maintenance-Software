@@ -176,7 +176,7 @@ Deno.test("buildVendorTenantInitiatedRescheduleSms asks for a new window", () =>
     workOrderRef: "WO-13F4",
     previousTimeLabel: "Thu 2–4pm",
   })
-  assertMatch(body, /can no longer make Thu 2–4pm/)
+  assertMatch(body, /still set for Thu 2–4pm/)
   assertMatch(body, /new day and arrival window/)
 
   const withPref = buildVendorTenantInitiatedRescheduleSms({
@@ -185,7 +185,7 @@ Deno.test("buildVendorTenantInitiatedRescheduleSms asks for a new window", () =>
     preferredWindowText: "Fri after 3pm",
   })
   assertMatch(withPref, /They suggested: Fri after 3pm/)
-  assertMatch(withPref, /confirm that one or offer another/)
+  assertMatch(withPref, /before the visit changes/)
 })
 
 Deno.test("humanizeTrade + formatRescheduleTimeLabel", () => {

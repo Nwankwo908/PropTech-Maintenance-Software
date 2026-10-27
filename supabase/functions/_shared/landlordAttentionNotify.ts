@@ -79,6 +79,8 @@ export type NotifyLandlordAttentionParams = {
   isCritical?: boolean
   /** Exact SMS body. Weather alerts use this so the grouped copy stays intact. */
   smsBody?: string | null
+  /** When set, skip the Find External Vendor link used for unassigned jobs. */
+  dashboardUrl?: string | null
   landlordFirstName?: string | null
   invoicePaidConfirmation?: AwaitingInvoicePaidConfirmation | null
   /** Pending YES HVAC ask, stored on the landlord thread with this alert. */
@@ -94,6 +96,8 @@ export type NotifyLandlordAttentionResult = {
 }
 
 function attentionDashboardUrl(params: NotifyLandlordAttentionParams): string {
+  const override = params.dashboardUrl?.trim()
+  if (override) return override
   const ticketId = params.maintenanceRequestId?.trim() ?? ""
   if (
     ticketId &&

@@ -376,7 +376,7 @@ export async function deliverVendorTextWithRetry(
   }
 }
 
-/** Vendor SMS when the resident can no longer make a confirmed visit. */
+/** Vendor SMS when the resident asks to move a visit that is still confirmed. */
 export function buildVendorTenantInitiatedRescheduleSms(input: {
   workOrderRef: string
   previousTimeLabel: string
@@ -388,16 +388,16 @@ export function buildVendorTenantInitiatedRescheduleSms(input: {
   const lines = [
     `Update for work order ${wo}.`,
     "",
-    `The resident can no longer make ${when}.`,
+    `The resident asked to move the visit that is still set for ${when}.`,
   ]
   if (preferred) {
     lines.push(`They suggested: ${preferred}.`)
     lines.push(
-      "Reply with a day and arrival window that works (confirm that one or offer another).",
+      "Reply with a day and arrival window that works. We'll confirm that time with the resident before the visit changes.",
     )
   } else {
     lines.push(
-      "Please reply with a new day and arrival window (e.g. Thu 1pm–4pm).",
+      "Please reply with a new day and arrival window (e.g. Thu 1pm–4pm). We'll confirm it with the resident before the visit changes.",
     )
   }
   return lines.join("\n")
@@ -1367,9 +1367,9 @@ export async function tryHandleVendorRescheduleSms(
 }
 
 /**
- * Tenant can no longer make a confirmed visit — clear confirmation, ask vendor
- * for a new window, leave FSM in awaiting_availability (parity with vendor-
- * initiated reschedule's clear of schedule_confirmed_at).
+ * Tenant asked to move a confirmed visit. The saved time stays until a new
+ * time is confirmed. Ask the vendor for a window and leave the FSM in
+ * awaiting_availability.
  */
 export async function beginTenantInitiatedReschedule(
   supabase: SupabaseClient,
@@ -1444,12 +1444,9 @@ export async function beginTenantInitiatedReschedule(
     .update({
       previous_scheduled_at: previousScheduledAt,
       previous_scheduled_window_text: previousWindow,
-      schedule_confirmed_at: null,
       reschedule_requested_by: "resident",
       reschedule_reason: params.residentMessage?.trim().slice(0, 240) || null,
       reschedule_requested_at: nowIso,
-      resident_confirmation_status: null,
-      resident_confirmed_at: null,
       schedule_status: "resident_requested_reschedule",
       ...(preferredWindow
         ? { resident_availability_text: preferredWindow }

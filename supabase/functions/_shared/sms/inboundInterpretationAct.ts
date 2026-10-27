@@ -5,6 +5,9 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import { uloAppUrl } from "../uloAppUrl.ts"
+import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
+import { buildTenantRescheduleLandlordNotice } from "./tenantRescheduleLandlordNotice.ts"
 import { findActiveWorkflowRun } from "../engine/workflowRuns.ts"
 import type { WorkflowRunStatus } from "../engine/types.ts"
 import { resolveRentPaymentLink } from "../engine/rentCollectionPayment.ts"
@@ -1578,30 +1581,33 @@ async function handleScheduleChange(
     }
   }
 
+  const preferenceLabel = preference
+    ? extractTenantSchedulePreferredWindow(preference) ?? preference
+    : ""
+  const notice = buildTenantRescheduleLandlordNotice({
+    vendorNotified,
+    failureCode: vendorNotified ? null : vendorNotifyReason,
+    currentVisitLabel: previousTimeLabel,
+    preferredWindow: preferenceLabel || null,
+    approvalRequired: false,
+  })
+  const visitRef = ticket ? tenantRef(ticket) : ""
   void notifyLandlordNeedsAttention(ctx.supabase, {
     landlordId: ctx.landlordId,
     kind: "workflow_escalated",
-    headline: "Resident asked to change a visit time",
-    detail: [
-      detail,
-      previousTimeLabel ? `Previous visit: ${previousTimeLabel}.` : null,
-      vendorNotified
-        ? "Vendor was asked for a new window."
-        : ticket
-        ? vendorNotifyReason === "no_vendor" || vendorNotifyReason === "no_vendor_phone"
-          ? "The vendor was not texted because there is no phone number on file."
-          : vendorNotifyReason === "send_failed"
-          ? "The visit is waiting on a new time, but the vendor was not texted."
-          : "The vendor was not texted. The saved visit was left as it is."
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" "),
+    headline: notice.headline,
+    detail: notice.detail,
+    whyLine: notice.whyLine,
+    nextSteps: notice.nextSteps,
+    dashboardUrl: ticket
+      ? uloAppUrl.adminWorkOrder(formatWorkOrderRef(ticket.id))
+      : uloAppUrl.admin(),
     idempotencyKey: `schedule-change:${ctx.conversationId}:${ctx.messageId}`,
     maintenanceRequestId: ticket?.id ?? null,
     residentId: ctx.identity.resident_id,
     unitId: ctx.identity.unit_id ?? null,
     workflowRunId: runId,
+    requestRef: visitRef || null,
   })
   await logOutcome(ctx, {
     eventType: "sms.schedule_change_requested",
@@ -1611,9 +1617,6 @@ async function handleScheduleChange(
     workflowRunId: runId,
     maintenanceRequestId: ticket?.id ?? null,
   })
-  const preferenceLabel = preference
-    ? extractTenantSchedulePreferredWindow(preference) ?? preference
-    : ""
   return handled(
     "sms_schedule_change",
     [
