@@ -679,6 +679,7 @@ export async function terminateWorkOrder(
       .join("\n\n")
 
     const patch: Record<string, unknown> = {
+      status: params.mode === "archive" ? "archived" : "cancelled",
       vendor_work_status: params.mode === "archive" ? "archived" : "cancelled",
       cancelled_at: nowIso,
       cancelled_by: params.actorType

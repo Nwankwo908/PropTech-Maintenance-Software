@@ -29,6 +29,7 @@ type StatusUi =
   | 'assigned'
   | 'under_review'
   | 'completed'
+  | 'cancelled'
 
 export type AdminTicketRow = {
   id: string
@@ -76,6 +77,7 @@ const STATUS_FILTER_OPTIONS: { value: StatusUi; label: string }[] = [
   { value: 'assigned', label: 'Assigned' },
   { value: 'in_progress', label: 'In Progress' },
   { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Closed' },
 ]
 
 const URGENCY_FILTER_OPTIONS: { value: UrgencyUi; label: string }[] = [
@@ -157,6 +159,7 @@ function mapDbUrgency(u: string): UrgencyUi {
 /** Maps `maintenance_requests.status` (and legacy vendor workflow strings) to dashboard filters. */
 function mapDbStatusToUi(raw: string): StatusUi {
   const x = raw.trim().toLowerCase().replace(/\s+/g, '_')
+  if (x === 'cancelled' || x === 'archived') return 'cancelled'
   if (x === 'completed' || x === 'done' || x === 'closed') return 'completed'
   if (x === 'in_progress' || x === 'inprogress') return 'in_progress'
   if (
@@ -183,6 +186,7 @@ function mapDbStatusToUi(raw: string): StatusUi {
 function mapVendorWorkStatusToUi(raw: string): StatusUi {
   const x = raw.trim().toLowerCase()
   if (x === 'completed') return 'completed'
+  if (x === 'cancelled' || x === 'archived') return 'cancelled'
   if (x === 'in_progress') return 'in_progress'
   if (x === 'accepted') return 'in_progress'
   if (x === 'declined' || x === 'unassigned') return 'assigned'
@@ -446,6 +450,12 @@ function statusUi(s: StatusUi): {
         label: 'Completed',
         pill: 'bg-[#dcfce7] border border-[#b9f8cf]',
         text: 'text-[#008236]',
+      }
+    case 'cancelled':
+      return {
+        label: 'Closed',
+        pill: 'bg-[#f3f4f6] border border-[#e5e7eb]',
+        text: 'text-[#4b5563]',
       }
     default:
       return {
