@@ -7,7 +7,11 @@ import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
-import { buildTenantRescheduleLandlordNotice } from "./tenantRescheduleLandlordNotice.ts"
+import {
+  buildTenantRescheduleLandlordNotice,
+  loadTicketRescheduleFacts,
+  resolveCurrentVisitLabel,
+} from "./tenantRescheduleLandlordNotice.ts"
 import { findActiveWorkflowRun } from "../engine/workflowRuns.ts"
 import type { WorkflowRunStatus } from "../engine/types.ts"
 import { resolveRentPaymentLink } from "../engine/rentCollectionPayment.ts"
@@ -1584,11 +1588,23 @@ async function handleScheduleChange(
   const preferenceLabel = preference
     ? extractTenantSchedulePreferredWindow(preference) ?? preference
     : ""
+  const facts = ticket
+    ? await loadTicketRescheduleFacts(ctx.supabase, ctx.landlordId, ticket.id)
+    : null
+  const savedName = (residentName ?? "").trim()
   const notice = buildTenantRescheduleLandlordNotice({
     vendorNotified,
     failureCode: vendorNotified ? null : vendorNotifyReason,
-    currentVisitLabel: previousTimeLabel,
+    currentVisitLabel: resolveCurrentVisitLabel(
+      facts?.scheduledWindowText ?? ticket?.scheduled_window_text,
+      previousTimeLabel,
+    ),
     preferredWindow: preferenceLabel || null,
+    residentName: savedName && savedName.toLowerCase() !== "there" ? savedName : null,
+    propertyAddress: facts?.propertyAddress ?? null,
+    unitLabel: facts?.unitLabel ?? ticket?.unit ?? null,
+    propertyType: facts?.propertyType ?? null,
+    repairLabel: facts?.repairLabel ?? null,
     approvalRequired: false,
   })
   const visitRef = ticket ? tenantRef(ticket) : ""
@@ -1606,6 +1622,7 @@ async function handleScheduleChange(
     maintenanceRequestId: ticket?.id ?? null,
     residentId: ctx.identity.resident_id,
     unitId: ctx.identity.unit_id ?? null,
+    propertyId: facts?.propertyId ?? null,
     workflowRunId: runId,
     requestRef: visitRef || null,
   })
