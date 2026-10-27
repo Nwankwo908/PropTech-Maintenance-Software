@@ -62,6 +62,10 @@ import {
 } from "./determineNextMaintenanceQuestion.ts"
 import { attachPriorRelatedTicket } from "./priorRelatedTicket.ts"
 import {
+  acceptLocationReply,
+  clarifyIssueLocation,
+} from "../../../../shared/maintenance/locationClarification.ts"
+import {
   applyRecurringIssueSignal,
   buildConfirmationSummary,
   computeIntakeSeverity,
@@ -258,6 +262,61 @@ async function saveIntakeState(
       step,
       error: error.message,
     })
+  }
+}
+
+async function attachPropertyLayoutCounts(
+  supabase: SupabaseClient,
+  ctx: WorkflowContext,
+  state: SmsIntakeState,
+): Promise<SmsIntakeState> {
+  if (
+    state.property_bedroom_count != null ||
+    state.property_bathroom_count != null
+  ) {
+    return state
+  }
+  let propertyId = ""
+  const unitId = ctx.identity.unit_id?.trim() || ""
+  if (unitId) {
+    const { data: unitRow } = await supabase
+      .from("units")
+      .select("property_id")
+      .eq("id", unitId)
+      .maybeSingle()
+    propertyId = typeof unitRow?.property_id === "string" ? unitRow.property_id.trim() : ""
+  }
+  if (!propertyId && ctx.landlordId) {
+    const { data: properties } = await supabase
+      .from("properties")
+      .select("id")
+      .eq("landlord_id", ctx.landlordId)
+      .limit(2)
+    if (properties?.length === 1 && typeof properties[0]?.id === "string") {
+      propertyId = properties[0].id
+    }
+  }
+  if (!propertyId) return state
+  const { data: home } = await supabase
+    .from("home_data_graph")
+    .select("bedrooms, bathrooms")
+    .eq("property_id", propertyId)
+    .maybeSingle()
+  const asCount = (value: unknown): number | null => {
+    const n = typeof value === "number"
+      ? value
+      : typeof value === "string"
+      ? Number(value)
+      : NaN
+    return Number.isFinite(n) ? n : null
+  }
+  const bedrooms = asCount(home?.bedrooms)
+  const bathrooms = asCount(home?.bathrooms)
+  if (bedrooms == null && bathrooms == null) return state
+  return {
+    ...state,
+    property_bedroom_count: bedrooms,
+    property_bathroom_count: bathrooms,
   }
 }
 
@@ -848,7 +907,8 @@ function applyStepAnswer(
       return { ok: true, state: applyQuestionPlan(next) }
     }
     case "room_or_area": {
-      const room = normalizeRoomOrArea(answer, state.initial_message)
+      const room = acceptLocationReply(answer) ??
+        normalizeRoomOrArea(answer, state.initial_message)
       if (!room) {
         const noticed = extractFirstNoticedFromText(answer)
         if (noticed) {
@@ -859,13 +919,21 @@ function applyStepAnswer(
         }
         return {
           ok: false,
-          retry:
+          retry: state.diagnostic_question?.trim() ||
             "Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
         }
       }
       next.room_or_area = room
+      const follow = clarifyIssueLocation({
+        text: [state.initial_message, state.description, room].filter(Boolean).join(" "),
+        bedroomCount: state.property_bedroom_count,
+        bathroomCount: state.property_bathroom_count,
+      })
+      const previous = state.diagnostic_question ?? ""
       const asked = [...(next.asked_question_types ?? [])]
-      if (!asked.includes("room_or_area")) asked.push("room_or_area")
+      if (!(follow.question && follow.question !== previous)) {
+        if (!asked.includes("room_or_area")) asked.push("room_or_area")
+      }
       next.asked_question_types = asked
       return { ok: true, state: applyQuestionPlan(next) }
     }
@@ -1089,6 +1157,8 @@ export async function processResidentMaintenanceIntake(
     state = started.state
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
     state = sanitizeIntakeState(state)
+    state = await attachPropertyLayoutCounts(supabase, ctx, state)
+    state = applyQuestionPlan(state)
     state = await persistEarlyTicket(supabase, ctx, state)
     await logIntakeClassification(
       supabase,

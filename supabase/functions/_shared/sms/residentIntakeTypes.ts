@@ -27,6 +27,10 @@ import {
   resolveUrgencyPolicy,
 } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { issueCategoryToVendorTrade } from "../../../../shared/maintenance/vendorTrades.ts"
+import {
+  acceptLocationReply,
+  clarifyIssueLocation,
+} from "../../../../shared/maintenance/locationClarification.ts"
 
 export const ISSUE_TYPES = [
   "plumbing",
@@ -93,6 +97,9 @@ export type SmsIntakeState = {
   secondary_trade?: string
   classification_reason?: string
   room_or_area?: string
+  /** From home data when known. Missing means the layout is unknown. */
+  property_bedroom_count?: number | null
+  property_bathroom_count?: number | null
   first_noticed?: string
   /**
    * Visit windows the resident offered in SMS (e.g. "Sat after 3pm; Sun 11–4").
@@ -419,9 +426,15 @@ export function normalizeRoomOrArea(
 export function resolveRoomLabel(state: SmsIntakeState): string | null {
   const stored = state.room_or_area?.trim()
   if (stored) {
-    const normalized = normalizeRoomOrArea(stored, state.initial_message)
-    if (normalized) return normalized
+    const accepted = acceptLocationReply(stored)
+    if (accepted) return accepted
   }
+  const fromConversation = clarifyIssueLocation({
+    text: [state.initial_message, state.description].filter(Boolean).join(" "),
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  }).location
+  if (fromConversation) return fromConversation
   return extractRoomFromText(state.initial_message ?? state.description ?? "")
 }
 
@@ -466,19 +479,26 @@ export function issueSymptomPhrase(state: SmsIntakeState): string {
 
 /** Re-normalize room_or_area on read so legacy polluted values don't leak into prompts. */
 export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
-  const room = resolveRoomLabel(state)
-  if (room && room !== state.room_or_area) {
-    return { ...state, room_or_area: room }
-  }
-
-  if (!room && state.room_or_area) {
-    return {
-      ...state,
-      room_or_area: undefined,
+  const stored = state.room_or_area?.trim()
+  if (stored) {
+    const accepted = acceptLocationReply(stored)
+    if (accepted) {
+      return accepted === stored ? state : { ...state, room_or_area: accepted }
     }
   }
-
-  return state
+  const clarified = clarifyIssueLocation({
+    text: [state.initial_message, state.description, stored].filter(Boolean).join(" "),
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  })
+  if (clarified.location && !clarified.question) {
+    return { ...state, room_or_area: clarified.location }
+  }
+  const fromText = extractRoomFromText(
+    [state.initial_message, state.description].filter(Boolean).join(" "),
+  )
+  if (fromText) return { ...state, room_or_area: fromText }
+  return stored ? { ...state, room_or_area: undefined } : state
 }
 
 const ISSUE_TYPE_ALIASES: Record<string, IssueType> = {
@@ -1161,6 +1181,12 @@ export function confirmationDetailLines(state: SmsIntakeState): string[] {
     lines.push(line)
   }
 
+  const location = resolveRoomLabel(state)
+  if (location && !/\b(not sure|unsure|unknown)\b/i.test(location)) {
+    const headline = issueSummaryBullet(state).toLowerCase()
+    if (!headline.includes(location.toLowerCase())) add(`Location: ${location}.`)
+  }
+
   const behavior = facts.hvac_behavior?.trim()
   if (behavior && isCleanDiagnosticFact(behavior, state)) {
     add(factConfirmationSentence("hvac_behavior", behavior))
@@ -1323,7 +1349,8 @@ export function intakeQuestionForStep(
     case "issue_type":
       return "Thanks for reaching out. I'll help get this taken care of. What kind of issue is it? Plumbing, electrical, appliance, HVAC, leak, pest, lock, or something else?"
     case "room_or_area":
-      return "Sorry you're dealing with that. Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
+      return state.diagnostic_question?.trim() ||
+        "Sorry you're dealing with that. Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
     case "first_noticed": {
       const room = resolveRoomLabel(state)
       const symptom = issueSymptomPhrase(state)

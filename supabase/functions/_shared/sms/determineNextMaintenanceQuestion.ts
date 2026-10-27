@@ -13,6 +13,10 @@ import {
 import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
 import { detectRecurringIssueSignal } from "../../../../shared/maintenance/recurringIssueSignal.ts"
 import {
+  acceptLocationReply,
+  clarifyIssueLocation,
+} from "../../../../shared/maintenance/locationClarification.ts"
+import {
   applyPhotoRequestPolicy,
   applyRecurringIssueSignal,
   computeIntakeSeverity,
@@ -407,6 +411,16 @@ function photoQuestion(state: SmsIntakeState, hay: string): NextMaintenanceQuest
   }
 }
 
+function locationFollowUp(state: SmsIntakeState): string | null {
+  if (asked(state, "room_or_area")) return null
+  const result = clarifyIssueLocation({
+    text: [tenantAuthoredText(state), state.room_or_area].filter(Boolean).join(" "),
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  })
+  return result.question
+}
+
 function readyForSelfFix(state: SmsIntakeState, hay: string): boolean {
   const issueKnown = Boolean(state.issue_type || state.vendor_trade || state.primary_category)
   if (!issueKnown) return false
@@ -497,10 +511,6 @@ function resolveNextMaintenanceQuestion(
 
   const overBudget = answered >= budget
   const door = doorHay(state, hay)
-  const multi = (state.pending_issues?.length ?? 0) >= 2
-  const sharedRoomQuestion = multi
-    ? "Which room are these mostly happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
-    : "Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
 
   const tryAsk = (
     type: MaintenanceQuestionType,
@@ -606,6 +616,28 @@ function resolveNextMaintenanceQuestion(
         "Has the hot water been out for more than a day, or did this just start?",
       )
       if (duration) return duration
+    }
+  }
+
+  if (shouldAskStructuralRisk(state, hay)) {
+    const q = tryAsk(
+      "structural_risk",
+      "Is the crack getting larger, sagging, or is there water coming through it?",
+    )
+    if (q) return q
+  }
+
+  if (
+    !isDoorComplaint(state, hay) &&
+    !isLock(state, hay) &&
+    !isPest(state, hay) &&
+    !matchesWaterOutage(tenantHay) &&
+    !/\b(?:no hot water|no heat(?:ed)? water)\b/.test(tenantHay)
+  ) {
+    const place = locationFollowUp(state)
+    if (place) {
+      const q = tryAsk("room_or_area", place, "room_or_area")
+      if (q) return q
     }
   }
 
@@ -752,16 +784,9 @@ function resolveNextMaintenanceQuestion(
   ) {
     const q = tryAsk(
       "room_or_area",
-      "Which room is that door in? Kitchen, bathroom, bedroom, front entrance, or somewhere else?",
+      locationFollowUp(state) ??
+        "Which room is that door in? Kitchen, bathroom, bedroom, front entrance, or somewhere else?",
       "room_or_area",
-    )
-    if (q) return q
-  }
-
-  if (shouldAskStructuralRisk(state, hay)) {
-    const q = tryAsk(
-      "structural_risk",
-      "Is the crack getting larger, sagging, or is there water coming through it?",
     )
     if (q) return q
   }
@@ -771,19 +796,12 @@ function resolveNextMaintenanceQuestion(
     if (q) return q
   }
 
-  if (
-    !room &&
-    !isHvac(state, hay) &&
-    !isLock(state, hay) &&
-    !isDoorComplaint(state, hay) &&
-    (state.issue_type || state.vendor_trade)
-  ) {
-    const q = tryAsk(
-      "room_or_area",
-      sharedRoomQuestion,
-      "room_or_area",
-    )
-    if (q) return q
+  if (!isDoorComplaint(state, hay)) {
+    const place = locationFollowUp(state)
+    if (place) {
+      const q = tryAsk("room_or_area", place, "room_or_area")
+      if (q) return q
+    }
   }
 
   if (!state.issue_type && !state.vendor_trade) {
@@ -860,7 +878,25 @@ function resolveNextMaintenanceQuestion(
 }
 
 export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
-  const withRecurring = applyRecurringIssueSignal(state)
+  const counts = {
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  }
+  const storedPlace = clarifyIssueLocation({
+    text: state.room_or_area ?? "",
+    ...counts,
+  })
+  const clarified = clarifyIssueLocation({
+    text: [tenantAuthoredText(state), state.room_or_area].filter(Boolean).join(" "),
+    ...counts,
+  })
+  const withLocation: SmsIntakeState =
+    storedPlace.location && !storedPlace.question
+      ? { ...state, room_or_area: storedPlace.location }
+      : clarified.location && !clarified.question
+      ? { ...state, room_or_area: clarified.location }
+      : state
+  const withRecurring = applyRecurringIssueSignal(withLocation)
   const withContact: SmsIntakeState = {
     ...withRecurring,
     preferred_contact_method: withRecurring.preferred_contact_method?.trim() || "text",
@@ -988,8 +1024,23 @@ export function applyDiagnosticAnswer(
     }
   }
   if (type === "pest_location" || type === "room_or_area") {
-    const extracted = extractRoomFromText(answer)
-    if (extracted) room = extracted
+    const accepted = acceptLocationReply(answer)
+    if (accepted) {
+      room = accepted
+      const follow = clarifyIssueLocation({
+        text: `${tenantAuthoredText(state)} ${accepted}`,
+        bedroomCount: state.property_bedroom_count,
+        bathroomCount: state.property_bathroom_count,
+      })
+      const previous = state.diagnostic_question ?? ""
+      if (follow.question && follow.question !== previous) {
+        const index = askedTypes.indexOf(type)
+        if (index >= 0) askedTypes.splice(index, 1)
+      }
+    } else {
+      const extracted = extractRoomFromText(answer)
+      if (extracted) room = extracted
+    }
   }
   if (type === "duration_material") {
     firstNoticed = answer

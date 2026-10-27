@@ -51,7 +51,7 @@ Deno.test("clogged sink with no overflow then asks which room before photo", () 
   const planned = applyQuestionPlan(afterNo)
   // Naming "sink" is not a location — ask room before photo.
   assertEqual(planned.diagnostic_question_type, "room_or_area", "room next")
-  assertMatch(planned.diagnostic_question ?? "", /which room/i, "asks room")
+  assertMatch(planned.diagnostic_question ?? "", /which sink is clogged/i, "asks which sink")
   assertEqual(planned.step === "photo", false, "not photo yet")
 })
 
@@ -86,7 +86,7 @@ Deno.test("faucet drip without a room asks which room, not photo first", () => {
   assertEqual(next.shouldAsk, true, "asks")
   if (!next.shouldAsk) return
   assertEqual(next.questionType, "room_or_area", "type")
-  assertMatch(next.question, /which room/i, "room copy")
+  assertMatch(next.question, /which faucet is dripping/i, "faucet copy")
   assertEqual(/photo/i.test(next.question), false, "not photo")
 })
 
@@ -251,8 +251,15 @@ Deno.test("bathroom sink leak asks for a photo after follow-ups", () => {
     asked_question_types: ["plumbing_active_flow"],
     diagnostic_facts: { plumbing_active_flow: "No, I turned off the valves" },
   })
-  assertEqual(planned.step, "photo", "photo next")
-  assertMatch(planned.diagnostic_question ?? "", /photo/i, "asks for a photo")
+  assertEqual(planned.diagnostic_question_type, "room_or_area", "which bathroom next")
+  assertMatch(planned.diagnostic_question ?? "", /which bathroom/i, "asks which bathroom")
+
+  const specific = applyQuestionPlan({
+    ...planned,
+    room_or_area: "hall bathroom",
+    asked_question_types: ["plumbing_active_flow", "room_or_area"],
+  })
+  assertEqual(specific.step, "photo", "photo after the bathroom is specific")
 })
 
 Deno.test("bedroom outlets ask whether power is out elsewhere", () => {
@@ -266,7 +273,21 @@ Deno.test("bedroom outlets ask whether power is out elsewhere", () => {
   })
   assertEqual(next.shouldAsk, true, "asks")
   if (!next.shouldAsk) return
-  assertEqual(next.questionType, "electrical_scope", "type")
+  assertEqual(next.questionType, "room_or_area", "type")
+  assertMatch(next.question, /which bedroom/i, "which bedroom")
+
+  const specific = determineNextMaintenanceQuestion({
+    issue_type: "electrical",
+    vendor_trade: "electrical",
+    primary_category: "electrical",
+    initial_message: "The outlets in my bedroom stopped working.",
+    description: "The outlets in my bedroom stopped working.",
+    room_or_area: "master bedroom",
+    asked_question_types: ["room_or_area"],
+  })
+  assertEqual(specific.shouldAsk, true, "still asks")
+  if (!specific.shouldAsk) return
+  assertEqual(specific.questionType, "electrical_scope", "scope after the bedroom is named")
 })
 
 Deno.test("structural crack/sag asks risk; ceiling pests and fans do not", () => {
