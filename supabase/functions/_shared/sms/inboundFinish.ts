@@ -18,6 +18,12 @@ import {
   clearOutboundLoopFlag,
   OUTBOUND_LOOP_FLAG_KEY,
 } from "./tenantDistress.ts"
+import {
+  buildReplyLoopAttention,
+  loadReplyLoopContext,
+  replyLoopNeedsIntervention,
+} from "./replyLoopAttention.ts"
+import { normalizeOutboundForLoopCompare } from "./sms_inbound_guard.ts"
 import type {
   IdentityResolutionSource,
   SelfHealingPhase,
@@ -156,39 +162,54 @@ export async function trySendAutoReply(
       } catch {
         loopIsLandlordThread = false
       }
-      void notifyLandlordNeedsAttention(supabase, {
-        landlordId: params.landlordId,
-        kind: "workflow_escalated",
-        headline: "Automated SMS replies were looping",
-        detail: loopIsLandlordThread
-          ? "Ulo stopped repeating the same reply on a property-team text thread. Check the latest approval or payment ask before texting again."
-          : "Ulo stopped repeating the same reply. A teammate should follow up with the resident.",
-        whyLine: loopIsLandlordThread
-          ? "The same automated reply kept going out on this property-team thread."
-          : "The resident kept getting the same automated message.",
-        nextSteps: loopIsLandlordThread
-          ? ["Review the latest text on this thread", "Reply with the correct APPROVE / DECLINE or payment choice"]
-          : ["Follow up with the resident by text"],
-        idempotencyKey: `sms-loop:${params.conversationId}:${Date.now()}`,
-      })
-      try {
-        const { data: convo } = await supabase
-          .from("sms_conversations")
-          .select("intake_state")
-          .eq("id", params.conversationId)
-          .maybeSingle()
-        const prior = (convo?.intake_state && typeof convo.intake_state === "object" &&
-            !Array.isArray(convo.intake_state))
-          ? { ...(convo.intake_state as Record<string, unknown>) }
-          : {}
-        prior[OUTBOUND_LOOP_FLAG_KEY] = new Date().toISOString()
-        delete prior.clarify_menu_shown_at
-        await supabase
-          .from("sms_conversations")
-          .update({ intake_state: prior, updated_at: new Date().toISOString() })
-          .eq("id", params.conversationId)
-      } catch (err) {
-        console.warn("[sms-inbound] failed to persist outbound loop flag", err)
+      if (replyLoopNeedsIntervention(replyBody)) {
+        const audience = loopIsLandlordThread ? "property_team" : "resident"
+        const context = await loadReplyLoopContext(supabase, {
+          landlordId: params.landlordId,
+          conversationId: params.conversationId,
+          audience,
+        })
+        const copy = buildReplyLoopAttention({
+          audience,
+          residentName: context.residentName,
+          propertyAddress: context.propertyAddress,
+          unitLabel: context.unitLabel,
+          propertyType: context.propertyType,
+          repairLabel: context.repairLabel,
+          suppressedBody: replyBody,
+        })
+        const bodyKey = normalizeOutboundForLoopCompare(replyBody).slice(0, 80)
+        void notifyLandlordNeedsAttention(supabase, {
+          landlordId: params.landlordId,
+          kind: "workflow_escalated",
+          headline: copy.headline,
+          detail: copy.detail,
+          whyLine: copy.whyLine,
+          nextSteps: copy.nextSteps,
+          dashboardUrl: context.dashboardUrl,
+          maintenanceRequestId: context.ticketId,
+          requestRef: context.requestRef,
+          idempotencyKey: `sms-loop:${params.conversationId}:${bodyKey}`,
+        })
+        try {
+          const { data: convo } = await supabase
+            .from("sms_conversations")
+            .select("intake_state")
+            .eq("id", params.conversationId)
+            .maybeSingle()
+          const prior = (convo?.intake_state && typeof convo.intake_state === "object" &&
+              !Array.isArray(convo.intake_state))
+            ? { ...(convo.intake_state as Record<string, unknown>) }
+            : {}
+          prior[OUTBOUND_LOOP_FLAG_KEY] = new Date().toISOString()
+          delete prior.clarify_menu_shown_at
+          await supabase
+            .from("sms_conversations")
+            .update({ intake_state: prior, updated_at: new Date().toISOString() })
+            .eq("id", params.conversationId)
+        } catch (err) {
+          console.warn("[sms-inbound] failed to persist outbound loop flag", err)
+        }
       }
     }
     return undefined
