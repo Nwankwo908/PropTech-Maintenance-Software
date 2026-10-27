@@ -137,12 +137,10 @@ export async function resurfaceAssignVendorAttentionForTicket(
   const attention = await notifyLandlordNeedsAttention(supabase, {
     landlordId,
     kind: "assign_vendor",
-    headline: `Vendor unresponsive — ${repair}`,
-    detail: locationLine,
+    headline: "The assigned vendor did not respond",
+    detail: repair ? `${repair.charAt(0).toUpperCase()}${repair.slice(1)}.` : locationLine,
     locationLine,
-    whyLine: nextSteps.length
-      ? "The assigned vendor never accepted. Nearby vendors:"
-      : "The assigned vendor never accepted. No one on your preferred list can take this right now.",
+    whyLine: "The assigned vendor never accepted.",
     nextSteps,
     choiceReplyHint,
     vendorChoice,

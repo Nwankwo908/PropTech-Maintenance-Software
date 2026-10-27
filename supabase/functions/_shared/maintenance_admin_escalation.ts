@@ -309,15 +309,20 @@ export async function escalateMaintenanceNeedsVendor(
     if (closedPriorAsk || opts.closeOpenAskFirst === true) {
       const place = street || "this property"
       headline = previousVendorName
-        ? `${previousVendorName} can't take this`
-        : "Vendor unavailable"
-      whyLine = `${vendorLabel} can't take the job at ${place} after all.`
+        ? `${previousVendorName} can't take the job at ${place}`
+        : `${vendorLabel} can't take the job at ${place}`
+      whyLine = ""
     } else if (opts.escalationReason === "vendor_declined_no_vendor") {
-      headline = "Vendor declined"
-      whyLine = "No one on your preferred list can take this right now."
+      headline = previousVendorName
+        ? `${previousVendorName} declined this request`
+        : "The vendor declined this request"
+      whyLine = ""
+    } else if (opts.escalationReason === "sla_expired_no_vendor") {
+      headline = "The vendor did not respond in time"
+      whyLine = ""
     } else {
-      headline = "No vendor found"
-      whyLine = "No one on your preferred list can take this right now."
+      headline = "No preferred vendor matched this request"
+      whyLine = ""
     }
 
     const attention = await notifyLandlordNeedsAttention(supabase, {

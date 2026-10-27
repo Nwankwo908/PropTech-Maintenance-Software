@@ -63,11 +63,11 @@ Deno.test("invoice_ready without invoicePaid falls back to empty next steps", ()
 Deno.test("assign-vendor SMS lists nearby vendors for numbered reply", () => {
   const body = buildLandlordAttentionSms({
     kind: "assign_vendor",
-    headline: "No vendor found",
+    headline: "No preferred vendor matched this request",
     detail: "The leaking kitchen faucet.",
     locationLine: "14 Maple Ave, Unit 1, reported 2h ago",
     requestRef: "676FE1DD",
-    whyLine: "No one on your preferred list can take this right now.",
+    whyLine: "",
     nextSteps: [
       "Rapid Plumb Co., 4.9/5 (218 reviews)",
       "Metro Plumbing Services, 4.6/5 (142 reviews)",
@@ -76,29 +76,20 @@ Deno.test("assign-vendor SMS lists nearby vendors for numbered reply", () => {
     choiceReplyHint: "Reply 1, 2, or 3 and we'll contact that vendor.",
     dashboardUrl: "https://www.ulohome.io/admin?findVendor=1&ticket=676FE1DD",
   })
-  assertEquals(
-    body,
-    [
-      "Ulo: No vendor found",
-      "",
-      "The leaking kitchen faucet.",
-      "",
-      "14 Maple Ave, Unit 1, reported 2h ago",
-      "Ref: 676FE1DD",
-      "",
-      "No one on your preferred list can take this right now.",
-      "",
-      "Nearby vendors:",
-      "1. Rapid Plumb Co., 4.9/5 (218 reviews)",
-      "2. Metro Plumbing Services, 4.6/5 (142 reviews)",
-      "3. Apex Pipe & Drain, 4.8/5 (96 reviews)",
-      "",
-      "Reply 1, 2, or 3 and we'll contact that vendor.",
-      "",
-      "Details:",
-      "https://www.ulohome.io/admin?findVendor=1&ticket=676FE1DD",
-    ].join("\n"),
-  )
+  const expected = [
+    "Ulo: No preferred vendor matched this request.",
+    "The leaking kitchen faucet.",
+    "Nearby options: 1. Rapid Plumb Co., 4.9/5 (218 reviews). 2. Metro Plumbing Services, 4.6/5 (142 reviews). 3. Apex Pipe & Drain, 4.8/5 (96 reviews).",
+    "Reply 1, 2, or 3 and we'll contact that vendor.",
+    "14 Maple Ave, Unit 1, reported 2h ago.",
+    "Ref: 676FE1DD.",
+    "Details: https://www.ulohome.io/admin?findVendor=1&ticket=676FE1DD",
+  ].join(" ")
+  assertEquals(body, expected)
+  assertEquals(body.replace(/\s+/g, " "), expected)
+  assertEquals(body.includes("No vendor found"), false)
+  assertEquals(body.includes("preferred list"), false)
+  assertEquals(body.includes("unavailable"), false)
   for (const ch of body) {
     assertEquals((ch.codePointAt(0) ?? 0) <= 127, true, `non-ascii ${ch}`)
   }
@@ -107,12 +98,14 @@ Deno.test("assign-vendor SMS lists nearby vendors for numbered reply", () => {
 Deno.test("assign-vendor SMS omits fake in-app options when search is empty", () => {
   const body = buildLandlordAttentionSms({
     kind: "assign_vendor",
-    headline: "No vendor found — leaking kitchen faucet",
-    locationLine: "14 Maple Ave · Unit 1 · reported 2h ago",
+    headline: "No preferred vendor matched this request",
+    whyLine: "",
+    locationLine: "14 Maple Ave, Unit 1, reported 2h ago",
     nextSteps: [],
     dashboardUrl: "https://app.ulohome.io/admin?findVendor=1&ticket=abc-123",
   })
-  assertStringIncludes(body, "No one on your preferred list can take this right now.")
+  assertStringIncludes(body, "No preferred vendor matched this request.")
+  assertEquals(body.includes("preferred list"), false)
   assertEquals(body.includes("Try your preferred vendors"), false)
   assertEquals(body.includes("Handle this one yourself"), false)
   assertEquals(body.includes("Find a vendor nearby"), false)
@@ -121,7 +114,8 @@ Deno.test("assign-vendor SMS omits fake in-app options when search is empty", ()
 Deno.test("attention email subject matches the SMS headline", () => {
   const mail = buildLandlordAttentionEmail({
     kind: "assign_vendor",
-    headline: "No vendor found",
+    headline: "No preferred vendor matched this request",
+    whyLine: "",
     detail: "The leaking kitchen faucet.",
     locationLine: "14 Maple Ave, Unit 1, reported 2h ago",
     nextSteps: [
@@ -131,7 +125,7 @@ Deno.test("attention email subject matches the SMS headline", () => {
     choiceReplyHint: "Reply 1 or 2 and we'll contact that vendor.",
     dashboardUrl: "https://www.ulohome.io/admin",
   })
-  assertEquals(mail.subject, "Ulo: No vendor found")
+  assertEquals(mail.subject, "Ulo: No preferred vendor matched this request")
   assertStringIncludes(mail.text, "1. Rapid Plumb Co., 4.9/5 (218 reviews)")
   assertStringIncludes(mail.html, "4.9/5 (218 reviews)")
   assertStringIncludes(mail.html, "Open Find External Vendor")
@@ -175,11 +169,18 @@ Deno.test("emergency SMS is scannable and has no fake numbered reply", () => {
     nextSteps: [],
     dashboardUrl: `https://www.ulohome.io/admin?findVendor=1&ticket=${findVendorTicketToken("30a0b8cc-4284-42a7-8139-b59e219219f0", "30A0B8CC")}`,
   })
-  assertStringIncludes(body, "Ulo: Emergency")
-  assertStringIncludes(body, "100 Disposable Test Lane")
-  assertStringIncludes(body, "Ref: 30A0B8CC")
-  assertStringIncludes(body, "No reply is needed. We'll text you with updates.")
-  assertEquals(body.includes("1."), false)
+  assertEquals(
+    body,
+    [
+      "Ulo: Emergency.",
+      "The AC is not turning on. It is 100 F inside. Someone in the home feels dizzy.",
+      "100 Disposable Test Lane.",
+      "Ref: 30A0B8CC.",
+      "No reply is needed. We'll text you with updates.",
+      "Details: https://www.ulohome.io/admin?findVendor=1&ticket=30A0B8CC",
+    ].join(" "),
+  )
+  assertEquals(body.includes("1. "), false)
   assertEquals(body.includes("Open Ulo to decide next"), false)
   assertEquals(
     findVendorTicketToken("30a0b8cc-4284-42a7-8139-b59e219219f0", "30A0B8CC"),

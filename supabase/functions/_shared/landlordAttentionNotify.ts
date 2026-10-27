@@ -146,7 +146,7 @@ export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[]
 export function defaultAttentionWhyLine(kind: LandlordAttentionKind): string | null {
   switch (kind) {
     case "assign_vendor":
-      return "No one on your preferred list can take this right now."
+      return "No preferred vendor matched this request."
     case "invoice_ready":
       return "The vendor finished the job and the invoice is ready."
     case "late_rent":
@@ -281,8 +281,11 @@ function attentionCopyParts(input: AttentionCopyInput) {
   const locationLine =
     (input.locationLine ?? "").trim() || (input.detail ?? "").trim()
   const whyLine =
-    (input.whyLine ?? "").trim() ||
-    (input.kind ? defaultAttentionWhyLine(input.kind) ?? "" : "")
+    input.whyLine == null
+      ? input.whyLine === undefined
+        ? (input.kind ? defaultAttentionWhyLine(input.kind) ?? "" : "")
+        : ""
+      : input.whyLine.trim()
   const steps = input.nextSteps
     ? input.nextSteps.map((s) => s.trim()).filter(Boolean)
     : input.kind
@@ -309,6 +312,19 @@ function attentionCopyParts(input: AttentionCopyInput) {
   }
 }
 
+function ensureSentence(text: string): string {
+  const trimmed = text.replace(/\s+/g, " ").trim()
+  if (!trimmed) return ""
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+function sameStatement(left: string, right: string): boolean {
+  const normalize = (value: string) =>
+    ensureSentence(value).replace(/^Ulo:\s*/i, "").toLowerCase()
+  return normalize(left) === normalize(right)
+}
+
+/** One paragraph. Readable when a phone drops line breaks. */
 function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | null): string {
   const {
     headline,
@@ -324,28 +340,34 @@ function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | 
     : input.kind === "assign_vendor"
       ? ""
       : landlordAskRefLine(workOrderRef)
-  const nearby = choiceReplyHint && numbered ? "Nearby vendors:" : ""
-  return [
-    `Ulo: ${headline}`,
-    "",
-    summaryLine || null,
-    summaryLine ? "" : null,
-    locationLine || null,
-    refLine || null,
-    (summaryLine || locationLine || refLine) && whyLine ? "" : null,
-    whyLine || null,
-    numbered ? "" : null,
-    nearby || null,
-    numbered || null,
-    choiceReplyHint ? "" : null,
-    choiceReplyHint || null,
-    "",
-    "Details:",
-    input.dashboardUrl,
-  ]
-    .filter((line): line is string => line != null)
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
+  const sentences: string[] = [ensureSentence(`Ulo: ${headline}`)]
+  if (summaryLine && !sameStatement(summaryLine, headline)) {
+    sentences.push(ensureSentence(summaryLine))
+  }
+  if (choiceReplyHint && numbered) {
+    const options = numbered
+      .split("\n")
+      .map((line) => ensureSentence(line))
+      .filter(Boolean)
+      .join(" ")
+    if (options) sentences.push(`Nearby options: ${options}`)
+    sentences.push(ensureSentence(choiceReplyHint))
+  }
+  if (locationLine && !sameStatement(locationLine, summaryLine) && !sameStatement(locationLine, headline)) {
+    sentences.push(ensureSentence(locationLine))
+  }
+  if (refLine) sentences.push(ensureSentence(refLine))
+  if (!choiceReplyHint && whyLine && !sameStatement(whyLine, headline)) {
+    sentences.push(ensureSentence(whyLine))
+  }
+  if (!choiceReplyHint && numbered) {
+    for (const line of numbered.split("\n")) {
+      const sentence = ensureSentence(line)
+      if (sentence) sentences.push(sentence)
+    }
+  }
+  sentences.push(`Details: ${input.dashboardUrl.trim()}`)
+  return sentences.filter(Boolean).join(" ")
 }
 
 export function buildLandlordAttentionSms(input: AttentionCopyInput): string {

@@ -4,6 +4,7 @@
  * Prefer these helpers over concatenating window.location.origin + path.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   findVendorTicketToken,
   isResidentRequestRefToken,
@@ -204,27 +205,14 @@ export function findExternalVendorTicketFromSearch(search: string): string | nul
 
 /** UUID opens directly. A short ref resolves only for the signed-in landlord. */
 export async function resolveFindVendorTicketId(
-  supabase: {
-    from: (table: string) => {
-      select: (columns: string) => {
-        eq: (column: string, value: string) => {
-          eq: (column: string, value: string) => {
-            maybeSingle: () => PromiseLike<{
-              data: { id?: string } | null
-              error: { message?: string } | null
-            }>
-          }
-        }
-      }
-    }
-  },
+  supabase: SupabaseClient | null,
   landlordId: string,
   token: string,
 ): Promise<string | null> {
   const value = token.trim()
   if (!value) return null
   if (isUuidTicketToken(value)) return value
-  if (!isResidentRequestRefToken(value) || !landlordId.trim()) return null
+  if (!supabase || !isResidentRequestRefToken(value) || !landlordId.trim()) return null
   const { data, error } = await supabase
     .from('maintenance_requests')
     .select('id')

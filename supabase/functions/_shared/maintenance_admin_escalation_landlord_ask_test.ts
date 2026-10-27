@@ -125,7 +125,7 @@ Deno.test("assign-vendor attention SMS omits Ref: WO line", () => {
     kind: "assign_vendor",
     headline: "No vendor found — Pest control at 109 S Grove St",
     locationLine: "109 S Grove St · reported 2h ago",
-    whyLine: "No one on your preferred list can take this right now.",
+    whyLine: "",
     dashboardUrl: "https://www.ulohome.io/admin?findVendor=1&ticket=fd7b189c",
     workOrderRef: "WO-FD7B",
   })

@@ -75,28 +75,11 @@ Thank you,
 
 ## Reference — landlord Needs Your Attention (canonical example)
 
-Use this shape for landlord attention SMS/email (`buildLandlordAttentionSms`). Identify Ulo, what happened, where/when, why, then numbered nearby vendors when no preferred vendor can take the job. Those numbers **are** SMS replies (`1` / `2` / `3`) — reuse `landlord_vendor_choice`. Do not invent short URLs; use `uloAppUrl`. Do not put work-order IDs or engine jargon in the body.
+Use this shape for landlord attention SMS/email (`buildLandlordAttentionSms`). Write complete sentences that still read when the phone shows the text as one block. Say no preferred vendor matched, then the nearby options. Say a preferred vendor is unavailable only after that vendor confirmed they cannot take the job. Those numbers **are** SMS replies (`1` / `2` / `3`) — reuse `landlord_vendor_choice`. Do not invent short URLs; use `uloAppUrl`. Do not put work-order IDs or engine jargon in the body.
 
 SMS:
 ```
-Ulo: No vendor found
-
-The leaking kitchen faucet.
-
-14 Maple Ave, Unit 1, reported 2h ago
-Ref: 676FE1DD
-
-No one on your preferred list can take this right now.
-
-Nearby vendors:
-1. Rapid Plumb Co., 4.9/5 (218 reviews)
-2. Metro Plumbing Services, 4.6/5 (142 reviews)
-3. Apex Pipe & Drain, 4.8/5 (96 reviews)
-
-Reply 1, 2, or 3 and we'll contact that vendor.
-
-Details:
-{link}
+Ulo: No preferred vendor matched this request. The leaking kitchen faucet. Nearby options: 1. Rapid Plumb Co., 4.9/5 (218 reviews). 2. Metro Plumbing Services, 4.6/5 (142 reviews). 3. Apex Pipe & Drain, 4.8/5 (96 reviews). Reply 1, 2, or 3 and we'll contact that vendor. 14 Maple Ave, Unit 1, reported 2h ago. Ref: 676FE1DD. Details: {link}
 ```
 
 ## Apply everywhere
