@@ -6,10 +6,7 @@ import { Link } from 'react-router-dom'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
 import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import {
-  NOTIFICATION_CHANNEL_OPTIONS,
   NOTIFICATION_PREFERENCE_OPTIONS,
-  QUIET_HOURS_TIME_OPTIONS,
-  type NotificationChannelId,
   type NotificationPreferenceId,
   type OnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
@@ -18,24 +15,12 @@ import {
   OnboardingContinueButton,
   OnboardingStepNav,
 } from './OnboardingStepChrome'
-import {
-  onboardingFieldLabelClass,
-  onboardingInputClass,
-  onboardingSelectClass,
-} from './onboardingFieldStyles'
+import { onboardingInputClass } from './onboardingFieldStyles'
 import {
   hasOnboardingSmsConsent,
   saveOnboardingAccountSetupStep,
   type SaveOnboardingAccountSetupStepInput,
 } from './onboardingAccountForm'
-
-const ACCOUNT_SETUP_CHANNEL_OPTIONS = NOTIFICATION_CHANNEL_OPTIONS.filter(
-  (option) => option.id !== 'activity_feed',
-).map((option) =>
-  option.id === 'both'
-    ? { ...option, description: 'SMS and email.' }
-    : option,
-)
 
 export type OnboardingAccountSetupStepSaveDeps = Omit<
   SaveOnboardingAccountSetupStepInput,
@@ -274,132 +259,6 @@ export function OnboardingAccountSetupStep({
                   )
                 })}
               </div>
-            </div>
-
-            <div>
-              <h3 className="text-[15px] font-semibold text-[#101828]">Channel preference</h3>
-              <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                Where should we send those alerts? SMS and email are available.
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {ACCOUNT_SETUP_CHANNEL_OPTIONS.map((option) => {
-                  const channel =
-                    approvalRules.notificationChannel === 'activity_feed'
-                      ? 'both'
-                      : approvalRules.notificationChannel
-                  const selected = channel === option.id
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() =>
-                        updateApprovalRules({
-                          notificationChannel: option.id as NotificationChannelId,
-                        })
-                      }
-                      className={[
-                        'rounded-[12px] border px-3 py-3 text-left transition-colors',
-                        selected
-                          ? 'border-[#186179] bg-[#f0f7fa] ring-1 ring-[#186179]/30'
-                          : 'border-[#e5e7eb] bg-white hover:border-[#cfd4dc] hover:bg-[#f9fafb]',
-                      ].join(' ')}
-                      aria-pressed={selected}
-                    >
-                      <p className="text-[14px] font-semibold text-[#101828]">{option.label}</p>
-                      {option.description ? (
-                        <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
-                          {option.description}
-                        </p>
-                      ) : null}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="text-[15px] font-semibold text-[#101828]">Quiet hours</h3>
-                  <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                    Pause non-emergency alerts overnight. Emergencies still come through.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={approvalRules.quietHoursEnabled}
-                  onClick={() =>
-                    updateApprovalRules({
-                      quietHoursEnabled: !approvalRules.quietHoursEnabled,
-                    })
-                  }
-                  className={[
-                    'relative h-6 w-11 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#186179]/30 focus-visible:ring-offset-2',
-                    approvalRules.quietHoursEnabled ? 'bg-[#611879]' : 'bg-[#e5e7eb]',
-                  ].join(' ')}
-                >
-                  <span
-                    className={[
-                      'pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm transition-transform',
-                      approvalRules.quietHoursEnabled ? 'translate-x-5' : 'translate-x-0',
-                    ].join(' ')}
-                  />
-                </button>
-              </div>
-              {approvalRules.quietHoursEnabled ? (
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>From</span>
-                    <div className="relative">
-                      <select
-                        className={onboardingSelectClass}
-                        value={approvalRules.quietHoursStart}
-                        onChange={(e) =>
-                          updateApprovalRules({ quietHoursStart: e.target.value })
-                        }
-                        aria-label="Quiet hours start"
-                      >
-                        {QUIET_HOURS_TIME_OPTIONS.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4" aria-hidden>
-                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </span>
-                    </div>
-                  </label>
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>To</span>
-                    <div className="relative">
-                      <select
-                        className={onboardingSelectClass}
-                        value={approvalRules.quietHoursEnd}
-                        onChange={(e) => updateApprovalRules({ quietHoursEnd: e.target.value })}
-                        aria-label="Quiet hours end"
-                      >
-                        {QUIET_HOURS_TIME_OPTIONS.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4" aria-hidden>
-                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </span>
-                    </div>
-                  </label>
-                  <p className="text-[12px] leading-4 text-[#6a7282] sm:col-span-2">
-                    Example: no alerts 10:00 PM–7:00 AM except emergencies.
-                  </p>
-                </div>
-              ) : null}
             </div>
           </div>
 

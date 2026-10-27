@@ -13,7 +13,6 @@ import {
   type OnboardingExtractedProperty,
   type OnboardingExtractedResident,
   type OnboardingExtractedUnit,
-  type OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
 import {
   editLeaseReviewDraft,
@@ -36,18 +35,8 @@ import {
   OnboardingStepNav,
 } from './OnboardingStepChrome'
 import { OnboardingUloNumberCard } from '@/components/onboarding/OnboardingUloNumberCard'
-import { NoVendorsContinueModal } from '@/components/onboarding/NoVendorsContinueModal'
 import { OnboardingSendSwitch } from '@/components/onboarding/OnboardingSendSwitch'
 import { US_STATE_OPTIONS } from '@/lib/usLocations'
-import { VENDOR_TRADE_OPTIONS as CANONICAL_VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
-
-const VENDOR_TRADE_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'Select trade' },
-  ...CANONICAL_VENDOR_TRADE_OPTIONS.map((trade) => ({
-    value: trade.value,
-    label: trade.label,
-  })),
-]
 
 const MANUAL_PROPERTY_SOURCE = 'Manual entry'
 
@@ -148,22 +137,6 @@ function AddRowButton({
       </svg>
     </button>
   )
-}
-
-function createEmptyExtractedVendor(): OnboardingExtractedVendor {
-  return {
-    id: `vendor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: '',
-    category: null,
-    phone: '',
-    email: '',
-    preferredEmergency: false,
-    sourceDocumentName: 'Manual entry',
-    confidence: 1,
-    selected: false,
-    needsReview: false,
-    sendOnboardingOnComplete: false,
-  }
 }
 
 const inputClass =
@@ -471,16 +444,11 @@ export function OnboardingAiReviewStep({
 }: OnboardingAiReviewStepProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
-  const [confirmNoVendorsOpen, setConfirmNoVendorsOpen] = useState(false)
   const [teamMemberOpen, setTeamMemberOpen] = useState(false)
   const smsConsentId = useId()
-  const noVendorsTitleId = useId()
   const reviewScrollRootRef = useRef<HTMLDivElement | null>(null)
   useReviewAttentionScrollGlow(reviewScrollRootRef)
 
-  const hasSelectedVendors = review.vendors.some(
-    (vendor) => vendor.selected && vendor.name.trim().length > 0,
-  )
   const hasPortfolioData = extractionReviewHasPortfolioData(review)
   // Sticky: once we show manual add (skip upload or empty extract), keep those
   // controls after the landlord adds their first property/tenant/vendor.
@@ -512,25 +480,10 @@ export function OnboardingAiReviewStep({
     review.account.backupContactEmail,
   ])
 
-  useEffect(() => {
-    if (review.vendors.length > 0) return
-    onReviewChange({
-      ...review,
-      vendors: [createEmptyExtractedVendor()],
-    })
-    // Seed one blank row when extraction found none, including Skip on Limited Alpha 2.
-    // A display-only card is not in review state, so typing never sticks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the list is empty
-  }, [review.vendors.length])
-
   const requiredBlankMessage = leaseDraftRequiredBlankMessage(review)
 
   function requestContinue() {
     if (requiredBlankMessage) return
-    if (!hasSelectedVendors) {
-      setConfirmNoVendorsOpen(true)
-      return
-    }
     onImportAll()
   }
 
@@ -565,13 +518,6 @@ export function OnboardingAiReviewStep({
     onReviewChange({
       ...review,
       units: review.units.map((row) => (row.id === id ? { ...row, ...patch } : row)),
-    })
-  }
-
-  function patchVendor(id: string, patch: Partial<OnboardingExtractedVendor>) {
-    onReviewChange({
-      ...review,
-      vendors: review.vendors.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     })
   }
 
@@ -619,27 +565,6 @@ export function OnboardingAiReviewStep({
     patchResident(item.id, {
       ...patch,
       selected: Boolean(next.fullName.trim() || next.phone.trim() || next.email.trim()),
-    })
-  }
-
-  function addVendorForm() {
-    onReviewChange({
-      ...review,
-      vendors: [...review.vendors, createEmptyExtractedVendor()],
-    })
-  }
-
-  function removeVendorForm(id: string) {
-    if (review.vendors.length <= 1) {
-      onReviewChange({
-        ...review,
-        vendors: [createEmptyExtractedVendor()],
-      })
-      return
-    }
-    onReviewChange({
-      ...review,
-      vendors: review.vendors.filter((row) => row.id !== id),
     })
   }
 
@@ -1473,166 +1398,6 @@ export function OnboardingAiReviewStep({
     )
   }
 
-  function renderVendorForms() {
-    const vendors = review.vendors
-
-    return (
-      <div className="mt-3 flex flex-col gap-3">
-        <p className="text-[13px] text-[#6a7282]">
-          Add preferred vendors for repairs and property services. You can enter them here even if
-          none were found in your documents.
-        </p>
-        {vendors.map((item, index) => (
-          <div
-            key={item.id}
-            className="rounded-[10px] border border-[#e5e7eb] bg-[#fafafa] p-4"
-          >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-[13px] font-semibold text-[#101828]">Vendor {index + 1}</p>
-              <div className="flex items-center gap-3">
-                <OnboardingSendSwitch
-                  variant="vendor"
-                  enabled={Boolean(item.sendOnboardingOnComplete)}
-                  disabled={!item.phone.trim() && !item.email.trim()}
-                  messagePreview={{
-                    kind: 'vendor',
-                    name: item.name,
-                    phone: item.phone,
-                    email: item.email,
-                    companyName: review.account?.companyName,
-                  }}
-                  onChange={(sendOnboardingOnComplete) =>
-                    patchVendor(item.id, { sendOnboardingOnComplete })
-                  }
-                  aria-label={
-                    item.phone.trim() || item.email.trim()
-                      ? `Send verification invite to vendor ${index + 1} when setup completes`
-                      : `Add a phone or email to send invite to vendor ${index + 1}`
-                  }
-                />
-                {vendors.length > 1 ? (
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-[8px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
-                    onClick={() => removeVendorForm(item.id)}
-                    aria-label={`Remove vendor ${index + 1}`}
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block sm:col-span-2">
-                <span className={fieldLabelClass}>Vendor name</span>
-                <input
-                  className={inputClass}
-                  value={item.name}
-                  onChange={(e) =>
-                    patchVendor(item.id, {
-                      name: e.target.value,
-                      selected: e.target.value.trim().length > 0,
-                    })
-                  }
-                  placeholder="Vendor name"
-                  aria-label={`Vendor ${index + 1} name`}
-                />
-              </label>
-              <label className="block relative">
-                <span className={fieldLabelClass}>Trade</span>
-                <select
-                  className={`${selectClass} ${!(item.category ?? '').trim() ? 'text-[#9ca3af]' : ''}`}
-                  value={item.category ?? ''}
-                  onChange={(e) =>
-                    patchVendor(item.id, {
-                      category: e.target.value.trim() || null,
-                      selected: item.name.trim().length > 0 || Boolean(e.target.value.trim()),
-                    })
-                  }
-                  aria-label={`Vendor ${index + 1} trade`}
-                >
-                  {VENDOR_TRADE_OPTIONS.map((option) => (
-                    <option key={option.value || 'placeholder'} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <span
-                  className="pointer-events-none absolute right-3 top-[30px] text-[#6a7282]"
-                  aria-hidden
-                >
-                  <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                    <path
-                      d="M6 9l6 6 6-6"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </span>
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Phone</span>
-                <input
-                  className={inputClass}
-                  type="tel"
-                  value={item.phone}
-                  onChange={(e) =>
-                    patchVendor(item.id, {
-                      phone: e.target.value,
-                      selected: item.name.trim().length > 0,
-                    })
-                  }
-                  placeholder="(555) 123-4567"
-                  aria-label={`Vendor ${index + 1} phone`}
-                />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className={fieldLabelClass}>Email</span>
-                <input
-                  className={inputClass}
-                  type="email"
-                  value={item.email}
-                  onChange={(e) =>
-                    patchVendor(item.id, {
-                      email: e.target.value,
-                      selected: item.name.trim().length > 0,
-                    })
-                  }
-                  placeholder="Email"
-                  aria-label={`Vendor ${index + 1} email`}
-                />
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={item.preferredEmergency}
-                  onChange={(e) =>
-                    patchVendor(item.id, {
-                      preferredEmergency: e.target.checked,
-                      selected: item.name.trim().length > 0,
-                    })
-                  }
-                  className={`${checkboxInputClassName} mt-0.5 accent-[#611879]`}
-                  aria-label={`Vendor ${index + 1} preferred emergency vendor`}
-                />
-                <span className="text-[12px] leading-5 text-[#364153]">
-                  Preferred emergency vendor for urgent after-hours work
-                </span>
-              </label>
-            </div>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[13px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb]"
-          onClick={addVendorForm}
-        >
-          + Add another vendor
-        </button>
-      </div>
-    )
-  }
 
   const account = review.account
   const smsChecked = Boolean(account.smsConsentAcceptedAt)
@@ -1789,7 +1554,7 @@ export function OnboardingAiReviewStep({
             <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-5 text-center">
               <p className="text-[14px] font-medium text-[#101828]">No portfolio data from your documents</p>
               <p className="mt-1 text-[13px] text-[#6a7282]">
-                Add properties, tenants, and vendors below, or go back to upload different documents.
+                Add properties and tenants below. Vendors are on the next page.
               </p>
             </div>
           ) : null}
@@ -1891,21 +1656,6 @@ export function OnboardingAiReviewStep({
             )}
           </ReviewSection>
           )}
-          <ReviewSection
-            title={manualAdd ? 'Add vendor' : 'Vendors'}
-            count={
-              manualAdd
-                ? undefined
-                : review.vendors.filter((v) => v.name.trim()).length || undefined
-            }
-            headerActions={
-              manualAdd ? (
-                <AddRowButton label="Add vendor" onClick={addVendorForm} />
-              ) : undefined
-            }
-          >
-            {manualAdd && review.vendors.length === 0 ? null : renderVendorForms()}
-          </ReviewSection>
         </>
       </div>
 
@@ -1920,17 +1670,6 @@ export function OnboardingAiReviewStep({
         </OnboardingContinueButton>
       </OnboardingStepNav>
 
-      {confirmNoVendorsOpen ? (
-        <NoVendorsContinueModal
-          titleId={noVendorsTitleId}
-          saving={saving}
-          onClose={() => setConfirmNoVendorsOpen(false)}
-          onConfirm={() => {
-            setConfirmNoVendorsOpen(false)
-            onImportAll()
-          }}
-        />
-      ) : null}
     </section>
   )
 }

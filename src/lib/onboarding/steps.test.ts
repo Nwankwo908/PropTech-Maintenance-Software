@@ -14,7 +14,6 @@ describe('getOnboardingStepOrder', () => {
       'entry',
       'account_setup',
       'property',
-      'vendors',
       'residents',
       'approval',
       'payouts',
@@ -41,7 +40,7 @@ describe('fast-track stepper labels', () => {
     const labels = getOnboardingStepsForPath('fast_track', { includePayouts: false })
       .filter((step) => step.id !== 'entry')
       .map((step) => step.label)
-    expect(labels).toEqual(['Upload documents', 'Review', 'Approval rules'])
+    expect(labels).toEqual(['Upload documents', 'Review', 'Operations setup'])
   })
 })
 
@@ -75,7 +74,7 @@ describe('resolveOnboardingStepForPath', () => {
 
   it('leaves steps alone on the guided path', () => {
     expect(resolveOnboardingStepForPath('property', 'guided')).toBe('property')
-    expect(resolveOnboardingStepForPath('vendors', null)).toBe('vendors')
+    expect(resolveOnboardingStepForPath('vendors', null)).toBe('approval')
   })
 })
 
@@ -87,7 +86,7 @@ describe('resolveReviewEditStep', () => {
   })
 
   it('opens merged Review for extracted roster and issue edits', () => {
-    expect(resolveReviewEditStep('vendors', 'fast_track')).toBe('ai_review')
+    expect(resolveReviewEditStep('vendors', 'fast_track')).toBe('approval')
     expect(resolveReviewEditStep('residents', 'fast_track')).toBe('ai_review')
     expect(resolveReviewEditStep('ai_review', 'fast_track')).toBe('ai_review')
     expect(resolveReviewEditStep('review', 'fast_track')).toBe('ai_review')
@@ -101,6 +100,7 @@ describe('resolveReviewEditStep', () => {
   it('does not remap guided review edits', () => {
     expect(resolveReviewEditStep('property', 'guided')).toBe('property')
     expect(resolveReviewEditStep('account_setup', 'guided')).toBe('account_setup')
+    expect(resolveReviewEditStep('vendors', 'guided')).toBe('approval')
   })
 })
 
@@ -111,7 +111,9 @@ describe('getPreviousOnboardingStep', () => {
   })
 
   it('walks guided and fast-track orders independently', () => {
-    expect(getPreviousOnboardingStep('vendors', 'guided', { includePayouts: true })).toBe('property')
+    expect(getPreviousOnboardingStep('vendors', 'guided', { includePayouts: true })).toBe(
+      'residents',
+    )
     expect(getPreviousOnboardingStep('approval', 'guided', { includePayouts: true })).toBe(
       'residents',
     )

@@ -47,6 +47,8 @@ export type OnboardingVendorsStepProps = {
   saving: boolean
   companyName?: string | null
   editContinueLabel?: string
+  /** Shown at the top of Operations setup, without its own continue button. */
+  embedded?: boolean
   onBack: () => void
 }
 
@@ -58,6 +60,7 @@ export function OnboardingVendorsStep({
   saving,
   companyName,
   editContinueLabel,
+  embedded = false,
   onBack,
 }: OnboardingVendorsStepProps) {
   function updateVendorForm(id: string, patch: Partial<VendorFormRow>) {
@@ -85,10 +88,18 @@ export function OnboardingVendorsStep({
   }
 
   return (
-        <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[18px] font-semibold text-[#101828]">Add vendors</h2>
-          <p className="mt-1 text-[14px] text-[#6a7282]">
-          Tell us about the vendors you work with for repairs, maintenance, and property services.
+        <section
+          className={
+            embedded
+              ? undefined
+              : 'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
+          }
+        >
+          <h2 className={embedded ? 'text-[15px] font-semibold text-[#111827]' : 'text-[18px] font-semibold text-[#101828]'}>
+            {embedded ? 'Vendors' : 'Add vendors'}
+          </h2>
+          <p className={embedded ? 'mt-1 text-[13px] leading-5 text-[#6b7280]' : 'mt-1 text-[14px] text-[#6a7282]'}>
+          Ulo dispatches jobs to your vendor network. Add at least one vendor per trade, plumbing, HVAC, electrical, so jobs route automatically without delay.
           </p>
           <div className="mt-4 flex flex-col gap-4">
             {vendorForms.map((form, index) => (
@@ -221,15 +232,17 @@ export function OnboardingVendorsStep({
               + Add another vendor
             </button>
           </div>
-          <OnboardingStepNav
-            showBack={showBackButton}
-            onBack={onBack}
-            saving={saving}
-          >
-            <OnboardingContinueButton disabled={saving} onClick={handleContinue}>
-              {editContinueLabel ?? 'Continue'}
-            </OnboardingContinueButton>
-          </OnboardingStepNav>
+          {embedded ? null : (
+            <OnboardingStepNav
+              showBack={showBackButton}
+              onBack={onBack}
+              saving={saving}
+            >
+              <OnboardingContinueButton disabled={saving} onClick={handleContinue}>
+                {editContinueLabel ?? 'Continue'}
+              </OnboardingContinueButton>
+            </OnboardingStepNav>
+          )}
         </section>
   )
 }

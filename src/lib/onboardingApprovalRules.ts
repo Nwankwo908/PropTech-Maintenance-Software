@@ -130,17 +130,7 @@ export const NOTIFICATION_CHANNEL_OPTIONS: {
   description?: string
 }[] = [
   { id: 'sms', label: 'SMS', description: 'Text messages only.' },
-  { id: 'email', label: 'Email', description: 'Email only.' },
-  {
-    id: 'activity_feed',
-    label: 'Activity feed',
-    description: 'Show alerts in the Ulo Activity Feed on Overview.',
-  },
-  {
-    id: 'both',
-    label: 'All channels',
-    description: 'SMS, email, and the Ulo Activity Feed.',
-  },
+  { id: 'both', label: 'SMS + email', description: 'Text messages and email.' },
 ]
 
 export const QUIET_HOURS_TIME_OPTIONS = [
@@ -253,9 +243,12 @@ export function normalizeOnboardingApprovalRules(
   const notifChannel = String(
     row.notificationChannel ?? row.notification_channel ?? defaults.notificationChannel,
   ).trim()
+  const offeredChannel = notifChannel === 'email' || notifChannel === 'activity_feed'
+    ? 'both'
+    : notifChannel
   const notificationChannel = (
-    NOTIFICATION_CHANNEL_OPTIONS.some((o) => o.id === notifChannel)
-      ? notifChannel
+    NOTIFICATION_CHANNEL_OPTIONS.some((o) => o.id === offeredChannel)
+      ? offeredChannel
       : defaults.notificationChannel
   ) as NotificationChannelId
 

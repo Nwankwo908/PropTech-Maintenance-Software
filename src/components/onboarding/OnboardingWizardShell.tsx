@@ -416,7 +416,18 @@ export function OnboardingWizardShell() {
               initialRules={state.approvalRules}
               saving={saving}
               showBack={showBackButton}
-              showNotificationPreferences={state.setupPath === 'fast_track'}
+              leading={
+                <OnboardingVendorsStep
+                  embedded
+                  vendorForms={vendorForms}
+                  setVendorForms={setVendorForms}
+                  saveDeps={{ ...stepSaveDeps, setVendorForms }}
+                  showBackButton={false}
+                  saving={saving}
+                  companyName={state.accountSetup.companyName}
+                  onBack={() => undefined}
+                />
+              }
               showMarketplacePreference={
                 state.setupPath !== 'fast_track' &&
                 landlordHasVendorMarketplace(getActiveLandlordId())

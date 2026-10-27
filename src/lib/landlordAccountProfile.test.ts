@@ -15,7 +15,7 @@ describe('landlordAccountProfile', () => {
     expect(notificationTogglesFromChannel('both')).toEqual({
       emailUpdates: true,
       smsAlerts: true,
-      activityFeedAlerts: true,
+      activityFeedAlerts: false,
     })
   })
 

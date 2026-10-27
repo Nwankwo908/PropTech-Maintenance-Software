@@ -25,9 +25,8 @@ export const GUIDED_ONBOARDING_STEPS: { id: OnboardingStep; label: string }[] = 
   { id: 'entry', label: 'Welcome' },
   { id: 'account_setup', label: 'Account setup' },
   { id: 'property', label: 'Property' },
-  { id: 'vendors', label: 'Vendors' },
   { id: 'residents', label: 'Residents' },
-  { id: 'approval', label: 'Approval rules' },
+  { id: 'approval', label: 'Operations setup' },
   { id: 'payouts', label: 'Payouts' },
   { id: 'review', label: 'Review' },
 ]
@@ -36,7 +35,7 @@ export const FAST_TRACK_ONBOARDING_STEPS: { id: OnboardingStep; label: string }[
   { id: 'entry', label: 'Welcome' },
   { id: 'document_upload', label: 'Upload documents' },
   { id: 'ai_review', label: 'Review' },
-  { id: 'approval', label: 'Approval rules' },
+  { id: 'approval', label: 'Operations setup' },
   { id: 'payouts', label: 'Payouts' },
 ]
 
@@ -44,7 +43,6 @@ const GUIDED_STEP_ORDER: OnboardingStep[] = [
   'entry',
   'account_setup',
   'property',
-  'vendors',
   'residents',
   'approval',
   'payouts',
@@ -62,6 +60,7 @@ const FAST_TRACK_STEP_ORDER: OnboardingStep[] = [
 const ALL_ONBOARDING_STEP_IDS = new Set<OnboardingStep>([
   ...GUIDED_STEP_ORDER,
   ...FAST_TRACK_STEP_ORDER,
+  'vendors',
 ])
 
 const LEGACY_STEP_MAP: Record<string, OnboardingStep> = {
@@ -97,6 +96,9 @@ export function resolveOnboardingStepForPath(
   options?: OnboardingStepOptions,
 ): OnboardingStep {
   let next = step
+  if (setupPath !== 'fast_track' && step === 'vendors') {
+    next = 'approval'
+  }
   if (setupPath === 'fast_track') {
     if (step === 'property') next = 'document_upload'
     else if (step === 'vendors' || step === 'residents') next = 'ai_review'
@@ -117,12 +119,16 @@ export function resolveReviewEditStep(
   target: OnboardingStep,
   setupPath: OnboardingSetupPath,
 ): OnboardingStep {
-  if (setupPath !== 'fast_track') return target
+  if (setupPath !== 'fast_track') {
+    if (target === 'vendors') return 'approval'
+    return target
+  }
   if (target === 'approval' || target === 'payouts') return target
   if (target === 'property' || target === 'document_upload' || target === 'account_setup') {
     return 'document_upload'
   }
-  // vendors / residents / ai_review / leftover review → merged Review stage
+  if (target === 'vendors') return 'approval'
+  // residents / ai_review / leftover review → merged Review stage
   return 'ai_review'
 }
 
