@@ -23,6 +23,7 @@ import {
   VENDOR_WO_CLARIFICATION_KEY,
 } from "../../sms/vendorWorkOrderClarification.ts"
 import { resolveVendorAvailability } from "../../vendor_availability_parse.ts"
+import { loadTicketPropertyScheduleTimeZone } from "../../residentSendTiming.ts"
 import {
   beginVendorAvailabilityAsk,
   confirmVendorSchedule,
@@ -267,6 +268,24 @@ function isStaleScheduleForTicket(
 ): boolean {
   if (!prev?.ticketId?.trim() || !currentTicketId?.trim()) return false
   return prev.ticketId.trim() !== currentTicketId.trim()
+}
+
+async function recentVendorScheduleContext(
+  supabase: SupabaseClient,
+  conversationId: string,
+): Promise<string> {
+  const { data } = await supabase
+    .from("sms_messages")
+    .select("direction, body")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(6)
+  return [...(data ?? [])].reverse().map((row) => {
+    const body = typeof row.body === "string" ? row.body.replace(/\s+/g, " ").trim() : ""
+    if (!body) return ""
+    const role = row.direction === "inbound" ? "Vendor" : "Ulo"
+    return `${role}: ${body}`
+  }).filter(Boolean).join("\n")
 }
 
 export const vendorJobResponseTemplate: WorkflowTemplate = {
@@ -562,10 +581,10 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         (typeof ctx.landlordId === "string" ? ctx.landlordId : "")
       if (!landlordIdForTz) return undefined
       try {
-        const { loadLandlordScheduleTimeZone } = await import(
-          "../../landlordNotificationPrefs.ts"
-        )
-        return await loadLandlordScheduleTimeZone(supabase, landlordIdForTz)
+        return await loadTicketPropertyScheduleTimeZone(supabase, {
+          ticketId,
+          landlordId: landlordIdForTz,
+        }) ?? undefined
       } catch {
         return undefined
       }
@@ -779,8 +798,15 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
       } else {
         const availabilityBody = stripWorkOrderRefFromSms(effectiveBody) ||
           effectiveBody
+        const threadContext = await recentVendorScheduleContext(
+          supabase,
+          sms.conversationId,
+        )
         const resolved = await resolveVendorAvailability(availabilityBody, {
-          conversationContext: formatScheduleContextForPrompt(schedulePrev),
+          conversationContext: [
+            formatScheduleContextForPrompt(schedulePrev),
+            threadContext,
+          ].filter((part) => part.trim()).join("\n"),
           clarifyAttempts: schedulePrev.clarifyAttempts ?? 0,
           timeZone: scheduleTimeZone,
           now: new Date(inboundAt),

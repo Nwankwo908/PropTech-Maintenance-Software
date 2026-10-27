@@ -4,6 +4,8 @@ import {
   assertExists,
 } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
+  buildDaypartClarificationPrompt,
+  buildMissingDayClarificationPrompt,
   buildScheduleAnchor,
   buildSoftClarificationPrompt,
   buildSoftConfirmationPrompt,
@@ -19,6 +21,12 @@ import {
   toArrivalEntity,
   zonedWallTimeToUtc,
 } from "./vendor_availability_parse.ts"
+import { buildTenantScheduleAskSms } from "./sms/tenantScheduleConfirm.ts"
+import {
+  createIdleScheduleState,
+  reduceScheduleFsm,
+} from "./vendor_schedule_fsm.ts"
+import { resolvePropertyScheduleTimeZone } from "./residentSendTiming.ts"
 import {
   buildVendorScheduleClarifySms,
   buildVendorScheduleSaveRetrySms,
@@ -278,4 +286,143 @@ Deno.test("regex Wed abbrev uses next Wednesday", () => {
   assertExists(hit)
   assertEquals(hit!.scheduledAt, "2026-07-22T13:00:00.000Z")
   assertEquals(hit!.endAt, "2026-07-22T16:00:00.000Z")
+})
+
+const BATHROOM_NOW = new Date("2026-10-27T18:00:00.000Z")
+const THURSDAY_WINDOW = "Thursday, Oct 29 between 2:00 PM and 4:00 PM"
+const THURSDAY_PHRASES = [
+  "Thursday between 2pm and 4pm",
+  "Thursday from 2 to 4 PM",
+  "Thu 2–4pm",
+  "I'm available Thursday afternoon, 2 to 4",
+  "October 29, 2:00–4:00 PM",
+]
+
+Deno.test("bathroom reschedule phrases share Thursday 2–4 PM Eastern", async () => {
+  for (const phrase of THURSDAY_PHRASES) {
+    const result = await resolveVendorAvailability(phrase, {
+      now: BATHROOM_NOW,
+      timeZone: TZ,
+      allowLlm: false,
+    })
+    assertEquals(result.status, "resolved", phrase)
+    if (result.status !== "resolved") continue
+    assertEquals(result.value.entity?.display_text, THURSDAY_WINDOW, phrase)
+    assertEquals(result.value.scheduledAt, "2026-10-29T18:00:00.000Z", phrase)
+    assertEquals(result.value.endAt, "2026-10-29T20:00:00.000Z", phrase)
+  }
+})
+
+Deno.test("a clock range without a day uses the conversation date", async () => {
+  const result = await resolveVendorAvailability("2pm-4pm", {
+    now: BATHROOM_NOW,
+    timeZone: TZ,
+    allowLlm: false,
+    conversationContext:
+      "Ulo: They suggested: Thursday between 2pm and 4pm.",
+  })
+  assertEquals(result.status, "resolved")
+  if (result.status === "resolved") {
+    assertEquals(result.value.entity?.display_text, THURSDAY_WINDOW)
+  }
+})
+
+Deno.test("Thursday afternoon does not invent a window", async () => {
+  const result = await resolveVendorAvailability("Thursday afternoon", {
+    now: BATHROOM_NOW,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "needs_clarification")
+  if (result.status === "needs_clarification") {
+    assertEquals(result.softPrompt, buildDaypartClarificationPrompt())
+    assertEquals(result.softPrompt.includes("2:00"), false)
+    assertEquals(result.softPrompt.includes("noon"), false)
+  }
+})
+
+Deno.test("a range without AM or PM asks instead of guessing noon", async () => {
+  const result = await resolveVendorAvailability("Thursday 2 to 4", {
+    now: BATHROOM_NOW,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "needs_clarification")
+  if (result.status === "needs_clarification") {
+    assertEquals(result.softPrompt.includes("morning or afternoon"), true)
+    assertEquals(result.softPrompt.includes("12:00"), false)
+  }
+})
+
+Deno.test("a window with no day and no context asks which day", async () => {
+  const result = await resolveVendorAvailability("2pm-4pm", {
+    now: BATHROOM_NOW,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "needs_clarification")
+  if (result.status === "needs_clarification") {
+    assertEquals(result.softPrompt, buildMissingDayClarificationPrompt())
+  }
+})
+
+Deno.test("vendor window asks the tenant and leaves the confirmed visit untouched", async () => {
+  const result = await resolveVendorAvailability("Thursday between 2pm and 4pm", {
+    now: BATHROOM_NOW,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "resolved")
+  if (result.status !== "resolved") return
+  const wednesday = "Wednesday, Oct 28 between 9:00 AM and 12:00 PM"
+  const tenantSms = buildTenantScheduleAskSms({
+    residentName: "Disposable Tenant",
+    vendorName: "Disposable test vendor",
+    windowText: result.value.entity?.display_text ?? "",
+    workOrderRef: "Ref: EB1D7CFC",
+  })
+  assertEquals(tenantSms.includes(THURSDAY_WINDOW), true)
+  assertEquals(tenantSms.includes("Reply YES to confirm"), true)
+  assertEquals(tenantSms.includes(wednesday), false)
+
+  const at = "2026-10-27T18:10:00.000Z"
+  const waiting = {
+    ...createIdleScheduleState("eb1d7cfc-3d70-4f57-bd59-680bdb997120"),
+    step: "awaiting_availability" as const,
+    enteredAt: at,
+    expiresAt: "2026-10-28T18:10:00.000Z",
+  }
+  const reduced = reduceScheduleFsm(waiting, {
+    type: "AVAILABILITY_TEXT",
+    at,
+    windowText: result.value.entity?.display_text ?? "",
+    scheduledAt: result.value.scheduledAt,
+    endAt: result.value.endAt,
+    outcome: "resolved",
+  })
+  assertEquals(reduced.effect.kind, "ask_tenant")
+  if (reduced.effect.kind === "ask_tenant") {
+    assertEquals(reduced.effect.windowText, THURSDAY_WINDOW)
+  }
+})
+
+Deno.test("Newark property clock wins over the landlord account clock", () => {
+  assertEquals(
+    resolvePropertyScheduleTimeZone({
+      propertyTimeZone: null,
+      state: "NJ",
+      zip: "07102",
+      landlordTimeZone: "America/Los_Angeles",
+    }),
+    "America/New_York",
+  )
+  assertEquals(
+    resolvePropertyScheduleTimeZone({
+      propertyTimeZone: "America/Chicago",
+      state: "NJ",
+      zip: "07102",
+      landlordTimeZone: "America/Los_Angeles",
+    }),
+    "America/Chicago",
+  )
 })
