@@ -1,4 +1,9 @@
 import { parseDurationHours, resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import {
+  LIFE_SAFETY_GUIDANCE,
+  undeliveredGuidance,
+  type GuidanceDeliveryMessage,
+} from "../../../../shared/maintenance/safetyGuidanceDelivery.ts"
 import { lookupOutdoorTempForProperty } from "../weather/propertyOutdoorTemp.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
@@ -717,7 +722,13 @@ async function prependEmergencySafetyIfNeeded(
   // The problem stays in the text we re-read each turn, so alert once per
   // intake. Otherwise every answer repeats the banner and re-texts the team.
   if (!shouldSendUrgencyAlert(state, tier)) {
-    return { outbound: replyHint, emergency: true }
+    if (!urgencyPolicy.leaveImmediately) {
+      return { outbound: replyHint, emergency: true }
+    }
+    const delivered = await loadGuidanceDeliveryMessages(supabase, ctx.conversationId)
+    const again = undeliveredGuidance([LIFE_SAFETY_GUIDANCE], delivered)
+    if (again.length === 0) return { outbound: replyHint, emergency: true }
+    return { outbound: `${again[0]}\n\n${replyHint}`, emergency: true }
   }
   state.urgency_alert_tier = tier
   state.urgency_alert_sent_at = new Date().toISOString()
@@ -960,6 +971,62 @@ function applyStepAnswer(
   }
 
   return { ok: true, state: next }
+}
+
+async function loadGuidanceDeliveryMessages(
+  supabase: SupabaseClient,
+  conversationId: string,
+): Promise<GuidanceDeliveryMessage[]> {
+  const { data, error } = await supabase
+    .from("sms_messages")
+    .select("direction, body, provider_status")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(40)
+  if (error) {
+    console.error("[sms-intake] guidance delivery lookup", error.message)
+    return []
+  }
+  return (data ?? []).map((row) => ({
+    direction: typeof row.direction === "string" ? row.direction : null,
+    body: typeof row.body === "string" ? row.body : null,
+    providerStatus: typeof row.provider_status === "string" ? row.provider_status : null,
+  }))
+}
+
+function intakeGuidanceText(state: SmsIntakeState): string {
+  return [
+    state.initial_message,
+    state.description,
+    state.safety_concerns,
+    ...Object.values(state.diagnostic_facts ?? {}),
+  ].filter(Boolean).join(" ")
+}
+
+/** Safety lines for the submit confirmation. Already-delivered lines are left out. */
+function confirmationGuidance(
+  state: SmsIntakeState,
+  messages: GuidanceDeliveryMessage[],
+): string | null {
+  const policy = resolveUrgencyPolicy({
+    text: intakeGuidanceText(state),
+    outdoorTempF: state.outdoor_temp_f ?? null,
+  })
+  const lines = undeliveredGuidance([
+    policy.leaveImmediately ? LIFE_SAFETY_GUIDANCE : null,
+    intakeCategoryHandlingTip(state),
+  ], messages)
+  return lines.length > 0 ? lines.join("\n\n") : null
+}
+
+async function confirmationSummaryForThread(
+  supabase: SupabaseClient,
+  conversationId: string,
+  state: SmsIntakeState,
+): Promise<string> {
+  const messages = await loadGuidanceDeliveryMessages(supabase, conversationId)
+  const tip = undeliveredGuidance([intakeCategoryHandlingTip(state)], messages)[0] ?? null
+  return buildConfirmationSummary(state, { handlingTip: tip })
 }
 
 async function rememberLocationQuestion(
@@ -1404,7 +1471,11 @@ export async function processResidentMaintenanceIntake(
       await saveIntakeState(supabase, ctx.conversationId, reprint)
       return {
         route: "resident_maintenance_intake",
-        replyHint: buildConfirmationSummary(reprint),
+        replyHint: await confirmationSummaryForThread(
+          supabase,
+          ctx.conversationId,
+          reprint,
+        ),
         metadata: { intakeStep: "awaiting_confirm", summaryReprint: true },
       }
     }
@@ -1458,6 +1529,7 @@ export async function processResidentMaintenanceIntake(
           }
           await saveIntakeState(supabase, ctx.conversationId, submitted)
           const companyName = await loadLandlordDisplayName(supabase, ctx.landlordId)
+          const delivered = await loadGuidanceDeliveryMessages(supabase, ctx.conversationId)
           return {
             route: "resident_maintenance_intake",
             replyHint: buildMultiIssueSubmittedSms(
@@ -1465,7 +1537,7 @@ export async function processResidentMaintenanceIntake(
               allVendorsAssigned,
               companyName,
               {
-                handlingTip: intakeCategoryHandlingTip(state),
+                handlingTip: confirmationGuidance(state, delivered),
                 requestRefs,
               },
             ),
@@ -1500,13 +1572,14 @@ export async function processResidentMaintenanceIntake(
         const submitted: SmsIntakeState = { ...state, step: "submitted" }
         await saveIntakeState(supabase, ctx.conversationId, submitted)
         const companyName = await loadLandlordDisplayName(supabase, ctx.landlordId)
+        const delivered = await loadGuidanceDeliveryMessages(supabase, ctx.conversationId)
         return {
           route: "resident_maintenance_intake",
           replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned, companyName, {
             categoryLabel: intakeCategoryLabel(state),
             sourceText: state.description || state.initial_message,
             requestRef,
-            handlingTip: intakeCategoryHandlingTip(state),
+            handlingTip: confirmationGuidance(state, delivered),
           }),
           metadata: { submitted: true, ticketId, intakeStep: "submitted" },
         }
@@ -1579,7 +1652,7 @@ export async function processResidentMaintenanceIntake(
       supabase,
       ctx,
       state,
-      buildConfirmationSummary(state),
+      await confirmationSummaryForThread(supabase, ctx.conversationId, state),
       { edited: "description" },
     )
   }
@@ -1737,9 +1810,11 @@ export async function processResidentMaintenanceIntake(
     })
   state.acknowledged_headline = headline
 
-  const nextHint = [headlineNote, questionForStep(state, state.step as IntakeStep)]
-    .filter(Boolean)
-    .join("\n\n")
+  const stepNow = state.step as IntakeStep
+  const question = stepNow === "awaiting_confirm"
+    ? await confirmationSummaryForThread(supabase, ctx.conversationId, state)
+    : questionForStep(state, stepNow)
+  const nextHint = [headlineNote, question].filter(Boolean).join("\n\n")
   const { outbound, emergency } = step === "diagnostic"
     ? await prependEmergencySafetyIfNeeded(
       supabase,

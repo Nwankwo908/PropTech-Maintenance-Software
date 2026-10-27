@@ -8,6 +8,8 @@
  * Rent / lease stay on their dedicated handlers (not this module).
  */
 
+import { LIFE_SAFETY_GUIDANCE } from "../../../../shared/maintenance/safetyGuidanceDelivery.ts"
+
 export type AssistantOtherKind =
   | "small_talk"
   | "unclear"
@@ -160,7 +162,7 @@ export function buildEmergencySafetySms(input: {
   const lines = [`Hi ${who},`, ""]
   if (input.leaveImmediately) {
     lines.push(
-      "If you smell gas, see fire, or anyone is in danger, leave right away and call 911.",
+      LIFE_SAFETY_GUIDANCE,
     )
   } else {
     lines.push(

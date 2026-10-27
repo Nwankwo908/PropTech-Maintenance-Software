@@ -1247,7 +1247,10 @@ function confirmationIssueLine(state: SmsIntakeState): string {
   return problemSentence(state.initial_message || state.description || "", reading.location)
 }
 
-export function buildConfirmationSummary(state: SmsIntakeState): string {
+export function buildConfirmationSummary(
+  state: SmsIntakeState,
+  options?: { handlingTip?: string | null },
+): string {
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   const facts = state.diagnostic_facts ?? {}
   const authored = tenantAuthoredText(state)
@@ -1275,7 +1278,9 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     issueLines.push(clarification || confirmationIssueLine(state))
   }
 
-  const handlingTip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
+  const handlingTip = options?.handlingTip !== undefined
+    ? options.handlingTip?.trim() || null
+    : resolveCategoryHandlingTip(tipInputFromIntakeState(state))
 
   const bullets: string[] = []
 
