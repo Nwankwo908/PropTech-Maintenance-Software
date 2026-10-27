@@ -128,6 +128,14 @@ function result(
   }
 }
 
+const GAS_EMERGENCY_TEXT =
+  /\b(gas\s*smell|smell\s*(?:of\s*)?gas|gas\s*leak|natural\s*gas|carbon\s+monoxide|co\s+alarm|rotten\s+eggs?|smells?\s+like\s+(?:rotten\s+)?(?:eggs?|sulfur)|sulfur\s+smell)\b/
+
+/** Gas smell, gas leak, or carbon monoxide. Life-safety, not a repair tip. */
+export function isGasEmergencyText(text: string | null | undefined): boolean {
+  return GAS_EMERGENCY_TEXT.test((text ?? "").toLowerCase())
+}
+
 /**
  * Policy table. First matching emergency wins, then medium, then low, else medium.
  */
@@ -137,10 +145,7 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
   const temp = input.outdoorTempF
   const emergencyType = input.emergencyType ?? 'none'
 
-  if (
-    /\b(gas\s*smell|smell\s*(?:of\s*)?gas|gas\s*leak|natural\s*gas|carbon\s+monoxide|co\s+alarm|rotten\s+eggs?|smells?\s+like\s+(?:rotten\s+)?(?:eggs?|sulfur)|sulfur\s+smell)\b/.test(hay) ||
-    emergencyType === 'gas'
-  ) {
+  if (isGasEmergencyText(hay) || emergencyType === 'gas') {
     return result(
       'emergency',
       'Gas smell — leave the unit immediately and call the gas utility from outside if you have not already.',

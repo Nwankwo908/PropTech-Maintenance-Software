@@ -18,8 +18,8 @@ import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispa
 import type { SmsIntakeState } from "./residentIntakeTypes.ts"
 import {
   buildIntakeDescription,
-  canReuseUnassignedTicketForIntake,
   entryOkIfAbsentFromIntake,
+  intakeMayAttachToOpenTicket,
   resolveIntakeIssueCategory,
   severityToDb,
   ticketIssueHeadline,
@@ -63,7 +63,7 @@ async function rehostSmsPhotos(
 async function reusableDraftTicketId(
   supabase: SupabaseClient,
   ticketId: string,
-  intakeCategory: string,
+  intake: SmsIntakeState,
 ): Promise<string | null> {
   const { data: ticket } = await supabase
     .from("maintenance_requests")
@@ -71,15 +71,14 @@ async function reusableDraftTicketId(
     .eq("id", ticketId)
     .maybeSingle()
   if (!ticket?.id) return null
-  const category = issueCategoryToVendorTrade(
-    typeof ticket.issue_category === "string" ? ticket.issue_category : null,
-  )
-  if (!canReuseUnassignedTicketForIntake({
-    ticketIssueCategory: category,
-    intakeIssueCategory: intakeCategory,
+  if (!intakeMayAttachToOpenTicket({
+    ticketIssueCategory: typeof ticket.issue_category === "string"
+      ? ticket.issue_category
+      : null,
     vendorWorkStatus: typeof ticket.vendor_work_status === "string"
       ? ticket.vendor_work_status
       : null,
+    intake,
   })) {
     return null
   }
@@ -91,9 +90,8 @@ async function resolveExistingDraftTicketId(
   conversationId: string,
   intake: SmsIntakeState,
 ): Promise<string | null> {
-  const intakeCategory = issueCategoryToVendorTrade(resolveIntakeIssueCategory(intake))
   const fromIntake = intake.draft_ticket_id?.trim()
-  if (fromIntake) return await reusableDraftTicketId(supabase, fromIntake, intakeCategory)
+  if (fromIntake) return await reusableDraftTicketId(supabase, fromIntake, intake)
 
   const { data: convo } = await supabase
     .from("sms_conversations")
@@ -106,7 +104,7 @@ async function resolveExistingDraftTicketId(
       ? convo.maintenance_request_id.trim()
       : ""
   if (!linked) return null
-  return await reusableDraftTicketId(supabase, linked, intakeCategory)
+  return await reusableDraftTicketId(supabase, linked, intake)
 }
 
 export async function submitSmsMaintenanceRequest(

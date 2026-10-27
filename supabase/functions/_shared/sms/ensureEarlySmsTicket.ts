@@ -18,6 +18,7 @@ import {
   severityToDb,
   ticketIssueHeadline,
   type SmsIntakeState,
+  intakeReportsGasEmergency,
 } from "./residentIntakeTypes.ts"
 import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
 import { queueWorkOrderContext } from "../workOrderContext.ts"
@@ -59,7 +60,9 @@ export function shouldMintEarlyTicket(state: SmsIntakeState): boolean {
   const hasDescription = Boolean(
     (state.initial_message ?? state.description ?? "").trim(),
   )
-  return hasDescription && (hasTrade || hasIssue)
+  if (!hasDescription) return false
+  if (hasTrade || hasIssue) return true
+  return intakeReportsGasEmergency(state)
 }
 
 /**
@@ -271,6 +274,20 @@ export function withDraftTicketId(
   return { ...state, draft_ticket_id: ticketId }
 }
 
+/** Do not point an existing work-order run at a different incident. */
+export function mayLinkWorkflowRunToNewTicket(params: {
+  templateId?: string | null
+  entityId?: string | null
+  ticketId: string
+}): boolean {
+  const ticketId = params.ticketId.trim()
+  if (!ticketId) return false
+  if ((params.templateId ?? "").trim() !== "maintenance_intake") return false
+  const entityId = (params.entityId ?? "").trim()
+  if (entityId && entityId !== ticketId) return false
+  return true
+}
+
 async function linkRunToTicket(
   supabase: SupabaseClient,
   runId: string | null,
@@ -278,6 +295,14 @@ async function linkRunToTicket(
   intake: SmsIntakeState,
 ): Promise<void> {
   if (!runId) return
+  const { data: run } = await supabase
+    .from("workflow_runs")
+    .select("template_id, entity_id")
+    .eq("id", runId)
+    .maybeSingle()
+  const templateId = typeof run?.template_id === "string" ? run.template_id : ""
+  const entityId = typeof run?.entity_id === "string" ? run.entity_id : ""
+  if (!mayLinkWorkflowRunToNewTicket({ templateId, entityId, ticketId })) return
   await updateWorkflowRun(supabase, runId, {
     entityType: "maintenance_request",
     entityId: ticketId,

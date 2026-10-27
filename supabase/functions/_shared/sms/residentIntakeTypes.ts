@@ -22,9 +22,11 @@ import { isDistinctResidentAvailability } from "./residentAvailabilityExtract.ts
 import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
 import type { PrimaryCategory } from "../../../../shared/maintenance/primaryCategories.ts"
 import {
+  isGasEmergencyText,
   parseDurationHours,
   resolveUrgencyPolicy,
 } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { issueCategoryToVendorTrade } from "../../../../shared/maintenance/vendorTrades.ts"
 
 export const ISSUE_TYPES = [
   "plumbing",
@@ -1090,6 +1092,59 @@ export function canReuseUnassignedTicketForIntake(params: {
   const intake = (params.intakeIssueCategory ?? "").trim().toLowerCase()
   if (!ticket || !intake) return false
   return ticket === intake
+}
+
+/** A gas smell is its own incident even when the classifier trade is "other". */
+export function intakeReportsGasEmergency(state: {
+  initial_message?: string | null
+  description?: string | null
+  safety_concerns?: string | null
+}): boolean {
+  return isGasEmergencyText(
+    [state.initial_message, state.description, state.safety_concerns].filter(Boolean).join(" "),
+  )
+}
+
+/**
+ * An open ticket may receive this intake only when it is the same kind of issue.
+ * Sharing a text thread, or being the latest open request, is not enough.
+ */
+export function intakeMayAttachToOpenTicket(params: {
+  ticketIssueCategory: string | null | undefined
+  vendorWorkStatus: string | null | undefined
+  intake: { vendor_trade?: string | null; issue_type?: string | null }
+}): boolean {
+  return canReuseUnassignedTicketForIntake({
+    ticketIssueCategory: issueCategoryToVendorTrade(params.ticketIssueCategory),
+    intakeIssueCategory: issueCategoryToVendorTrade(
+      resolveIntakeIssueCategory(params.intake as SmsIntakeState),
+    ),
+    vendorWorkStatus: params.vendorWorkStatus,
+  })
+}
+
+/**
+ * Reference for a property-team alert or a later submit.
+ * A draft for this intake wins. Another request on the same thread is used
+ * only when it is the same kind of open issue. Otherwise there is no ref yet.
+ */
+export function alertTicketIdForIntake(params: {
+  draftTicketId?: string | null
+  linkedTicketId?: string | null
+  linkedTicketCategory?: string | null
+  linkedTicketStatus?: string | null
+  intake: { vendor_trade?: string | null; issue_type?: string | null }
+}): string | null {
+  const draft = (params.draftTicketId ?? "").trim()
+  if (draft) return draft
+  const linked = (params.linkedTicketId ?? "").trim()
+  if (!linked) return null
+  if (!intakeMayAttachToOpenTicket({
+    ticketIssueCategory: params.linkedTicketCategory,
+    vendorWorkStatus: params.linkedTicketStatus,
+    intake: params.intake,
+  })) return null
+  return linked
 }
 
 /** Complete, resident-provided lines for the confirmation. No guessed details. */

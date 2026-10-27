@@ -87,6 +87,7 @@ import {
   headlineUpdateLine,
   sanitizeIntakeState,
   shouldSendUrgencyAlert,
+  alertTicketIdForIntake,
   type IntakeStep,
   type SmsIntakeState,
   type UrgencyAlertTier,
@@ -673,14 +674,39 @@ async function prependEmergencySafetyIfNeeded(
       .split(/\s+/)[0] || "there"
 
   let teamAlerted = false
+  let alertTicketId: string | null = (state.draft_ticket_id ?? "").trim() || null
   try {
-    const ticketId = state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null
+    const linkedId = (ctx.maintenanceRequestId ?? "").trim()
+    if (!alertTicketId && linkedId) {
+      const { data: linked } = await supabase
+        .from("maintenance_requests")
+        .select("issue_category, vendor_work_status")
+        .eq("id", linkedId)
+        .eq("landlord_id", ctx.landlordId)
+        .maybeSingle()
+      alertTicketId = alertTicketIdForIntake({
+        draftTicketId: null,
+        linkedTicketId: linked ? linkedId : null,
+        linkedTicketCategory: typeof linked?.issue_category === "string"
+          ? linked.issue_category
+          : null,
+        linkedTicketStatus: typeof linked?.vendor_work_status === "string"
+          ? linked.vendor_work_status
+          : null,
+        intake: state,
+      })
+    }
     const report = (state.description || state.initial_message || "").trim()
-    const place = await landlordEmergencyPlace(supabase, ctx.landlordId, ctx.conversationId, ticketId)
+    const place = await landlordEmergencyPlace(
+      supabase,
+      ctx.landlordId,
+      ctx.conversationId,
+      alertTicketId,
+    )
     let requestRef: string | null = null
-    if (ticketId) {
+    if (alertTicketId) {
       try {
-        requestRef = await ensureResidentRequestRef(supabase, ticketId)
+        requestRef = await ensureResidentRequestRef(supabase, alertTicketId)
       } catch {
         requestRef = null
       }
@@ -699,7 +725,7 @@ async function prependEmergencySafetyIfNeeded(
       // questions cannot re-alert even if the state write is lost.
       idempotencyKey:
         `sms-emergency:${ctx.conversationId}:${state.draft_ticket_id ?? "intake"}:${tier}`,
-      maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
+      maintenanceRequestId: alertTicketId,
       unitId: ctx.identity.unit_id ?? null,
       residentId,
     })
@@ -744,7 +770,7 @@ async function prependEmergencySafetyIfNeeded(
     actorId: residentId,
     unitId: ctx.identity.unit_id ?? null,
     residentId,
-    maintenanceRequestId: state.draft_ticket_id ?? null,
+    maintenanceRequestId: alertTicketId,
     conversationId: ctx.conversationId,
     messageId: ctx.messageId,
     workflowTemplateId: "maintenance_intake",

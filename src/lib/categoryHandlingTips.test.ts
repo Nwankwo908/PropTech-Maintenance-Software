@@ -23,6 +23,15 @@ describe("resolveCategoryHandlingTip", () => {
     expect(tip).toMatch(/don't keep flushing|drain cleaner/i)
   })
 
+  it("does not offer a waiting tip for a gas smell", () => {
+    const tip = resolveCategoryHandlingTip({
+      primaryCategory: "general",
+      vendorTrade: "other",
+      text: "I smell gas in the kitchen",
+    })
+    expect(tip).toBeNull()
+  })
+
   it("skips troubleshooting when someone is unwell from the heat", () => {
     const tip = resolveCategoryHandlingTip({
       primaryCategory: "hvac",

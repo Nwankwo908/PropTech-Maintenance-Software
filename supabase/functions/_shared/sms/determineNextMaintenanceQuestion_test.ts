@@ -6,6 +6,8 @@ import {
 import {
   buildConfirmationSummary,
   canReuseUnassignedTicketForIntake,
+  alertTicketIdForIntake,
+  intakeMayAttachToOpenTicket,
 } from "./residentIntakeTypes.ts"
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
@@ -538,6 +540,54 @@ Deno.test("a different trade does not reuse an unassigned work order", () => {
     intakeIssueCategory: "hvac",
     vendorWorkStatus: "accepted",
   }), false, "accepted work is not a draft")
+})
+
+const GAS_INTAKE = {
+  vendor_trade: "other" as const,
+  primary_category: "general" as const,
+  initial_message: "I smell gas in the kitchen",
+  description: "I smell gas in the kitchen",
+  urgency: "emergency" as const,
+  preferred_contact_method: "text" as const,
+}
+const AC_TICKET = "30a0b8cc-4284-42a7-8139-b59e219219f0"
+
+Deno.test("gas confirmation does not offer a quick fix", () => {
+  const sms = buildConfirmationSummary(GAS_INTAKE)
+  assertMatch(sms, /Gas smell/, "gas headline")
+  assertMatch(sms, /Reply YES to submit/, "submit still waits")
+  assertEqual(/Until help arrives/i.test(sms), false, "no troubleshooting tip")
+  assertEqual(/thermostat|shutoff|GFCI|reset/i.test(sms), false, "no quick fix")
+})
+
+Deno.test("a gas emergency does not alert or submit against an open AC request", () => {
+  assertEqual(intakeMayAttachToOpenTicket({
+    ticketIssueCategory: "hvac",
+    vendorWorkStatus: "unassigned",
+    intake: GAS_INTAKE,
+  }), false, "submission does not update the AC request")
+  assertEqual(alertTicketIdForIntake({
+    linkedTicketId: AC_TICKET,
+    linkedTicketCategory: "hvac",
+    linkedTicketStatus: "unassigned",
+    intake: GAS_INTAKE,
+  }), null, "alert omits the AC ref")
+  assertEqual(alertTicketIdForIntake({
+    draftTicketId: "gas-ticket",
+    linkedTicketId: AC_TICKET,
+    linkedTicketCategory: "hvac",
+    linkedTicketStatus: "unassigned",
+    intake: GAS_INTAKE,
+  }), "gas-ticket", "gas draft is the alert ref")
+  assertEqual(alertTicketIdForIntake({
+    linkedTicketId: AC_TICKET,
+    linkedTicketCategory: "hvac",
+    linkedTicketStatus: "unassigned",
+    intake: {
+      vendor_trade: "hvac",
+      issue_type: "HVAC",
+    },
+  }), AC_TICKET, "same AC issue can stay on the AC request")
 })
 
 Deno.test("confirmation is tenant-facing and omits priority chips", () => {

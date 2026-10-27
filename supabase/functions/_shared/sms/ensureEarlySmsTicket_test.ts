@@ -1,6 +1,6 @@
 /// <reference lib="deno.ns" />
 
-import { shouldMintEarlyTicket } from "./ensureEarlySmsTicket.ts"
+import { shouldMintEarlyTicket, mayLinkWorkflowRunToNewTicket } from "./ensureEarlySmsTicket.ts"
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {
@@ -67,5 +67,49 @@ Deno.test("requires a description plus trade or issue type", () => {
     }),
     false,
     "no trade",
+  )
+})
+
+Deno.test("mints a gas emergency even when the trade is other", () => {
+  assertEqual(
+    shouldMintEarlyTicket({
+      step: "awaiting_confirm",
+      confidence_band: "high",
+      vendor_trade: "other",
+      initial_message: "I smell gas in the kitchen",
+      description: "I smell gas in the kitchen",
+    }),
+    true,
+    "gas draft",
+  )
+})
+
+Deno.test("does not retarget an AC work-order run to a new gas ticket", () => {
+  assertEqual(
+    mayLinkWorkflowRunToNewTicket({
+      templateId: "maintenance_request",
+      entityId: "30a0b8cc-4284-42a7-8139-b59e219219f0",
+      ticketId: "gas-ticket",
+    }),
+    false,
+    "ac run stays",
+  )
+  assertEqual(
+    mayLinkWorkflowRunToNewTicket({
+      templateId: "maintenance_intake",
+      entityId: "30a0b8cc-4284-42a7-8139-b59e219219f0",
+      ticketId: "gas-ticket",
+    }),
+    false,
+    "intake already tied to ac",
+  )
+  assertEqual(
+    mayLinkWorkflowRunToNewTicket({
+      templateId: "maintenance_intake",
+      entityId: "",
+      ticketId: "gas-ticket",
+    }),
+    true,
+    "fresh intake run",
   )
 })

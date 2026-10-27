@@ -4,7 +4,7 @@
  * Keep copy plain-language (Ulo writing standard) — no jargon or IDs.
  */
 import { matchesWaterOutage } from './deterministicRules.ts'
-import { indicatesImmediateHeatDanger } from './urgencyPolicy.ts'
+import { indicatesImmediateHeatDanger, isGasEmergencyText } from './urgencyPolicy.ts'
 
 export type CategoryHandlingTipInput = {
   primaryCategory?: string | null
@@ -117,6 +117,8 @@ export function resolveCategoryHandlingTip(
 ): string | null {
   // Distress already has safety guidance. Do not add thermostat or other troubleshooting.
   if (residentIsUnwell(input)) return null
+  // A gas smell is leave-immediately. Do not add a try-this or waiting tip.
+  if (isGasEmergencyText(haystack(input))) return null
   const key = categoryKey(input)
   const text = haystack(input)
   const overflowYes = (value?: string) => /^y(es)?\b/i.test(value?.trim() ?? "")
