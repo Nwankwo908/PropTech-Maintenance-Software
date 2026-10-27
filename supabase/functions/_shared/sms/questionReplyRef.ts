@@ -101,6 +101,77 @@ export function removeScheduleQuestion(
   return next
 }
 
+export function questionStillOpen(question: ScheduleQuestion, now: number): boolean {
+  const expiry = typeof question.expires_at === "string"
+    ? Date.parse(question.expires_at)
+    : NaN
+  return !Number.isFinite(expiry) || now < expiry
+}
+
+export function scheduleQuestionShortRefs(question: ScheduleQuestion): string[] {
+  const labels = new Set<string>()
+  const request = typeof question.request_ref === "string"
+    ? question.request_ref.trim().toUpperCase()
+    : ""
+  if (request) labels.add(request)
+  const ticket = String(question.ticket_id ?? question.ticketId ?? "")
+  const compact = ticket.replace(/-/g, "")
+  if (/^[0-9a-f]{8,}$/i.test(compact)) {
+    labels.add(`WO-${compact.slice(0, 4).toUpperCase()}`)
+    labels.add(compact.slice(0, 8).toUpperCase())
+  }
+  return [...labels]
+}
+
+export function buildOpenVisitChoiceSms(questions: ScheduleQuestion[]): string {
+  const lines = ["You have more than one visit waiting. Which one should I use?", ""]
+  questions.forEach((question, index) => {
+    const when = typeof question.window_text === "string" && question.window_text.trim()
+      ? question.window_text.trim()
+      : "the proposed visit"
+    const ref = scheduleQuestionShortRefs(question)[0]
+    lines.push(ref ? `${index + 1}. ${when}. Ref: ${ref}` : `${index + 1}. ${when}`)
+  })
+  lines.push("", "Reply with the number and YES or NO. For example, 1 YES.")
+  return lines.join("\n")
+}
+
+function matchNumberedVisitReply(
+  body: string,
+  questions: ScheduleQuestion[],
+): { question: ScheduleQuestion; body: string } | null {
+  const match = body.trim().match(/^(\d{1,2})(?:\s*[.)]\s*|\s+)([\s\S]*)$/)
+  if (!match) return null
+  const index = Number(match[1])
+  if (!Number.isInteger(index) || index < 1 || index > questions.length) return null
+  return { question: questions[index - 1], body: match[2].trim() }
+}
+
+function matchShortVisitRef(
+  body: string,
+  questions: ScheduleQuestion[],
+): { kind: "unique"; question: ScheduleQuestion; body: string } | { kind: "none" } {
+  const hits = questions.filter((question) =>
+    scheduleQuestionShortRefs(question).some((label) =>
+      new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body)
+    )
+  )
+  if (hits.length !== 1) return { kind: "none" }
+  const labels = scheduleQuestionShortRefs(hits[0])
+  let rest = body
+  for (const label of labels) {
+    rest = rest.replace(
+      new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"),
+      " ",
+    )
+  }
+  return {
+    kind: "unique",
+    question: hits[0],
+    body: rest.replace(/\bref\b[:.]?/gi, " ").replace(/\s+/g, " ").trim(),
+  }
+}
+
 export function selectScheduleQuestion(
   intake: Record<string, unknown>,
   body: string,
@@ -120,11 +191,7 @@ export function selectScheduleQuestion(
   }
   const matches = explicit
     ? rows.filter((r) => r.reply_ref === explicit.ref)
-    : rows.filter((r) =>
-      typeof r.expires_at !== "string" ||
-      !Number.isFinite(Date.parse(r.expires_at)) ||
-      now < Date.parse(r.expires_at)
-    )
+    : rows.filter((r) => questionStillOpen(r, now))
   if (!explicit && rows.length && !matches.length) {
     return {
       kind: "clarify",
@@ -140,16 +207,20 @@ export function selectScheduleQuestion(
     }
   }
   if (!matches.length) return { kind: "none" }
-  if (matches.length > 1) {
-    return {
-      kind: "clarify",
-      body: "Which visit are you answering?\n" +
-        matches.map((r) =>
-          `${r.reply_ref || "Earlier visit"}: ${
-            r.window_text || "proposed visit"
-          } — reply ${r.reply_ref || "with the job reference and"} YES or NO.`
-        ).join("\n"),
+  if (!explicit && matches.length > 1) {
+    const numbered = matchNumberedVisitReply(body, matches)
+    if (numbered) {
+      return { kind: "selected", question: numbered.question, body: numbered.body }
     }
+    const byShortRef = matchShortVisitRef(body, matches)
+    if (byShortRef.kind === "unique") {
+      return {
+        kind: "selected",
+        question: byShortRef.question,
+        body: byShortRef.body,
+      }
+    }
+    return { kind: "clarify", body: buildOpenVisitChoiceSms(matches) }
   }
   const question = matches[0]
   const expiry = typeof question.expires_at === "string"

@@ -15,7 +15,7 @@ function fakeDb(
     from(table: string) {
       const chain: Record<string, unknown> = {}
       let update: Record<string, unknown> | null = null
-      for (const method of ["select", "eq", "gte", "lte", "limit", "order"]) {
+      for (const method of ["select", "eq", "gte", "lte", "limit", "order", "ilike", "is"]) {
         chain[method] = (...args: unknown[]) => {
           calls.push({ table, method, args })
           return chain
