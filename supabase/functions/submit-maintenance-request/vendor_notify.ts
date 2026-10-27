@@ -321,7 +321,7 @@ async function loadPreferredVendorIfMatchable(
   let query = supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status,onboarding_overridden_at",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status,onboarding_overridden_at,state",
     )
     .eq("id", id)
     .eq("active", true)
@@ -372,6 +372,7 @@ async function loadPreferredVendorIfMatchable(
   const vendorStates = vendorServiceStateCodes({
     serviceArea: verif?.service_area ?? null,
     licenseState: typeof verif?.license_state === "string" ? verif.license_state : null,
+    rosterState: typeof vendor.state === "string" ? vendor.state : null,
   })
   if (!vendorCoversJobState(vendorStates, jobState)) {
     return null

@@ -2,7 +2,10 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
+import {
+  assignVendorAndNotify,
+  reassignVendorByIdAndNotify,
+} from "../submit-maintenance-request/vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { runMaintenanceRequestViaEngine } from "../_shared/engine/maintenanceRequestEngine.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
@@ -80,7 +83,7 @@ serve(async (req) => {
   const { data: ticketRow, error: ticketLoadErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, issue_category, assigned_vendor_id, vendor_work_status, scheduled_window_text, vendor_action_token",
+      "id, landlord_id, issue_category, assigned_vendor_id, vendor_work_status, scheduled_window_text, schedule_confirmed_at, vendor_notified_at, vendor_action_token, priority, unit, description, issue_headline, entry_ok_if_absent, urgency, severity, due_at, estimated_minutes, resident_availability_text",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -179,6 +182,77 @@ serve(async (req) => {
       console.error("[admin-reassign-vendor] schedule_confirm", e)
       return jsonResponse({ error: "Schedule confirm SMS failed" }, 500)
     }
+  }
+
+  // Approval already booked this vendor, but the job text never went out.
+  // Sends only to the assigned vendor. Does not search the roster.
+  if (action === "notify_selected") {
+    const assignedVendorId =
+      typeof ticketRow.assigned_vendor_id === "string"
+        ? ticketRow.assigned_vendor_id.trim()
+        : ""
+    if (!vendorIdRaw || !isUuidShape(vendorIdRaw) || vendorIdRaw !== assignedVendorId) {
+      return jsonResponse({ error: "Vendor does not match the assigned vendor" }, 422)
+    }
+    const confirmed =
+      typeof ticketRow.schedule_confirmed_at === "string" &&
+      ticketRow.schedule_confirmed_at.trim().length > 0
+    if (!confirmed) {
+      return jsonResponse({ error: "Schedule is not confirmed" }, 422)
+    }
+    if (
+      typeof ticketRow.vendor_notified_at === "string" &&
+      ticketRow.vendor_notified_at.trim()
+    ) {
+      return jsonResponse({ error: "Vendor was already notified" }, 409)
+    }
+    // The window was locked before the vendor was told. Clear that lock so
+    // their YES confirms this window with the resident instead of asking again.
+    const { error: unlockErr } = await supabase
+      .from("maintenance_requests")
+      .update({ schedule_confirmed_at: null })
+      .eq("id", ticketId)
+      .eq("assigned_vendor_id", assignedVendorId)
+      .is("vendor_notified_at", null)
+    if (unlockErr) {
+      console.error("[admin-reassign-vendor] notify_selected unlock", unlockErr)
+      return jsonResponse({ error: "Could not prepare the saved window" }, 500)
+    }
+    const priority =
+      typeof ticketRow.priority === "string" && ticketRow.priority.trim()
+        ? ticketRow.priority
+        : "normal"
+    const result = await assignVendorAndNotify(supabase, {
+      ticketId,
+      priority,
+      unit: typeof ticketRow.unit === "string" ? ticketRow.unit : "",
+      description: typeof ticketRow.description === "string" ? ticketRow.description : "",
+      issueHeadline: typeof ticketRow.issue_headline === "string"
+        ? ticketRow.issue_headline
+        : null,
+      entryOkIfAbsent: typeof ticketRow.entry_ok_if_absent === "boolean"
+        ? ticketRow.entry_ok_if_absent
+        : null,
+      urgency: typeof ticketRow.urgency === "string" ? ticketRow.urgency : null,
+      severity: typeof ticketRow.severity === "string" ? ticketRow.severity : null,
+      dueAt: typeof ticketRow.due_at === "string" ? ticketRow.due_at : null,
+      estimatedMinutes: typeof ticketRow.estimated_minutes === "number"
+        ? ticketRow.estimated_minutes
+        : null,
+      landlordId: ticketLandlordId,
+      preferVendorId: assignedVendorId,
+      landlordAcknowledged: true,
+      residentAvailabilityText: typeof ticketRow.resident_availability_text === "string"
+        ? ticketRow.resident_availability_text
+        : null,
+      retryIfUnassigned: true,
+    })
+    return jsonResponse({
+      ok: result.assigned,
+      ticketId,
+      assigned_vendor_id: result.vendorId,
+      skipReason: result.skipReason ?? null,
+    }, result.assigned ? 200 : 502)
   }
 
   let _vendorId = ""

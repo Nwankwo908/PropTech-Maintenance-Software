@@ -63,6 +63,18 @@ export async function trySendAutoReply(
       })
       return undefined
     }
+    const { data: replyConv } = await supabase
+      .from("sms_conversations")
+      .select("conversation_type")
+      .eq("id", params.conversationId)
+      .maybeSingle()
+    const replyType = String(replyConv?.conversation_type ?? "")
+    if (replyType === "landlord_update") {
+      console.info("[sms-inbound] auto-reply skipped — property-team thread has no open ask", {
+        conversationId: params.conversationId,
+      })
+      return undefined
+    }
     replyBody =
       params.workflowHint?.trim() ||
       params.resolutionHint?.trim() ||
