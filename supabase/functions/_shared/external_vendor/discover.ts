@@ -31,7 +31,10 @@ import type {
 } from "./types.ts"
 import { listThumbtackThreadsForTicket } from "./thumbtackThreads.ts"
 import { formatThumbtackJobCategoryLabel } from "./thumbtackOutreachCopy.ts"
-import { landlordHasVendorMarketplace } from "../../../../shared/landlordCapabilities.ts"
+import {
+  landlordBlocksExternalVendorOutreach,
+  landlordHasVendorMarketplace,
+} from "../../../../shared/landlordCapabilities.ts"
 import {
   clampExternalVendorSearchLimit,
   EXTERNAL_VENDOR_SEARCH_LIMIT,
@@ -176,6 +179,19 @@ export async function discoverExternalVendors(
     textQuery: jobDescription ? `${jobDescription}. ${textQuery}` : textQuery,
     jobDescription,
     limit: clampExternalVendorSearchLimit(options.limit ?? EXTERNAL_VENDOR_SEARCH_LIMIT),
+  }
+
+  if (landlordBlocksExternalVendorOutreach(options.landlordId)) {
+    return {
+      suggestions: [],
+      providersUsed: [],
+      mode: "live",
+      configured: true,
+      searchLocation,
+      locationLabel: options.locationLabel ?? searchLocation,
+      areaLabel: options.areaLabel ?? null,
+      issueCategory,
+    }
   }
 
   const landlordAllows = await landlordAllowsMockExternalVendors(

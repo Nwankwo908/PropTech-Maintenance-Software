@@ -75,6 +75,32 @@ Deno.test("Alpha does not receive mock external vendors", async () => {
   }
 })
 
+Deno.test("the maintenance test account does not search outside vendors", async () => {
+  const blocked = await discoverExternalVendors(null, {
+    issueCategory: "electrical",
+    searchLocation: "Newark, NJ 07102",
+    landlordId: "d15a0000-0000-4000-8000-000000000001",
+    allowMock: true,
+    forceMock: true,
+  })
+  if (blocked.suggestions.length !== 0) {
+    throw new Error("test account must not receive outside vendors")
+  }
+  if (blocked.providersUsed.length !== 0) {
+    throw new Error("test account must not call an outside provider")
+  }
+
+  const other = await discoverExternalVendors(null, {
+    issueCategory: "electrical",
+    searchLocation: "Chicago, IL",
+    landlordId: DEMO_SHOWCASE_LANDLORD_ID,
+    allowMock: true,
+  })
+  if (!other.suggestions.some((row) => row.name === "BrightWire Electric")) {
+    throw new Error("other accounts still search outside vendors")
+  }
+})
+
 Deno.test("workflow location hint prefers the work-order building over a duplicate unit label", () => {
   const hint = workflowLocationHintFromRuns([
     {

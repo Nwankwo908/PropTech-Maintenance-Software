@@ -17,6 +17,7 @@ import {
   isTemporarySharedAlphaLineLandlord,
   landlordHasPayments,
   landlordMayUseSharedAlphaLine,
+  landlordBlocksExternalVendorOutreach,
   landlordHasVendorMarketplace,
   landlordUsesTwilioSms,
   pickSettingsTestSmsDestination,
@@ -128,6 +129,10 @@ describe('temporary shared Alpha line access', () => {
     expect(isLimitedAlphaLandlord(testLandlord)).toBe(false)
     expect(landlordHasPayments(testLandlord)).toBe(true)
     expect(resolveSmsIntakeNumber({ landlordId: testLandlord })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
+    expect(landlordBlocksExternalVendorOutreach(testLandlord)).toBe(true)
+    expect(landlordBlocksExternalVendorOutreach(otherDisposable)).toBe(false)
+    expect(landlordBlocksExternalVendorOutreach(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(landlordBlocksExternalVendorOutreach(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
   })
 })
 
