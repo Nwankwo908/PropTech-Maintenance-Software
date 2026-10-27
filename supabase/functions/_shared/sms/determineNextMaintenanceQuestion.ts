@@ -16,6 +16,7 @@ import {
   acceptLocationReply,
   clarifyIssueLocation,
 } from "../../../../shared/maintenance/locationClarification.ts"
+import { interpretConfirmedLocation } from "../../../../shared/maintenance/requestConfirmation.ts"
 import {
   applyPhotoRequestPolicy,
   applyRecurringIssueSignal,
@@ -878,6 +879,28 @@ function resolveNextMaintenanceQuestion(
 }
 
 export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
+  const rememberedLocationQuestion = state.location_question?.trim() ||
+    (state.diagnostic_question_type === "room_or_area" ? state.diagnostic_question?.trim() : "")
+  if (rememberedLocationQuestion) {
+    state = { ...state, location_question: rememberedLocationQuestion }
+  }
+  const locationReading = interpretConfirmedLocation({
+    problem: state.initial_message || state.description,
+    answer: state.room_or_area,
+    question: state.location_question,
+  })
+  if (locationReading.clarification && state.room_or_area?.trim()) {
+    return {
+      ...state,
+      room_or_area: undefined,
+      step: "room_or_area",
+      diagnostic_question_type: "room_or_area",
+      diagnostic_question: locationReading.clarification,
+      asked_question_types: (state.asked_question_types ?? []).filter((type) =>
+        type !== "room_or_area"
+      ),
+    }
+  }
   const counts = {
     bedroomCount: state.property_bedroom_count,
     bathroomCount: state.property_bathroom_count,

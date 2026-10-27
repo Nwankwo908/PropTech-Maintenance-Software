@@ -31,6 +31,12 @@ import {
   acceptLocationReply,
   clarifyIssueLocation,
 } from "../../../../shared/maintenance/locationClarification.ts"
+import {
+  entrySentence,
+  interpretConfirmedLocation,
+  problemSentence,
+  scopeSentence,
+} from "../../../../shared/maintenance/requestConfirmation.ts"
 
 export const ISSUE_TYPES = [
   "plumbing",
@@ -97,6 +103,8 @@ export type SmsIntakeState = {
   secondary_trade?: string
   classification_reason?: string
   room_or_area?: string
+  /** The location question the resident answered, when one was asked. */
+  location_question?: string
   /** From home data when known. Missing means the layout is unknown. */
   property_bedroom_count?: number | null
   property_bathroom_count?: number | null
@@ -1181,12 +1189,6 @@ export function confirmationDetailLines(state: SmsIntakeState): string[] {
     lines.push(line)
   }
 
-  const location = resolveRoomLabel(state)
-  if (location && !/\b(not sure|unsure|unknown)\b/i.test(location)) {
-    const headline = issueSummaryBullet(state).toLowerCase()
-    if (!headline.includes(location.toLowerCase())) add(`Location: ${location}.`)
-  }
-
   const behavior = facts.hvac_behavior?.trim()
   if (behavior && isCleanDiagnosticFact(behavior, state)) {
     add(factConfirmationSentence("hvac_behavior", behavior))
@@ -1204,7 +1206,6 @@ export function confirmationDetailLines(state: SmsIntakeState): string[] {
   for (const key of [
     "plumbing_hot_water_scope",
     "plumbing_water_outage_scope",
-    "electrical_scope",
     "appliance_symptom",
     "door_part",
   ] as const) {
@@ -1227,6 +1228,29 @@ export function confirmationDetailLines(state: SmsIntakeState): string[] {
   return lines
 }
 
+export function confirmationClarification(state: SmsIntakeState): string | null {
+  const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
+  if (pending.length >= 2) return null
+  return interpretConfirmedLocation({
+    problem: state.initial_message || state.description,
+    answer: state.room_or_area,
+    question: state.location_question,
+  }).clarification
+}
+
+function confirmationNarrative(state: SmsIntakeState): string {
+  const reading = interpretConfirmedLocation({
+    problem: state.initial_message || state.description,
+    answer: state.room_or_area,
+    question: state.location_question,
+  })
+  return [
+    problemSentence(state.initial_message || state.description || "", reading.location),
+    scopeSentence(state.diagnostic_facts?.electrical_scope),
+    entrySentence(state.diagnostic_facts?.unit_entry),
+  ].filter(Boolean).join(" ")
+}
+
 export function buildConfirmationSummary(state: SmsIntakeState): string {
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   const facts = state.diagnostic_facts ?? {}
@@ -1243,16 +1267,16 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   const issueLines: string[] = []
   if (pending.length >= 2) {
     for (let i = 0; i < pending.length; i++) {
-      const summary = (pending[i].summary ?? "").replace(/^["“”']+|["“”']+$/g, "").trim()
-      const cleaned = summary || issueSummaryBullet({
-        ...state,
-        description: summary,
-        initial_message: summary,
-      })
-      issueLines.push(`${i + 1}. ${cleaned.replace(/\.$/, "")}`)
+      const issue = pending[i]
+      const sentence = problemSentence(
+        issue.description || issue.summary,
+        issue.room_or_area ?? null,
+      )
+      issueLines.push(`${i + 1}. ${sentence.replace(/\.$/, "")}`)
     }
   } else {
-    issueLines.push(issueSummaryBullet(state).replace(/\.$/, ""))
+    const clarification = confirmationClarification(state)
+    issueLines.push(clarification || confirmationNarrative(state))
   }
 
   const handlingTip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
@@ -1268,19 +1292,9 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     bullets.push(`• ${line}`)
   }
 
-  if (facts.unit_entry?.trim()) {
+  if (facts.unit_entry?.trim() && !entrySentence(facts.unit_entry)) {
     const entry = facts.unit_entry.trim()
-    const lower = entry.toLowerCase()
-    if (/^(y|yes)\b/.test(lower)) {
-      bullets.push("• It's OK to enter if no one is home.")
-    } else if (/^(n|no)\b/.test(lower)) {
-      bullets.push("• Do not enter if no one is home.")
-    } else if (
-      lower === "not_sure" ||
-      /^(not\s+sure|unsure)\b/.test(lower)
-    ) {
-      bullets.push("• It isn't confirmed whether someone can enter if no one is home.")
-    } else if (isCleanDiagnosticFact(entry, state)) {
+    if (isCleanDiagnosticFact(entry, state)) {
       bullets.push(`• ${finishSentence(`Entry if no one is home: ${entry}`)}`)
     }
   }

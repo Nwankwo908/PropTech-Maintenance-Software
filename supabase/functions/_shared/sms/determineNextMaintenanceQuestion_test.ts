@@ -575,7 +575,7 @@ const AC_TICKET = "30a0b8cc-4284-42a7-8139-b59e219219f0"
 
 Deno.test("gas confirmation does not offer a quick fix", () => {
   const sms = buildConfirmationSummary(GAS_INTAKE)
-  assertMatch(sms, /Gas smell/, "gas headline")
+  assertMatch(sms, /gas smell in the kitchen/i, "gas headline")
   assertMatch(sms, /Reply YES to submit/, "submit still waits")
   assertEqual(/Until help arrives/i.test(sms), false, "no troubleshooting tip")
   assertEqual(/thermostat|shutoff|GFCI|reset/i.test(sms), false, "no quick fix")
@@ -650,12 +650,13 @@ Deno.test("door confirmation states a clean issue phrase without quotation marks
     preferred_contact_method: "text",
   })
   assertMatch(sms, /Got it\. Here's the request:/i, "header")
-  assertMatch(sms, /^Carpentry issue$/m, "issue line")
+  assertMatch(sms, /The door is broken\./, "issue line")
   assertEqual(/[“"].*[”"]/u.test(sms), false, "no quote marks")
   assertEqual(/^My door broke$/m.test(sms), false, "not bare first person")
+  assertEqual(/Carpentry issue/i.test(sms), false, "not only the trade name")
   // Safety tip comes right after the issue line.
   const tipIdx = sms.search(/Until help arrives/i)
-  const issueIdx = sms.search(/^Carpentry issue$/m)
+  const issueIdx = sms.search(/The door is broken\./)
   assertEqual(tipIdx > issueIdx, true, "tip after issue")
   assertMatch(sms, /Reply YES to submit, or reply with any changes/i, "cta")
 })

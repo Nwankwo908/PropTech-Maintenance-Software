@@ -65,9 +65,11 @@ import {
   acceptLocationReply,
   clarifyIssueLocation,
 } from "../../../../shared/maintenance/locationClarification.ts"
+import { recoverLocationQuestion } from "../../../../shared/maintenance/requestConfirmation.ts"
 import {
   applyRecurringIssueSignal,
   buildConfirmationSummary,
+  confirmationClarification,
   computeIntakeSeverity,
   conversationStatusForStep,
   EDIT_FIELD_OPTIONS,
@@ -960,6 +962,25 @@ function applyStepAnswer(
   return { ok: true, state: next }
 }
 
+async function rememberLocationQuestion(
+  supabase: SupabaseClient,
+  conversationId: string,
+  state: SmsIntakeState,
+): Promise<SmsIntakeState> {
+  if (state.location_question?.trim()) return state
+  const { data } = await supabase
+    .from("sms_messages")
+    .select("direction, body")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
+    .limit(40)
+  const question = recoverLocationQuestion(
+    (data ?? []) as { direction?: string | null; body?: string | null }[],
+  )
+  if (!question) return state
+  return { ...state, location_question: question }
+}
+
 /** Structured SMS maintenance intake — one question at a time. */
 export async function processResidentMaintenanceIntake(
   supabase: SupabaseClient,
@@ -1362,6 +1383,26 @@ export async function processResidentMaintenanceIntake(
   }
 
   if (step === "awaiting_confirm") {
+    state = await rememberLocationQuestion(supabase, ctx.conversationId, state)
+    const locationClarification = confirmationClarification(state)
+    if (locationClarification) {
+      state = {
+        ...state,
+        step: "room_or_area",
+        diagnostic_question_type: "room_or_area",
+        diagnostic_question: locationClarification,
+        room_or_area: undefined,
+      }
+      return finishIntakeQuestion(supabase, ctx, state, locationClarification)
+    }
+    if (/^summary$/i.test(body.trim())) {
+      return finishIntakeQuestion(
+        supabase,
+        ctx,
+        state,
+        buildConfirmationSummary(state),
+      )
+    }
     if (isYesReply(body)) {
       const multiIssues = Array.isArray(state.pending_issues)
         ? state.pending_issues
