@@ -64,6 +64,33 @@ export function isVendorMatchableForDispatch(input: {
   return true
 }
 
+/**
+ * Whether a vendor named on an open landlord approval can still take the job.
+ * Pause lives on the verification record. A missing verification is not a pause.
+ */
+export function offerVendorStillAvailable(input: {
+  vendor: {
+    id?: string | null
+    active?: boolean | null
+    roster_status?: string | null
+    onboarding_overridden_at?: string | null
+  } | null
+  verification: {
+    status?: string | null
+    availability?: string | null
+  } | null
+}): boolean {
+  const id = input.vendor?.id?.trim()
+  if (!id) return false
+  return isVendorMatchableForDispatch({
+    verificationStatus: input.verification?.status ?? null,
+    vendorActive: input.vendor?.active,
+    availability: input.verification?.availability ?? null,
+    rosterStatus: input.vendor?.roster_status ?? null,
+    onboardingOverriddenAt: input.vendor?.onboarding_overridden_at ?? null,
+  })
+}
+
 /** Ulo-vetted-only pools exclude externally discovered roster vendors. */
 export function vendorAllowedForMarketplace(
   vendor: Pick<VendorAssignmentRow, "onboarded_from_external">,
