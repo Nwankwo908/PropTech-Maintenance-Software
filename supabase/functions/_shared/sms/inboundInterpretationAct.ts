@@ -1580,7 +1580,11 @@ async function handleScheduleChange(
       vendorNotified
         ? "Vendor was asked for a new window."
         : ticket
-        ? `Vendor was not texted (${vendorNotifyReason ?? "unknown"}).`
+        ? vendorNotifyReason === "no_vendor" || vendorNotifyReason === "no_vendor_phone"
+          ? "The vendor was not texted because there is no phone number on file."
+          : vendorNotifyReason === "send_failed"
+          ? "The visit is waiting on a new time, but the vendor was not texted."
+          : "The vendor was not texted. The saved visit was left as it is."
         : null,
     ]
       .filter(Boolean)

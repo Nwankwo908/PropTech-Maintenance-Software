@@ -1464,7 +1464,7 @@ export async function beginTenantInitiatedReschedule(
       vendorNotified: false,
       previousTimeLabel,
       vendorId,
-      error: upErr.message,
+      error: "update_failed",
     }
   }
 
