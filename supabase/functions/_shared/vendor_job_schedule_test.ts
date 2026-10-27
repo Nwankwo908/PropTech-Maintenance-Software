@@ -42,7 +42,7 @@ Deno.test("dispatch SMS includes WO + YES/NO and unique job link", () => {
       "Hi Flex Plumbing — new job WO-3B00",
       "Address: 14 Maple Ave",
       "Unit: 2B",
-      "Issue: Leaking kitchen sink",
+      "Issue: Leaking kitchen sink.",
       "Entry OK if resident out: Yes",
       "",
       "Would you like to take this job? Reply YES WO-3B00 to accept or NO WO-3B00 to decline.",
@@ -97,7 +97,7 @@ Deno.test("dispatch SMS uses clean headline, not intake Q&A in description", () 
   })
 
   const issueLine = body.split("\n").find((l) => l.startsWith("Issue:")) ?? ""
-  assertEquals(issueLine, "Issue: Shower won't shut off")
+  assertEquals(issueLine, "Issue: Shower won't shut off.")
   assertEquals(/Tenant update/i.test(issueLine), false)
   assertEquals(/Affected area/i.test(issueLine), false)
   assertEquals(/Entry if not home/i.test(issueLine), false)

@@ -85,6 +85,13 @@ export type TicketNotifyPayload = {
   locationLabel?: string | null
   /** When set, single-family properties omit the Unit line on vendor SMS. */
   propertyType?: string | null
+  /** Location question still stored on the resident thread. */
+  locationQuestion?: string | null
+  /** Place the resident confirmed on that thread. */
+  locationAnswer?: string | null
+  /** Diagnostic answers such as scope. Entry permission stays on entryOkIfAbsent. */
+  facts?: Record<string, string | null | undefined> | null
+  safetyConcern?: string | null
   /**
    * Retry assignment when the ticket was already marked notified but still has
    * no vendor (e.g. landlord Override after a no-vendor submit).
@@ -283,6 +290,10 @@ function buildSmsBody(
     entryOkIfAbsent: payload.entryOkIfAbsent,
     location: payload.locationLabel ?? payload.unit,
     propertyType: payload.propertyType,
+    locationQuestion: payload.locationQuestion,
+    locationAnswer: payload.locationAnswer,
+    facts: payload.facts,
+    safetyConcern: payload.safetyConcern,
     jobDetailUrl: buildJobDetailUrl(actionToken) ?? legacyViewUrl,
     residentAvailabilityText: payload.residentAvailabilityText,
   })
@@ -505,6 +516,18 @@ async function notifyChannelsForAssignment(
         } catch (e) {
           console.error("[vendor-notify] property type for assignment SMS", e)
         }
+      }
+      try {
+        const { loadConfirmedVendorOfferFacts } = await import(
+          "../_shared/sms/vendorJobOfferContext.ts"
+        )
+        const offerFacts = await loadConfirmedVendorOfferFacts(supabase, ticketId)
+        payload.locationQuestion = offerFacts.locationQuestion
+        payload.locationAnswer = offerFacts.locationAnswer
+        payload.facts = offerFacts.facts
+        payload.safetyConcern = offerFacts.safetyConcern
+      } catch (e) {
+        console.error("[vendor-notify] confirmed offer details", e)
       }
       const smsBody = buildSmsBody(
         payload,

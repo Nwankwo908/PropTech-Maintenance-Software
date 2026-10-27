@@ -217,7 +217,7 @@ export function problemSentence(problem: string, location: string | null): strin
   }
   if (place && !opening.toLowerCase().includes(place)) {
     const base = ensureSentence(opening).replace(/\.$/, "")
-    return `${base} It is in the ${place}.`
+    return `${base}. It is in the ${place}.`
   }
   return ensureSentence(opening || "Maintenance issue")
 }
