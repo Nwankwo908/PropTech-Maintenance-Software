@@ -25,6 +25,7 @@ import {
   extractWeekdayPreference,
   formatRentDueDayLabel,
   interpretInboundSms,
+  looksLikeCancelRepair,
   parseResidentCalendarDate,
   pendingContextFromIntake,
   shouldHandleInterpretedIntent,
@@ -2615,9 +2616,11 @@ export async function tryHandleInterpretedInbound(
         awaiting_ticket_cancel_confirm: false,
         pending_ticket_cancel_id: undefined,
       })
-      interpretation.intent = intake.pending_which_request_intent ??
-        interpretation.intent ??
-        "maintenance_update"
+      interpretation.intent = looksLikeCancelRepair(ctx.inbound.body)
+        ? "maintenance_cancel"
+        : intake.pending_which_request_intent ??
+          interpretation.intent ??
+          "maintenance_update"
       interpretation.extractedSlots = {
         ...interpretation.extractedSlots,
         ticket_id: matched[0].id,
@@ -2640,9 +2643,11 @@ export async function tryHandleInterpretedInbound(
           awaiting_ticket_cancel_confirm: false,
           pending_ticket_cancel_id: undefined,
         })
-        interpretation.intent = intake.pending_which_request_intent ??
-          interpretation.intent ??
-          "maintenance_update"
+        interpretation.intent = looksLikeCancelRepair(ctx.inbound.body)
+          ? "maintenance_cancel"
+          : intake.pending_which_request_intent ??
+            interpretation.intent ??
+            "maintenance_update"
         interpretation.extractedSlots = {
           ...interpretation.extractedSlots,
           ticket_id: unique[0].id,

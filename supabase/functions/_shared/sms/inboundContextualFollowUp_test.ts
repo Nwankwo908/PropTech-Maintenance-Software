@@ -251,6 +251,33 @@ Deno.test("worse with one open request continues that request", () => {
   }
 })
 
+Deno.test("naming the fixed repair closes that request when another is open", () => {
+  const faucet: OpenRequestSummary = {
+    id: "t-faucet",
+    description: "The Kitchen faucet is dripping.",
+    vendor_work_status: "unassigned",
+    issue_category: "plumbing",
+  }
+  const cooling: OpenRequestSummary = {
+    id: "t-ac",
+    description: "The AC isn't working",
+    vendor_work_status: "unassigned",
+    issue_category: "hvac",
+  }
+  const decision = resolveContextualFollowUp({
+    body: "I fixed the kitchen faucet.",
+    hasMedia: false,
+    intent: null,
+    openTickets: [cooling, faucet],
+    activeIntake: false,
+  })
+  assertEquals(decision.action, "follow_up")
+  if (decision.action === "follow_up") {
+    assertEquals(decision.intent, "maintenance_cancel")
+    assertEquals(decision.ticketId, "t-faucet")
+  }
+})
+
 Deno.test("fixed it cancels the existing request instead of opening a new one", () => {
   const decision = resolveContextualFollowUp({
     body: "Never mind, I fixed it.",

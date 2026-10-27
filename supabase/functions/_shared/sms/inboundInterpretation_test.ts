@@ -288,6 +288,7 @@ Deno.test("natural cancel phrases stop the current request, including mid-intake
     "Never mind",
     "I don't need it",
     "I already fixed it",
+    "I fixed the kitchen faucet",
     "It's working",
     "Forget it",
     "Never mind, I fixed it",
