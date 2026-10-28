@@ -149,6 +149,8 @@ import {
   type PropertyHealthPmTask,
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
+  emptyPropertyHealthVitalsSignals,
+  type PropertyHealthVitalsSignals,
 } from '@/lib/propertyHealth'
 import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
 import { PropertyHealthUnavailableNote } from '@/components/PropertyHealthUnavailableNote'
@@ -968,6 +970,7 @@ export function AdminOverviewDashboard() {
   const [healthAssets, setHealthAssets] = useState<PropertyHealthAsset[]>([])
   const [healthInspections, setHealthInspections] = useState<PropertyHealthInspection[]>([])
   const [healthDamageReports, setHealthDamageReports] = useState<PropertyHealthDamageReport[]>([])
+  const [healthVitals, setHealthVitals] = useState<PropertyHealthVitalsSignals>(emptyPropertyHealthVitalsSignals)
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [overviewResidents, setOverviewResidents] = useState<OverviewResident[]>([])
   const [leaseInfoMissing, setLeaseInfoMissing] = useState<LeaseInfoMissingAttention[]>([])
@@ -1482,6 +1485,7 @@ export function AdminOverviewDashboard() {
       setHealthAssets(healthSignals.assets)
       setHealthInspections(healthSignals.inspections)
       setHealthDamageReports(healthSignals.damageReports)
+      setHealthVitals(healthSignals.vitals)
 
       if (canonicalPropertiesResult.ok) {
         setCanonicalProperties(canonicalPropertiesResult.properties)
@@ -1602,11 +1606,12 @@ export function AdminOverviewDashboard() {
       assets: healthAssets,
       inspections: healthInspections,
       damageReports: healthDamageReports,
+      ...healthVitals,
       residents,
       canonicalProperties: canonicalPropertiesForHealth,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, healthVitals, residents, canonicalPropertiesForHealth, now])
 
   const kpis = useMemo(() => {
     const openRepairs = openTickets.length

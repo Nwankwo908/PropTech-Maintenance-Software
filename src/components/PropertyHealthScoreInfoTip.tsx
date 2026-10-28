@@ -12,7 +12,7 @@ function KpiInfoIcon() {
   )
 }
 
-/** Property Health KPI ⓘ — intro + Factor / Status / What it means table, portaled over the card. */
+/** Property Health KPI ⓘ — intro + Factor / Points / What it means table, portaled over the card. */
 export function PropertyHealthScoreInfoTip({
   lines,
 }: {
@@ -94,7 +94,7 @@ export function PropertyHealthScoreInfoTip({
                       Factor
                     </th>
                     <th className="pb-1.5 pr-2 text-[11px] font-semibold leading-4 text-[#0a0a0a]">
-                      Status
+                      Points
                     </th>
                     <th className="pb-1.5 text-[11px] font-semibold leading-4 text-[#0a0a0a]">
                       What it means

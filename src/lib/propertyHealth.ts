@@ -1,29 +1,36 @@
 /**
- * Unified Property Health — per-building scores; Overview is a unit-weighted
- * average of buildings that have a real Condition-backed score.
+ * Unified Property Health (Ulo Vitals) — per-building scores; Overview is a
+ * unit-weighted average of scored buildings.
  *
- * Score (0–100) comes from calculatePropertyHealth():
- *   40% Condition · 35% Maintenance · 25% Risk
- * Missing factors are unknown (not scored as 50).
+ * Score (0–100) comes from calculatePropertyHealth(), four dimensions × 25 pts:
+ *   Open action items · Occupancy · Vendor coverage · Documentation
+ * Bands: Healthy 80+ · Fair 65–79 · At Risk 50–64 · Critical < 50.
  *
  * Property activation (Active vs Pending setup) is separate from health scoring.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import {
-  REPEAT_ISSUE_WINDOW_DAYS,
+  CORE_VENDOR_TRADES,
+  PROPERTY_HEALTH_CATEGORY_LABELS,
+  PROPERTY_HEALTH_CATEGORY_WEIGHTS,
+  VITALS_DIMENSION_POINTS,
   calculatePropertyHealth,
   clampHealthScore,
+  coreTradesForVendorCategory,
+  formatPropertyHealthGap,
   propertyHealthRatingFromScore,
+  type CoreVendorTrade,
+  type PropertyHealthGap,
   type PropertyHealthRating,
 } from '@/lib/propertyHealth/calculatePropertyHealth'
 
 export {
-  REPEAT_ISSUE_WINDOW_DAYS,
   calculatePropertyHealth,
+  formatPropertyHealthGap,
   propertyHealthRatingFromScore,
 }
-export type { PropertyHealthRating }
+export type { PropertyHealthGap, PropertyHealthRating }
 
 /** Days of ops history used by older insights gates (not a score penalty). */
 export const PROPERTY_HEALTH_OPS_MATURITY_DAYS = 30
@@ -32,19 +39,15 @@ export const PROPERTY_HEALTH_INSIGHTS_CAPTION =
   'More activity needed for full insights'
 
 export const PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION =
-  'Add inspection or appliance details to calculate property health'
+  'Add units to calculate property health'
 
-export const PROPERTY_HEALTH_WEIGHTS = {
-  condition: 0.4,
-  maintenance: 0.35,
-  risk: 0.25,
-} as const
+export const PROPERTY_HEALTH_WEIGHTS = PROPERTY_HEALTH_CATEGORY_WEIGHTS
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
 /** Property Health ⓘ popover intro — weights + missing-data rule. */
 export const PROPERTY_HEALTH_SCORE_INFO_DESCRIPTION =
-  'Your score reflects property condition (40%), maintenance (35%), and risk (25%). If information is missing, we leave it out of the score.'
+  'Your score adds four parts worth 25 points each: open action items, occupancy, vendor coverage across 8 core trades, and documentation (lease, Home Check equipment, photo on the last job and property insurance, equally weighted). Healthy is 80+, Fair 65–79, At Risk 50–64, Critical below 50.'
 
 export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history' | 'unknown_condition'
 
@@ -100,7 +103,8 @@ export function shouldShowPropertyHealthScore(
     status === 'high_risk' ||
     status === 'healthy' ||
     status === 'monitor' ||
-    status === 'at_risk'
+    status === 'at_risk' ||
+    status === 'critical'
   )
 }
 
@@ -140,16 +144,20 @@ export type PropertyHealthStatus =
   | 'healthy'
   | 'monitor'
   | 'at_risk'
+  | 'critical'
   | 'active'
   | 'pending_setup'
   | 'unknown'
 
-export type PropertyHealthComponentKey = 'condition' | 'maintenance' | 'risk'
+export type PropertyHealthComponentKey = keyof typeof PROPERTY_HEALTH_CATEGORY_WEIGHTS
 
 export type PropertyHealthComponent = {
   key: PropertyHealthComponentKey
   label: string
+  /** Points earned in this dimension (0–25). */
   score: number
+  /** Points available in this dimension. */
+  maxPoints: number
   weight: number
   /** True when this category had no known factors. */
   isFallback: boolean
@@ -167,7 +175,9 @@ export type PropertyHealthScopeScore = {
   pendingReason?: PropertyHealthPendingReason | null
   dataCompleteness?: number
   topIssues?: string[]
-  /** Buildings included in the Overview rollup (have a Condition-backed score). */
+  /** Point-gain CTAs, largest first (e.g. "Add HVAC vendor → +7 pts"). */
+  gaps?: PropertyHealthGap[]
+  /** Buildings included in the Overview rollup (have a score). */
   scoredPropertyCount?: number
   /** Buildings on the Properties grid. */
   propertyCount?: number
@@ -408,13 +418,47 @@ export type PropertyHealthInputs = {
   /** Roster rows used for occupancy (units with an assigned active resident). */
   residents?: PropertyHealthResident[]
   now?: number
-  /** Override repeat-issue lookback window (ms). Defaults to REPEAT_ISSUE_WINDOW_DAYS. */
-  repeatWindowMs?: number
+  /** Landlord vendors — used for core-trade coverage. */
+  vendors?: PropertyHealthVendor[]
+  /** Per-ticket extras keyed by ticket id (Home Check observation flag, completion photos). */
+  ticketExtras?: Record<string, PropertyHealthTicketExtras>
+  /** Lease uploads, matched to current residents for the Documentation dimension. */
+  leaseDocuments?: PropertyHealthLeaseLookup | null
+  /** The landlord's own property insurance policies (vendor COIs excluded). */
+  insuranceDocuments?: PropertyHealthInsuranceLookup | null
   /**
-   * When set, open-maintenance scoring only counts units with open tickets whose
-   * created_at is before this timestamp (used for portfolio delta proxy).
+   * When set, open action items are counted as of this timestamp (used for the
+   * month-over-month trend).
    */
   openIssuesCreatedBeforeMs?: number
+}
+
+export type PropertyHealthVendor = {
+  id: string
+  category: string | null
+  active: boolean
+  rosterStatus: string | null
+}
+
+/** Answers whether a resident has a lease upload matched to them. */
+export type PropertyHealthLeaseLookup = {
+  hasLeaseFor(resident: {
+    fullName: string
+    unit: string
+    building: string
+    email?: string | null
+  }): boolean
+}
+
+/** Answers whether a property policy is on file for any of a property's names / addresses. */
+export type PropertyHealthInsuranceLookup = {
+  hasPolicyFor(propertyNames: string[]): boolean
+}
+
+export type PropertyHealthTicketExtras = {
+  /** Home Check observation tickets are not action items. */
+  observationOnly: boolean
+  completionPhotoCount: number
 }
 
 const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled', 'archived'])
@@ -427,17 +471,14 @@ function isVoidedWorkOrder(ticket: Pick<PropertyHealthTicket, 'vendorWorkStatus'
 
 const FOUR_WEEKS_MS = 28 * 24 * 60 * 60 * 1000
 
-const COMPONENT_LABELS: Record<PropertyHealthComponentKey, string> = {
-  condition: 'Condition',
-  maintenance: 'Maintenance',
-  risk: 'Risk',
-}
+const COMPONENT_LABELS: Record<PropertyHealthComponentKey, string> = PROPERTY_HEALTH_CATEGORY_LABELS
 
 function buildNeutralComponents(): PropertyHealthComponent[] {
   return (Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]).map((key) => ({
     key,
     label: COMPONENT_LABELS[key],
     score: 0,
+    maxPoints: VITALS_DIMENSION_POINTS,
     weight: PROPERTY_HEALTH_WEIGHTS[key],
     isFallback: true,
     detail: 'No active units to measure',
@@ -455,6 +496,7 @@ function buildNeutralScopeScore(): PropertyHealthScopeScore {
     pendingReason: 'inactive_units',
     dataCompleteness: 0,
     topIssues: [],
+    gaps: [],
   }
 }
 
@@ -587,11 +629,10 @@ export function isPendingSetupHealth(components: PropertyHealthComponent[]): boo
 
 export function propertyHealthStatus(score: number): PropertyHealthStatus {
   const rating = propertyHealthRatingFromScore(score)
-  if (rating === 'Excellent') return 'excellent'
-  if (rating === 'Good') return 'good'
+  if (rating === 'Healthy') return 'healthy'
   if (rating === 'Fair') return 'fair'
-  if (rating === 'Needs Attention') return 'needs_attention'
-  return 'high_risk'
+  if (rating === 'At Risk') return 'at_risk'
+  return 'critical'
 }
 
 export function resolvePropertyHealthStatus(
@@ -599,10 +640,8 @@ export function resolvePropertyHealthStatus(
   components: PropertyHealthComponent[],
   options?: { insufficientOperationalSignal?: boolean },
 ): PropertyHealthStatus {
+  void options
   if (isPendingSetupHealth(components)) return 'pending_setup'
-  const condition = components.find((component) => component.key === 'condition')
-  if (!condition || condition.isFallback) return 'unknown'
-  if (options?.insufficientOperationalSignal) return propertyHealthStatus(score)
   return propertyHealthStatus(score)
 }
 
@@ -1136,16 +1175,6 @@ export function findCanonicalPropertyForResident(
   return null
 }
 
-function filterPmForScope(
-  tasks: PropertyHealthPmTask[],
-  building: string,
-  property: PropertyHealthCanonicalProperty | null,
-  units: PropertyHealthUnit[],
-): PropertyHealthPmTask[] {
-  const aliases = buildingScopeAliasKeys(building, property, units)
-  return tasks.filter((task) => aliases.has(normalizeBuildingKey(task.building)))
-}
-
 function filterAssetsForScope(
   assets: PropertyHealthAsset[],
   building: string,
@@ -1156,19 +1185,6 @@ function filterAssetsForScope(
   return assets.filter((asset) => {
     if (property?.id && asset.propertyId && asset.propertyId === property.id) return true
     return aliases.has(normalizeBuildingKey(asset.building))
-  })
-}
-
-function filterInspectionsForScope(
-  inspections: PropertyHealthInspection[],
-  building: string,
-  property: PropertyHealthCanonicalProperty | null,
-  units: PropertyHealthUnit[],
-): PropertyHealthInspection[] {
-  const aliases = buildingScopeAliasKeys(building, property, units)
-  return inspections.filter((row) => {
-    if (property?.id && row.propertyId && row.propertyId === property.id) return true
-    return aliases.has(normalizeBuildingKey(row.building))
   })
 }
 
@@ -1258,38 +1274,104 @@ export function computeGridOccupancyForBuilding(
   return occupancyFromInventory(buildingUnits)
 }
 
-function categoryDetail(
-  result: ReturnType<typeof calculatePropertyHealth>,
-  key: PropertyHealthComponentKey,
-): { score: number; isFallback: boolean; detail: string } {
-  const category = result[key]
-  const notes = category.factors
-    .filter((factor) => factor.status === 'known' && factor.explanation)
-    .map((factor) => factor.explanation!)
-  if (category.score == null) {
-    return { score: 0, isFallback: true, detail: 'Not enough information yet' }
-  }
-  return {
-    score: category.score,
-    isFallback: false,
-    detail: notes.length ? notes.slice(0, 2).join(' · ') : 'No deductions',
-  }
-}
-
 function componentsFromHealthResult(
   result: ReturnType<typeof calculatePropertyHealth>,
 ): PropertyHealthComponent[] {
   return (Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]).map((key) => {
-    const mapped = categoryDetail(result, key)
+    const dimension = result.dimensions[key]
+    const gap = result.gaps.find((row) => row.dimension === key)
     return {
       key,
       label: COMPONENT_LABELS[key],
-      score: mapped.score,
+      score: dimension.points,
+      maxPoints: dimension.maxPoints,
       weight: PROPERTY_HEALTH_WEIGHTS[key],
-      isFallback: mapped.isFallback,
-      detail: mapped.detail,
+      isFallback: false,
+      detail: gap ? `${dimension.detail}. ${formatPropertyHealthGap(gap)}` : dimension.detail,
     }
   })
+}
+
+const HEATING_SYSTEM_PATTERN = /\b(furnace|boiler|heat\s*pump|heating|hvac)\b/i
+const WATER_HEATER_PATTERN = /water[\s_]*heater/i
+
+/** Home Check equipment: a water heater and a heating system are both on record. */
+function hasCompleteHomeCheckAssetList(assets: PropertyHealthAsset[]): boolean {
+  const types = assets.map((asset) => asset.applianceType.replace(/_/g, ' '))
+  return (
+    types.some((type) => WATER_HEATER_PATTERN.test(type)) &&
+    types.some((type) => HEATING_SYSTEM_PATTERN.test(type) && !WATER_HEATER_PATTERN.test(type))
+  )
+}
+
+const INACTIVE_VENDOR_ROSTER_STATUSES = new Set(['inactive', 'suspended', 'banned', 'removed', 'archived'])
+
+/** Core trades with at least one active vendor on the landlord's roster. */
+export function coveredCoreTrades(vendors: PropertyHealthVendor[]): CoreVendorTrade[] {
+  const covered = new Set<CoreVendorTrade>()
+  for (const vendor of vendors) {
+    if (!vendor.active) continue
+    if (INACTIVE_VENDOR_ROSTER_STATUSES.has((vendor.rosterStatus ?? '').trim().toLowerCase())) continue
+    for (const trade of coreTradesForVendorCategory(vendor.category)) covered.add(trade)
+  }
+  return CORE_VENDOR_TRADES.filter((trade) => covered.has(trade))
+}
+
+function isObservationOnlyTicket(
+  ticket: PropertyHealthTicket,
+  extras: Record<string, PropertyHealthTicketExtras> | undefined,
+): boolean {
+  return extras?.[ticket.id]?.observationOnly === true
+}
+
+/** Open action item as of `asOfMs` (defaults to now). */
+function isOpenActionItem(
+  ticket: PropertyHealthTicket,
+  extras: Record<string, PropertyHealthTicketExtras> | undefined,
+  asOfMs: number | undefined,
+): boolean {
+  if (isVoidedWorkOrder(ticket) || isObservationOnlyTicket(ticket, extras)) return false
+  if (asOfMs == null) return isTicketOpen(ticket)
+  const created = parseTimestampMs(ticket.createdAt)
+  if (created == null || created >= asOfMs) return false
+  const completed = parseTimestampMs(ticket.completedAt)
+  if (completed != null) return completed >= asOfMs
+  return isTicketOpen(ticket)
+}
+
+/** True when the most recent completed job has at least one completion photo. */
+function lastCompletedJobHasPhoto(
+  tickets: PropertyHealthTicket[],
+  extras: Record<string, PropertyHealthTicketExtras> | undefined,
+): boolean {
+  let latest: { ticket: PropertyHealthTicket; at: number } | null = null
+  for (const ticket of tickets) {
+    if (isVoidedWorkOrder(ticket) || isObservationOnlyTicket(ticket, extras)) continue
+    const done =
+      Boolean(ticket.completedAt?.trim()) || ticket.vendorWorkStatus.toLowerCase() === 'completed'
+    if (!done) continue
+    const at = parseTimestampMs(ticket.completedAt) ?? parseTimestampMs(ticket.createdAt) ?? 0
+    if (!latest || at > latest.at) latest = { ticket, at }
+  }
+  if (!latest) return false
+  return (extras?.[latest.ticket.id]?.completionPhotoCount ?? 0) > 0
+}
+
+/** Every current resident in scope has a lease upload matched to them. */
+function everyResidentHasLeaseOnFile(
+  residents: PropertyHealthResident[],
+  fallbackBuilding: string | null,
+  leases: PropertyHealthLeaseLookup | null | undefined,
+): boolean {
+  if (!leases || residents.length === 0) return false
+  return residents.every((resident) =>
+    leases.hasLeaseFor({
+      fullName: resident.fullName,
+      unit: resident.unit,
+      building: resident.building ?? fallbackBuilding ?? '',
+      email: resident.email ?? null,
+    }),
+  )
 }
 
 function occupyingResidentsForHealthScope(
@@ -1332,9 +1414,6 @@ export function computePropertyHealthScope(
   inputs: PropertyHealthInputs,
   scope: { building?: string; property?: PropertyHealthCanonicalProperty } = {},
 ): PropertyHealthScopeScore | null {
-  const now = inputs.now ?? Date.now()
-  const repeatWindowMs =
-    inputs.repeatWindowMs ?? REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   const scopeBuilding = scope.building?.trim()
   const scopeProperty = scope.property ?? null
 
@@ -1365,57 +1444,51 @@ export function computePropertyHealthScope(
           scopeProperty,
         )
       : inputs.tickets
-  const scopedPm =
-    scopeBuilding != null
-      ? filterPmForScope(inputs.pmTasks, scopeBuilding, scopeProperty, inputs.units)
-      : inputs.pmTasks
   const scopedAssets =
     scopeBuilding != null
       ? filterAssetsForScope(inputs.assets ?? [], scopeBuilding, scopeProperty, inputs.units)
       : (inputs.assets ?? [])
-  const scopedInspections =
-    scopeBuilding != null
-      ? filterInspectionsForScope(
-          inputs.inspections ?? [],
-          scopeBuilding,
-          scopeProperty,
-          inputs.units,
-        )
-      : (inputs.inspections ?? [])
 
-  const scopedTicketIds = new Set(scopedTickets.map((ticket) => ticket.id))
-  const scopedDamage =
-    scopeBuilding != null
-      ? (inputs.damageReports ?? []).filter((row) => {
-          const id = row.maintenanceRequestId?.trim()
-          if (!id) return false
-          return scopedTicketIds.has(id)
-        })
-      : (inputs.damageReports ?? [])
+  // Occupancy: active leases vs. every unit onboarded for this property.
+  const inventory =
+    scopedUnits.length > 0
+      ? scopeBuilding != null
+        ? dedupePropertyUnitsByLabel(scopedUnits, scopeProperty?.name ?? scopeBuilding)
+        : uniqueUnitsForOccupancy(scopedUnits)
+      : trackedUnits
+  const occupiedUnits = inventory.filter(
+    (unit) =>
+      isOccupiedUnitStatus(unit.status) ||
+      isUnitOccupiedByResident(unit, unit.building ?? scopeBuilding ?? '', occupyingResidents),
+  ).length
 
+  const extras = inputs.ticketExtras
   const result = calculatePropertyHealth({
-    trackedUnits: trackedUnits.map((unit) => ({
-      unitLabel: unit.unitLabel,
-      status: unit.status,
-    })),
-    tickets: scopedTickets.map((ticket) => ({
-      ...ticket,
-      issueCategory: ticket.issueCategory ?? null,
-    })),
-    pmTasks: scopedPm,
-    assets: scopedAssets,
-    inspections: scopedInspections,
-    damageReports: scopedDamage,
-    now,
-    repeatWindowMs,
-    openIssuesCreatedBeforeMs: inputs.openIssuesCreatedBeforeMs,
+    openItemCount: scopedTickets.filter((ticket) =>
+      isOpenActionItem(ticket, extras, inputs.openIssuesCreatedBeforeMs),
+    ).length,
+    totalUnits: inventory.length,
+    occupiedUnits,
+    coveredTrades: coveredCoreTrades(inputs.vendors ?? []),
+    documentation: {
+      leaseOnFile: everyResidentHasLeaseOnFile(
+        occupyingResidents,
+        scopeProperty?.name ?? scopeBuilding ?? null,
+        inputs.leaseDocuments,
+      ),
+      assetListComplete: hasCompleteHomeCheckAssetList(scopedAssets),
+      lastJobPhotoReceipt: lastCompletedJobHasPhoto(scopedTickets, extras),
+      insuranceOnFile:
+        inputs.insuranceDocuments?.hasPolicyFor(
+          [scopeProperty?.name, scopeBuilding].filter((name): name is string => Boolean(name?.trim())),
+        ) ?? false,
+    },
   })
 
   const components = componentsFromHealthResult(result)
   const score = result.score
-  const status = resolvePropertyHealthStatus(score ?? 0, components)
-  const pendingReason: PropertyHealthPendingReason | null =
-    status === 'unknown' ? 'unknown_condition' : null
+  const status = resolvePropertyHealthStatus(score, components)
+  const dimensionsFull = components.filter((component) => component.score >= component.maxPoints).length
 
   return {
     score,
@@ -1423,9 +1496,10 @@ export function computePropertyHealthScope(
     rating: result.rating,
     components,
     trackedUnitCount: trackedUnits.length,
-    pendingReason,
-    dataCompleteness: result.dataCompleteness,
-    topIssues: result.topIssues.map((issue) => issue.explanation),
+    pendingReason: null,
+    dataCompleteness: Math.round((dimensionsFull / components.length) * 100) / 100,
+    topIssues: result.gaps.slice(0, 4).map(formatPropertyHealthGap),
+    gaps: result.gaps,
   }
 }
 
@@ -1459,6 +1533,7 @@ function rollupCategoryFromBuildings(
       key,
       label: COMPONENT_LABELS[key],
       score: 0,
+      maxPoints: VITALS_DIMENSION_POINTS,
       weight: PROPERTY_HEALTH_WEIGHTS[key],
       isFallback: true,
       detail: 'Not enough information yet',
@@ -1468,6 +1543,7 @@ function rollupCategoryFromBuildings(
     key,
     label: COMPONENT_LABELS[key],
     score: clampHealthScore(scoreSum / weightSum),
+    maxPoints: VITALS_DIMENSION_POINTS,
     weight: PROPERTY_HEALTH_WEIGHTS[key],
     isFallback: false,
     detail: detail ?? 'Weighted by unit count across properties',
@@ -1647,7 +1723,6 @@ export function buildPropertyHealthReport(
       {
         ...inputs,
         now: now - FOUR_WEEKS_MS,
-        repeatWindowMs: REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
         openIssuesCreatedBeforeMs: now - FOUR_WEEKS_MS,
       },
       landlordId,
@@ -1663,14 +1738,13 @@ export function buildPropertyHealthReport(
 export function formatPropertyHealthTooltip(components: PropertyHealthComponent[]): string {
   return components
     .map((c) => {
-      const pct = Math.round(c.weight * 100)
-      const suffix = c.isFallback ? ' (unknown)' : ''
-      return `${c.label} ${pct}%: ${c.isFallback ? '—' : c.score}${suffix} — ${c.detail}`
+      const value = c.isFallback ? '—' : `${c.score}/${c.maxPoints}`
+      return `${c.label}: ${value} — ${c.detail}`
     })
     .join('\n')
 }
 
-const CATEGORY_ORDER: PropertyHealthComponentKey[] = ['condition', 'maintenance', 'risk']
+const CATEGORY_ORDER = Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]
 
 export type PropertyHealthFactorBreakdownLine = {
   label: string
@@ -1678,37 +1752,24 @@ export type PropertyHealthFactorBreakdownLine = {
   detail: string
 }
 
-function propertyHealthFactorMeaning(
-  key: PropertyHealthComponentKey,
-  component: PropertyHealthComponent | undefined,
-): string {
-  if (!component || component.isFallback) {
-    if (key === 'condition') return 'Add property details to calculate this part.'
-    return 'Not enough information yet to score this part.'
-  }
-  const hasIssueNotes =
-    Boolean(component.detail?.trim()) && component.detail !== 'No deductions'
-  if (hasIssueNotes) return component.detail
-  if (key === 'maintenance') {
-    return 'No maintenance issues are currently lowering this score.'
-  }
-  if (key === 'risk') {
-    return 'No recorded risks are currently lowering this score.'
-  }
-  return 'No condition issues are currently lowering this score.'
-}
-
-/** KPI popover rows for Condition / Maintenance / Risk (Factor · Status · What it means). */
+/** KPI popover rows for the four Vitals dimensions (Factor · Points · What it means). */
 export function propertyHealthFactorBreakdownLines(
   components: PropertyHealthComponent[],
 ): PropertyHealthFactorBreakdownLine[] {
   const byKey = new Map(components.map((component) => [component.key, component]))
   return CATEGORY_ORDER.map((key) => {
     const component = byKey.get(key)
+    if (!component || component.isFallback) {
+      return {
+        label: COMPONENT_LABELS[key],
+        value: 'Unknown',
+        detail: 'Add units to score this part.',
+      }
+    }
     return {
       label: COMPONENT_LABELS[key],
-      value: !component || component.isFallback ? 'Unknown' : String(component.score),
-      detail: propertyHealthFactorMeaning(key, component),
+      value: `${component.score} / ${component.maxPoints}`,
+      detail: component.detail,
     }
   })
 }
@@ -1811,7 +1872,141 @@ function parseInspectionResult(value: unknown): {
   }
 }
 
-/** Fetch PM, assets, inspections, and damage reports for property health. */
+/** Vitals inputs not carried on the pages' own ticket / unit rows. */
+export type PropertyHealthVitalsSignals = {
+  vendors: PropertyHealthVendor[]
+  ticketExtras: Record<string, PropertyHealthTicketExtras>
+  leaseDocuments: PropertyHealthLeaseLookup | null
+  insuranceDocuments: PropertyHealthInsuranceLookup | null
+}
+
+export function emptyPropertyHealthVitalsSignals(): PropertyHealthVitalsSignals {
+  return { vendors: [], ticketExtras: {}, leaseDocuments: null, insuranceDocuments: null }
+}
+
+const PROPERTY_POLICY_DOCUMENT_TYPES = new Set([
+  'dwelling_policy_declarations',
+  'homeowners_policy_declarations',
+  'commercial_property_policy',
+])
+
+/** Insured property addresses from uploaded property policies (never vendor COIs). */
+export function propertyPolicyAddressesFromUploads(documents: unknown[]): string[] {
+  const addresses: string[] = []
+  for (const doc of documents) {
+    if (!doc || typeof doc !== 'object') continue
+    const payload = (doc as { extractedPayload?: unknown }).extractedPayload
+    if (!payload || typeof payload !== 'object') continue
+    const policy = (payload as { dwellingPolicy?: unknown }).dwellingPolicy
+    if (!policy || typeof policy !== 'object') continue
+    const row = policy as { document_type?: unknown; insured_property_address?: unknown }
+    if (!PROPERTY_POLICY_DOCUMENT_TYPES.has(asString(row.document_type))) continue
+    const address = asString(row.insured_property_address)
+    if (address) addresses.push(address)
+  }
+  return addresses
+}
+
+/** A property policy matches when its insured address is the same place as the property. */
+export function insuredAddressMatchesProperty(insuredAddress: string, propertyNames: string[]): boolean {
+  const street = insuredAddress.split(',')[0]?.trim() ?? ''
+  return propertyNames.some(
+    (name) =>
+      buildingsLikelySamePlace(insuredAddress, name) ||
+      (street.length > 0 && buildingsLikelySamePlace(street, name.split(',')[0]?.trim() ?? name)),
+  )
+}
+
+async function fetchPropertyHealthVitalsSignals(
+  landlordId: string,
+): Promise<PropertyHealthVitalsSignals> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return emptyPropertyHealthVitalsSignals()
+
+  const [vendorResult, ticketResult, leaseResult, insuranceResult] = await Promise.allSettled([
+    supabase
+      .from('vendors')
+      .select('id, category, active, roster_status')
+      .eq('landlord_id', landlordId)
+      .limit(500),
+    supabase
+      .from('maintenance_requests')
+      .select('id, observation_only, completion_photo_paths')
+      .eq('landlord_id', landlordId)
+      .order('created_at', { ascending: false })
+      .limit(1000),
+    (async () => {
+      const { collectResidentLeaseDocuments, loadLeaseDocumentPool } = await import(
+        '@/lib/residentLeaseDocuments'
+      )
+      const pool = await loadLeaseDocumentPool(landlordId)
+      const lookup: PropertyHealthLeaseLookup = {
+        hasLeaseFor: (resident) =>
+          collectResidentLeaseDocuments(pool.documents, resident, pool.review).length > 0,
+      }
+      return lookup
+    })(),
+    (async () => {
+      const [
+        { loadOnboardingDocumentArchive },
+        { propertyInsuranceProfileOnFile },
+        { loadInsuredPropertyNames },
+      ] = await Promise.all([
+        import('@/lib/organizationSettings'),
+        import('@/lib/propertyDetailsCompleteness'),
+        import('@/lib/propertyInsuranceProfile'),
+      ])
+      const [archive, insuredOnAccount] = await Promise.all([
+        loadOnboardingDocumentArchive(landlordId),
+        loadInsuredPropertyNames(landlordId),
+      ])
+      const insuredAddresses = propertyPolicyAddressesFromUploads(archive.documents)
+      const lookup: PropertyHealthInsuranceLookup = {
+        hasPolicyFor: (propertyNames) =>
+          propertyNames.some(
+            (name) =>
+              insuredOnAccount.some((saved) => buildingsLikelySamePlace(saved, name)) ||
+              propertyInsuranceProfileOnFile(name),
+          ) ||
+          insuredAddresses.some((address) => insuredAddressMatchesProperty(address, propertyNames)),
+      }
+      return lookup
+    })(),
+  ])
+
+  const vendors: PropertyHealthVendor[] =
+    vendorResult.status === 'fulfilled' && !vendorResult.value.error
+      ? ((vendorResult.value.data ?? []) as Record<string, unknown>[]).map((row) => ({
+          id: asString(row.id),
+          category: asString(row.category) || null,
+          active: row.active !== false,
+          rosterStatus: asString(row.roster_status) || null,
+        }))
+      : []
+
+  const ticketExtras: Record<string, PropertyHealthTicketExtras> = {}
+  if (ticketResult.status === 'fulfilled' && !ticketResult.value.error) {
+    for (const row of (ticketResult.value.data ?? []) as Record<string, unknown>[]) {
+      const id = asString(row.id)
+      if (!id) continue
+      ticketExtras[id] = {
+        observationOnly: row.observation_only === true,
+        completionPhotoCount: Array.isArray(row.completion_photo_paths)
+          ? row.completion_photo_paths.length
+          : 0,
+      }
+    }
+  }
+
+  return {
+    vendors,
+    ticketExtras,
+    leaseDocuments: leaseResult.status === 'fulfilled' ? leaseResult.value : null,
+    insuranceDocuments: insuranceResult.status === 'fulfilled' ? insuranceResult.value : null,
+  }
+}
+
+/** Fetch PM, assets, inspections, damage reports and Vitals inputs for property health. */
 export async function fetchPropertyHealthSignals(): Promise<{
   pmTasks: PropertyHealthPmTask[]
   feedback: PropertyHealthFeedback[]
@@ -1819,6 +2014,7 @@ export async function fetchPropertyHealthSignals(): Promise<{
   assets: PropertyHealthAsset[]
   inspections: PropertyHealthInspection[]
   damageReports: PropertyHealthDamageReport[]
+  vitals: PropertyHealthVitalsSignals
 }> {
   const empty = {
     pmTasks: [] as PropertyHealthPmTask[],
@@ -1827,11 +2023,15 @@ export async function fetchPropertyHealthSignals(): Promise<{
     assets: [] as PropertyHealthAsset[],
     inspections: [] as PropertyHealthInspection[],
     damageReports: [] as PropertyHealthDamageReport[],
+    vitals: emptyPropertyHealthVitalsSignals(),
   }
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return empty
 
   const landlordId = getActiveLandlordId()
+  const vitalsPromise = fetchPropertyHealthVitalsSignals(landlordId).catch(() =>
+    emptyPropertyHealthVitalsSignals(),
+  )
 
   const [pmResult, feedbackResult, vendorResult, assetResult, assessmentResult, damageResult] =
     await Promise.allSettled([
@@ -1972,7 +2172,8 @@ export async function fetchPropertyHealthSignals(): Promise<{
         }))
       : []
 
-  return { pmTasks, feedback, vendorMetrics, assets, inspections, damageReports }
+  const vitals = await vitalsPromise
+  return { pmTasks, feedback, vendorMetrics, assets, inspections, damageReports, vitals }
 }
 
 /** Attach unit/building from maintenance tickets to resident feedback rows. */
