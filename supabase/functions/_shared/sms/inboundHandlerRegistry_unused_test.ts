@@ -37,6 +37,7 @@ const ADAPTER_ID_FROM_FN: Record<string, string> = {
   tryTenantActivationHoldHandler: "tenant_activation_hold",
   tryResidentQuietHoursHandler: "resident_quiet_hours",
   tryDailyPrioritiesAskHandler: "daily_priorities_ask",
+  tryRepeatedLandlordApprovalHandler: "repeated_landlord_approval",
   tryVendorAvailabilityProbeHandler: "vendor_availability_probe",
   tryVendorRescheduleHandler: "vendor_reschedule",
   tryVendorCapacityHandler: "vendor_capacity",

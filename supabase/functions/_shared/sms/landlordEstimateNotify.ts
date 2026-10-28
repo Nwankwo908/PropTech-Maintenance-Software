@@ -1221,7 +1221,7 @@ export function buildEstimateDisambiguationSms(
 export function replyForEstimateTerminalStatus(status: string): string | null {
   switch (status) {
     case "approved":
-      return "This estimate was already approved. The vendor was notified."
+      return "This request is already approved."
     case "rejected":
       return "This estimate was already declined. The vendor was notified."
     case "superseded":

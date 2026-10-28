@@ -58,6 +58,7 @@ import {
   tryHandleLandlordVendorChoiceInbound,
 } from "../vendorLandlordChoice.ts"
 import { tryHandleLandlordPickBatchInbound } from "../landlordDecisionExecute.ts"
+import { tryHandleRepeatedLandlordApproval } from "./repeatedLandlordApproval.ts"
 import { tryHandlePmServiceYesHvacInbound } from "./pmServiceYesHvac.ts"
 import {
   canHandleVendorAvailabilityProbe,
@@ -337,6 +338,29 @@ async function tryDailyPrioritiesReplyHandler(
     reply: {
       body: result.message,
       source: "ask_ulo_daily_priorities_reply",
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryRepeatedLandlordApprovalHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleRepeatedLandlordApproval(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    fromPhone: ctx.inbound.from,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: "repeated_landlord_approval",
+    maintenanceRequestId: result.ticketId ?? undefined,
+    reply: {
+      body: result.replyBody,
+      source: "repeated_landlord_approval",
       skipGenericFallback: true,
     },
   }
@@ -1005,6 +1029,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "Resident identity + QUIET / QUIET OFF command (set quiet-hours window)",
   daily_priorities_ask:
     "Landlord or resident identity + daily-priorities question phrasing (What should I prioritize today? / What's urgent?) — Ask Ulo cross-system briefing; read-only",
+  repeated_landlord_approval:
+    "Landlord YES/APPROVE after the approval ask is closed, when that reply clearly repeats one completed approval (latest single-request ask, or a named reference). A different pending question or several requests in that ask clarify. Reply only — no second assignment, approval, or vendor text.",
   vendor_availability_probe:
     "intake_state.awaiting_vendor_probes[] (or legacy awaiting_vendor_probe) on vendor thread — slot / NO before landlord assigns; multi-ticket replies match WO-XXXX or ask which job",
   vendor_reschedule:
@@ -1105,6 +1131,11 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
     id: "daily_priorities_ask",
     priority: 36,
     try: tryDailyPrioritiesAskHandler,
+  },
+  {
+    id: "repeated_landlord_approval",
+    priority: 37,
+    try: tryRepeatedLandlordApprovalHandler,
   },
   {
     id: "vendor_availability_probe",

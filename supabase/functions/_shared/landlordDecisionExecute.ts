@@ -26,6 +26,11 @@ import {
   confirmDurableLandlordChoiceTrigger,
 } from "./vendorLandlordChoice.ts"
 import { offerVendorStillAvailable } from "./vendor_assignment.ts"
+import { residentRequestRef } from "../../../shared/maintenance/residentRequestRef.ts"
+import {
+  repeatedApprovalAcknowledgement,
+  vendorNotificationVerified,
+} from "../../../shared/sms/repeatedApprovalAck.ts"
 
 export type PickSnapshot = {
   vendor_id?: string | null
@@ -210,7 +215,9 @@ export async function tryHandleLandlordPickBatchInbound(
   const { data: tickets } = ticketIds.length
     ? await supabase
       .from("maintenance_requests")
-      .select("id, vendor_notify_error, snoozed_until")
+      .select(
+        "id, vendor_notify_error, snoozed_until, vendor_notified_at, resident_request_ref",
+      )
       .in("id", ticketIds)
     : { data: [] }
 
@@ -325,9 +332,47 @@ export async function tryHandleLandlordPickBatchInbound(
     }
   }
 
+  const yesDisplayIds = new Set<number>()
+  if (parsed.yesAll) {
+    for (const candidate of candidates) yesDisplayIds.add(candidate.displayId)
+  }
+  for (const intent of [...parsed.intents, ...llmIntents]) {
+    if (intent.action === "yes") yesDisplayIds.add(intent.displayId)
+  }
+  const acknowledgementLines = lines.map((line) => {
+    if (
+      line.displayId == null ||
+      !yesDisplayIds.has(line.displayId) ||
+      !/already decided/i.test(line.text)
+    ) {
+      return line
+    }
+    const candidate = candidates.find((row) => row.displayId === line.displayId)
+    const ticket = candidate ? ticketById.get(candidate.ticketId) : undefined
+    return {
+      ...line,
+      text: repeatedApprovalAcknowledgement({
+        ref: residentRequestRef(
+          candidate?.ticketId ?? "",
+          typeof ticket?.resident_request_ref === "string"
+            ? ticket.resident_request_ref
+            : null,
+        ),
+        vendorNotified: vendorNotificationVerified({
+          vendorNotifiedAt: typeof ticket?.vendor_notified_at === "string"
+            ? ticket.vendor_notified_at
+            : null,
+          vendorNotifyError: typeof ticket?.vendor_notify_error === "string"
+            ? ticket.vendor_notify_error
+            : null,
+        }),
+      }),
+    }
+  })
+
   return {
     handled: true,
-    replyBody: buildDecisionConfirmation(lines, plan.question),
+    replyBody: buildDecisionConfirmation(acknowledgementLines, plan.question),
   }
 }
 

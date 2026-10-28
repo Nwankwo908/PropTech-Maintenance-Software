@@ -4,6 +4,11 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isConfirmedDurableInboundTrigger } from "../../../shared/ops/vendorChoiceTriggerAudit.ts"
+import { residentRequestRef } from "../../../shared/maintenance/residentRequestRef.ts"
+import {
+  repeatedApprovalAcknowledgement,
+  vendorNotificationVerified,
+} from "../../../shared/sms/repeatedApprovalAck.ts"
 import { selfFixLineForTicket } from "./sms/selfFixPrefs.ts"
 import {
   landlordApprovalMediaFallbackLine,
@@ -1451,7 +1456,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, priority, urgency, severity, unit, description, issue_headline, entry_ok_if_absent, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status, vendor_notified_at",
+      "id, priority, urgency, severity, unit, description, issue_headline, entry_ok_if_absent, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status, vendor_notified_at, vendor_notify_error, resident_request_ref",
     )
     .eq("id", awaiting.ticketId)
     .eq("landlord_id", params.landlordId)
@@ -1541,7 +1546,20 @@ export async function tryHandleLandlordVendorChoiceInbound(
         handled: true,
         ticketId: awaiting.ticketId,
         vendorId: assignedId,
-        replyBody: `Got it — we'll keep ${vendorChoiceDisplayName(chosen.name)} on this job and wait for them to reply.`,
+        replyBody: repeatedApprovalAcknowledgement({
+          ref: residentRequestRef(
+            String(ticket.id),
+            typeof ticket.resident_request_ref === "string"
+              ? ticket.resident_request_ref
+              : null,
+          ),
+          vendorNotified: vendorNotificationVerified({
+            vendorNotifiedAt: vendorNotifiedAt,
+            vendorNotifyError: typeof ticket.vendor_notify_error === "string"
+              ? ticket.vendor_notify_error
+              : null,
+          }),
+        }),
       }
     }
     if (!canReplaceAssignedVendorForLandlordChoice(workStatus)) {

@@ -50,6 +50,15 @@ Deno.test("daily priorities ask runs after pending asks and before vendor probe"
   assertEquals(priority("daily_priorities_ask") < priority("vendor_availability_probe"), true)
 })
 
+Deno.test("repeated landlord approval runs after pending yes asks", () => {
+  assertEquals(priority("landlord_pick_batch") < priority("repeated_landlord_approval"), true)
+  assertEquals(priority("estimate_decision") < priority("repeated_landlord_approval"), true)
+  assertEquals(priority("landlord_vendor_choice") < priority("repeated_landlord_approval"), true)
+  assertEquals(priority("landlord_rent_receipt") < priority("repeated_landlord_approval"), true)
+  assertEquals(priority("hqs_confirm") < priority("repeated_landlord_approval"), true)
+  assertEquals(priority("repeated_landlord_approval") < priority("vendor_availability_probe"), true)
+})
+
 Deno.test("schedule_confirm runs before tenant_activation_reply (YES disambiguation)", () => {
   assertEquals(priority("schedule_confirm") < priority("tenant_activation_reply"), true)
 })

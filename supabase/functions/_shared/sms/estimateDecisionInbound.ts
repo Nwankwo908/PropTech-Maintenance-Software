@@ -29,6 +29,7 @@ import {
   matchShortReplyToken,
   normalizeShortReply,
 } from "./shortReplyTokens.ts"
+import { loadRepeatedApprovalAcknowledgement } from "./repeatedLandlordApproval.ts"
 
 export type EstimateDecisionKeyword = "approve" | "reject"
 
@@ -77,6 +78,17 @@ export function parseEstimateDecisionKeyword(
   if (declineHit) return "reject"
 
   return null
+}
+
+async function replyForTerminalEstimate(
+  supabase: SupabaseClient,
+  status: string,
+  ticketId: string | null | undefined,
+): Promise<string | null> {
+  if (status === "approved") {
+    return loadRepeatedApprovalAcknowledgement(supabase, ticketId)
+  }
+  return replyForEstimateTerminalStatus(status)
 }
 
 function money(n: number): string {
@@ -362,7 +374,9 @@ async function applyDecision(
       params.estimateId,
       params.landlordId,
     )
-    const terminal = row ? replyForEstimateTerminalStatus(row.status) : null
+    const terminal = row
+      ? await replyForTerminalEstimate(supabase, row.status, row.ticketId)
+      : null
     console.error("[estimateDecisionInbound] decide failed", result.error)
     return {
       handled: true,
@@ -411,7 +425,7 @@ async function applyDecision(
 
   const replyBody = result.already
     ? result.status === "approved"
-      ? "This estimate was already approved. The vendor was notified."
+      ? await loadRepeatedApprovalAcknowledgement(supabase, params.ticketId)
       : "This estimate was already declined. The vendor was notified."
     : result.status === "approved"
       ? "Got it — estimate approved. The vendor can proceed with the work."
@@ -649,7 +663,13 @@ export async function tryHandleEstimateDecisionInbound(
         handled: true,
         clarified: true,
         estimateId: exact.id,
-        replyBody: replyForEstimateTerminalStatus(exact.status) ||
+        replyBody: await replyForTerminalEstimate(
+          supabase,
+          String(exact.status),
+          typeof exact.maintenance_request_id === "string"
+            ? exact.maintenance_request_id
+            : null,
+        ) ||
           "That estimate question is no longer open. Please use the current estimate's reference.",
       }
     }
@@ -699,7 +719,11 @@ export async function tryHandleEstimateDecisionInbound(
           ticketId,
         }
       } else if (pending?.id && typeof pending.status === "string") {
-        const terminal = replyForEstimateTerminalStatus(String(pending.status))
+        const terminal = await replyForTerminalEstimate(
+          supabase,
+          String(pending.status),
+          ticketId,
+        )
         if (terminal) {
           return {
             handled: true,
@@ -824,7 +848,7 @@ export async function tryHandleEstimateDecisionInbound(
       if (!awaiting) {
         const { data: latest } = await supabase
           .from("maintenance_estimates")
-          .select("id, status")
+          .select("id, status, maintenance_request_id")
           .eq("landlord_id", landlordId)
           .in("status", [
             "approved",
@@ -837,8 +861,12 @@ export async function tryHandleEstimateDecisionInbound(
           .limit(1)
           .maybeSingle()
         if (latest?.id) {
-          const terminal = replyForEstimateTerminalStatus(
+          const terminal = await replyForTerminalEstimate(
+            supabase,
             String(latest.status),
+            typeof latest.maintenance_request_id === "string"
+              ? latest.maintenance_request_id
+              : null,
           )
           if (terminal) {
             return {
@@ -873,7 +901,11 @@ export async function tryHandleEstimateDecisionInbound(
     }
   }
   if (current.status !== "pending_approval") {
-    const terminal = replyForEstimateTerminalStatus(current.status)
+    const terminal = await replyForTerminalEstimate(
+      supabase,
+      current.status,
+      awaiting.ticketId,
+    )
     await clearAwaitingEstimateDecision(
       supabase,
       params.conversationId,
