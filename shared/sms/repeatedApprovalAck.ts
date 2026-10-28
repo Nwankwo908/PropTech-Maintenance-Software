@@ -115,6 +115,10 @@ export function resolveRepeatedApproval(input: {
   const parsed = parseRepeatedApprovalReply(input.body)
   if (parsed.kind === "none") return { action: "ignore" }
   if (input.pendingQuestionCount > 0) {
+    // Nothing approved to repeat: the reply belongs to that pending question.
+    if (input.latestAsk.length === 0 && input.namedPool.length === 0) {
+      return { action: "ignore" }
+    }
     return { action: "clarify", body: clarifyPending() }
   }
 
