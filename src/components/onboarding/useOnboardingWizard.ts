@@ -29,6 +29,7 @@ import {
 import {
   createEmptyVendorForm,
   dedupeVendorForms,
+  saveOnboardingVendorsStep,
   vendorToFormRow,
   type VendorFormRow,
 } from '@/components/onboarding/onboardingVendorForm'
@@ -439,7 +440,7 @@ export function useOnboardingWizard() {
   }, [loading, step, state.formDraft, state.properties])
 
   useEffect(() => {
-    if (loading || step !== 'vendors') return
+    if (loading || (step !== 'vendors' && step !== 'approval')) return
 
     let cancelled = false
     void (async () => {
@@ -1145,6 +1146,18 @@ export function useOnboardingWizard() {
   }
 
   async function saveApprovalRulesAndContinue(rules: LandlordOnboardingState['approvalRules']) {
+    const vendorsSaved = await saveOnboardingVendorsStep({
+      vendorForms,
+      editingFromReview: editingFromReviewRef.current,
+      setSaving,
+      setError,
+      setVendorForms,
+      returnToReviewAfterEdit,
+      goTo,
+      refreshCounts,
+      skipNavigation: true,
+    })
+    if (!vendorsSaved) return
     if (editingFromReviewRef.current && state.setupPath !== 'fast_track') {
       await returnToReviewAfterEdit({ approvalRules: rules })
       return

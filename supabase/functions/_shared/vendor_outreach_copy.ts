@@ -5,6 +5,11 @@ import {
   formatBareUnitLabel,
   shouldOmitUnitReference,
 } from "./properties/unitLabelDisplay.ts"
+import {
+  composeVendorJobOfferIssue,
+  entryOkFromConfirmedText,
+  type VendorJobOfferInput,
+} from "../../../shared/maintenance/vendorJobOffer.ts"
 
 /** Short work-order ref for SMS (matches admin WO-XXXX style). */
 export function formatWorkOrderRef(ticketId: string): string {
@@ -142,10 +147,7 @@ export function buildVendorJobAssignmentSms(input: {
   vendorName: string
   priority: string
   unit: string
-  /**
-   * @deprecated Do not use for the Issue line — intake Q&A accumulates here.
-   * Prefer `issueHeadline`. Kept so older callers still compile.
-   */
+  /** Stored request text. Confirmed details are read from it; raw Q&A is not copied through. */
   description: string
   ticketId: string
   /** Clean ticket headline — never the stuffed description. */
@@ -165,25 +167,33 @@ export function buildVendorJobAssignmentSms(input: {
   acceptUrl?: string | null
   /** Resident-offered visit windows from intake. */
   residentAvailabilityText?: string | null
-}): string {
+} & VendorJobOfferInput): string {
   const company = vendorCompanyName(input.vendorName)
   const wo = formatWorkOrderRef(input.ticketId)
-  // Never fall back to raw description — it often includes intake Q&A trail.
-  const issue = (input.issueHeadline ?? "").trim() ||
-    "See work order for details."
+  const issue = composeVendorJobOfferIssue({
+    description: input.description,
+    issueHeadline: input.issueHeadline,
+    locationQuestion: input.locationQuestion,
+    locationAnswer: input.locationAnswer,
+    facts: input.facts,
+    safetyConcern: input.safetyConcern,
+  })
   const { address, unitLabel } = addressAndUnitForVendorAssignmentSms({
     location: input.location,
     unit: input.unit,
     propertyType: input.propertyType,
   })
+  const entry = typeof input.entryOkIfAbsent === "boolean"
+    ? input.entryOkIfAbsent
+    : entryOkFromConfirmedText(input.description)
 
   const lines = [`Hi ${company} — new job ${wo}`]
   if (address) lines.push(`Address: ${address}`)
   if (unitLabel) lines.push(`Unit: ${unitLabel}`)
-  lines.push(`Issue: ${issue}`)
-  if (input.entryOkIfAbsent === true) {
+  if (issue) lines.push(`Issue: ${issue}`)
+  if (entry === true) {
     lines.push("Entry OK if resident out: Yes")
-  } else if (input.entryOkIfAbsent === false) {
+  } else if (entry === false) {
     lines.push("Entry OK if resident out: No")
   }
   const avail = sanitizeResidentAvailabilityForVendor(input.residentAvailabilityText)

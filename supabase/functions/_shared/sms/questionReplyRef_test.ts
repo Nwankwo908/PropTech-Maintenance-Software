@@ -156,15 +156,72 @@ Deno.test("NO as well as YES clarifies across several decision types", () => {
   }
 })
 
+Deno.test("one open visit accepts YES or NO; several visits need a number or short ref", () => {
+  const only = addScheduleQuestion({}, {
+    ...first,
+    request_ref: "EB1D7CFC",
+    ticket_id: "eb1d7cfc-3d70-4f57-bd59-680bdb997120",
+  })
+  const yes = selectScheduleQuestion(only, "YES", NOW)
+  assertEquals(yes.kind, "selected")
+  if (yes.kind === "selected") assertEquals(yes.body, "YES")
+  const no = selectScheduleQuestion(only, "NO", NOW)
+  assertEquals(no.kind, "selected")
+
+  const state = addScheduleQuestion(addScheduleQuestion({}, {
+    ...first,
+    request_ref: "EB1D7CFC",
+    ticket_id: "eb1d7cfc-3d70-4f57-bd59-680bdb997120",
+    window_text: "Wednesday, Oct 28 between 9:00 AM and 12:00 PM",
+  }), {
+    ...second,
+    request_ref: "30A0B8CC",
+    ticket_id: "30a0b8cc-1111-2222-3333-444444444444",
+  })
+  const clarify = selectScheduleQuestion(state, "YES", NOW)
+  assertEquals(clarify.kind, "clarify")
+  if (clarify.kind === "clarify") {
+    assertEquals(clarify.body.includes("S-"), false)
+    assertEquals(clarify.body.includes("1. Wednesday, Oct 28 between 9:00 AM and 12:00 PM. Ref: EB1D7CFC"), true)
+    assertEquals(clarify.body.includes("Reply with the number and YES or NO."), true)
+  }
+  const numbered = selectScheduleQuestion(state, "1 YES", NOW)
+  assertEquals(numbered.kind, "selected")
+  if (numbered.kind === "selected") {
+    assertEquals(numbered.question.ticket_id, "eb1d7cfc-3d70-4f57-bd59-680bdb997120")
+    assertEquals(numbered.body, "YES")
+  }
+  const byRef = selectScheduleQuestion(state, "30A0B8CC NO", NOW)
+  assertEquals(byRef.kind, "selected")
+  if (byRef.kind === "selected") {
+    assertEquals(byRef.question.ticket_id, "30a0b8cc-1111-2222-3333-444444444444")
+    assertEquals(byRef.body, "NO")
+  }
+  const byWorkOrder = selectScheduleQuestion(state, "WO-EB1D YES", NOW)
+  assertEquals(byWorkOrder.kind, "selected")
+  if (byWorkOrder.kind === "selected") {
+    assertEquals(byWorkOrder.body, "YES")
+  }
+})
+
 Deno.test("outbound visit and estimate questions advertise their exact answer references", () => {
   const visit = buildTenantScheduleAskSms({
     residentName: "Test",
     vendorName: "Test Vendor",
     windowText: "Monday",
-    replyRef: first.reply_ref,
-    workOrderRef: "WO-1111",
+    workOrderRef: "Ref: EB1D7CFC",
   })
-  assertEquals(visit.includes(`${first.reply_ref} YES`), true)
+  assertEquals(visit.includes("Reply YES to confirm"), true)
+  assertEquals(visit.includes("S-"), false)
+  const several = buildTenantScheduleAskSms({
+    residentName: "Test",
+    vendorName: "Test Vendor",
+    windowText: "Monday",
+    choiceRef: "EB1D7CFC",
+    workOrderRef: "Ref: EB1D7CFC",
+  })
+  assertEquals(several.includes("EB1D7CFC YES"), true)
+  assertEquals(several.includes("S-"), false)
   const estimate = buildLandlordEstimateApprovalSms({
     estimateId: "abcdef12-3456-4789-8123-123456789012",
     vendorName: "Test Vendor",

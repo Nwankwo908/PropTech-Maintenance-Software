@@ -22,8 +22,8 @@ Deno.test("nearby search runs when confirmed ticket has no preferred vendor", ()
       vendorId: null,
       skipReason: "ai_dispatch_disabled",
     }),
-    true,
-    "ai dispatch off still needs nearby",
+    false,
+    "approval hold does not search outside vendors",
   )
   assertEqual(
     confirmedTicketNeedsNearbySearch({ assigned: false, vendorId: null, skipReason: "assign_failed" }),

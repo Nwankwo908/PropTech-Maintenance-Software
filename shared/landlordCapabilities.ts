@@ -112,6 +112,16 @@ export function isTemporarySharedAlphaLineLandlord(
 }
 
 /**
+ * This maintenance-test account must not search or text businesses outside
+ * its roster. Other accounts keep Find External Vendor. Remove with the test.
+ */
+export function landlordBlocksExternalVendorOutreach(
+  landlordId: string | null | undefined,
+): boolean {
+  return isTemporarySharedAlphaLineLandlord(landlordId)
+}
+
+/**
  * Accounts that may send and receive on the shared Limited Alpha Twilio number.
  * Does not change payments or the rest of the Limited Alpha product surface.
  */

@@ -599,13 +599,28 @@ export async function resolveVendorTicketForInbound(
         openJobs,
       }
     }
-    return {
-      ok: false,
-      reason: match.kind === "ambiguous"
-        ? "need_work_order"
-        : "unknown_work_order",
-      openJobs,
+    if (match.kind === "ambiguous") {
+      return { ok: false, reason: "need_work_order", openJobs }
     }
+    // The offering thread already names this job. Bind that ticket when the
+    // quoted ref matches it, even if the open-job list missed the row.
+    const quoted = extractWorkOrderRefFromSms(params.inboundBody)
+    const pinned =
+      params.conversationTicketId?.trim() ||
+      params.pendingOfferTicketId?.trim() ||
+      null
+    if (quoted && pinned && workOrderRefMatchesTicket(quoted, pinned)) {
+      const loaded = await loadBindableOfferTicket(supabase, pinned)
+      if (loaded) {
+        return {
+          ok: true,
+          ticketId: loaded.ticketId,
+          boundBy: "conversation_pin",
+          openJobs,
+        }
+      }
+    }
+    return { ok: false, reason: "unknown_work_order", openJobs }
   }
 
   if (openJobs.length > 1 && isBareYesOrNoShortReply(params.inboundBody)) {

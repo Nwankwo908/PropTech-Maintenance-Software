@@ -210,7 +210,7 @@ export async function saveOnboardingPropertyStep(
     return
   }
 
-  await goTo('vendors', { properties: savedProperties })
+  await goTo('residents', { properties: savedProperties })
   await refreshCounts()
   setSaving(false)
 }

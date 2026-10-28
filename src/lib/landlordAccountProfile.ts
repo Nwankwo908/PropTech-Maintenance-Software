@@ -107,7 +107,7 @@ export function notificationTogglesFromChannel(channel: string | null | undefine
     return { emailUpdates: false, smsAlerts: false, activityFeedAlerts: true }
   }
   if (normalized === 'both') {
-    return { emailUpdates: true, smsAlerts: true, activityFeedAlerts: true }
+    return { emailUpdates: true, smsAlerts: true, activityFeedAlerts: false }
   }
   return { emailUpdates: true, smsAlerts: true, activityFeedAlerts: true }
 }

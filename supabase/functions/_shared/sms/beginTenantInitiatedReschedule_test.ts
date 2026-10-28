@@ -104,7 +104,7 @@ function mockSupabase(state: State) {
   return { from } as unknown as import("https://esm.sh/@supabase/supabase-js@2.49.1").SupabaseClient
 }
 
-Deno.test("beginTenantInitiatedReschedule clears confirmation and moves FSM to awaiting_availability", async () => {
+Deno.test("beginTenantInitiatedReschedule keeps the confirmed visit and moves FSM to awaiting_availability", async () => {
   const state: State = {
     ticket: {
       id: TICKET_ID,
@@ -138,7 +138,7 @@ Deno.test("beginTenantInitiatedReschedule clears confirmation and moves FSM to a
   })
 
   assertEquals(result.ok, true)
-  assertEquals(state.ticket.schedule_confirmed_at, null)
+  assertEquals(state.ticket.schedule_confirmed_at, "2026-09-22T12:00:00.000Z")
   assertEquals(state.ticket.reschedule_requested_by, "resident")
   assertEquals(state.ticket.schedule_status, "resident_requested_reschedule")
   assertEquals(result.previousTimeLabel != null, true)
@@ -154,6 +154,6 @@ Deno.test("beginTenantInitiatedReschedule clears confirmation and moves FSM to a
     workOrderRef: "WO-CCCC",
     previousTimeLabel: result.previousTimeLabel ?? "Thu 2–4pm",
   })
-  assertMatch(body, /can no longer make/)
+  assertMatch(body, /still set for/)
   assertMatch(body, /new day and arrival window/)
 })

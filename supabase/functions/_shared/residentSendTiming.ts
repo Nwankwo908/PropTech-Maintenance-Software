@@ -372,6 +372,78 @@ export function inferTimeZoneFromUsAddress(params: {
   return resolveTimeZoneFromUsStateAndZip(params).timeZone
 }
 
+/** Property clock first, then the property's state, then the landlord account. */
+export function resolvePropertyScheduleTimeZone(input: {
+  propertyTimeZone?: string | null
+  state?: string | null
+  zip?: string | null
+  landlordTimeZone?: string | null
+}): string | null {
+  const stored = input.propertyTimeZone?.trim() || null
+  if (isValidIanaTimeZone(stored)) return stored
+  const inferred = inferTimeZoneFromUsAddress({
+    state: input.state,
+    zip: input.zip,
+  })
+  if (isValidIanaTimeZone(inferred)) return inferred
+  const landlord = input.landlordTimeZone?.trim() || null
+  if (isValidIanaTimeZone(landlord)) return landlord
+  return null
+}
+
+/** Arrival-window clock for a work order. Does not write the property timezone. */
+export async function loadTicketPropertyScheduleTimeZone(
+  supabase: SupabaseClient,
+  params: { ticketId: string; landlordId: string },
+): Promise<string | null> {
+  const ticketId = params.ticketId.trim()
+  const landlordId = params.landlordId.trim()
+  if (!ticketId || !landlordId) return null
+
+  const { data: ticket } = await supabase
+    .from("maintenance_requests")
+    .select("property_id")
+    .eq("id", ticketId)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  const propertyId = typeof ticket?.property_id === "string"
+    ? ticket.property_id.trim()
+    : ""
+
+  let propertyTimeZone: string | null = null
+  let state: string | null = null
+  let zip: string | null = null
+  if (propertyId) {
+    const { data: property } = await supabase
+      .from("properties")
+      .select("timezone, state, zip_code")
+      .eq("id", propertyId)
+      .eq("landlord_id", landlordId)
+      .maybeSingle()
+    if (property) {
+      propertyTimeZone = typeof property.timezone === "string" ? property.timezone : null
+      state = typeof property.state === "string" ? property.state : null
+      zip = typeof property.zip_code === "string" ? property.zip_code : null
+    }
+  }
+
+  const { data: landlord } = await supabase
+    .from("landlords")
+    .select("time_zone")
+    .eq("id", landlordId)
+    .maybeSingle()
+  const landlordTimeZone = typeof landlord?.time_zone === "string"
+    ? landlord.time_zone
+    : null
+
+  return resolvePropertyScheduleTimeZone({
+    propertyTimeZone,
+    state,
+    zip,
+    landlordTimeZone,
+  })
+}
+
 export type PropertyTimezoneBackfillConfidence =
   | "high_confidence"
   | "manual_review"

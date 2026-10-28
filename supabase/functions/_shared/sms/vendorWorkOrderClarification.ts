@@ -502,7 +502,7 @@ export async function listVendorActiveJobs(
   const rosterIds = await resolveVendorSmsRosterIds(supabase, vendorId)
   const { data, error } = await supabase
     .from("maintenance_requests")
-    .select("id, unit, building, issue_category, description, created_at")
+    .select("id, unit, issue_category, description, created_at")
     .in("assigned_vendor_id", rosterIds)
     .in("vendor_work_status", [...OPEN_STATUSES])
     .order("created_at", { ascending: false })

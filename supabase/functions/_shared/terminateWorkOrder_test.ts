@@ -447,6 +447,7 @@ Deno.test("terminateWorkOrder cancel persists state before delivery and notifies
   assertEquals(result.ok, true)
   if (!result.ok) return
   assertEquals(state.ticket.vendor_work_status, "cancelled")
+  assertEquals((state.ticket as { status?: string }).status, "cancelled")
   assertEquals(state.ticket.assigned_vendor_id, null)
   assertEquals(state.ticket.previous_vendor_id, VENDOR_ID)
   assertEquals(state.terminations.length, 1)

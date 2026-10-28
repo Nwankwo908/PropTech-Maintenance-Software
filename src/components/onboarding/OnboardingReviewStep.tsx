@@ -262,20 +262,10 @@ export function OnboardingReviewStep({
               }
             />
             {!notificationPrefsOnApproval ? (
-              <>
-                <ReviewSummaryRow
-                  label="Notification preference"
-                  value={notificationPreferenceLabel(reviewData.approvalRules.notificationPreference)}
-                />
-                <ReviewSummaryRow
-                  label="Channel preference"
-                  value={notificationChannelLabel(reviewData.approvalRules.notificationChannel)}
-                />
-                <ReviewSummaryRow
-                  label="Quiet hours"
-                  value={quietHoursLabel(reviewData.approvalRules)}
-                />
-              </>
+              <ReviewSummaryRow
+                label="Notification preference"
+                value={notificationPreferenceLabel(reviewData.approvalRules.notificationPreference)}
+              />
             ) : null}
           </ReviewSummaryCard>
 
@@ -453,7 +443,15 @@ export function OnboardingReviewStep({
             )}
           </ReviewSummaryCard>
 
-          <ReviewSummaryCard title="Maintenance approval rules" onEdit={() => onEditStep('approval')}>
+          <ReviewSummaryCard title="Operations setup" onEdit={() => onEditStep('approval')}>
+            <ReviewSummaryRow
+              label="Channel preference"
+              value={notificationChannelLabel(reviewData.approvalRules.notificationChannel)}
+            />
+            <ReviewSummaryRow
+              label="Quiet hours"
+              value={quietHoursLabel(reviewData.approvalRules)}
+            />
             <ReviewSummaryRow
               label="Emergencies"
               value={reviewData.approvalRules.emergencyTypes
@@ -479,14 +477,6 @@ export function OnboardingReviewStep({
                 <ReviewSummaryRow
                   label="Notification preference"
                   value={notificationPreferenceLabel(reviewData.approvalRules.notificationPreference)}
-                />
-                <ReviewSummaryRow
-                  label="Channel preference"
-                  value={notificationChannelLabel(reviewData.approvalRules.notificationChannel)}
-                />
-                <ReviewSummaryRow
-                  label="Quiet hours"
-                  value={quietHoursLabel(reviewData.approvalRules)}
                 />
               </>
             ) : null}

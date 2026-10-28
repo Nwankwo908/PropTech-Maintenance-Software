@@ -44,6 +44,10 @@ import {
 } from "../_shared/vendorPropertyGate.ts"
 import { resumeMaintenanceWorkflowAfterVendorAssigned } from "../_shared/maintenance_admin_escalation.ts"
 import { closeOpenAsksForTicket } from "../_shared/closeOpenAsksForTicket.ts"
+import {
+  shouldHoldRoutineVendorOutreach,
+  vendorNotifyAlreadyCovered,
+} from "../_shared/vendorOutreachGate.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -85,6 +89,13 @@ export type TicketNotifyPayload = {
   locationLabel?: string | null
   /** When set, single-family properties omit the Unit line on vendor SMS. */
   propertyType?: string | null
+  /** Location question still stored on the resident thread. */
+  locationQuestion?: string | null
+  /** Place the resident confirmed on that thread. */
+  locationAnswer?: string | null
+  /** Diagnostic answers such as scope. Entry permission stays on entryOkIfAbsent. */
+  facts?: Record<string, string | null | undefined> | null
+  safetyConcern?: string | null
   /**
    * Retry assignment when the ticket was already marked notified but still has
    * no vendor (e.g. landlord Override after a no-vendor submit).
@@ -283,6 +294,10 @@ function buildSmsBody(
     entryOkIfAbsent: payload.entryOkIfAbsent,
     location: payload.locationLabel ?? payload.unit,
     propertyType: payload.propertyType,
+    locationQuestion: payload.locationQuestion,
+    locationAnswer: payload.locationAnswer,
+    facts: payload.facts,
+    safetyConcern: payload.safetyConcern,
     jobDetailUrl: buildJobDetailUrl(actionToken) ?? legacyViewUrl,
     residentAvailabilityText: payload.residentAvailabilityText,
   })
@@ -310,7 +325,7 @@ async function loadPreferredVendorIfMatchable(
   let query = supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status,onboarding_overridden_at",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status,onboarding_overridden_at,state",
     )
     .eq("id", id)
     .eq("active", true)
@@ -361,6 +376,7 @@ async function loadPreferredVendorIfMatchable(
   const vendorStates = vendorServiceStateCodes({
     serviceArea: verif?.service_area ?? null,
     licenseState: typeof verif?.license_state === "string" ? verif.license_state : null,
+    rosterState: typeof vendor.state === "string" ? vendor.state : null,
   })
   if (!vendorCoversJobState(vendorStates, jobState)) {
     return null
@@ -506,6 +522,18 @@ async function notifyChannelsForAssignment(
           console.error("[vendor-notify] property type for assignment SMS", e)
         }
       }
+      try {
+        const { loadConfirmedVendorOfferFacts } = await import(
+          "../_shared/sms/vendorJobOfferContext.ts"
+        )
+        const offerFacts = await loadConfirmedVendorOfferFacts(supabase, ticketId)
+        payload.locationQuestion = offerFacts.locationQuestion
+        payload.locationAnswer = offerFacts.locationAnswer
+        payload.facts = offerFacts.facts
+        payload.safetyConcern = offerFacts.safetyConcern
+      } catch (e) {
+        console.error("[vendor-notify] confirmed offer details", e)
+      }
       const smsBody = buildSmsBody(
         payload,
         vendor.name,
@@ -589,11 +617,12 @@ export async function assignVendorAndNotify(
     Boolean(ticket.vendor_notified_at.trim())
   // Probe soft-offer may set assigned_vendor_id without a job SMS. Landlord YES
   // with the same preferVendorId must continue into notify, not short-circuit.
-  const landlordNeedsNotify =
-    payload.landlordAcknowledged === true &&
-    Boolean(preferVendorId) &&
-    preferVendorId === existingVendorId &&
-    !alreadyNotified
+  const landlordNeedsNotify = !vendorNotifyAlreadyCovered({
+    existingVendorId,
+    preferVendorId,
+    alreadyNotified,
+    landlordAcknowledged: payload.landlordAcknowledged === true,
+  })
   if (existingVendorId && !landlordNeedsNotify) {
     // #region agent log
 // #endregion
@@ -726,19 +755,18 @@ export async function assignVendorAndNotify(
       return loadLandlordOperationalSettings(supabase, landlordId)
     })()
     : null
-  if (operational && operational.allowAiDispatch === false && payload.residentConfirmed !== true) {
-    console.log("[vendor-notify] AI dispatch disabled; awaiting landlord approval", {
-      ticketId: payload.ticketId,
-      landlordId,
-    })
-    await supabase
-      .from("maintenance_requests")
-      .update({
-        vendor_notify_error: "Awaiting landlord approval before vendor dispatch",
-      })
-      .eq("id", payload.ticketId)
-    return { assigned: false, vendorId: null, skipReason: "ai_dispatch_disabled" }
-  }
+  const holdRoutineOutreach = shouldHoldRoutineVendorOutreach({
+    allowAiDispatch: operational?.allowAiDispatch !== false,
+    emergency: isImmediatePropertyEmergency({
+      priority: payload.priority ||
+        (typeof ticket.priority === "string" ? ticket.priority : null),
+      urgency: payload.urgency ??
+        (typeof ticket.urgency === "string" ? ticket.urgency : null),
+      severity: payload.severity ??
+        (typeof ticket.severity === "string" ? ticket.severity : null),
+    }),
+    landlordAcknowledged: payload.landlordAcknowledged === true,
+  })
 
   let vendor = null as Awaited<ReturnType<typeof loadPreferredVendorIfMatchable>>
   if (payload.landlordAcknowledged === true && payload.preferVendorId?.trim()) {
@@ -765,6 +793,25 @@ export async function assignVendorAndNotify(
       jobState,
     })
     if (decision.kind === "landlord_choice") {
+      // Approval required: ask the landlord once. Do not text a vendor yet.
+      // A retry while that ask is open must not send the ask again.
+      if (holdRoutineOutreach) {
+        if (!alreadyAwaitingChoice) {
+          await notifyLandlordVendorChoice(supabase, {
+            landlordId,
+            ticketId: payload.ticketId,
+            unit: payload.unit,
+            issueCategory,
+            options: decision.options,
+          })
+          await markAwaitingLandlordVendorChoice(supabase, payload.ticketId)
+        }
+        return {
+          assigned: false,
+          vendorId: null,
+          skipReason: "awaiting_landlord_choice",
+        }
+      }
       // Refresh after landlord was already asked: re-text choice, do not re-probe.
       if (alreadyAwaitingChoice) {
         await notifyLandlordVendorChoice(supabase, {
@@ -828,6 +875,15 @@ export async function assignVendorAndNotify(
     })
   }
   if (!vendor) {
+    if (holdRoutineOutreach) {
+      await supabase
+        .from("maintenance_requests")
+        .update({
+          vendor_notify_error: "Awaiting landlord approval before vendor dispatch",
+        })
+        .eq("id", payload.ticketId)
+      return { assigned: false, vendorId: null, skipReason: "ai_dispatch_disabled" }
+    }
     if (!propertyHold.mayBook) {
       return { assigned: false, vendorId: null, skipReason: "address_unknown" }
     }

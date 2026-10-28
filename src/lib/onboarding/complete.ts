@@ -106,7 +106,7 @@ export function canCompleteOnboarding(
     normalizeOnboardingApprovalRules(state.approvalRules),
   )
   if (!approvalCheck.ok) {
-    missing.push('Maintenance approval rules')
+    missing.push('Operations setup')
   }
   // Payouts are optional during onboarding — rent collection stays gated until Connect is ready.
   return { ok: missing.length === 0, missing }

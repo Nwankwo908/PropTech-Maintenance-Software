@@ -62,6 +62,34 @@ export function residentRequestRef(
   return pickUniqueResidentRequestRef(ticketId, [])
 }
 
+const ISSUE_FIXTURE =
+  "light|sink|faucet|toilet|window|door|outlet|fan|shower"
+
+/** Short issue name from the resident's own words, when they named a fixture. */
+export function specificIssuePhrase(sourceText: string | null | undefined): string | null {
+  const opening = (sourceText ?? "").split(/\n|Tenant update:/i)[0]?.replace(/\s+/g, " ").trim() ?? ""
+  if (!opening) return null
+  const words = opening.split(/\s+/).filter(Boolean)
+  if (words.length > 18) return null
+  const placed = opening.match(
+    new RegExp(
+      `^(?:the|my|our)\\s+(${ISSUE_FIXTURE})\\s+in the\\s+([a-z][a-z\\s-]{0,40}?)(?:\\s+(?:won't|wont|isn't|isnt|doesn't|doesnt|is|needs|won't)\\b|[.!?]|$)`,
+      "i",
+    ),
+  )
+  if (placed) {
+    const place = placed[2].trim().toLowerCase().replace(/[.!?]+$/g, "")
+    return `${place} ${placed[1].toLowerCase()}`
+  }
+  const fixture = opening.match(
+    new RegExp(`^(?:the|my|our)\\s+((?:[a-z]+\\s+){0,3})(${ISSUE_FIXTURE})\\b`, "i"),
+  )
+  if (!fixture) return null
+  const prefix = fixture[1].trim().toLowerCase()
+  const noun = fixture[2].toLowerCase()
+  return prefix ? `${prefix} ${noun}` : noun
+}
+
 /** Phrase in “your {phrase} request”. AC failures stay “AC repair”. */
 export function residentRequestPhrase(
   categoryLabel: string | null | undefined,
@@ -72,6 +100,8 @@ export function residentRequestPhrase(
   if (/^hvac$/i.test(label) && /\b(a\/?c|air\s*condition\w*|cooling)\b/i.test(text)) {
     return "AC repair"
   }
+  const specific = specificIssuePhrase(text)
+  if (specific) return specific
   if (/^hvac$/i.test(label)) return "HVAC"
   if (!label || /^maintenance$/i.test(label)) return "maintenance"
   return label

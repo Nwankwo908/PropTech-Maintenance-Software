@@ -156,11 +156,13 @@ export type SaveOnboardingVendorsStepInput = {
     },
   ) => Promise<void>
   refreshCounts: () => Promise<void>
+  /** Save the roster without leaving the current page. */
+  skipNavigation?: boolean
 }
 
 export async function saveOnboardingVendorsStep(
   input: SaveOnboardingVendorsStepInput,
-): Promise<void> {
+): Promise<boolean> {
   const {
     vendorForms,
     editingFromReview,
@@ -170,16 +172,17 @@ export async function saveOnboardingVendorsStep(
     returnToReviewAfterEdit,
     goTo,
     refreshCounts,
+    skipNavigation = false,
   } = input
 
   if (!supabase) {
     setError("We can't reach the server right now. Please try again in a moment.")
-    return
+    return false
   }
   const scope = requireOnboardingLandlord()
   if (!scope.ok) {
     setError(scope.error)
-    return
+    return false
   }
 
   const vendorsToSave = vendorForms.filter((form) => form.name.trim())
@@ -194,7 +197,7 @@ export async function saveOnboardingVendorsStep(
       form.country.trim()
     if (hasPartialData && !form.name.trim()) {
       setError('Each vendor needs a name, or clear empty vendor rows.')
-      return
+      return false
     }
   }
 
@@ -212,7 +215,7 @@ export async function saveOnboardingVendorsStep(
     if (phoneResult.error) {
       setSaving(false)
       setError(`${form.name.trim()}: ${phoneResult.error}`)
-      return
+      return false
     }
     vendorPhones.push({ phone: phoneResult.phone })
   }
@@ -241,7 +244,7 @@ export async function saveOnboardingVendorsStep(
       if (updateError) {
         setSaving(false)
         setError(getOnboardingErrorMessage(updateError, 'Couldn’t save this vendor. Please try again.'))
-        return
+        return false
       }
       continue
     }
@@ -256,7 +259,7 @@ export async function saveOnboardingVendorsStep(
       if (updateError) {
         setSaving(false)
         setError(getOnboardingErrorMessage(updateError, 'Couldn’t save this vendor. Please try again.'))
-        return
+        return false
       }
       continue
     }
@@ -277,7 +280,7 @@ export async function saveOnboardingVendorsStep(
         if (updateError) {
           setSaving(false)
           setError(getOnboardingErrorMessage(updateError, 'Couldn’t save this vendor. Please try again.'))
-          return
+          return false
         }
         continue
       }
@@ -295,13 +298,13 @@ export async function saveOnboardingVendorsStep(
         if (updateError) {
           setSaving(false)
           setError(getOnboardingErrorMessage(updateError, 'Couldn’t save this vendor. Please try again.'))
-          return
+          return false
         }
         continue
       }
       setSaving(false)
       setError(getOnboardingErrorMessage(insertError, 'Couldn’t save this vendor. Please try again.'))
-      return
+      return false
     }
   }
 
@@ -312,9 +315,11 @@ export async function saveOnboardingVendorsStep(
   )
   setVendorForms(savedVendorForms)
   setSaving(false)
+  if (skipNavigation) return true
   if (editingFromReview) {
     await returnToReviewAfterEdit()
-    return
+    return true
   }
   await goTo('residents', {}, { vendorForms: savedVendorForms })
+  return true
 }

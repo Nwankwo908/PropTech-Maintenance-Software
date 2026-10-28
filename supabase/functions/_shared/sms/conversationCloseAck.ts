@@ -90,6 +90,7 @@ export function hasOpenPendingAskForCloseAck(
   if (intake?.awaiting_related_confirm === true) return true
   if (intake?.awaiting_rent_balance_clarify === true) return true
   if (intake?.awaiting_which_request === true) return true
+  if (intake?.awaiting_reschedule_window === true) return true
   return false
 }
 

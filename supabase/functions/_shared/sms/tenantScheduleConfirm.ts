@@ -1,6 +1,8 @@
 import {
   addScheduleQuestion,
+  questionStillOpen,
   removeScheduleQuestion,
+  scheduleQuestions,
   selectScheduleQuestion,
 } from "./questionReplyRef.ts"
 /**
@@ -40,7 +42,12 @@ import { getSMSProviderForSend } from "./providerFactory.ts"
 import {
   extractTenantSchedulePreferredWindow,
   hasTenantScheduleTimeCue,
+  RESCHEDULE_WINDOW_ASK,
 } from "./tenantSchedulePreferredWindow.ts"
+import {
+  hasClearNewVisitWindow,
+  looksLikeTenantScheduleChange,
+} from "./inboundInterpretation.ts"
 import { matchShortReplyToken } from "./shortReplyTokens.ts"
 import { landlordRecipients, recordSmsNoRecipients } from "../smsRecipients.ts"
 
@@ -71,19 +78,21 @@ export function buildTenantScheduleAskSms(input: {
   residentName: string
   vendorName: string
   windowText: string
-  replyRef?: string
+  /** Short request ref, only when another visit is also waiting. */
+  choiceRef?: string
   workOrderRef?: string
 }): string {
   const who = firstName(input.residentName)
   const vendor = input.vendorName.trim() || "the vendor"
   const when = input.windowText.trim() || "the time they shared"
+  const choice = input.choiceRef?.trim()
   return [
     `Hi ${who},`,
     "",
     `${vendor} proposed an arrival window of ${when}. Does that work for you?`,
     "",
-    input.replyRef
-      ? `Reply ${input.replyRef} YES to confirm, or ${input.replyRef} NO with another day/time.`
+    choice
+      ? `Reply ${choice} YES to confirm this visit, or ${choice} NO with another day/time.`
       : "Reply YES to confirm, or NO with another day/time (e.g. Thu 2–4pm).",
     ...(input.workOrderRef ? [input.workOrderRef] : []),
   ].join("\n")
@@ -502,9 +511,25 @@ export async function askTenantScheduleConfirmation(
   const replyRef = `S-${
     crypto.randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()
   }`
+  const requestRef = await ensureResidentRequestRef(supabase, params.ticketId)
+  const { data: priorThread } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", conversationId)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  const priorIntake =
+    priorThread?.intake_state && typeof priorThread.intake_state === "object"
+      ? priorThread.intake_state as Record<string, unknown>
+      : {}
+  const now = Date.now()
+  const otherOpenVisits = scheduleQuestions(priorIntake).filter((question) => {
+    const ticket = String(question.ticket_id ?? question.ticketId ?? "")
+    return ticket !== params.ticketId && questionStillOpen(question, now)
+  })
   const body = buildTenantScheduleAskSms({
-    replyRef,
-    workOrderRef: `Ref: ${await ensureResidentRequestRef(supabase, params.ticketId)}`,
+    choiceRef: otherOpenVisits.length > 0 ? requestRef : undefined,
+    workOrderRef: `Ref: ${requestRef}`,
     residentName: String(ticket.resident_name ?? ""),
     vendorName,
     windowText: params.windowText,
@@ -512,7 +537,8 @@ export async function askTenantScheduleConfirmation(
 
   const pendingAsk = {
     reply_ref: replyRef,
-    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    request_ref: requestRef,
+    expires_at: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
     ticket_id: params.ticketId,
     vendor_id: params.vendorId,
     vendor_conversation_id: params.vendorConversationId,
@@ -767,8 +793,28 @@ export async function tryHandleTenantScheduleConfirmInbound(
   if (!decision && hasTenantScheduleTimeCue(replyBody)) {
     decision = "counter_propose"
   }
-  if (!decision) {
+  if (!decision && !looksLikeTenantScheduleChange(replyBody)) {
     // Keep the pending ask — never fall through to a generic maintenance greeting.
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody: buildScheduleConfirmClarifySms({
+        windowText: pending.windowText,
+        workOrderRef: `Ref: ${await ensureResidentRequestRef(supabase, pending.ticketId)}`,
+      }),
+    }
+  }
+  if (decision !== "accept" && !hasClearNewVisitWindow(replyBody)) {
+    // A no, or a reschedule with no new time, waits here. The saved visit stays.
+    return {
+      handled: true,
+      clarified: true,
+      ticketId: pending.ticketId,
+      replyBody: RESCHEDULE_WINDOW_ASK,
+    }
+  }
+  if (!decision) {
     return {
       handled: true,
       clarified: true,
@@ -891,10 +937,7 @@ export async function tryHandleTenantScheduleConfirmInbound(
       handled: true,
       action: "accept",
       ticketId: pending.ticketId,
-      replyBody: buildTenantScheduleAcceptedSms(pending.windowText) +
-        (selected.question.reply_ref
-          ? ` ${workOrderRef} · ${selected.question.reply_ref}`
-          : ""),
+      replyBody: `${buildTenantScheduleAcceptedSms(pending.windowText)} ${workOrderRef}`.trim(),
     }
   }
 
@@ -1053,10 +1096,8 @@ export async function tryHandleTenantScheduleConfirmInbound(
     handled: true,
     action: decision,
     ticketId: pending.ticketId,
-    replyBody:
-      (laterSameDayReply ?? buildTenantScheduleDeclinedSms(preferredWindow)) +
-      (selected.question.reply_ref
-        ? ` ${workOrderRef} · ${selected.question.reply_ref}`
-        : ""),
+    replyBody: `${
+      laterSameDayReply ?? buildTenantScheduleDeclinedSms(preferredWindow)
+    } ${workOrderRef}`.trim(),
   }
 }

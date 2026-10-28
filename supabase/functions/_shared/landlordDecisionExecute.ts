@@ -25,6 +25,7 @@ import {
   AWAITING_LANDLORD_VENDOR_CHOICE,
   confirmDurableLandlordChoiceTrigger,
 } from "./vendorLandlordChoice.ts"
+import { offerVendorStillAvailable } from "./vendor_assignment.ts"
 
 export type PickSnapshot = {
   vendor_id?: string | null
@@ -96,17 +97,38 @@ async function vendorStillAvailable(
 ): Promise<boolean> {
   const id = vendorId?.trim()
   if (!id) return false
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("vendors")
-    .select("id, active, availability")
+    .select("id, active, roster_status, onboarding_overridden_at")
     .eq("id", id)
     .maybeSingle()
-  if (!data?.id) return false
-  if (data.active === false) return false
-  if (typeof data.availability === "string" && data.availability.trim().toLowerCase() === "paused") {
-    return false
-  }
-  return true
+  if (error || !data?.id) return false
+  const { data: verification, error: verificationError } = await supabase
+    .from("vendor_verifications")
+    .select("status, availability")
+    .eq("vendor_id", id)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (verificationError) return false
+  return offerVendorStillAvailable({
+    vendor: {
+      id: typeof data.id === "string" ? data.id : id,
+      active: typeof data.active === "boolean" ? data.active : null,
+      roster_status: typeof data.roster_status === "string" ? data.roster_status : null,
+      onboarding_overridden_at: typeof data.onboarding_overridden_at === "string"
+        ? data.onboarding_overridden_at
+        : null,
+    },
+    verification: verification
+      ? {
+        status: typeof verification.status === "string" ? verification.status : null,
+        availability: typeof verification.availability === "string"
+          ? verification.availability
+          : null,
+      }
+      : null,
+  })
 }
 
 export async function tryHandleLandlordPickBatchInbound(
@@ -309,6 +331,65 @@ export async function tryHandleLandlordPickBatchInbound(
   }
 }
 
+/** Tell the approved vendor and lock the window they already offered. */
+async function notifyBookedVendor(
+  supabase: SupabaseClient,
+  params: { landlordId: string; ticketId: string; vendorId: string },
+): Promise<void> {
+  const { data: row } = await supabase
+    .from("maintenance_requests")
+    .select(
+      "priority, unit, description, issue_headline, entry_ok_if_absent, urgency, severity, due_at, estimated_minutes, resident_availability_text, scheduled_at, scheduled_window_text",
+    )
+    .eq("id", params.ticketId)
+    .eq("landlord_id", params.landlordId)
+    .maybeSingle()
+  if (!row) return
+
+  const { assignVendorAndNotify } = await import(
+    "../submit-maintenance-request/vendor_notify.ts"
+  )
+  await assignVendorAndNotify(supabase, {
+    ticketId: params.ticketId,
+    priority: typeof row.priority === "string" && row.priority.trim() ? row.priority : "normal",
+    unit: typeof row.unit === "string" ? row.unit : "",
+    description: typeof row.description === "string" ? row.description : "",
+    issueHeadline: typeof row.issue_headline === "string" ? row.issue_headline : null,
+    entryOkIfAbsent: typeof row.entry_ok_if_absent === "boolean" ? row.entry_ok_if_absent : null,
+    urgency: typeof row.urgency === "string" ? row.urgency : null,
+    severity: typeof row.severity === "string" ? row.severity : null,
+    dueAt: typeof row.due_at === "string" ? row.due_at : null,
+    estimatedMinutes: typeof row.estimated_minutes === "number" ? row.estimated_minutes : null,
+    landlordId: params.landlordId,
+    preferVendorId: params.vendorId,
+    landlordAcknowledged: true,
+    residentAvailabilityText: typeof row.resident_availability_text === "string"
+      ? row.resident_availability_text
+      : null,
+    retryIfUnassigned: true,
+  })
+
+  const patch: Record<string, unknown> = {}
+  try {
+    const { findProbeOfferForVendor } = await import("./vendorAvailabilityProbe.ts")
+    const offer = await findProbeOfferForVendor(supabase, params.ticketId, params.vendorId)
+    if (offer?.scheduledAt) patch.scheduled_at = offer.scheduledAt
+    if (offer?.windowLabel?.trim()) patch.scheduled_window_text = offer.windowLabel.trim()
+  } catch (error) {
+    console.warn("[landlord-decision] probe window", error)
+  }
+  const hasWindow = Boolean(
+    patch.scheduled_at ||
+      patch.scheduled_window_text ||
+      row.scheduled_at ||
+      (typeof row.scheduled_window_text === "string" && row.scheduled_window_text.trim()),
+  )
+  if (hasWindow) patch.schedule_confirmed_at = new Date().toISOString()
+  if (Object.keys(patch).length > 0) {
+    await supabase.from("maintenance_requests").update(patch).eq("id", params.ticketId)
+  }
+}
+
 async function applyMutation(
   supabase: SupabaseClient,
   params: {
@@ -345,6 +426,17 @@ async function applyMutation(
       .eq("vendor_notify_error", AWAITING)
       .select("id")
     updated = data
+    if (updated?.length) {
+      try {
+        await notifyBookedVendor(supabase, {
+          landlordId: params.landlordId,
+          ticketId: params.mutation.ticketId,
+          vendorId,
+        })
+      } catch (error) {
+        console.error("[landlord-decision] notify booked vendor", error)
+      }
+    }
   } else if (params.mutation.kind === "snooze") {
     const { data } = await supabase
       .from("maintenance_requests")

@@ -3,13 +3,17 @@
  * Kept separate so tenantScheduleConfirm ↔ vendorRescheduleSms stay cycle-free.
  */
 
+export const RESCHEDULE_WINDOW_ASK =
+  "Sure. What day and time works better for you?"
+
 /** True when the text includes a day and/or clock cue for a visit window. */
 export function hasTenantScheduleTimeCue(text: string): boolean {
   return (
     /\b(tomorrow|today|tonight|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i
       .test(text) ||
     /\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/i.test(text) ||
-    /\b(?:after|before|between|from)\s+\d{1,2}\b/i.test(text)
+    /\b(?:after|before|between|from)\s+\d{1,2}\b/i.test(text) ||
+    /\b\d{1,2}\s*[–—-]\s*\d{1,2}\b/.test(text)
   )
 }
 

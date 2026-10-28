@@ -14,6 +14,7 @@ import {
 } from "./tenantMessaging.ts"
 import {
   extractFirstNoticedFromText,
+  inferIssueTypeFromText,
   isAffirmativeReply,
   normalizeRoomOrArea,
   parseContactMethod,
@@ -43,6 +44,7 @@ import {
   hasStrongRepairAsk,
   looksLikeTenantInspectionNotice,
 } from "../../../../shared/maintenance/tenantInspectionNotice.ts"
+import { hasTenantScheduleTimeCue } from "./tenantSchedulePreferredWindow.ts"
 
 export { looksLikeRentBalanceAsk } from "./rentIntent.ts"
 export { looksLikeMaintenanceStatusAsk } from "./nonRepairIntents.ts"
@@ -133,8 +135,125 @@ const URGENCY_WORSE =
 const MAINTENANCE_UPDATE =
   /\b(still (broken|leaking|not fixed|going on)|getting worse|not fixed|same (problem|issue|leak)|happening again|came back|still not working)\b/i
 
+const WEEKDAY_WORD =
+  "mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?"
+
 const SCHEDULE_CHANGE =
-  /\b(reschedule|re-?schedule|different time|another time|can'?t make (it|the)|cannot make (it|the)|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (doesn'?t|does not|won'?t) work|doesn'?t work for me|can they come|come after|after \d{1,2})\b/i
+  /\b(reschedule|re-?schedule|different time|another time|can'?t make\b|cannot make\b|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (?:doesn'?t|does not|won'?t|will not) work|(?:doesn'?t|does not) work for me|can they come|come after|come before|after \d{1,2}|before \d{1,2})\b/i
+
+function normalizeScheduleText(text: string): string {
+  return text.replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ").trim()
+}
+
+/** A resident is asking to move a visit, including a counter-window such as "Thursday 2–4 works better". */
+export function looksLikeTenantScheduleChange(text: string): boolean {
+  const body = normalizeScheduleText(text)
+  if (!body) return false
+  if (SCHEDULE_CHANGE.test(body)) return true
+  if (hasClearNewVisitWindow(body)) return true
+  return /\b(?:works|work) better\b/i.test(body) && hasTenantScheduleTimeCue(body)
+}
+
+function weekdayName(raw: string): string {
+  const token = raw.toLowerCase()
+  const names: Record<string, string> = {
+    mon: "Monday", tue: "Tuesday", tues: "Tuesday", wed: "Wednesday",
+    thu: "Thursday", thur: "Thursday", thurs: "Thursday", fri: "Friday",
+    sat: "Saturday", sun: "Sunday",
+  }
+  if (names[token]) return names[token]
+  return token.charAt(0).toUpperCase() + token.slice(1)
+}
+
+/**
+ * The day the resident wants instead.
+ * "Reschedule Wednesday" names the visit to move, so it is not a new preference.
+ */
+export function offeredVisitWeekday(text: string): string | null {
+  const body = normalizeScheduleText(text)
+  if (/\b(?:works|work) better\b/i.test(body)) {
+    return extractWeekdayPreference(body)
+  }
+  const directed = body.match(
+    new RegExp(
+      `\\b(?:reschedul\\w*|re-?schedul\\w*|move|change|come)\\s+(?:it\\s+)?(?:to|for|on)\\s+(${WEEKDAY_WORD})\\b`,
+      "i",
+    ),
+  )
+  if (directed) return weekdayName(directed[1])
+  if (!NEW_VISIT_CLOCK.test(body)) return null
+  const hints = new Set(existingVisitDayHints(body).map((hint) => hint.toLowerCase()))
+  const weekdays = body.match(new RegExp(`\\b(${WEEKDAY_WORD})\\b`, "gi")) ?? []
+  for (const day of weekdays) {
+    const name = weekdayName(day)
+    if (!hints.has(name.toLowerCase())) return name
+  }
+  return null
+}
+
+/**
+ * Days that point at the existing visit ("can't make tomorrow", "reschedule Wednesday").
+ * A directed new day ("reschedule to Thursday") is not included.
+ */
+export function existingVisitDayHints(text: string): string[] {
+  const body = normalizeScheduleText(text)
+  const hints: string[] = []
+  if (
+    /\b(?:can'?t|cannot)\s+make\s+tomorrow\b/i.test(body) ||
+    /\btomorrow\s+(?:doesn'?t|does\s+not|won'?t|will\s+not)\s+work\b/i.test(body)
+  ) {
+    hints.push("tomorrow")
+  }
+  if (
+    /\b(?:can'?t|cannot)\s+make\s+today\b/i.test(body) ||
+    /\btoday\s+(?:doesn'?t|does\s+not|won'?t|will\s+not)\s+work\b/i.test(body)
+  ) {
+    hints.push("today")
+  }
+  const declined = body.match(
+    new RegExp(`\\b(?:can'?t|cannot)\\s+make(?:\\s+the)?\\s+(${WEEKDAY_WORD})\\b`, "i"),
+  )
+  if (declined) hints.push(weekdayName(declined[1]))
+  const moved = body.match(
+    new RegExp(
+      `\\b(?:reschedul\\w*|re-?schedul\\w*)\\s+(?!to\\b|for\\b|on\\b)(?:the\\s+)?(${WEEKDAY_WORD})\\b`,
+      "i",
+    ),
+  )
+  if (moved) hints.push(weekdayName(moved[1]))
+  return [...new Set(hints)]
+}
+
+const NEW_VISIT_CLOCK =
+  /\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b|\b(?:after|before|between|from)\s+\d{1,2}\b|\b\d{1,2}\s*[–—-]\s*\d{1,2}\b|\b(?:morning|afternoon|evening|noon)\b/i
+
+const NEW_VISIT_DATE =
+  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})\b/i
+
+/** The resident offered a different day and a time, not only the visit they want to move. */
+export function hasClearNewVisitWindow(text: string): boolean {
+  const body = normalizeScheduleText(text)
+  if (!body || !NEW_VISIT_CLOCK.test(body)) return false
+  if (offeredVisitWeekday(body)) return true
+  if (NEW_VISIT_DATE.test(body)) return true
+  const hints = new Set(existingVisitDayHints(body).map((hint) => hint.toLowerCase()))
+  const weekdays = body.match(new RegExp(`\\b(${WEEKDAY_WORD})\\b`, "gi")) ?? []
+  if (weekdays.some((day) => !hints.has(weekdayName(day).toLowerCase()))) return true
+  if (/\btomorrow\b/i.test(body) && !hints.has("tomorrow")) return true
+  if (/\btoday\b/i.test(body) && !hints.has("today")) return true
+  if (/\btonight\b/i.test(body)) return true
+  return false
+}
+
+/** A scheduling reply that still lacks a new day, a new time, or both. */
+export function isPartialRescheduleWindow(text: string): boolean {
+  if (hasClearNewVisitWindow(text)) return false
+  const body = normalizeScheduleText(text)
+  if (!body) return false
+  if (looksLikeTenantScheduleChange(body)) return true
+  if (inferIssueTypeFromText(body)) return false
+  return hasTenantScheduleTimeCue(body)
+}
 
 const ACCESS_INSTRUCTION =
   /\b(let (him|her|them|the vendor|the plumber) in|key(s)? (is |are )?(under|in|on)|lock ?box|gate code|don'?t (come in|enter)|do not (come in|enter)|i'?ll be home|i will be home|leave it (at|with|outside)|use the (side|back|front) (door|gate))\b/i
@@ -286,6 +405,9 @@ function pendingAnswerForStep(
   }
 
   if (step === "awaiting_confirm" || step === "awaiting_multi_issue_confirm") {
+    if (/^summary$/i.test(body.trim())) {
+      return { addressesPending: true, pendingAnswer: "summary" }
+    }
     if (isAffirmativeReply(body)) {
       return { addressesPending: true, pendingAnswer: "yes" }
     }
@@ -536,8 +658,8 @@ function heuristicIntent(
     }
   }
 
-  if (SCHEDULE_CHANGE.test(text) && (!pending.activeIntake || pending.draftTicketId)) {
-    const weekday = extractWeekdayPreference(text)
+  if (looksLikeTenantScheduleChange(text) && (!pending.activeIntake || pending.draftTicketId)) {
+    const weekday = offeredVisitWeekday(text)
     return {
       intent: "schedule_change",
       extractedSlots: weekday ? { preferred_day: weekday } : {},
@@ -635,6 +757,17 @@ export function heuristicInterpretInbound(
   const recognition = recognizeInboundIntentSync(body, {
     activeIntake: pending.activeIntake,
   })
+  if (pendingMatch.pendingAnswer === "summary" && pendingMatch.addressesPending) {
+    return {
+      addressesPending: true,
+      pendingAnswer: "summary",
+      intent: "maintenance_new",
+      extractedSlots: {},
+      needsClarification: false,
+      source: "heuristic",
+      recognition,
+    }
+  }
   const guessed = heuristicIntent(body, pending, recognition, recentTurns)
   const withRecognition = (
     interpretation: InboundInterpretation,

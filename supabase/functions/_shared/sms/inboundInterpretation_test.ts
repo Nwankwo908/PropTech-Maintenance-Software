@@ -4,7 +4,9 @@ import {
   accessInstructionKind,
   extractWeekdayPreference,
   formatRentDueDayLabel,
+  hasClearNewVisitWindow,
   heuristicInterpretInbound,
+  isPartialRescheduleWindow,
   looksLikePhotoSkip,
   nextStepForVendorStatus,
   parseResidentCalendarDate,
@@ -373,6 +375,56 @@ Deno.test("schedule change extracts weekday preference", () => {
   assertEquals(interp.intent, "schedule_change")
   assertEquals(interp.extractedSlots.preferred_day, "Thursday")
   assertEquals(extractWeekdayPreference("Can we reschedule to Thursday?"), "Thursday")
+
+  const moving = heuristicInterpretInbound("Can we reschedule Wednesday?")
+  assertEquals(moving.intent, "schedule_change")
+  assertEquals(moving.extractedSlots.preferred_day, undefined)
+
+  const better = heuristicInterpretInbound("Thursday 2–4 works better")
+  assertEquals(better.intent, "schedule_change")
+  assertEquals(better.extractedSlots.preferred_day, "Thursday")
+
+  const tomorrow = heuristicInterpretInbound("I can't make tomorrow.")
+  assertEquals(tomorrow.intent, "schedule_change")
+  assertEquals(tomorrow.extractedSlots.preferred_day, undefined)
+
+  const curly = heuristicInterpretInbound("I can’t make tomorrow.")
+  assertEquals(curly.intent, "schedule_change")
+
+  assertEquals(
+    heuristicInterpretInbound("The repair works better.").intent === "schedule_change",
+    false,
+  )
+})
+
+Deno.test("reschedule asks only when a new day and time are missing", () => {
+  for (const phrase of [
+    "Can we reschedule?",
+    "Can we reschedule Wednesday?",
+    "I can't make tomorrow.",
+    "Can we reschedule to Thursday?",
+    "Thursday",
+    "2–4pm",
+  ]) {
+    assertEquals(hasClearNewVisitWindow(phrase), false, phrase)
+    assertEquals(isPartialRescheduleWindow(phrase), true, phrase)
+  }
+
+  for (const phrase of [
+    "Thursday 2–4 works better",
+    "Thursday 2-4pm",
+    "Can they come Thursday between 2pm and 4pm?",
+    "I can't make tomorrow. Thursday between 2 and 4 works.",
+  ]) {
+    assertEquals(hasClearNewVisitWindow(phrase), true, phrase)
+    assertEquals(isPartialRescheduleWindow(phrase), false, phrase)
+  }
+
+  assertEquals(isPartialRescheduleWindow("The kitchen sink is leaking"), false)
+
+  const bareWindow = heuristicInterpretInbound("Thursday between 2pm and 4pm")
+  assertEquals(bareWindow.intent, "schedule_change")
+  assertEquals(bareWindow.extractedSlots.preferred_day, "Thursday")
 })
 
 Deno.test("access allow vs restrict", () => {
@@ -435,6 +487,15 @@ Deno.test("summary YES stays on intake so the request can submit", () => {
   assertEquals(interp.addressesPending, true)
   assertEquals(interp.pendingAnswer, "yes")
   assertEquals(shouldHandleInterpretedIntent(interp, "YES", pending), false)
+})
+
+Deno.test("summary reprints the request and stays on intake", () => {
+  const pending = { intakeStep: "awaiting_confirm" as const, activeIntake: true }
+  const interp = heuristicInterpretInbound("Summary", pending)
+  assertEquals(interp.addressesPending, true)
+  assertEquals(interp.pendingAnswer, "summary")
+  assertEquals(interp.needsClarification, false)
+  assertEquals(shouldHandleInterpretedIntent(interp, "Summary", pending), false)
 })
 
 Deno.test("urgency answer continues intake; lease question does not", () => {

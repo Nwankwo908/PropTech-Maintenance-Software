@@ -338,7 +338,7 @@ function hasExplicitClock(text: string): boolean {
   return (
     /\b\d{1,2}(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)\b/i.test(text) ||
     /\b([01]?\d|2[0-3]):([0-5]\d)\b/.test(text) ||
-    /\b\d{1,2}\s*[-–—to]+\s*\d{1,2}/i.test(text)
+    hasClockRange(text)
   )
 }
 
@@ -548,14 +548,28 @@ export function resolveNamedWeekdayDate(
   return { year: zNow.year, month: zNow.month, day: zNow.day }
 }
 
-/** True when text looks like a start–end clock range (incl. "9am-12pm"). */
+const CLOCK_RANGE_SEPARATOR = String.raw`(?:[-–—]|to|and)`
+
+/** True when text looks like a start–end clock range (incl. "9am-12pm" and "between 2pm and 4pm"). */
 export function hasClockRange(text: string): boolean {
-  return (
-    /\d\s*[-–—to]+\s*\d/i.test(text) ||
-    /\b\d{1,2}(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)\s*[-–—to]+\s*\d{1,2}/i.test(
-      text,
-    )
-  )
+  return new RegExp(
+    String.raw`\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?\s*${CLOCK_RANGE_SEPARATOR}\s*\d{1,2}(?::\d{2})?(?!\d)`,
+    "i",
+  ).test(text)
+}
+
+/** A daypart with no start and end. "Thursday afternoon" is not a 2–4 window. */
+export function isDaypartWithoutClock(text: string): boolean {
+  return /\b(morning|afternoon|evening)\b/i.test(text) && !hasClockRange(text) &&
+    !/\b\d{1,2}(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)\b/i.test(text)
+}
+
+/** A numeric range with no AM/PM and no morning/afternoon/evening. */
+export function clockRangeLacksMeridiem(text: string): boolean {
+  if (!hasClockRange(text)) return false
+  if (/(?:a\.?m\.?|p\.?m\.?)/i.test(text)) return false
+  if (/\b(morning|afternoon|evening)\b/i.test(text)) return false
+  return true
 }
 
 /** Cap an oversized range to a preferred arrival window from the start. */
@@ -595,7 +609,10 @@ export function parseAvailabilityRegex(
   if (!text) return null
 
   const rangeMatch = text.match(
-    /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*[-–—to]+\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i,
+    new RegExp(
+      String.raw`\b(?:between|from)?\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*${CLOCK_RANGE_SEPARATOR}\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?`,
+      "i",
+    ),
   )
   let hours: number | null = null
   let minutes = 0
@@ -609,18 +626,27 @@ export function parseAvailabilityRegex(
     endHours = Number(rangeMatch[4])
     endMinutes = rangeMatch[5] ? Number(rangeMatch[5]) : 0
     const endMer = (rangeMatch[6] ?? "").toLowerCase().replace(/\./g, "")
+    const daypart = /\bafternoon\b|\bevening\b/.test(text)
+      ? "pm"
+      : /\bmorning\b/.test(text)
+      ? "am"
+      : ""
     let meridiem = startMer
     if (!meridiem) {
       if (endMer.startsWith("p") && (endHours === 12 || hours > endHours)) {
         meridiem = "am"
       } else {
-        meridiem = endMer || "am"
+        meridiem = endMer || daypart
       }
+    }
+    if (!meridiem || !endMer && !daypart && !startMer) {
+      return null
     }
     if (meridiem.startsWith("p") && hours < 12) hours += 12
     if (meridiem.startsWith("a") && hours === 12) hours = 0
-    if (endMer.startsWith("p") && endHours < 12) endHours += 12
-    if (endMer.startsWith("a") && endHours === 12) endHours = 0
+    const endMeridiem = endMer || meridiem
+    if (endMeridiem.startsWith("p") && endHours < 12) endHours += 12
+    if (endMeridiem.startsWith("a") && endHours === 12) endHours = 0
   } else {
     const timeMatch = text.match(
       /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i,
@@ -1157,6 +1183,18 @@ export function buildSoftClarificationPrompt(custom?: string): string {
   )
 }
 
+export function buildDaypartClarificationPrompt(): string {
+  return "What start and end time works? Reply with a day and a window, like Thu 2–4pm."
+}
+
+export function buildMeridiemClarificationPrompt(): string {
+  return "Do you mean morning or afternoon? Reply with AM or PM, like Thu 2–4pm."
+}
+
+export function buildMissingDayClarificationPrompt(): string {
+  return "Which day should that window be? Reply with the day and time, like Thu 2–4pm."
+}
+
 function standardizeWindowLabel(
   value: ResolvedAvailability,
   timeZone: string,
@@ -1262,6 +1300,85 @@ function mergeRangeWithBestDate(
  * Resolve vendor free-text availability:
  * chrono → regex → LLM function call, then classify exact / bounded / oversized / unbounded.
  */
+function calendarPartsFromText(
+  text: string,
+  anchor: ScheduleAnchor,
+): { year: number; month: number; day: number } | null {
+  const lower = text.toLowerCase()
+  const zNow = zonedParts(anchor.now, anchor.timeZone)
+  if (/\btomorrow\b/.test(lower)) {
+    return addCalendarDays(zNow.year, zNow.month, zNow.day, 1)
+  }
+  if (/\b(today|tonight)\b/.test(lower)) {
+    return { year: zNow.year, month: zNow.month, day: zNow.day }
+  }
+  const absoluteMonth = lower.match(
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/i,
+  )
+  if (absoluteMonth) {
+    return {
+      year: absoluteMonth[3] ? Number(absoluteMonth[3]) : zNow.year,
+      month: monthNameToNumber(absoluteMonth[1]!),
+      day: Number(absoluteMonth[2]),
+    }
+  }
+  const namedIdx = extractNamedWeekdayIndex(text)
+  if (namedIdx == null) return null
+  return resolveNamedWeekdayDate(namedIdx, anchor)
+}
+
+function lastContextCalendarParts(
+  context: string,
+  anchor: ScheduleAnchor,
+): { year: number; month: number; day: number } | null {
+  const lines = context.split(/\n/).map((line) => line.trim()).filter(Boolean)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const parts = calendarPartsFromText(lines[i]!, anchor)
+    if (parts) return parts
+  }
+  return null
+}
+
+function restampArrivalDate(
+  value: ResolvedAvailability,
+  parts: { year: number; month: number; day: number },
+  timeZone: string,
+): ResolvedAvailability {
+  const startZ = zonedParts(new Date(value.scheduledAt), timeZone)
+  const scheduledAt = zonedWallTimeToUtc(
+    {
+      year: parts.year,
+      month: parts.month,
+      day: parts.day,
+      hour: startZ.hour,
+      minute: startZ.minute,
+    },
+    timeZone,
+  ).toISOString()
+  let endAt = value.endAt
+  if (endAt) {
+    const endZ = zonedParts(new Date(endAt), timeZone)
+    endAt = zonedWallTimeToUtc(
+      {
+        year: parts.year,
+        month: parts.month,
+        day: parts.day,
+        hour: endZ.hour,
+        minute: endZ.minute,
+      },
+      timeZone,
+    ).toISOString()
+  }
+  const entity = toArrivalEntity(scheduledAt, endAt, timeZone)
+  return {
+    ...value,
+    scheduledAt,
+    endAt: entity.type === "WINDOW" ? endAt : null,
+    windowLabel: entity.display_text,
+    entity,
+  }
+}
+
 export async function resolveVendorAvailability(
   raw: string,
   options?: {
@@ -1284,6 +1401,18 @@ export async function resolveVendorAvailability(
     return {
       status: "needs_clarification",
       softPrompt: buildSoftClarificationPrompt(),
+    }
+  }
+  if (isDaypartWithoutClock(text)) {
+    return {
+      status: "needs_clarification",
+      softPrompt: buildDaypartClarificationPrompt(),
+    }
+  }
+  if (clockRangeLacksMeridiem(text)) {
+    return {
+      status: "needs_clarification",
+      softPrompt: buildMeridiemClarificationPrompt(),
     }
   }
 
@@ -1323,6 +1452,19 @@ export async function resolveVendorAvailability(
       status: "needs_clarification",
       softPrompt: buildSoftClarificationPrompt(),
     }
+  }
+
+  if (!calendarPartsFromText(text, anchor)) {
+    const hinted = options?.conversationContext
+      ? lastContextCalendarParts(options.conversationContext, anchor)
+      : null
+    if (!hinted) {
+      return {
+        status: "needs_clarification",
+        softPrompt: buildMissingDayClarificationPrompt(),
+      }
+    }
+    resolved = restampArrivalDate(resolved, hinted, timeZone)
   }
 
   resolved = standardizeWindowLabel(resolved, timeZone)
