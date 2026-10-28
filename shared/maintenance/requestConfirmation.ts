@@ -80,7 +80,15 @@ export function interpretConfirmedLocation(input: {
   question?: string | null
 }): LocationReading {
   const problem = withoutConversationInstruction(input.problem).replace(/\s+/g, " ").trim()
-  const question = (input.question ?? "").trim()
+  const needed = clarifyIssueLocation({ text: problem }).question
+  let question = (input.question ?? "").trim()
+  if (
+    needed &&
+    /^Which (?:hallway|closet|stairs)\b/.test(needed) &&
+    !/^Which (?:hallway|closet|stairs)\b/.test(question)
+  ) {
+    question = needed
+  }
   const answer = cleanAnswer(input.answer)
   if (!answer || VAGUE_ANSWER.test(answer)) {
     if (/\bwhich bathroom\b/i.test(question)) {

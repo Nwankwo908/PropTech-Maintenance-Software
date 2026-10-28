@@ -79,6 +79,7 @@ import {
   applyRecurringIssueSignal,
   buildConfirmationSummary,
   confirmationClarification,
+  repairStaleLocationAsk,
   computeIntakeSeverity,
   conversationStatusForStep,
   EDIT_FIELD_OPTIONS,
@@ -1057,9 +1058,17 @@ async function rememberLocationQuestion(
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(40)
-  const question = recoverLocationQuestion(
+  const recovered = recoverLocationQuestion(
     (data ?? []) as { direction?: string | null; body?: string | null }[],
   )
+  const needed = clarifyIssueLocation({
+    text: withoutConversationInstruction(state.initial_message || state.description || ""),
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  }).question
+  const question = needed && /^Which (?:hallway|closet|stairs)\b/.test(needed)
+    ? needed
+    : recovered
   if (!question) return state
   return { ...state, location_question: question }
 }
@@ -1328,6 +1337,7 @@ export async function processResidentMaintenanceIntake(
     await saveIntakeState(supabase, ctx.conversationId, state)
   }
 
+  state = repairStaleLocationAsk(state)
   const step = state.step as IntakeStep
 
   if (step === "classification_clarification") {

@@ -12,7 +12,12 @@ import {
   applyQuestionPlan,
   determineNextMaintenanceQuestion,
 } from "./determineNextMaintenanceQuestion.ts"
-import { buildConfirmationSummary, confirmationClarification } from "./residentIntakeTypes.ts"
+import {
+  buildConfirmationSummary,
+  confirmationClarification,
+  repairStaleLocationAsk,
+} from "./residentIntakeTypes.ts"
+import { interpretConfirmedLocation } from "../../../../shared/maintenance/requestConfirmation.ts"
 
 function questionFor(message: string, counts?: { bedroomCount?: number; bathroomCount?: number }) {
   const next = determineNextMaintenanceQuestion({
@@ -229,6 +234,42 @@ Deno.test("a confirmed hallway location is corrected in the summary and vendor o
     offer,
     "The light in the upstairs hallway near the bedrooms won't turn on.",
   )
+})
+
+Deno.test("an older bathroom question does not take over a hallway repair", () => {
+  const bathroomQuestion =
+    "Which bathroom did you mean? You can say the bedroom bathroom, the hall bathroom, or another one."
+  const reading = interpretConfirmedLocation({
+    problem: "A new problem. The hallway fixture is out.",
+    answer: "hallway",
+    question: bathroomQuestion,
+  })
+  assertEquals(reading.location, null)
+  assertEquals(reading.clarification, HALLWAY_QUESTION)
+  const repaired = repairStaleLocationAsk({
+    step: "room_or_area",
+    issue_type: "electrical",
+    vendor_trade: "electrical",
+    initial_message: "A new problem. The hallway fixture is out.",
+    description: "A new problem. The hallway fixture is out.\nTenant update: Yes",
+    diagnostic_question_type: "room_or_area",
+    diagnostic_question: bathroomQuestion,
+    location_question: bathroomQuestion,
+    room_or_area: "hallway",
+    diagnostic_facts: { unit_entry: "Yes" },
+    asked_question_types: ["unit_entry", "room_or_area"],
+    preferred_contact_method: "text",
+  })
+  assertEquals(repaired.diagnostic_question, HALLWAY_QUESTION)
+  assertEquals(repaired.room_or_area, undefined)
+  assertEquals(repaired.diagnostic_facts?.unit_entry, "Yes")
+  assertEquals(/bathroom/i.test(repaired.diagnostic_question ?? ""), false)
+  const bathroom = interpretConfirmedLocation({
+    problem: "The bathroom light won't turn on",
+    answer: "Yes",
+    question: "Which bathroom is it in?",
+  })
+  assertEquals(/which bathroom/i.test(bathroom.clarification ?? ""), true)
 })
 
 Deno.test("emergency guidance does not wait on a hallway question", () => {

@@ -1320,6 +1320,45 @@ export function confirmationDetailLines(state: SmsIntakeState): string[] {
   return lines
 }
 
+/**
+ * A broad place still needs its own question. An older bathroom or bedroom
+ * question on the same text thread does not answer it.
+ */
+export function repairStaleLocationAsk(state: SmsIntakeState): SmsIntakeState {
+  const problem = withoutConversationInstruction(
+    [state.initial_message, state.description].filter(Boolean).join(" "),
+  )
+  const needed = clarifyIssueLocation({
+    text: problem,
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  }).question
+  if (!needed || !/^Which (?:hallway|closet|stairs)\b/.test(needed)) return state
+  const onLocationStep = state.step === "awaiting_confirm" ||
+    state.step === "room_or_area" ||
+    state.diagnostic_question_type === "room_or_area"
+  if (!onLocationStep) return state
+  const current = (state.diagnostic_question || state.location_question || "").trim()
+  if (current === needed) return state
+  const stored = state.room_or_area?.trim()
+  const storedStillBroad = !stored || Boolean(clarifyIssueLocation({
+    text: `${problem} ${stored}`,
+    bedroomCount: state.property_bedroom_count,
+    bathroomCount: state.property_bathroom_count,
+  }).question)
+  return {
+    ...state,
+    step: "room_or_area",
+    diagnostic_question_type: "room_or_area",
+    diagnostic_question: needed,
+    location_question: needed,
+    room_or_area: storedStillBroad ? undefined : stored,
+    asked_question_types: (state.asked_question_types ?? []).filter((type) =>
+      type !== "room_or_area"
+    ),
+  }
+}
+
 export function confirmationClarification(state: SmsIntakeState): string | null {
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   if (pending.length >= 2) return null
