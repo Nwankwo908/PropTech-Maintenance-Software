@@ -7,8 +7,23 @@ import {
   type HomeCheckTarget,
   nearestHomeCheckVendors,
   parseHomeCheckCommand,
+  parseHomeCheckGuideStart,
   parseHomeCheckPhotoReply,
 } from '../../../../shared/homeCheck.ts'
+function homeCheckGuidePending(intake: unknown): boolean {
+  if (!intake || typeof intake !== 'object') return false
+  const guide = (intake as { home_check_guide?: { step?: unknown } }).home_check_guide
+  return Boolean(guide && typeof guide === 'object' && typeof guide.step === 'string')
+}
+
+/** Reads thread state only for a short reply that could continue a guide. */
+function mightContinueHomeCheckGuide(body: string): boolean {
+  const text = body.trim()
+  if (!text || text.length > 80) return false
+  if (/^(yes|y|yeah|yep|no|nope|n|cancel|\d{1,2})$/i.test(text)) return true
+  return /\b(be home|enter|without me|without you|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|\d\s*(?:am|pm)|[–-]\s*\d)/i
+    .test(text)
+}
 import {
   checked,
   checkLocation,
@@ -36,6 +51,13 @@ export type HomeCheckSmsAction =
   | { kind: 'confirm'; check: HomeCheckRow }
   | { kind: 'answers'; check: HomeCheckRow; answers: HomeCheckAnswers }
   | { kind: 'clarify'; reply: string }
+  | {
+    kind: 'guide'
+    body: string
+    conversationId: string
+    initiatorPhone: string
+    sender: 'landlord' | 'tenant'
+  }
 
 /** Explicit reference + assigned phone + receiving Ulo line takes precedence
  * over ambiguous contact identities on the shared Alpha DID. */
@@ -125,9 +147,11 @@ export async function prepareHomeCheckSms(
   const landlord = ctx.identity.identity_type === 'landlord'
   const body = ctx.inbound.body.trim()
   const command = parseHomeCheckCommand(body)
-  if (command) {
+  const guideStart = parseHomeCheckGuideStart(body)
+  if (command || guideStart) {
+    if (!landlord) return null
     if (
-      !landlord || !await isLandlordAccountOrOpsPhone(ctx.supabase, {
+      !await isLandlordAccountOrOpsPhone(ctx.supabase, {
         fromNumber: ctx.inbound.from,
         landlordId: ctx.landlordId,
       })
@@ -139,10 +163,56 @@ export async function prepareHomeCheckSms(
       }
     }
     return {
-      kind: 'start',
-      command,
-      messageId: ctx.messageId,
+      kind: 'guide',
+      body,
+      conversationId: ctx.conversationId,
       initiatorPhone: normalizeSmsPhone(ctx.inbound.from),
+      sender: 'landlord',
+    }
+  }
+  if (
+    landlord && mightContinueHomeCheckGuide(body) &&
+    await isLandlordAccountOrOpsPhone(ctx.supabase, {
+      fromNumber: ctx.inbound.from,
+      landlordId: ctx.landlordId,
+    })
+  ) {
+    const { data } = await ctx.supabase.from('sms_conversations').select('intake_state').eq(
+      'id',
+      ctx.conversationId,
+    ).maybeSingle()
+    if (homeCheckGuidePending(data?.intake_state)) {
+      return {
+        kind: 'guide',
+        body,
+        conversationId: ctx.conversationId,
+        initiatorPhone: normalizeSmsPhone(ctx.inbound.from),
+        sender: 'landlord',
+      }
+    }
+  }
+  if (ctx.identity.identity_type === 'resident' && mightContinueHomeCheckGuide(body)) {
+    const { data } = await ctx.supabase.from('sms_conversations').select('intake_state').eq(
+      'id',
+      ctx.conversationId,
+    ).maybeSingle()
+    const pending = data?.intake_state &&
+      typeof data.intake_state === 'object' &&
+      (data.intake_state as { home_check_tenant_reply?: unknown }).home_check_tenant_reply
+    if (pending) {
+      const { data: threads } = await ctx.supabase.from('sms_conversations').select(
+        'id, intake_state',
+      ).eq('landlord_id', ctx.landlordId)
+      const landlordThread = (threads ?? []).find((row) => homeCheckGuidePending(row.intake_state))
+      if (landlordThread) {
+        return {
+          kind: 'guide',
+          body,
+          conversationId: landlordThread.id,
+          initiatorPhone: normalizeSmsPhone(ctx.inbound.from),
+          sender: 'tenant',
+        }
+      }
     }
   }
   if (
@@ -214,6 +284,11 @@ export async function actHomeCheckSms(
   action: HomeCheckSmsAction,
 ) {
   if (action.kind === 'clarify') return { reply: action.reply }
+  if (action.kind === 'guide') {
+    const { actHomeCheckGuide } = await import('./guideAct.ts')
+    const guided = await actHomeCheckGuide(db, landlordId, action)
+    return { reply: guided.reply }
+  }
   if (action.kind === 'start') {
     return {
       reply:

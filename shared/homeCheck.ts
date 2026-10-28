@@ -105,6 +105,47 @@ export function parseHomeCheckCommand(
   }
 }
 
+/**
+ * Guided SMS start. INSPECT / CHECK keep their shortcut roles.
+ * "home check" and "check the equipment" ask who should do it.
+ */
+export function parseHomeCheckGuideStart(
+  body: string,
+): { role: HomeCheckRole | null; target: string; window: string | null } | null {
+  const trimmed = body.trim()
+  const command = parseHomeCheckCommand(trimmed)
+  const split = (target: string) => {
+    const [place, window] = target.split('|').map((part) => part.trim())
+    return { target: place || '', window: window || null }
+  }
+  if (command && /^(?:INSPECT|INSPECTION|START\s)/i.test(trimmed)) {
+    return { role: command.role, ...split(command.target) }
+  }
+  if (command && /^CHECK\b/i.test(trimmed)) {
+    return { role: command.role, ...split(command.target) }
+  }
+  if (
+    command && /^HOME\s+CHECK\b/i.test(trimmed) &&
+    /\b(?:TENANT|CONTRACTOR|SELF)\b/i.test(trimmed)
+  ) {
+    return { role: command.role, ...split(command.target) }
+  }
+  if (
+    /\bhome\s+check\b/i.test(trimmed) ||
+    /\bcheck the equipment\b/i.test(trimmed) ||
+    /\bequipment check\b/i.test(trimmed)
+  ) {
+    const target = trimmed
+      .replace(/^.*?\bhome\s+check\b/i, '')
+      .replace(/^.*?\bcheck the equipment(?:\s+at)?\b/i, '')
+      .replace(/^.*?\bequipment check(?:\s+at|\s+for)?\b/i, '')
+      .replace(/^[\s,:-]+/, '')
+      .trim()
+    return { role: null, target, window: null }
+  }
+  return null
+}
+
 /** MMS must name both the check reference and its photo slot; never use the latest job. */
 export function parseHomeCheckPhotoReply(
   body: string,

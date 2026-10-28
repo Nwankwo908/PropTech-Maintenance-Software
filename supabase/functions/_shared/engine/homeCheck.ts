@@ -1,4 +1,5 @@
 import type { WorkflowTemplate } from './types.ts'
+import { sweepHomeCheckGuides } from '../homeCheck/guideAct.ts'
 import { actHomeCheckSms, runHomeCheckReminder } from '../homeCheck/sms.ts'
 import { checked, homeCheckEvent, type HomeCheckRow, requireData } from '../homeCheck/service.ts'
 
@@ -56,6 +57,18 @@ export const homeCheckTemplate: WorkflowTemplate = {
         ).is('reminder_claimed_at', null),
       ) as HomeCheckRow[]
       let reminders = 0
+      let guideReminders = 0
+      let guideHandoffs = 0
+      try {
+        const guided = await sweepHomeCheckGuides(db, ctx.landlordId)
+        guideReminders = guided.reminders
+        guideHandoffs = guided.handoffs
+      } catch (error) {
+        console.error(
+          '[home-check] guide sweep failed',
+          error instanceof Error ? error.message : 'failed',
+        )
+      }
       for (const check of due) {
         try {
           await runHomeCheckReminder(db, check)
@@ -71,7 +84,7 @@ export const homeCheckTemplate: WorkflowTemplate = {
       return {
         templateId: 'home_check',
         route: 'home_check',
-        metadata: { reminders, expired: expired.length },
+        metadata: { reminders, expired: expired.length, guideReminders, guideHandoffs },
       }
     }
     return {

@@ -78,10 +78,10 @@ describe('Home Check SMS dispatch', () => {
   })
   it('reserves CHECK initiation for registered landlord and property-team identities', async () => {
     const db = query([])
-    expect(await prepareHomeCheckSms(context(db, 'CHECK 12A'))).toMatchObject({ kind: 'clarify' })
+    expect(await prepareHomeCheckSms(context(db, 'CHECK 12A'))).toBeNull()
     expect(await prepareHomeCheckSms(context(db, 'CHECK 12A', [], true))).toMatchObject({
-      kind: 'start',
-      command: { role: 'tenant', target: '12A' },
+      kind: 'guide',
+      sender: 'landlord',
     })
     expect(db.from).not.toHaveBeenCalled()
     expect(isLandlordAccountOrOpsPhone).toHaveBeenCalledWith(db, {
@@ -105,10 +105,7 @@ describe('Home Check SMS dispatch', () => {
       ).from(table)
     )
     const action = await prepareHomeCheckSms(context(db, 'INSPECT Birch / 12A', [], true))
-    expect(action).toMatchObject({ kind: 'start', initiatorPhone: '+15551112222' })
-    const result = await actHomeCheckSms(db as never, 'landlord', action!)
-    expect(result.reply).toContain('Property Intelligence')
-    expect(result.reply).not.toContain('/c/')
+    expect(action).toMatchObject({ kind: 'guide', initiatorPhone: '+15551112222', sender: 'landlord' })
     expect(createHomeCheck).not.toHaveBeenCalled()
   })
   it('asks for an exact property/unit before starting when scope is absent or duplicated', async () => {
@@ -125,10 +122,7 @@ describe('Home Check SMS dispatch', () => {
       ).from(table)
     )
     for (const body of ['INSPECT', 'INSPECT 12A']) {
-      const action = await prepareHomeCheckSms(context(db, body, [], true))
-      const result = await actHomeCheckSms(db as never, 'landlord', action!)
-      expect(result.reply).toContain('Property Intelligence')
-      expect(result.reply).not.toContain('/c/')
+      expect(await prepareHomeCheckSms(context(db, body, [], true))).toMatchObject({ kind: 'guide' })
     }
     expect(createHomeCheck).not.toHaveBeenCalled()
   })
@@ -141,16 +135,10 @@ describe('Home Check SMS dispatch', () => {
           : [{ id: 'maple-home', property_id: 'maple', unit_label: 'Home' }],
       ).from(table)
     )
-    const menu = await actHomeCheckSms(
-      db as never,
-      'landlord',
-      (await prepareHomeCheckSms(context(db, 'INSPECT', [], true)))!,
-    )
-    expect(menu.reply).toContain('Property Intelligence')
-    expect(menu.reply).not.toContain('Unit 1')
-    expect(menu.reply).not.toContain('/c/')
-    const started = await prepareHomeCheckSms(context(db, 'INSPECT 14 Maple Ave', [], true))
-    await actHomeCheckSms(db as never, 'landlord', started!)
+    expect(await prepareHomeCheckSms(context(db, 'INSPECT', [], true))).toMatchObject({ kind: 'guide' })
+    expect(await prepareHomeCheckSms(context(db, 'INSPECT 14 Maple Ave', [], true))).toMatchObject({
+      kind: 'guide',
+    })
     expect(createHomeCheck).not.toHaveBeenCalled()
   })
   it('leaves compliance and unrelated messages outside the Home Check workflow', async () => {

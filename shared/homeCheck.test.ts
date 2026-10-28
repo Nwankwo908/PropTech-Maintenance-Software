@@ -14,6 +14,7 @@ import {
   homeCheckWorkOrderTitle,
   nearestHomeCheckVendors,
   parseHomeCheckCommand,
+  parseHomeCheckGuideStart,
   parseHomeCheckPhotoReply,
   resolveHomeCheckTarget,
   supportedHomeCheckPhotoWarning,
@@ -99,6 +100,18 @@ describe('Home Check scope and completion', () => {
       target: 'results for my heater',
     })
     expect(parseHomeCheckCommand('Can you inspect my apartment?')).toBeNull()
+    expect(parseHomeCheckGuideStart('home check 12 Oak')).toEqual({
+      role: null,
+      target: '12 Oak',
+      window: null,
+    })
+    expect(parseHomeCheckGuideStart('can someone check the equipment at Maple')).toEqual({
+      role: null,
+      target: 'Maple',
+      window: null,
+    })
+    expect(parseHomeCheckGuideStart('CHECK 12A')?.role).toBe('tenant')
+    expect(parseHomeCheckGuideStart('INSPECT SELF Birch / 12A')?.role).toBe('landlord')
   })
   it('requires an exact check and slot for MMS; short replies and trailing scope guesses are rejected', () => {
     expect(parseHomeCheckPhotoReply('hc-aabbccddeeff 3')).toEqual({
