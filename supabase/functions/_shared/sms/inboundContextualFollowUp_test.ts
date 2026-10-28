@@ -299,6 +299,21 @@ Deno.test("naming the fixed repair closes that request when another is open", ()
   }
 })
 
+Deno.test("FIXED with several open requests asks which one", () => {
+  const decision = resolveContextualFollowUp({
+    body: "FIXED",
+    hasMedia: false,
+    intent: null,
+    openTickets: [leak, ac],
+    activeIntake: false,
+  })
+  assertEquals(decision.action, "clarify")
+  if (decision.action === "clarify") {
+    assertEquals(decision.ticketIds.includes("t-leak"), true)
+    assertEquals(decision.ticketIds.includes("t-ac"), true)
+  }
+})
+
 Deno.test("fixed it cancels the existing request instead of opening a new one", () => {
   const decision = resolveContextualFollowUp({
     body: "Never mind, I fixed it.",

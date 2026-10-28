@@ -84,6 +84,11 @@ import {
   RESCHEDULE_WINDOW_ASK,
 } from "./tenantSchedulePreferredWindow.ts"
 import { closeWorkOrderCancelledByResident } from "./cancelResidentWorkOrder.ts"
+import { closeWorkOrderResolvedByResident } from "./tenantResolvedWorkOrder.ts"
+import {
+  looksLikeTenantReportedFix,
+  residentCloseKind,
+} from "../../../../shared/maintenance/tenantReportedFix.ts"
 import { pendingIntakeQuestion, releaseMaintenanceIntakePin } from "./residentIntake.ts"
 import {
   formatTicketClosedDate,
@@ -1763,6 +1768,7 @@ async function executeResidentTicketCancel(
       awaiting_which_request: false,
       pending_which_request_ids: undefined,
       pending_which_request_intent: undefined,
+      pending_close_as: undefined,
     })
     return handled(
       "sms_maintenance_cancel",
@@ -1770,6 +1776,10 @@ async function executeResidentTicketCancel(
     )
   }
 
+  const closeAs = residentCloseKind({
+    body: ctx.inbound.body,
+    pendingCloseAs: intake.pending_close_as,
+  })
   const canAutoCancel = status === "unassigned" || status === "pending_accept"
   await patchIntakeState(ctx.supabase, ctx.conversationId, {
     awaiting_ticket_cancel_confirm: false,
@@ -1777,7 +1787,51 @@ async function executeResidentTicketCancel(
     awaiting_which_request: false,
     pending_which_request_ids: undefined,
     pending_which_request_intent: undefined,
+    pending_close_as: undefined,
   })
+
+  if (closeAs === "resolved") {
+    const closed = await closeWorkOrderResolvedByResident(ctx.supabase, {
+      landlordId: ctx.landlordId,
+      ticketId: ticket.id,
+      conversationId: ctx.conversationId,
+      residentId: ctx.identity.resident_id,
+    })
+    if (!closed.ok) {
+      console.warn("[sms-interpret] resolve ticket update failed", closed.error)
+      return handled(
+        "sms_maintenance_cancel",
+        `Hi ${who},\n\nThis is the property management team.\n\nI couldn't close that work order from here. I've left a note for the property team to follow up.`,
+      )
+    }
+    if (closed.alreadyClosed) {
+      return handled(
+        "sms_maintenance_cancel",
+        `Hi ${who},\n\nThis is the property management team.\n\nThat ${label} is already closed. If the problem comes back, just text me.`,
+      )
+    }
+    const siblings = ticketsSharingRequestLabel(tickets, ticket).filter((row) =>
+      row.id !== ticket.id
+    )
+    for (const sibling of siblings) {
+      const siblingStatus = (sibling.vendor_work_status ?? "").toLowerCase()
+      if (siblingStatus === "completed" || siblingStatus === "cancelled" || siblingStatus === "archived") {
+        continue
+      }
+      await closeWorkOrderResolvedByResident(ctx.supabase, {
+        landlordId: ctx.landlordId,
+        ticketId: sibling.id,
+        residentId: ctx.identity.resident_id,
+      })
+    }
+    return handled(
+      "sms_maintenance_cancel",
+      buildResidentRepairClosedSms({
+        description: ticket.description,
+        requestRef: tenantRef(ticket),
+      }),
+    )
+  }
 
   if (!canAutoCancel) {
     void notifyLandlordNeedsAttention(ctx.supabase, {
@@ -1848,7 +1902,7 @@ async function executeResidentTicketCancel(
     maintenanceRequestId: ticket.id,
     extra: {
       closure_source: "tenant_sms",
-      closure_reason: "resident_resolved",
+      closure_reason: "resident_cancelled",
     },
   })
   return handled(
@@ -2031,9 +2085,11 @@ async function handleCancel(
     "maintenance_cancel",
     false,
   )
+  const reportedFix = looksLikeTenantReportedFix(ctx.inbound.body)
   await patchIntakeState(ctx.supabase, ctx.conversationId, {
     awaiting_ticket_cancel_confirm: true,
     pending_ticket_cancel_id: ticket.id,
+    pending_close_as: reportedFix ? "resolved" : "cancelled",
   })
   await logOutcome(ctx, {
     eventType: "sms.maintenance_cancel_noted",
@@ -2552,6 +2608,7 @@ async function handleWhichRequestClarify(
     return `• ${when ? `${name} (${when})` : name}`
   }).join("\n")
   const cancel = intent === "maintenance_cancel"
+  const reportedFix = cancel && looksLikeTenantReportedFix(ctx.inbound.body)
   const statusAsk = intent === "maintenance_status"
   await patchIntakeState(ctx.supabase, ctx.conversationId, {
     awaiting_which_request: true,
@@ -2559,6 +2616,7 @@ async function handleWhichRequestClarify(
     pending_which_request_intent: whichRequestPendingIntent(intent),
     awaiting_ticket_cancel_confirm: false,
     pending_ticket_cancel_id: undefined,
+    pending_close_as: cancel ? (reportedFix ? "resolved" : "cancelled") : undefined,
   })
   await logOutcome(ctx, {
     eventType: "sms.maintenance_followup_clarify",
@@ -2572,7 +2630,9 @@ async function handleWhichRequestClarify(
       "",
       "This is the property management team.",
       "",
-      cancel
+      reportedFix
+        ? "You have more than one open request. Which one did you fix?"
+        : cancel
         ? "You have more than one open request. Which one do you want to cancel?"
         : visitAsk
         ? "You have more than one upcoming visit. Which one do you want to change?"

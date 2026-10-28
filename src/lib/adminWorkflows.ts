@@ -270,9 +270,10 @@ export function isCancelledOnActiveTasks(row: {
   status?: string | null
   vendorWorkStatus?: string | null
 }): boolean {
+  const vws = (row.vendorWorkStatus ?? '').trim().toLowerCase()
+  if (vws === 'completed') return false
   const run = (row.status ?? '').trim().toLowerCase()
   if (run === 'cancelled') return true
-  const vws = (row.vendorWorkStatus ?? '').trim().toLowerCase()
   return vws === 'cancelled' || vws === 'archived'
 }
 

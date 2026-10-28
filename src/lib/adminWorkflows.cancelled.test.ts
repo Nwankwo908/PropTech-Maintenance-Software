@@ -45,6 +45,15 @@ describe('isCancelledOnActiveTasks', () => {
       false,
     )
   })
+
+  it('does not treat a completed repair as a cancellation', () => {
+    expect(isCancelledOnActiveTasks({ status: 'cancelled', vendorWorkStatus: 'completed' })).toBe(
+      false,
+    )
+    expect(isCompletedOnActiveTasks({ status: 'cancelled', vendorWorkStatus: 'completed' })).toBe(
+      true,
+    )
+  })
 })
 
 describe('isCompletedOnActiveTasks', () => {

@@ -190,6 +190,7 @@ export async function submitSmsMaintenanceRequest(
     severity: dbSeverity,
     estimated_minutes: estimatedMinutes,
     due_at: dueAt.toISOString(),
+    ...(params.closeAs === "tenant_self_fix" ? { status: "completed" } : {}),
     vendor_work_status: params.closeAs === "tenant_self_fix" ? "completed" : "unassigned",
     ...(params.closeAs === "tenant_self_fix"
       ? {

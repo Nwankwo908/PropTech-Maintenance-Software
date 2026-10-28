@@ -25,6 +25,7 @@ import {
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 import { looksLikeClosedRepairStatusAsk } from "./maintenanceTicketContext.ts"
+import { looksLikeTenantReportedFix } from "../../../../shared/maintenance/tenantReportedFix.ts"
 import {
   classifyRentSmsIntent,
 } from "./rentIntent.ts"
@@ -123,6 +124,7 @@ export function looksLikeCancelRepair(body: string): boolean {
   const text = body.trim()
   if (!text) return false
   if (/\bnever ?mind\b/i.test(text) && /\bi meant\b/i.test(text)) return false
+  if (looksLikeTenantReportedFix(text)) return true
   return CANCEL_SHORT.test(text) || CANCEL_PHRASE.test(text)
 }
 

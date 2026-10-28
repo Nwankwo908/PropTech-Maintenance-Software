@@ -178,6 +178,8 @@ export type SmsIntakeState = {
   pending_ticket_update_media?: string[]
   awaiting_ticket_cancel_confirm?: boolean
   pending_ticket_cancel_id?: string
+  /** Whether the open close question is a reported fix or a cancellation. */
+  pending_close_as?: "resolved" | "cancelled"
   awaiting_move_out_confirm?: boolean
   pending_move_out_date?: string
   /** Waiting for the resident to name which of several open requests they mean. */

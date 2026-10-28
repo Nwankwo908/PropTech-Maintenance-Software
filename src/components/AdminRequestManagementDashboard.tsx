@@ -21,6 +21,7 @@ import {
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
 import { homeCheckFollowUpCategory } from '@shared/maintenance/homeCheckRepairCategory'
+import { adminRequestStatusFromDb } from '@/lib/adminRequestStatus'
 import { isHomeCheckObservation } from '@/lib/landlordWorkOrders'
 type UrgencyUi = 'urgent' | 'normal' | 'low'
 
@@ -156,44 +157,6 @@ function mapDbUrgency(u: string): UrgencyUi {
   return 'normal'
 }
 
-/** Maps `maintenance_requests.status` (and legacy vendor workflow strings) to dashboard filters. */
-function mapDbStatusToUi(raw: string): StatusUi {
-  const x = raw.trim().toLowerCase().replace(/\s+/g, '_')
-  if (x === 'cancelled' || x === 'archived') return 'cancelled'
-  if (x === 'completed' || x === 'done' || x === 'closed') return 'completed'
-  if (x === 'in_progress' || x === 'inprogress') return 'in_progress'
-  if (
-    x === 'under_review' ||
-    x === 'review' ||
-    x === 'pending_review'
-  ) {
-    return 'under_review'
-  }
-  if (x === 'pending_accept' || x === 'accepted') return 'assigned'
-  if (
-    x === 'assigned' ||
-    x === 'open' ||
-    x === 'new' ||
-    x === 'pending' ||
-    x === 'submitted'
-  ) {
-    return 'assigned'
-  }
-  return 'assigned'
-}
-
-/** Maps `maintenance_requests.vendor_work_status` (vendor portal / Edge) to admin pipeline status. */
-function mapVendorWorkStatusToUi(raw: string): StatusUi {
-  const x = raw.trim().toLowerCase()
-  if (x === 'completed') return 'completed'
-  if (x === 'cancelled' || x === 'archived') return 'cancelled'
-  if (x === 'in_progress') return 'in_progress'
-  if (x === 'accepted') return 'in_progress'
-  if (x === 'declined' || x === 'unassigned') return 'assigned'
-  if (x === 'pending_accept') return 'assigned'
-  return 'assigned'
-}
-
 /** Optional text column `maintenance_requests.vendor` (not PostgREST embedded `vendors`). */
 function readDenormalizedVendorText(
   raw: Record<string, unknown>,
@@ -276,9 +239,10 @@ function formatIssueCategoryLabel(
 
 function resolveAdminStatusFromDb(dbRow: MaintenanceRequestRowDb): StatusUi {
   const extended = dbRow as MaintenanceRequestRowDb & Record<string, unknown>
-  const vws = readVendorWorkStatusFromRow(extended)
-  if (vws != null) return mapVendorWorkStatusToUi(vws)
-  return mapDbStatusToUi(dbRow.status ?? '')
+  return adminRequestStatusFromDb({
+    status: dbRow.status,
+    vendorWorkStatus: readVendorWorkStatusFromRow(extended),
+  })
 }
 
 /** Normalize a PostgREST row (e.g. from `select('*')`) into our typed shape. */
