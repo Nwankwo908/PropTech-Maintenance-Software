@@ -270,6 +270,28 @@ async function loadProfileLeaseDocuments(
   return Array.from(byId.values())
 }
 
+/** Every lease / move-in upload for a landlord, for matching against residents in bulk. */
+export type PropertyHealthLeaseDocumentPool = {
+  documents: OnboardingUploadedDocument[]
+  review: OnboardingExtractionReview | null
+}
+
+export async function loadLeaseDocumentPool(
+  landlordId: string = getActiveLandlordId(),
+): Promise<PropertyHealthLeaseDocumentPool> {
+  const [archive, profileDocs] = await Promise.all([
+    loadOnboardingDocumentArchive(landlordId),
+    loadProfileLeaseDocuments(landlordId),
+  ])
+  const byId = new Map<string, OnboardingUploadedDocument>()
+  for (const doc of archive.documents) byId.set(doc.id, doc)
+  for (const doc of profileDocs) byId.set(doc.id, doc)
+  return {
+    documents: Array.from(byId.values()).filter((doc) => isLeasingDocumentCategory(doc.documentCategory)),
+    review: archive.review ?? null,
+  }
+}
+
 export async function loadResidentLeaseDocuments(
   resident: ResidentLeaseDocumentMatchInput,
   landlordId: string = getActiveLandlordId(),

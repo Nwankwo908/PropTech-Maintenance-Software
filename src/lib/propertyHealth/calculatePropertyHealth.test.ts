@@ -1,187 +1,174 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CORE_VENDOR_TRADES,
   calculatePropertyHealth,
+  coreTradesForVendorCategory,
+  documentationPoints,
+  formatPropertyHealthGap,
+  occupancyPoints,
+  openItemsPoints,
   propertyHealthRatingFromScore,
-  type CalculatePropertyHealthTicket,
+  vendorCoveragePoints,
+  type CalculatePropertyHealthInput,
 } from '@/lib/propertyHealth/calculatePropertyHealth'
 
-const now = Date.parse('2026-09-07T12:00:00.000Z')
+const allDocs = { leaseOnFile: true, assetListComplete: true, lastJobPhotoReceipt: true, insuranceOnFile: true }
 
-function ticket(
-  partial: Partial<CalculatePropertyHealthTicket> & Pick<CalculatePropertyHealthTicket, 'id'>,
-): CalculatePropertyHealthTicket {
+function input(partial: Partial<CalculatePropertyHealthInput> = {}): CalculatePropertyHealthInput {
   return {
-    createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    unit: '101',
-    issueCategory: 'plumbing',
-    vendorWorkStatus: 'accepted',
-    description: 'Kitchen sink drip',
-    urgency: 'normal',
+    openItemCount: 0,
+    totalUnits: 4,
+    occupiedUnits: 4,
+    coveredTrades: CORE_VENDOR_TRADES,
+    documentation: allDocs,
     ...partial,
   }
 }
 
+describe('Vitals rubric points', () => {
+  it('scores open action items by backlog size', () => {
+    expect([0, 1, 2, 3, 4, 9].map(openItemsPoints)).toEqual([25, 18, 10, 10, 0, 0])
+  })
+
+  it('scores occupancy by occupied share of onboarded units', () => {
+    expect(occupancyPoints(4, 4)).toBe(25)
+    expect(occupancyPoints(9, 10)).toBe(18)
+    expect(occupancyPoints(19, 20)).toBe(18)
+    expect(occupancyPoints(3, 4)).toBe(10)
+    expect(occupancyPoints(89, 100)).toBe(10)
+    expect(occupancyPoints(2, 4)).toBe(0)
+    expect(occupancyPoints(0, 0)).toBe(0)
+  })
+
+  it('scores vendor coverage across the 8 core trades', () => {
+    expect([8, 7, 6, 5, 4, 3, 0].map(vendorCoveragePoints)).toEqual([25, 18, 18, 10, 10, 0, 0])
+  })
+
+  it('weights the four documents equally', () => {
+    expect([4, 3, 2, 1, 0].map(documentationPoints)).toEqual([25, 19, 13, 6, 0])
+  })
+
+  it('maps score bands', () => {
+    expect(propertyHealthRatingFromScore(100)).toBe('Healthy')
+    expect(propertyHealthRatingFromScore(80)).toBe('Healthy')
+    expect(propertyHealthRatingFromScore(79)).toBe('Fair')
+    expect(propertyHealthRatingFromScore(65)).toBe('Fair')
+    expect(propertyHealthRatingFromScore(64)).toBe('At Risk')
+    expect(propertyHealthRatingFromScore(50)).toBe('At Risk')
+    expect(propertyHealthRatingFromScore(49)).toBe('Critical')
+  })
+})
+
 describe('calculatePropertyHealth', () => {
-  it('does not lower Condition when system data is missing', () => {
-    const result = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'active' }],
-      tickets: [],
-      pmTasks: [],
-      assets: [],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-
-    expect(result.condition.score).toBeNull()
-    expect(result.maintenance.score).toBe(100)
-    expect(result.risk.score).toBe(100)
-    expect(result.score).toBeNull()
-    expect(result.rating).toBeNull()
-    expect(result.condition.factors.every((factor) => factor.status === 'unknown')).toBe(true)
-  })
-
-  it('scores overall health once a major system age is on file, even with no deductions', () => {
-    const result = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'active' }],
-      tickets: [],
-      pmTasks: [],
-      assets: [
-        {
-          applianceType: 'roof',
-          estimatedAgeYears: 5,
-          usefulLifeYears: 25,
-          replacementUrgency: null,
-          condition: 'good',
-        },
-      ],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-
-    expect(result.condition.score).toBe(100)
-    expect(result.maintenance.score).toBe(100)
-    expect(result.risk.score).toBe(100)
+  it('matches the calculator example: everything complete scores 100 Healthy', () => {
+    const result = calculatePropertyHealth(input())
     expect(result.score).toBe(100)
-    expect(result.rating).toBe('Excellent')
+    expect(result.rating).toBe('Healthy')
+    expect(result.gaps).toEqual([])
   })
 
-  it('does not keep penalizing completed maintenance', () => {
-    const result = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'active' }],
-      tickets: [
-        ticket({
-          id: 'closed',
-          vendorWorkStatus: 'completed',
-          description: 'Kitchen sink was leaking',
-          urgency: 'urgent',
-        }),
-      ],
-      pmTasks: [{ taskStatus: 'completed', dueAt: new Date(now - 86400000).toISOString() }],
-      assets: [],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-
-    expect(result.maintenance.score).toBe(100)
-    expect(result.topIssues).toEqual([])
-  })
-
-  it('deducts for an open plumbing request and aging roof', () => {
-    const result = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'active' }],
-      tickets: [ticket({ id: 'open-plumb', description: 'Kitchen sink is leaking' })],
-      pmTasks: [],
-      assets: [
-        {
-          applianceType: 'roof',
-          estimatedAgeYears: 24,
-          usefulLifeYears: 25,
-          replacementUrgency: 'soon',
-          condition: null,
-        },
-      ],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-
-    expect(result.condition.score).toBe(85)
-    expect(result.maintenance.score).toBeLessThan(100)
-    expect(result.topIssues.some((issue) => /roof/i.test(issue.explanation))).toBe(true)
-    expect(result.topIssues.some((issue) => /leak/i.test(issue.explanation))).toBe(true)
-    expect(result.rating).toBe(propertyHealthRatingFromScore(result.score!))
-  })
-
-  it('does not treat an inspection letter batch as Repeat issues', () => {
-    const hqsTickets = Array.from({ length: 12 }, (_, i) =>
-      ticket({
-        id: `hqs-${i}`,
-        unit: '1',
-        issueCategory: 'general',
-        vendorWorkStatus: 'pending_accept',
-        description: `HQS fail item ${i + 1}`,
-        inspectionReportId: 'insp-report-1',
+  it('adds the four dimensions', () => {
+    const result = calculatePropertyHealth(
+      input({
+        openItemCount: 2,
+        totalUnits: 10,
+        occupiedUnits: 9,
+        coveredTrades: ['plumbing', 'hvac', 'electrical', 'general', 'appliance_repair', 'locksmith'],
+        documentation: { leaseOnFile: true, assetListComplete: false, lastJobPhotoReceipt: true, insuranceOnFile: true },
       }),
     )
-    const result = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '1', status: 'active' }],
-      tickets: hqsTickets,
-      pmTasks: [],
-      assets: [],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-
-    const repeat = result.maintenance.factors.find(
-      (factor) => factor.id === 'maintenance.repeat',
+    expect(result.dimensions.open_items.points).toBe(10)
+    expect(result.dimensions.occupancy.points).toBe(18)
+    expect(result.dimensions.vendor_coverage.points).toBe(18)
+    expect(result.dimensions.documentation.points).toBe(19)
+    expect(result.score).toBe(65)
+    expect(result.rating).toBe('Fair')
+    expect(result.dimensions.vendor_coverage.detail).toBe(
+      '6 of 8 trades covered · missing Pest Control and Roofing',
     )
-    expect(repeat?.deduction).toBe(0)
-    expect(repeat?.explanation).toBeNull()
+    expect(result.dimensions.occupancy.detail).toBe('9 of 10 units occupied (90%)')
   })
 
-  it('treats smoke detector status as unknown without deducting', () => {
-    const result = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'active' }],
-      tickets: [],
-      pmTasks: [],
-      assets: [],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-
-    const smoke = result.risk.factors.find((factor) => factor.id === 'risk.smoke_co')
-    expect(smoke?.status).toBe('unknown')
-    expect(smoke?.deduction).toBe(0)
+  it('surfaces gaps with the real points they add', () => {
+    const result = calculatePropertyHealth(
+      input({
+        openItemCount: 1,
+        coveredTrades: ['plumbing', 'hvac', 'electrical', 'general', 'appliance_repair', 'locksmith', 'roofing'],
+        documentation: { leaseOnFile: false, assetListComplete: true, lastJobPhotoReceipt: true, insuranceOnFile: true },
+      }),
+    )
+    expect(result.gaps.map(formatPropertyHealthGap)).toEqual([
+      'Close 1 open action item → +7 pts',
+      'Add Pest Control vendor → +7 pts',
+      'Upload the lease → +6 pts',
+    ])
   })
 
-  it('applies a modest vacancy deduction on Risk only', () => {
-    const occupied = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'active' }],
-      tickets: [],
-      pmTasks: [],
-      assets: [],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
-    const vacant = calculatePropertyHealth({
-      trackedUnits: [{ unitLabel: '101', status: 'vacant' }],
-      tickets: [],
-      pmTasks: [],
-      assets: [],
-      inspections: [],
-      damageReports: [],
-      now,
-    })
+  it('counts insurance as one of four equal documents', () => {
+    const withoutInsurance = calculatePropertyHealth(
+      input({ documentation: { ...allDocs, insuranceOnFile: false } }),
+    )
+    expect(withoutInsurance.dimensions.documentation.points).toBe(19)
+    expect(withoutInsurance.score).toBe(94)
+    expect(withoutInsurance.dimensions.documentation.detail).toContain('Insurance missing')
+    expect(withoutInsurance.gaps.map(formatPropertyHealthGap)).toEqual([
+      'Upload the property insurance policy → +6 pts',
+    ])
+  })
 
-    expect(occupied.risk.score).toBe(100)
-    expect(vacant.risk.score).toBe(97)
-    expect(occupied.score).toBeNull()
-    expect(vacant.score).toBeNull()
+  it('asks for the smallest step that reaches the next band', () => {
+    const result = calculatePropertyHealth(
+      input({
+        openItemCount: 5,
+        totalUnits: 20,
+        occupiedUnits: 14,
+        coveredTrades: ['plumbing', 'hvac', 'electrical'],
+      }),
+    )
+    const actions = result.gaps.map(formatPropertyHealthGap)
+    expect(actions).toContain('Close 2 open action items → +10 pts')
+    expect(actions).toContain('Lease 1 vacant unit → +10 pts')
+    expect(actions).toContain('Add Appliance vendor → +10 pts')
+  })
+
+  it('names every trade needed when one vendor is not enough to reach the next band', () => {
+    const result = calculatePropertyHealth(
+      input({ coveredTrades: ['plumbing', 'hvac', 'electrical', 'general'] }),
+    )
+    expect(result.gaps.map(formatPropertyHealthGap)).toEqual([
+      'Add vendors for Appliance and Locksmith → +8 pts',
+    ])
+  })
+
+  it('gives zero occupancy points and no lease gap math errors for an empty property', () => {
+    const result = calculatePropertyHealth(
+      input({ totalUnits: 0, occupiedUnits: 0, documentation: { leaseOnFile: false, assetListComplete: false, lastJobPhotoReceipt: false, insuranceOnFile: false } }),
+    )
+    expect(result.dimensions.occupancy.points).toBe(0)
+    expect(result.dimensions.documentation.points).toBe(0)
+    expect(result.gaps.filter((gap) => gap.dimension === 'occupancy')).toEqual([])
+  })
+})
+
+describe('coreTradesForVendorCategory', () => {
+  it('maps common categories onto core trades', () => {
+    expect(coreTradesForVendorCategory('Plumbing')).toEqual(['plumbing'])
+    expect(coreTradesForVendorCategory('HVAC')).toEqual(['hvac'])
+    expect(coreTradesForVendorCategory('Handyman')).toEqual(['general'])
+    expect(coreTradesForVendorCategory('Pest Management')).toEqual(['pest_control'])
+  })
+
+  it('reads several trades from one category', () => {
+    expect(coreTradesForVendorCategory('Plumbing, HVAC & Electrical')).toEqual([
+      'plumbing',
+      'hvac',
+      'electrical',
+    ])
+  })
+
+  it('ignores non-core and empty categories', () => {
+    expect(coreTradesForVendorCategory('Painting')).toEqual([])
+    expect(coreTradesForVendorCategory('')).toEqual([])
+    expect(coreTradesForVendorCategory(null)).toEqual([])
   })
 })

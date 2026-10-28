@@ -3,8 +3,9 @@ import {
   buildPropertyHealthReport,
   resolvePropertyHealthKpiCaption,
   rollupPortfolioHealthFromBuildings,
-  type PropertyHealthAsset,
+  type PropertyHealthComponent,
   type PropertyHealthResident,
+  type PropertyHealthTicket,
   type PropertyHealthUnit,
 } from '@/lib/propertyHealth'
 
@@ -18,85 +19,77 @@ function unit(partial: Partial<PropertyHealthUnit> & Pick<PropertyHealthUnit, 'i
   }
 }
 
-function resident(
-  id: string,
-  unitLabel: string,
-  building: string,
-): PropertyHealthResident {
+function resident(id: string, unitLabel: string, building: string): PropertyHealthResident {
   return { id, fullName: id, unit: unitLabel, building, status: 'active' }
 }
 
-function goodRoof(building: string, propertyId: string): PropertyHealthAsset {
+function openTicket(id: string, building: string, unitId: string, propertyId: string): PropertyHealthTicket {
   return {
+    id,
+    createdAt: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    unit: '1',
+    unitId,
     building,
     propertyId,
-    applianceType: 'roof',
-    estimatedAgeYears: 5,
-    usefulLifeYears: 25,
-    replacementUrgency: null,
-    condition: 'good',
-    deficiencies: [],
+    issueCategory: 'plumbing',
+    vendorWorkStatus: 'pending_accept',
+    assignedVendorId: null,
   }
 }
 
-function wornRoof(building: string, propertyId: string): PropertyHealthAsset {
-  return {
-    ...goodRoof(building, propertyId),
-    estimatedAgeYears: 24,
-    condition: 'poor',
-    replacementUrgency: 'replace_now',
-  }
+function component(key: PropertyHealthComponent['key'], score: number): PropertyHealthComponent {
+  return { key, label: key, score, maxPoints: 25, weight: 0.25, isFallback: false, detail: '' }
 }
 
 describe('rollupPortfolioHealthFromBuildings', () => {
-  it('unit-weights Overview by inventory, skipping buildings without a Condition score', () => {
+  it('unit-weights Overview by inventory, skipping pending-setup buildings', () => {
     const report = buildPropertyHealthReport({
       units: [
         unit({ id: 'a1', unitLabel: '1', building: 'Annex', propertyId: 'p-annex' }),
         unit({ id: 'm1', unitLabel: '1', building: 'Main', propertyId: 'p-main' }),
         unit({ id: 'm2', unitLabel: '2', building: 'Main', propertyId: 'p-main' }),
         unit({ id: 'm3', unitLabel: '3', building: 'Main', propertyId: 'p-main' }),
-        unit({ id: 'u1', unitLabel: '1', building: 'Unknown', propertyId: 'p-unk' }),
+        unit({ id: 'n1', unitLabel: '1', building: 'New', propertyId: 'p-new', status: 'inactive' }),
       ],
-      tickets: [],
+      tickets: [
+        openTicket('t1', 'Annex', 'a1', 'p-annex'),
+        openTicket('t2', 'Annex', 'a1', 'p-annex'),
+      ],
       pmTasks: [],
       feedback: [],
       vendorMetrics: [],
-      assets: [wornRoof('Annex', 'p-annex'), goodRoof('Main', 'p-main')],
       residents: [
         resident('ra', '1', 'Annex'),
         resident('rm1', '1', 'Main'),
         resident('rm2', '2', 'Main'),
         resident('rm3', '3', 'Main'),
-        resident('ru', '1', 'Unknown'),
       ],
       canonicalProperties: [
         { id: 'p-annex', name: 'Annex' },
         { id: 'p-main', name: 'Main' },
-        { id: 'p-unk', name: 'Unknown' },
+        { id: 'p-new', name: 'New' },
       ],
       now,
     })
 
     const annex = report.buildings.find((row) => row.building === 'Annex')
     const main = report.buildings.find((row) => row.building === 'Main')
-    const unknown = report.buildings.find((row) => row.building === 'Unknown')
+    const fresh = report.buildings.find((row) => row.building === 'New')
 
-    expect(annex?.score).not.toBeNull()
-    expect(main?.score).not.toBeNull()
-    expect(unknown?.score).toBeNull()
+    // Annex: 2 open items (10) + occupied (25) = 35. Main: 0 open (25) + occupied (25) = 50.
+    expect(annex?.score).toBe(35)
+    expect(main?.score).toBe(50)
+    expect(fresh?.status).toBe('pending_setup')
     expect(report.portfolio?.scoredPropertyCount).toBe(2)
     expect(report.portfolio?.propertyCount).toBe(3)
 
-    const expected = Math.round(
-      (annex!.score! * 1 + main!.score! * 3) / 4,
-    )
-    expect(report.portfolio?.score).toBe(expected)
-    expect(expected).not.toBe(Math.round(((annex!.score! + main!.score!) / 2)))
+    // (35 × 1 unit + 50 × 3 units) / 4 = 46.25 → 46, not the plain average 43.
+    expect(report.portfolio?.score).toBe(46)
+    expect(report.portfolio?.status).toBe('critical')
     expect(resolvePropertyHealthKpiCaption(report.portfolio)).toContain('2 of 3 properties scored')
   })
 
-  it('does not average pending-setup buildings as 0 or 50', () => {
+  it('does not average pending-setup buildings as 0', () => {
     const rolled = rollupPortfolioHealthFromBuildings([
       {
         building: 'Ready',
@@ -107,33 +100,13 @@ describe('rollupPortfolioHealthFromBuildings', () => {
         residentRating: null,
         feedbackCount: 0,
         score: 90,
-        status: 'excellent',
-        rating: 'Excellent',
+        status: 'healthy',
+        rating: 'Healthy',
         components: [
-          {
-            key: 'condition',
-            label: 'Condition',
-            score: 90,
-            weight: 0.4,
-            isFallback: false,
-            detail: 'Roof in good condition',
-          },
-          {
-            key: 'maintenance',
-            label: 'Maintenance',
-            score: 100,
-            weight: 0.35,
-            isFallback: false,
-            detail: 'No deductions',
-          },
-          {
-            key: 'risk',
-            label: 'Risk',
-            score: 100,
-            weight: 0.25,
-            isFallback: false,
-            detail: 'No deductions',
-          },
+          component('open_items', 25),
+          component('occupancy', 25),
+          component('vendor_coverage', 25),
+          component('documentation', 15),
         ],
         trackedUnitCount: 2,
       },
@@ -155,6 +128,7 @@ describe('rollupPortfolioHealthFromBuildings', () => {
     ])
 
     expect(rolled?.score).toBe(90)
+    expect(rolled?.status).toBe('healthy')
     expect(rolled?.scoredPropertyCount).toBe(1)
     expect(rolled?.propertyCount).toBe(2)
   })

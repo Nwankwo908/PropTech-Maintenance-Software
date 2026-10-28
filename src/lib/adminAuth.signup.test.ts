@@ -6,7 +6,7 @@ vi.mock('@/lib/landlordPortalMembers', () => ({ landlordIdForPortalMemberEmail: 
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: { signInWithOtp: mocks.otp } } }))
 vi.mock('@/lib/activeLandlord', () => ({ clearTryDemoVisitor: vi.fn(), clearTryDemoWelcomePending: vi.fn() }))
 import { isAdminSessionAllowed, sendAdminEmailOtp } from './adminAuth'
-const session = (signup = false) => ({ user: { id: 'sim-new-user', email: 'new@example.invalid', user_metadata: { limited_alpha_signup: signup } } }) as Session
+const session = (signup = false) => ({ user: { id: 'sim-new-user', email: 'new@example.invalid', user_metadata: { limited_alpha_signup: signup } } }) as unknown as Session
 beforeEach(() => { vi.clearAllMocks(); mocks.member.mockResolvedValue(null); mocks.intent.mockReturnValue(false); mocks.otp.mockResolvedValue({ error: null }); mocks.provision.mockResolvedValue('private-profile') })
 it('allows a newly verified signup after private provisioning succeeds', async () => {
   expect(await isAdminSessionAllowed(session(true))).toBe(true)

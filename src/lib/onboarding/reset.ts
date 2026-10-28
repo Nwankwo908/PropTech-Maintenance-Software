@@ -1233,6 +1233,9 @@ export async function resetOnboardingPortfolio(
   const unitsScoped = await deleteLandlordScopedRows('units', scope.landlordId)
   if (!unitsScoped.ok) return { ...unitsScoped, opsPurgePath }
 
+  // Property Details insurance (rows without a property_id do not cascade).
+  await deleteLandlordScopedRows('property_insurance_profiles', scope.landlordId, { bestEffort: true })
+
   // Client fallback must delete properties even when the staff RPC is missing.
   const propertiesCleared = await deleteLandlordScopedRows('properties', scope.landlordId)
   if (!propertiesCleared.ok) return { ...propertiesCleared, opsPurgePath }

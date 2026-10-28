@@ -82,6 +82,19 @@ function insuranceHasContent(profile: InsuranceProfileLite): boolean {
   )
 }
 
+/**
+ * Property Details → Insurance has the property's own policy (carrier, policy
+ * number, or a scanned binder) in this browser's copy. The account copy lives in
+ * `property_insurance_profiles` (see propertyInsuranceProfile.ts).
+ */
+export function propertyInsuranceProfileOnFile(building: string): boolean {
+  const name = building.trim()
+  if (!name) return false
+  const raw = readJson<Record<string, unknown>>(landlordScopedKey('ulo.propertyInsurance', name), {})
+  const text = (key: string) => (typeof raw[key] === 'string' ? (raw[key] as string).trim() : '')
+  return Boolean(text('carrier') || text('policyNumber') || text('binderFileName'))
+}
+
 function loadInsuranceHasContent(building: string): boolean {
   const raw = readJson<Record<string, unknown>>(
     landlordScopedKey('ulo.propertyInsurance', building),
@@ -161,7 +174,12 @@ export async function loadPropertyDetailsSections(
   const history =
     loadMaintenanceHistoryDocuments({ building: name }).length > 0 ||
     loadApprovedMaintenanceRecords({ building: name }).length > 0
-  const insurance = loadInsuranceHasContent(name)
+  const insurance =
+    loadInsuranceHasContent(name) ||
+    (await import('@/lib/propertyInsuranceProfile')
+      .then(({ loadInsuredPropertyNames }) => loadInsuredPropertyNames())
+      .then((names) => names.some((saved) => saved.trim().toLowerCase() === name.toLowerCase()))
+      .catch(() => false))
 
   const access = await loadPropertyAccess(name)
   const accessFilled = propertyAccessHasContent(access)

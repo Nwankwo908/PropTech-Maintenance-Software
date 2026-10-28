@@ -73,6 +73,8 @@ import {
   type PropertyHealthPmTask,
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
+  emptyPropertyHealthVitalsSignals,
+  type PropertyHealthVitalsSignals,
 } from '@/lib/propertyHealth'
 import {
   formatPropertySubtitle,
@@ -301,6 +303,7 @@ export function AdminPropertyDetailDashboard() {
   const [healthAssets, setHealthAssets] = useState<PropertyHealthAsset[]>([])
   const [healthInspections, setHealthInspections] = useState<PropertyHealthInspection[]>([])
   const [healthDamageReports, setHealthDamageReports] = useState<PropertyHealthDamageReport[]>([])
+  const [healthVitals, setHealthVitals] = useState<PropertyHealthVitalsSignals>(emptyPropertyHealthVitalsSignals)
   const [canonicalProperty, setCanonicalProperty] = useState<PropertyRecord | null>(null)
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [autoApprovalCap, setAutoApprovalCap] = useState(1000)
@@ -664,6 +667,7 @@ export function AdminPropertyDetailDashboard() {
       setHealthAssets(healthSignals.assets)
       setHealthInspections(healthSignals.inspections)
       setHealthDamageReports(healthSignals.damageReports)
+      setHealthVitals(healthSignals.vitals)
 
       if (canonicalPropertiesResult.ok) {
         setCanonicalProperties(canonicalPropertiesResult.properties)
@@ -1015,6 +1019,7 @@ export function AdminPropertyDetailDashboard() {
       assets: healthAssets,
       inspections: healthInspections,
       damageReports: healthDamageReports,
+      ...healthVitals,
       residents: residents.map((resident) => ({
         id: resident.id,
         fullName: resident.fullName,
@@ -1025,7 +1030,7 @@ export function AdminPropertyDetailDashboard() {
       })),
       canonicalProperties: canonicalPropertiesForHealth,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, healthVitals, residents, canonicalPropertiesForHealth])
 
   const buildingHealth: PropertyHealthBuildingRow | null = useMemo(() => {
     const lookupName = activeCanonicalProperty?.name ?? building
