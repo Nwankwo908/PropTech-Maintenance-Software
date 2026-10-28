@@ -82,6 +82,7 @@ import {
 } from "../../../../shared/maintenance/requestConfirmation.ts"
 import {
   applyRecurringIssueSignal,
+  applySummaryCorrection,
   buildConfirmationSummary,
   confirmationClarification,
   repairStaleLocationAsk,
@@ -1491,6 +1492,68 @@ export async function processResidentMaintenanceIntake(
         description: repairedDescription || state.description,
       }
     }
+    if (state.diagnostic_question_type === "answer_clarification") {
+      const correction = applySummaryCorrection(state, body)
+      if (correction.action === "update") {
+        const planned = applyQuestionPlan({ ...correction.state, step: "awaiting_confirm" })
+        await saveIntakeState(supabase, ctx.conversationId, planned)
+        return {
+          route: "resident_maintenance_intake",
+          replyHint: planned.step === "awaiting_confirm"
+            ? await confirmationSummaryForThread(supabase, ctx.conversationId, planned)
+            : questionForStep(planned, planned.step as IntakeStep),
+          metadata: { intakeStep: planned.step, answerBound: true },
+        }
+      }
+      return finishIntakeQuestion(
+        supabase,
+        ctx,
+        correction.action === "clarify" ? correction.state : state,
+        state.diagnostic_question || "Did you mean the kind of item, or where it is?",
+      )
+    }
+    if (/^summary$/i.test(body.trim())) {
+      const reprint: SmsIntakeState = {
+        ...state,
+        step: "awaiting_confirm",
+        clarify_menu_shown_at: undefined,
+      }
+      await saveIntakeState(supabase, ctx.conversationId, reprint)
+      return {
+        route: "resident_maintenance_intake",
+        replyHint: await confirmationSummaryForThread(
+          supabase,
+          ctx.conversationId,
+          reprint,
+        ),
+        metadata: { intakeStep: "awaiting_confirm", summaryReprint: true },
+      }
+    }
+    const correction = applySummaryCorrection(state, body)
+    if (correction.action === "clarify") {
+      return finishIntakeQuestion(supabase, ctx, correction.state, correction.question)
+    }
+    if (correction.action === "update") {
+      const planned = applyQuestionPlan({ ...correction.state, step: "awaiting_confirm" })
+      if (planned.step === "awaiting_confirm") {
+        await saveIntakeState(supabase, ctx.conversationId, planned)
+        return {
+          route: "resident_maintenance_intake",
+          replyHint: await confirmationSummaryForThread(
+            supabase,
+            ctx.conversationId,
+            planned,
+          ),
+          metadata: { intakeStep: "awaiting_confirm", answerBound: true },
+        }
+      }
+      return finishIntakeQuestion(
+        supabase,
+        ctx,
+        planned,
+        questionForStep(planned, planned.step as IntakeStep),
+      )
+    }
     const locationClarification = confirmationClarification(state)
     if (locationClarification) {
       const reading = interpretConfirmedLocation({
@@ -1574,23 +1637,6 @@ export async function processResidentMaintenanceIntake(
         diagnostic_question: detailQuestion,
       }
       return finishIntakeQuestion(supabase, ctx, asking, detailQuestion)
-    }
-    if (/^summary$/i.test(body.trim())) {
-      const reprint: SmsIntakeState = {
-        ...state,
-        step: "awaiting_confirm",
-        clarify_menu_shown_at: undefined,
-      }
-      await saveIntakeState(supabase, ctx.conversationId, reprint)
-      return {
-        route: "resident_maintenance_intake",
-        replyHint: await confirmationSummaryForThread(
-          supabase,
-          ctx.conversationId,
-          reprint,
-        ),
-        metadata: { intakeStep: "awaiting_confirm", summaryReprint: true },
-      }
     }
     if (isYesReply(body)) {
       const multiIssues = Array.isArray(state.pending_issues)

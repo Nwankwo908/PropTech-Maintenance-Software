@@ -124,6 +124,9 @@ export function interpretConfirmedLocation(input: {
     if (/^(?:near|by|next to|beside|behind|across from)\b/i.test(answer)) {
       return { location: `${place} ${answer.toLowerCase()}`, clarification: null }
     }
+    if (/^(?:ceiling|wall[-\s]?mounted)$/i.test(answer)) {
+      return { location: null, clarification: question }
+    }
     return { location: answer.toLowerCase(), clarification: null }
   }
 

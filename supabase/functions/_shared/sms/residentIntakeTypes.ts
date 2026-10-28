@@ -27,6 +27,7 @@ import {
   resolveUrgencyPolicy,
 } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { issueCategoryToVendorTrade } from "../../../../shared/maintenance/vendorTrades.ts"
+import { interpretBoundAnswer } from "../../../../shared/maintenance/boundAnswer.ts"
 import {
   acceptLocationReply,
   clarifyIssueLocation,
@@ -144,6 +145,11 @@ export type SmsIntakeState = {
   /** Current dynamic follow-up (not a generic questionnaire step). */
   diagnostic_question_type?: string
   diagnostic_question?: string
+  /** The question the resident last answered, kept for a later correction. */
+  last_answered_question_type?: string
+  last_answered_question?: string
+  /** Word held while Ulo asks which detail the resident meant. */
+  pending_clarification_value?: string
   asked_question_types?: string[]
   diagnostic_facts?: Record<string, string>
   /** Landlord setting. Missing means tips stay on. */
@@ -516,6 +522,17 @@ export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
   if (stored) {
     const accepted = acceptLocationReply(stored)
     if (accepted) {
+      const onItsOwn = clarifyIssueLocation({
+        text: accepted,
+        bedroomCount: state.property_bedroom_count,
+        bathroomCount: state.property_bathroom_count,
+      })
+      if (!onItsOwn.question) {
+        const phrase = accepted.length >= (onItsOwn.location?.length ?? 0)
+          ? accepted
+          : onItsOwn.location || accepted
+        return phrase === stored ? state : { ...state, room_or_area: phrase }
+      }
       const still = clarifyIssueLocation({
         text: `${problem} ${accepted}`,
         bedroomCount: state.property_bedroom_count,
@@ -1374,6 +1391,67 @@ export function repairStaleLocationAsk(state: SmsIntakeState): SmsIntakeState {
       type !== "room_or_area"
     ),
   }
+}
+
+function withoutAnswerLines(text: string | null | undefined): string {
+  return withoutConversationInstruction(text ?? "")
+    .split(/\n|Tenant update:/i)[0]
+    ?.replace(/\s+/g, " ")
+    .trim() ?? ""
+}
+
+/**
+ * Apply one summary reply to the field it belongs to.
+ * Clarify leaves the saved location, item, and entry permission unchanged.
+ */
+export function applySummaryCorrection(
+  state: SmsIntakeState,
+  body: string,
+):
+  | { action: "update"; state: SmsIntakeState }
+  | { action: "clarify"; state: SmsIntakeState; question: string }
+  | { action: "none" } {
+  const bound = interpretBoundAnswer({
+    answer: body,
+    question: state.diagnostic_question,
+    questionType: state.diagnostic_question_type,
+    problem: withoutAnswerLines(state.initial_message || state.description),
+    itemDetail: state.diagnostic_facts?.item_detail,
+    lastAnsweredQuestionType: state.last_answered_question_type,
+    pendingValue: state.pending_clarification_value,
+  })
+  if (bound.kind === "unrecognized") return { action: "none" }
+  if (bound.kind === "clarify") {
+    return {
+      action: "clarify",
+      question: bound.question,
+      state: {
+        ...state,
+        step: "awaiting_confirm",
+        diagnostic_question_type: "answer_clarification",
+        diagnostic_question: bound.question,
+        pending_clarification_value: bound.pendingValue,
+      },
+    }
+  }
+  const facts = { ...(state.diagnostic_facts ?? {}) }
+  const next: SmsIntakeState = {
+    ...state,
+    diagnostic_question_type: undefined,
+    diagnostic_question: undefined,
+    pending_clarification_value: undefined,
+    last_answered_question_type: bound.kind,
+    last_answered_question: state.diagnostic_question || state.last_answered_question,
+  }
+  if (bound.kind === "item_detail") {
+    facts.item_detail = bound.value
+    next.diagnostic_facts = facts
+  } else {
+    next.room_or_area = bound.value
+    next.location_question = state.location_question
+  }
+  next.acknowledged_headline = issueSummaryBullet(next).replace(/\.$/, "")
+  return { action: "update", state: next }
 }
 
 export function confirmationClarification(state: SmsIntakeState): string | null {

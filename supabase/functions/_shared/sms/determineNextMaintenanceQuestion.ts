@@ -424,9 +424,17 @@ function itemDetailFollowUp(state: SmsIntakeState): string | null {
 }
 
 function locationFollowUp(state: SmsIntakeState): string | null {
-  if (asked(state, "room_or_area")) return null
+  const stored = state.room_or_area?.trim()
+  if (stored) {
+    const onItsOwn = clarifyIssueLocation({
+      text: stored,
+      bedroomCount: state.property_bedroom_count,
+      bathroomCount: state.property_bathroom_count,
+    })
+    if (!onItsOwn.question) return null
+  }
   const result = clarifyIssueLocation({
-    text: [tenantAuthoredText(state), state.room_or_area].filter(Boolean).join(" "),
+    text: [tenantAuthoredText(state), stored].filter(Boolean).join(" "),
     bedroomCount: state.property_bedroom_count,
     bathroomCount: state.property_bathroom_count,
   })
@@ -1159,9 +1167,13 @@ export function applyDiagnosticAnswer(
     }
   }
 
-  const description = [state.description?.trim(), `${TENANT_UPDATE_PREFIX} ${answer}`]
-    .filter(Boolean)
-    .join("\n")
+  const keepAnswerOffDescription = type === "item_detail" ||
+    type === "unit_entry" ||
+    type === "room_or_area" ||
+    type === "pest_location"
+  const description = keepAnswerOffDescription
+    ? state.description
+    : [state.description?.trim(), `${TENANT_UPDATE_PREFIX} ${answer}`].filter(Boolean).join("\n")
 
   return {
     ...state,
@@ -1173,6 +1185,8 @@ export function applyDiagnosticAnswer(
     issue_type: issueType,
     vendor_trade: vendorTrade,
     description,
+    last_answered_question_type: type,
+    last_answered_question: state.diagnostic_question,
     open_question_asked_at: undefined,
     intake_silence_nudge_sent_at: undefined,
     intake_silence_resolved_at: undefined,
