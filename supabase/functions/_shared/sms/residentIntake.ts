@@ -59,6 +59,7 @@ import {
 import {
   SYSTEM_SAFETY_NOTES,
   TENANT_UPDATE_PREFIX,
+  tenantAuthoredText,
 } from "./intakeSystemText.ts"
 import {
   applyDiagnosticAnswer,
@@ -71,6 +72,10 @@ import {
   clarifyIssueLocation,
   withoutConversationInstruction,
 } from "../../../../shared/maintenance/locationClarification.ts"
+import {
+  acceptItemDetailAnswer,
+  itemDetailQuestion,
+} from "../../../../shared/maintenance/itemDetail.ts"
 import {
   interpretConfirmedLocation,
   recoverLocationQuestion,
@@ -1531,6 +1536,44 @@ export async function processResidentMaintenanceIntake(
         room_or_area: undefined,
       }
       return finishIntakeQuestion(supabase, ctx, state, locationClarification)
+    }
+    const detailQuestion = !state.diagnostic_facts?.item_detail
+      ? itemDetailQuestion(tenantAuthoredText(state))
+      : null
+    if (detailQuestion) {
+      const stored = acceptItemDetailAnswer(body)
+      if (stored) {
+        const continued = applyQuestionPlan(applyDiagnosticAnswer({
+          ...state,
+          diagnostic_question_type: "item_detail",
+          diagnostic_question: detailQuestion,
+        }, body))
+        if (continued.step === "awaiting_confirm") {
+          await saveIntakeState(supabase, ctx.conversationId, continued)
+          return {
+            route: "resident_maintenance_intake",
+            replyHint: await confirmationSummaryForThread(
+              supabase,
+              ctx.conversationId,
+              continued,
+            ),
+            metadata: { intakeStep: "awaiting_confirm", itemDetailConfirmed: true },
+          }
+        }
+        return finishIntakeQuestion(
+          supabase,
+          ctx,
+          continued,
+          questionForStep(continued, continued.step as IntakeStep),
+        )
+      }
+      const asking: SmsIntakeState = {
+        ...state,
+        step: "diagnostic",
+        diagnostic_question_type: "item_detail",
+        diagnostic_question: detailQuestion,
+      }
+      return finishIntakeQuestion(supabase, ctx, asking, detailQuestion)
     }
     if (/^summary$/i.test(body.trim())) {
       const reprint: SmsIntakeState = {

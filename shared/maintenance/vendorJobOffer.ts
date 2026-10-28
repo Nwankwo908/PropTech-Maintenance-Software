@@ -175,7 +175,7 @@ export function composeVendorJobOfferIssue(input: VendorJobOfferInput): string |
 
   let problem = ""
   if (problemSource) {
-    problem = problemSentence(problemSource, location)
+    problem = problemSentence(problemSource, location, input.facts?.item_detail)
   }
   if (!problem || isWeakIssue(problem)) {
     if (headline && !isWeakIssue(headline)) {
@@ -191,7 +191,13 @@ export function composeVendorJobOfferIssue(input: VendorJobOfferInput): string |
   const scope = firstScope(parts.tenantUpdates, input.facts)
   const details: string[] = []
   for (const [key, value] of Object.entries(input.facts ?? {})) {
-    if (key === "unit_entry" || key === "electrical_scope" || key === "self_fix_tip" || key === "self_fix_result") {
+    if (
+      key === "unit_entry" ||
+      key === "electrical_scope" ||
+      key === "self_fix_tip" ||
+      key === "self_fix_result" ||
+      key === "item_detail"
+    ) {
       continue
     }
     const line = factLine(key, value ?? "")

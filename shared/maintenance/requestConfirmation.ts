@@ -4,6 +4,7 @@
  * stays unresolved instead of being guessed.
  */
 import { generateIssueSummary } from "./generateIssueSummary.ts"
+import { confirmedItemPhrase } from "./itemDetail.ts"
 import {
   clarifyIssueLocation,
   withoutConversationInstruction,
@@ -209,6 +210,11 @@ function openingProblem(text: string): string {
   return withoutConversationInstruction(first).replace(/\s+/g, " ").trim()
 }
 
+function leakSourceAlreadyNamed(opening: string): boolean {
+  return /\b(?:sink|faucet|toilet|pipe|ceiling|roof|fridge|refrigerator|dishwasher|washer|dryer|water heater|tub|shower)\b/i
+    .test(opening)
+}
+
 function asLightOutage(opening: string): string {
   if (!/\bfixture\b/i.test(opening)) return opening
   if (!/\b(?:is out|isn'?t working|not working|won'?t(?: turn on| work)?)\b/i.test(opening)) {
@@ -223,8 +229,12 @@ function isDirectProblem(text: string): boolean {
   return !/\b(?:hi|hello|hey|thank|thanks|trying to see|wondering|i hope)\b/i.test(text)
 }
 
-/** One sentence naming the problem and, when known, the confirmed place. */
-export function problemSentence(problem: string, location: string | null): string {
+/** One sentence naming the problem and, when known, the confirmed place and item. */
+export function problemSentence(
+  problem: string,
+  location: string | null,
+  itemDetail?: string | null,
+): string {
   const opening = asLightOutage(openingProblem(problem))
   if (!isDirectProblem(opening)) {
     const phrase = generateIssueSummary(opening, { format: "title", maxChars: 80 })
@@ -232,6 +242,7 @@ export function problemSentence(problem: string, location: string | null): strin
     return ensureSentence(phrase || opening)
   }
   const place = location?.replace(/\s+/g, " ").trim().toLowerCase() || null
+  const itemPhrase = confirmedItemPhrase(opening, itemDetail)
   if (/\b(?:smell(?:s)?\s+(?:of\s+)?gas|gas\s+(?:smell|leak)|i smell gas)\b/i.test(opening)) {
     if (place && !opening.toLowerCase().includes(place)) {
       return `There is a gas smell in the ${place}.`
@@ -245,12 +256,33 @@ export function problemSentence(problem: string, location: string | null): strin
   const fixture = opening.match(
     /^(?:the|my|our|there(?:'s| is) an?)\s+(?:([a-z]+)\s+)?(light|sink|faucet|toilet|window|door|outlet|fan|shower)\b\s*(.*)$/i,
   )
+  if (itemPhrase && /\bappliance\b/i.test(opening) && !/\b(?:fridge|refrigerator|stove|oven|dishwasher|washer|dryer)\b/i.test(opening)) {
+    return place
+      ? `The ${itemPhrase} isn't working in the ${place}.`
+      : `The ${itemPhrase} isn't working.`
+  }
+  if (itemPhrase && /\b(?:bugs?|pests?|insects?)\b/i.test(opening)) {
+    return place ? `There are ${itemPhrase} in the ${place}.` : `There are ${itemPhrase}.`
+  }
+  if (itemPhrase && /\b(?:leak(?:ing)?|dripp(?:ing)?)\b/i.test(opening) && !leakSourceAlreadyNamed(opening)) {
+    const noun = itemPhrase.replace(/^(?:a|an|the)\s+/i, "")
+    return place
+      ? `The ${noun} is leaking in the ${place}.`
+      : `The ${noun} is leaking.`
+  }
+
   if (fixture) {
     const broad = fixture[1]?.toLowerCase()
     const noun = fixture[2].toLowerCase()
     let rest = fixture[3].replace(/[.!?]+$/g, "").trim()
     if (/^broke$/i.test(rest)) rest = "is broken"
     if (!rest) rest = "needs repair"
+    if (noun === "light" && itemPhrase && itemPhrase !== "light") {
+      const detail = /\b(?:out|won'?t turn on|isn'?t working|not working)\b/i.test(rest) ? "is out" : rest
+      return place
+        ? `The ${itemPhrase} in the ${place} ${detail}.`
+        : `The ${itemPhrase} ${detail}.`
+    }
     if (place && !opening.toLowerCase().includes(place)) {
       const detail = noun === "light" && /^(?:is out|out)$/i.test(rest) ? "won't turn on" : rest
       if (noun === "light" && place.split(/\s+/).length > 1) {

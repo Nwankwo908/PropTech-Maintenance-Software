@@ -13,6 +13,10 @@ import {
 import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
 import { detectRecurringIssueSignal } from "../../../../shared/maintenance/recurringIssueSignal.ts"
 import {
+  acceptItemDetailAnswer,
+  itemDetailQuestion,
+} from "../../../../shared/maintenance/itemDetail.ts"
+import {
   acceptLocationReply,
   clarifyIssueLocation,
 } from "../../../../shared/maintenance/locationClarification.ts"
@@ -66,6 +70,7 @@ export type MaintenanceQuestionType =
   | "duration_material"
   | "photo"
   | "unit_entry"
+  | "item_detail"
   | "self_fix"
 
 export type NextMaintenanceQuestion =
@@ -412,6 +417,12 @@ function photoQuestion(state: SmsIntakeState, hay: string): NextMaintenanceQuest
   }
 }
 
+function itemDetailFollowUp(state: SmsIntakeState): string | null {
+  if (asked(state, "item_detail") || fact(state, "item_detail")) return null
+  if (locationFollowUp(state)) return null
+  return itemDetailQuestion(tenantAuthoredText(state))
+}
+
 function locationFollowUp(state: SmsIntakeState): string | null {
   if (asked(state, "room_or_area")) return null
   const result = clarifyIssueLocation({
@@ -703,6 +714,16 @@ function resolveNextMaintenanceQuestion(
       "Do you see sparks, smoke, or smell anything burning?",
     )
     if (q) return q
+  }
+
+  const detailQuestion = itemDetailFollowUp(state)
+  if (detailQuestion) {
+    return {
+      shouldAsk: true,
+      questionType: "item_detail",
+      question: detailQuestion,
+      step: "diagnostic",
+    }
   }
 
   if (isElectrical(state, hay) && /\b(outlet|room|bedroom|lights?)\b/.test(hay)) {
@@ -1054,6 +1075,15 @@ export function applyDiagnosticAnswer(
     if (/\b(?:sag(?:ging)?|collaps(?:e|ed|ing)?|fall(?:ing)?)\b/i.test(answer)) {
       safety = SYSTEM_SAFETY_NOTES.structuralCollapse
     }
+  }
+  if (type === "item_detail") {
+    const stored = acceptItemDetailAnswer(answer)
+    if (!stored) {
+      const index = askedTypes.indexOf(type)
+      if (index >= 0) askedTypes.splice(index, 1)
+      return { ...state, asked_question_types: askedTypes }
+    }
+    facts.item_detail = stored
   }
   if (type === "pest_location" || type === "room_or_area") {
     const accepted = acceptLocationReply(answer)

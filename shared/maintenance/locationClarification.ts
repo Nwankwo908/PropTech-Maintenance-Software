@@ -76,25 +76,30 @@ function readBroadPlace(text: string): BroadPlace | null {
   if (matches.length === 0) return null
   const noun = broadNounName(matches[0]?.[1] ?? "")
   const windowRe = new RegExp(
-    `\\b((?:(?:${BROAD_QUALIFIER})\\s+){1,3})?(${BROAD_NOUN})\\b(?:\\s+(?:near|by|next to|beside|behind|across from)\\s+(?:the\\s+)?(?:(?!light\\b|sink\\b|fixture\\b|is\\b|out\\b|won'?t\\b)[a-z0-9']+)(?:\\s+(?!light\\b|sink\\b|fixture\\b|is\\b|out\\b|won'?t\\b)[a-z0-9']+){0,3})?`,
+    `\\b((?:(?:${BROAD_QUALIFIER})\\s+){1,3})?(${BROAD_NOUN})\\b(?:\\s+(?:near|by|next to|beside|behind|across from)\\s+(?:the\\s+)?(?:(?!light\\b|sink\\b|fixture\\b|is\\b|out\\b|won'?t\\b|tenant\\b|update\\b)[a-z0-9']+)(?:\\s+(?!light\\b|sink\\b|fixture\\b|is\\b|out\\b|won'?t\\b|tenant\\b|update\\b)[a-z0-9']+){0,3})?`,
+    "gi",
+  )
+  const phrases = [...text.matchAll(windowRe)].map((match) =>
+    (match[0] ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/^(?:the|my|our)\s+/, "")
+  )
+  const distinctNouns = new Set(matches.map((match) => broadNounName(match[1] ?? "")))
+  const qualifiedRe = new RegExp(
+    `\\b(?:${BROAD_QUALIFIER}|near|by|next to|beside|behind|across from)\\b`,
     "i",
   )
-  let phrase = text.match(windowRe)?.[0]?.replace(/\s+/g, " ").trim().toLowerCase()
-    .replace(/^(?:the|my|our)\s+/, "") ?? noun
-  const distinctNouns = new Set(matches.map((match) => broadNounName(match[1] ?? "")))
+  const specificPhrase = phrases
+    .filter((phrase) => qualifiedRe.test(phrase) && phrase.split(/\s+/).length > 1)
+    .sort((a, b) => b.length - a.length)[0]
+  if (specificPhrase) return { noun, phrase: specificPhrase, specific: true }
   if (distinctNouns.size > 1) {
     const first = matches[0]
     const last = matches[matches.length - 1]
     const start = first?.index ?? 0
     const end = (last?.index ?? 0) + (last?.[1]?.length ?? 0)
-    phrase = text.slice(start, end).replace(/\s+/g, " ").trim().toLowerCase()
+    const phrase = text.slice(start, end).replace(/\s+/g, " ").trim().toLowerCase()
+    return { noun, phrase, specific: phrase.split(/\s+/).length > 1 }
   }
-  const qualified = new RegExp(
-    `\\b(?:${BROAD_QUALIFIER}|near|by|next to|beside|behind|across from)\\b`,
-    "i",
-  ).test(phrase) || distinctNouns.size > 1
-  const specific = qualified && phrase.split(/\s+/).length > 1
-  return { noun, phrase: specific ? phrase : noun, specific }
+  return { noun, phrase: noun, specific: false }
 }
 
 function problemNoun(text: string): string | null {

@@ -877,6 +877,15 @@ export function headlineUpdateLine(
 }
 
 export function issueSummaryBullet(state: SmsIntakeState): string {
+  const confirmedDetail = state.diagnostic_facts?.item_detail?.trim()
+  if (confirmedDetail && confirmedDetail !== "not_sure") {
+    const sentence = problemSentence(
+      state.initial_message || state.description || "",
+      resolveRoomLabel(state),
+      confirmedDetail,
+    ).replace(/\.$/, "")
+    if (sentence && !/^maintenance issue$/i.test(sentence)) return sentence
+  }
   const room = resolveRoomLabel(state)
   const issue = (state.issue_type ?? "").toLowerCase()
   const desc = (state.description ?? state.initial_message ?? "").toLowerCase()
@@ -930,6 +939,10 @@ export function applyRecurringIssueSignal(state: SmsIntakeState): SmsIntakeState
 
 /** Clean ticket headline for vendor SMS / cards — never the Q&A-stuffed description. */
 export function ticketIssueHeadline(state: SmsIntakeState): string {
+  const confirmedDetail = state.diagnostic_facts?.item_detail?.trim()
+  if (confirmedDetail && confirmedDetail !== "not_sure") {
+    return issueSummaryBullet(state)
+  }
   const acknowledged = state.acknowledged_headline?.trim()
   if (acknowledged) return acknowledged
   return issueSummaryBullet(state)
@@ -968,6 +981,10 @@ export function buildIntakeDescription(state: SmsIntakeState): string {
   if (state.room_or_area?.trim()) {
     const room = resolveRoomLabel(state)
     if (room) parts.push(`Affected area: ${room}.`)
+  }
+  const itemDetail = state.diagnostic_facts?.item_detail?.trim()
+  if (itemDetail && itemDetail !== "not_sure") {
+    parts.push(`Item: ${itemDetail}.`)
   }
   const safetyLine = state.safety_concerns?.trim()
     ? safetyConfirmationSentence(state.safety_concerns, tenantAuthoredText(state))
@@ -1375,7 +1392,11 @@ function confirmationIssueLine(state: SmsIntakeState): string {
     answer: state.room_or_area,
     question: state.location_question,
   })
-  return problemSentence(state.initial_message || state.description || "", reading.location)
+  return problemSentence(
+    state.initial_message || state.description || "",
+    reading.location,
+    state.diagnostic_facts?.item_detail,
+  )
 }
 
 export function buildConfirmationSummary(
