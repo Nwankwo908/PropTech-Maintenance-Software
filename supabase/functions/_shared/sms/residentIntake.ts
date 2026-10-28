@@ -69,8 +69,12 @@ import { attachPriorRelatedTicket } from "./priorRelatedTicket.ts"
 import {
   acceptLocationReply,
   clarifyIssueLocation,
+  withoutConversationInstruction,
 } from "../../../../shared/maintenance/locationClarification.ts"
-import { recoverLocationQuestion } from "../../../../shared/maintenance/requestConfirmation.ts"
+import {
+  interpretConfirmedLocation,
+  recoverLocationQuestion,
+} from "../../../../shared/maintenance/requestConfirmation.ts"
 import {
   applyRecurringIssueSignal,
   buildConfirmationSummary,
@@ -340,7 +344,7 @@ async function initializeIntake(
   outdoorTempF: number | null = null,
   smsContext?: ClassifyMaintenanceSmsContext,
 ): Promise<{ state: SmsIntakeState; classification: ClassificationResult }> {
-  let initial = body.trim()
+  let initial = withoutConversationInstruction(body.trim()) || body.trim()
   if (mediaCount > 0) {
     initial = initial
       ? `${initial}\n(Photo attached)`
@@ -1463,13 +1467,57 @@ export async function processResidentMaintenanceIntake(
 
   if (step === "awaiting_confirm") {
     state = await rememberLocationQuestion(supabase, ctx.conversationId, state)
+    const repairedInitial = withoutConversationInstruction(state.initial_message ?? "")
+    const repairedDescription = withoutConversationInstruction(state.description ?? "")
+    if (repairedInitial || repairedDescription) {
+      state = {
+        ...state,
+        initial_message: repairedInitial || state.initial_message,
+        description: repairedDescription || state.description,
+      }
+    }
     const locationClarification = confirmationClarification(state)
     if (locationClarification) {
+      const reading = interpretConfirmedLocation({
+        problem: state.initial_message || state.description,
+        answer: body,
+        question: locationClarification,
+      })
+      if (reading.location && !reading.clarification) {
+        const continued = applyQuestionPlan({
+          ...state,
+          room_or_area: reading.location,
+          location_question: locationClarification,
+          asked_question_types: [
+            ...(state.asked_question_types ?? []).filter((type) => type !== "room_or_area"),
+            "room_or_area",
+          ],
+        })
+        if (continued.step === "awaiting_confirm") {
+          await saveIntakeState(supabase, ctx.conversationId, continued)
+          return {
+            route: "resident_maintenance_intake",
+            replyHint: await confirmationSummaryForThread(
+              supabase,
+              ctx.conversationId,
+              continued,
+            ),
+            metadata: { intakeStep: "awaiting_confirm", locationConfirmed: true },
+          }
+        }
+        return finishIntakeQuestion(
+          supabase,
+          ctx,
+          continued,
+          questionForStep(continued, continued.step as IntakeStep),
+        )
+      }
       state = {
         ...state,
         step: "room_or_area",
         diagnostic_question_type: "room_or_area",
         diagnostic_question: locationClarification,
+        location_question: locationClarification,
         room_or_area: undefined,
       }
       return finishIntakeQuestion(supabase, ctx, state, locationClarification)

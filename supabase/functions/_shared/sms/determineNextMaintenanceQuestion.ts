@@ -722,6 +722,11 @@ function resolveNextMaintenanceQuestion(
   }
 
   if (isPest(state, hay)) {
+    const broadPlace = locationFollowUp(state)
+    if (broadPlace && /^Which (?:hallway|closet|stairs)\b/.test(broadPlace)) {
+      const q = tryAsk("room_or_area", broadPlace, "room_or_area")
+      if (q) return q
+    }
     // "Repeatedly" / "again" can mean sighting frequency — only treat as a
     // prior-visit follow-up when a real prior ticket is attached.
     const frequencyImplied =
@@ -896,6 +901,7 @@ export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
       step: "room_or_area",
       diagnostic_question_type: "room_or_area",
       diagnostic_question: locationReading.clarification,
+      location_question: locationReading.clarification,
       asked_question_types: (state.asked_question_types ?? []).filter((type) =>
         type !== "room_or_area"
       ),
@@ -968,6 +974,9 @@ export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
     step: next.step,
     diagnostic_question_type: next.questionType,
     diagnostic_question: next.question,
+    location_question: next.questionType === "room_or_area" || next.questionType === "pest_location"
+      ? next.question
+      : prepared.location_question,
     diagnostic_facts: facts,
   }
 }

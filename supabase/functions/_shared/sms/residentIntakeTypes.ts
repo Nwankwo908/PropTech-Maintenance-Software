@@ -30,6 +30,7 @@ import { issueCategoryToVendorTrade } from "../../../../shared/maintenance/vendo
 import {
   acceptLocationReply,
   clarifyIssueLocation,
+  withoutConversationInstruction,
 } from "../../../../shared/maintenance/locationClarification.ts"
 import {
   entrySentence,
@@ -440,18 +441,31 @@ export function normalizeRoomOrArea(
 
 /** Resolve a clean room label from stored state (re-extract if polluted with issue text). */
 export function resolveRoomLabel(state: SmsIntakeState): string | null {
+  const problem = withoutConversationInstruction(
+    [state.initial_message, state.description].filter(Boolean).join(" "),
+  )
   const stored = state.room_or_area?.trim()
   if (stored) {
     const accepted = acceptLocationReply(stored)
-    if (accepted) return accepted
+    if (accepted) {
+      const still = clarifyIssueLocation({
+        text: `${problem} ${accepted}`,
+        bedroomCount: state.property_bedroom_count,
+        bathroomCount: state.property_bathroom_count,
+      })
+      if (!still.question) {
+        return accepted.length >= (still.location?.length ?? 0) ? accepted : still.location
+      }
+    }
   }
   const fromConversation = clarifyIssueLocation({
-    text: [state.initial_message, state.description].filter(Boolean).join(" "),
+    text: problem,
     bedroomCount: state.property_bedroom_count,
     bathroomCount: state.property_bathroom_count,
-  }).location
-  if (fromConversation) return fromConversation
-  return extractRoomFromText(state.initial_message ?? state.description ?? "")
+  })
+  if (fromConversation.question) return null
+  if (fromConversation.location) return fromConversation.location
+  return extractRoomFromText(problem)
 }
 
 /** Natural symptom phrase derived from tenant wording + issue type. */
@@ -495,18 +509,31 @@ export function issueSymptomPhrase(state: SmsIntakeState): string {
 
 /** Re-normalize room_or_area on read so legacy polluted values don't leak into prompts. */
 export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
+  const problem = withoutConversationInstruction(
+    [state.initial_message, state.description].filter(Boolean).join(" "),
+  )
   const stored = state.room_or_area?.trim()
   if (stored) {
     const accepted = acceptLocationReply(stored)
     if (accepted) {
-      return accepted === stored ? state : { ...state, room_or_area: accepted }
+      const still = clarifyIssueLocation({
+        text: `${problem} ${accepted}`,
+        bedroomCount: state.property_bedroom_count,
+        bathroomCount: state.property_bathroom_count,
+      })
+      if (!still.question) {
+        return accepted === stored ? state : { ...state, room_or_area: accepted }
+      }
     }
   }
   const clarified = clarifyIssueLocation({
-    text: [state.initial_message, state.description, stored].filter(Boolean).join(" "),
+    text: [problem, stored].filter(Boolean).join(" "),
     bedroomCount: state.property_bedroom_count,
     bathroomCount: state.property_bathroom_count,
   })
+  if (clarified.question) {
+    return stored ? { ...state, room_or_area: undefined } : state
+  }
   if (clarified.location && !clarified.question) {
     return { ...state, room_or_area: clarified.location }
   }

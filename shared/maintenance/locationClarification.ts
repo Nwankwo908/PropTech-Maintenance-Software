@@ -14,7 +14,15 @@ const AMBIGUOUS_ROOM =
   /^(?:bed\s?room|bath(?:room)?|bath)$/i
 
 const SPECIFIC_INTERIOR =
-  /\b(?:kitchen|living room|dining room|laundry(?: room)?|garage|basement|attic|office|utility room|hallway|hall|closet|entryway|foyer)\b/i
+  /\b(?:kitchen|living room|dining room|laundry(?: room)?|garage|basement|attic|office|utility room|entryway|foyer)\b/i
+
+const BROAD_NOUN = "hallway|hall|corridor|closet|stairs|stairway|stairwell|staircase"
+
+const BROAD_QUALIFIER =
+  "upstairs|downstairs|upper|lower|front|back|rear|main|side|left|right|first(?:[\\s-]?floor)?|second(?:[\\s-]?floor)?|third(?:[\\s-]?floor)?|1st|2nd|3rd|basement|attic|garage|kitchen|bedroom|bed\\s?room|bathroom|bath|living\\s?room|dining(?:\\s?room)?|laundry|office|guest|master|primary|kids?'?"
+
+const CONVERSATION_INSTRUCTION =
+  /^(?:(?:a|this is a|it'?s a|its a)\s+)?(?:new|separate|different)\s+(?:problem|issue|request)\b[.!:,\-—]*\s*|^none of (?:these|those|them)\b[.!:,\-—]*\s*/i
 
 const SPECIFIC_EXTERIOR =
   /\b(?:front|back|side|rear)\s+(?:porch|yard|door|steps|stairs|entrance|of the (?:house|home|building))\b|\b(?:driveway|sidewalk|roof|gutter|balcony|deck|patio|garage|fence|carport|front porch|back porch)\b/i
@@ -26,6 +34,93 @@ const FLOOR_ONLY =
 
 const FIXTURE =
   /\b(sink|faucet|tap|toilet|shower|tub|bathtub|window|outlet|light|lamp|door|stove|oven|fridge|refrigerator|dishwasher|washer|dryer)\b/i
+
+/**
+ * Drop a leading "new problem" / "none of these" instruction.
+ * The repair sentence stays. The original inbound text stays in message history.
+ */
+export function withoutConversationInstruction(text: string | null | undefined): string {
+  const raw = (text ?? "").trim()
+  if (!raw) return ""
+  const lines = raw.split("\n")
+  let first = lines[0].replace(/\s+/g, " ").trim()
+  for (let i = 0; i < 3; i += 1) {
+    const next = first.replace(CONVERSATION_INSTRUCTION, "").trim()
+    if (next === first) break
+    first = next
+  }
+  if (first === lines[0].trim()) return raw
+  lines[0] = first
+  return lines.join("\n").replace(/^\n+/, "").trim()
+}
+
+type BroadPlace = {
+  noun: "hallway" | "closet" | "stairs"
+  phrase: string
+  specific: boolean
+}
+
+function broadNounName(raw: string): BroadPlace["noun"] {
+  if (/^hall(?:way)?$|^corridor$/i.test(raw)) return "hallway"
+  if (/^closet$/i.test(raw)) return "closet"
+  return "stairs"
+}
+
+function readBroadPlace(text: string): BroadPlace | null {
+  const re = new RegExp(`\\b(${BROAD_NOUN})\\b`, "gi")
+  const matches = [...text.matchAll(re)].filter((match) => {
+    if (!/^hall$/i.test(match[1] ?? "")) return true
+    const after = text.slice((match.index ?? 0) + (match[1]?.length ?? 0))
+    return !/^\s*(?:bath(?:room)?|bed\s?room)\b/i.test(after)
+  })
+  if (matches.length === 0) return null
+  const noun = broadNounName(matches[0]?.[1] ?? "")
+  const windowRe = new RegExp(
+    `\\b((?:(?:${BROAD_QUALIFIER})\\s+){1,3})?(${BROAD_NOUN})\\b(?:\\s+(?:near|by|next to|beside|behind|across from)\\s+(?:the\\s+)?(?:(?!light\\b|sink\\b|fixture\\b|is\\b|out\\b|won'?t\\b)[a-z0-9']+)(?:\\s+(?!light\\b|sink\\b|fixture\\b|is\\b|out\\b|won'?t\\b)[a-z0-9']+){0,3})?`,
+    "i",
+  )
+  let phrase = text.match(windowRe)?.[0]?.replace(/\s+/g, " ").trim().toLowerCase()
+    .replace(/^(?:the|my|our)\s+/, "") ?? noun
+  const distinctNouns = new Set(matches.map((match) => broadNounName(match[1] ?? "")))
+  if (distinctNouns.size > 1) {
+    const first = matches[0]
+    const last = matches[matches.length - 1]
+    const start = first?.index ?? 0
+    const end = (last?.index ?? 0) + (last?.[1]?.length ?? 0)
+    phrase = text.slice(start, end).replace(/\s+/g, " ").trim().toLowerCase()
+  }
+  const qualified = new RegExp(
+    `\\b(?:${BROAD_QUALIFIER}|near|by|next to|beside|behind|across from)\\b`,
+    "i",
+  ).test(phrase) || distinctNouns.size > 1
+  const specific = qualified && phrase.split(/\s+/).length > 1
+  return { noun, phrase: specific ? phrase : noun, specific }
+}
+
+function problemNoun(text: string): string | null {
+  if (/\bfixture\b/i.test(text) && /\b(?:is out|out|isn'?t working|not working|won'?t(?: turn on| work)?)\b/i.test(text)) {
+    return "light"
+  }
+  const fixture = text.match(FIXTURE)?.[1]?.toLowerCase()
+  if (!fixture) return null
+  if (fixture === "tap") return "faucet"
+  if (fixture === "tub") return "bathtub"
+  return fixture
+}
+
+function broadPlaceQuestion(text: string, noun: BroadPlace["noun"]): string {
+  const item = problemNoun(text)
+  if (noun === "stairs") {
+    const subject = item ? `Which stairs is the ${item} on?` : "Which stairs?"
+    return `${subject} For example, the front stairs, the back stairs, or near a particular room.`
+  }
+  if (noun === "closet") {
+    const subject = item ? `Which closet is the ${item} in?` : "Which closet is it in?"
+    return `${subject} For example, a bedroom closet, a hall closet, or near a particular room.`
+  }
+  const subject = item ? `Which hallway is the ${item} in?` : "Which hallway is it in?"
+  return `${subject} For example, upstairs, downstairs, or near a particular room.`
+}
 
 /**
  * A free-text place. Keeps qualifiers such as "upstairs hall bathroom".
@@ -112,7 +207,7 @@ export function clarifyIssueLocation(input: {
   bedroomCount?: number | null
   bathroomCount?: number | null
 }): LocationClarification {
-  const text = (input.text ?? "").replace(/\s+/g, " ").trim()
+  const text = withoutConversationInstruction(input.text).replace(/\s+/g, " ").trim()
   if (!text) return { location: null, question: null }
 
   const emergency =
@@ -127,12 +222,15 @@ export function clarifyIssueLocation(input: {
   const interior = text.match(SPECIFIC_INTERIOR)?.[0]?.replace(/\s+/g, " ").trim().toLowerCase()
   const fixture = text.match(FIXTURE)?.[1]?.toLowerCase()
   const vagueOutside = VAGUE_EXTERIOR.test(text) && !specificExterior
-  const floorOnly = FLOOR_ONLY.test(text) && !bathroomNamed && !bedroomNamed && !interior && !specificExterior
-
+  const broad = readBroadPlace(text)
+  const floorOnly = FLOOR_ONLY.test(text) && !bathroomNamed && !bedroomNamed && !interior &&
+    !specificExterior && !broad
   if (emergency) {
     const location = specificExterior?.toLowerCase() ||
       (bathroomNamed ? qualifiedPlace(text, "bathroom") ?? "bathroom" : null) ||
       (bedroomNamed ? qualifiedPlace(text, "bedroom") ?? "bedroom" : null) ||
+      (broad?.specific ? broad.phrase : null) ||
+      broad?.phrase ||
       interior ||
       null
     return { location, question: null }
@@ -149,6 +247,12 @@ export function clarifyIssueLocation(input: {
   }
   if (floorOnly) {
     return { location: null, question: "Which room on that floor is it in?" }
+  }
+  if (broad && !broad.specific) {
+    return { location: null, question: broadPlaceQuestion(text, broad.noun) }
+  }
+  if (broad?.specific) {
+    return { location: broad.phrase, question: null }
   }
 
   if (specificExterior) {

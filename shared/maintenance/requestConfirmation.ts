@@ -4,6 +4,10 @@
  * stays unresolved instead of being guessed.
  */
 import { generateIssueSummary } from "./generateIssueSummary.ts"
+import {
+  clarifyIssueLocation,
+  withoutConversationInstruction,
+} from "./locationClarification.ts"
 
 export type LocationReading = {
   /** Most specific place supported by the question and the answer. */
@@ -53,7 +57,7 @@ export function recoverLocationQuestion(
     if ((message.direction ?? "").toLowerCase() !== "outbound") continue
     const body = (message.body ?? "").trim()
     if (/^(?:which|where)\b/i.test(body) &&
-      /\b(?:bathroom|bedroom|sink|faucet|window|door|light|outside|room|floor|home)\b/i.test(body)
+      /\b(?:bathroom|bedroom|sink|faucet|window|door|light|outside|room|floor|home|hallway|closet|stairs)\b/i.test(body)
     ) {
       found = body
     }
@@ -75,7 +79,7 @@ export function interpretConfirmedLocation(input: {
   answer?: string | null
   question?: string | null
 }): LocationReading {
-  const problem = (input.problem ?? "").replace(/\s+/g, " ").trim()
+  const problem = withoutConversationInstruction(input.problem).replace(/\s+/g, " ").trim()
   const question = (input.question ?? "").trim()
   const answer = cleanAnswer(input.answer)
   if (!answer || VAGUE_ANSWER.test(answer)) {
@@ -92,7 +96,26 @@ export function interpretConfirmedLocation(input: {
         clarification: question,
       }
     }
+    const pending = clarifyIssueLocation({ text: problem }).question
+    if (pending && /^Which (?:hallway|closet|stairs)\b/.test(pending)) {
+      return { location: null, clarification: pending }
+    }
     return { location: null, clarification: null }
+  }
+
+  const broadAsk = question.match(/\bwhich (hallway|closet|stairs)\b/i)?.[1]?.toLowerCase()
+  if (broadAsk) {
+    const place = broadAsk === "hall" ? "hallway" : broadAsk
+    if (new RegExp(`^(?:${place}|hall|hallway|corridor|closet|stairs|stairway|stairwell|staircase)$`, "i").test(answer)) {
+      return { location: null, clarification: question }
+    }
+    if (/^(?:upstairs|downstairs|upper|lower|front|back|rear|main|side)$/i.test(answer)) {
+      return { location: `${answer.toLowerCase()} ${place}`, clarification: null }
+    }
+    if (/^(?:near|by|next to|beside|behind|across from)\b/i.test(answer)) {
+      return { location: `${place} ${answer.toLowerCase()}`, clarification: null }
+    }
+    return { location: answer.toLowerCase(), clarification: null }
   }
 
   if (/\bwhich bathroom\b/i.test(question)) {
@@ -152,6 +175,17 @@ export function interpretConfirmedLocation(input: {
     }
   }
 
+  const pending = clarifyIssueLocation({ text: `${problem} ${answer}` })
+  if (pending.question && /^Which (?:hallway|closet|stairs)\b/.test(pending.question)) {
+    return { location: null, clarification: pending.question }
+  }
+  if (pending.location && !pending.question) {
+    const spoken = answer.toLowerCase()
+    return {
+      location: spoken.length >= pending.location.length ? spoken : pending.location,
+      clarification: null,
+    }
+  }
   return { location: answer.toLowerCase(), clarification: null }
 }
 
@@ -164,7 +198,15 @@ function ensureSentence(text: string): string {
 
 function openingProblem(text: string): string {
   const first = text.split(/\n|Tenant update:/i)[0] ?? ""
-  return first.replace(/\s+/g, " ").trim()
+  return withoutConversationInstruction(first).replace(/\s+/g, " ").trim()
+}
+
+function asLightOutage(opening: string): string {
+  if (!/\bfixture\b/i.test(opening)) return opening
+  if (!/\b(?:is out|isn'?t working|not working|won'?t(?: turn on| work)?)\b/i.test(opening)) {
+    return opening
+  }
+  return opening.replace(/\bfixture\b/i, "light").replace(/\bis out\b/i, "won't turn on")
 }
 
 function isDirectProblem(text: string): boolean {
@@ -175,7 +217,7 @@ function isDirectProblem(text: string): boolean {
 
 /** One sentence naming the problem and, when known, the confirmed place. */
 export function problemSentence(problem: string, location: string | null): string {
-  const opening = openingProblem(problem)
+  const opening = asLightOutage(openingProblem(problem))
   if (!isDirectProblem(opening)) {
     const phrase = generateIssueSummary(opening, { format: "title", maxChars: 80 })
       .replace(/^an?\s+/i, "")
@@ -201,12 +243,13 @@ export function problemSentence(problem: string, location: string | null): strin
     let rest = fixture[3].replace(/[.!?]+$/g, "").trim()
     if (/^broke$/i.test(rest)) rest = "is broken"
     if (!rest) rest = "needs repair"
-    if (place && broad === "bathroom" && noun === "light" && place.includes("bathroom") && place !== "bathroom") {
-      return `The light in the ${place} ${rest}.`
-    }
     if (place && !opening.toLowerCase().includes(place)) {
-      if (!place.includes(noun)) return `The ${place} ${noun} ${rest}.`
-      return `The ${noun} in the ${place} ${rest}.`
+      const detail = noun === "light" && /^(?:is out|out)$/i.test(rest) ? "won't turn on" : rest
+      if (noun === "light" && place.split(/\s+/).length > 1) {
+        return `The light in the ${place} ${detail}.`
+      }
+      if (!place.includes(noun)) return `The ${place} ${noun} ${detail}.`
+      return `The ${noun} in the ${place} ${detail}.`
     }
     if (broad && broad !== noun) return `The ${broad} ${noun} ${rest}.`
     return `The ${noun} ${rest}.`

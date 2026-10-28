@@ -3,13 +3,16 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   acceptLocationReply,
   clarifyIssueLocation,
+  withoutConversationInstruction,
 } from "../../../../shared/maintenance/locationClarification.ts"
+import { composeVendorJobOfferIssue } from "../../../../shared/maintenance/vendorJobOffer.ts"
+import { looksLikeSeparateNewRequest, matchOpenRequests } from "./inboundContextualFollowUp.ts"
 import {
   applyDiagnosticAnswer,
   applyQuestionPlan,
   determineNextMaintenanceQuestion,
 } from "./determineNextMaintenanceQuestion.ts"
-import { buildConfirmationSummary } from "./residentIntakeTypes.ts"
+import { buildConfirmationSummary, confirmationClarification } from "./residentIntakeTypes.ts"
 
 function questionFor(message: string, counts?: { bedroomCount?: number; bathroomCount?: number }) {
   const next = determineNextMaintenanceQuestion({
@@ -112,6 +115,135 @@ Deno.test("a loose only does not name which bathroom", () => {
     }).question,
     "Which bathroom is it in?",
   )
+})
+
+const HALLWAY_QUESTION =
+  "Which hallway is the light in? For example, upstairs, downstairs, or near a particular room."
+
+Deno.test("a new problem among other requests asks which hallway before submission", () => {
+  const body = "A new problem. The hallway fixture is out."
+  const open = [
+    { id: "bath", description: "The bathroom light won't turn on", vendor_work_status: "accepted", issue_category: "electrical" },
+    { id: "gas", description: "I smell gas in the kitchen", vendor_work_status: "unassigned", issue_category: "other" },
+    { id: "ac", description: "The AC isn't working", vendor_work_status: "unassigned", issue_category: "hvac" },
+  ]
+  assertEquals(looksLikeSeparateNewRequest(body), true)
+  assertEquals(matchOpenRequests(body, open).map((row) => row.id), [])
+  assertEquals(
+    withoutConversationInstruction(body),
+    "The hallway fixture is out.",
+  )
+  const planned = applyQuestionPlan({
+    issue_type: "electrical",
+    vendor_trade: "electrical",
+    primary_category: "electrical",
+    initial_message: body,
+    description: body,
+    room_or_area: "hallway",
+    diagnostic_facts: { unit_entry: "Yes" },
+    preferred_contact_method: "text",
+  })
+  assertEquals(planned.diagnostic_question, HALLWAY_QUESTION)
+  assertEquals(planned.diagnostic_facts?.unit_entry, "Yes")
+  assertEquals(planned.room_or_area, undefined)
+  assertEquals(confirmationClarification(planned), HALLWAY_QUESTION)
+  const summary = buildConfirmationSummary({
+    ...planned,
+    step: "awaiting_confirm",
+  })
+  assertEquals(/upstairs hallway near the bedrooms/i.test(summary), false)
+  assertEquals(/bathroom light|smell gas|AC isn't/i.test(summary), false)
+})
+
+Deno.test("a clear hallway is kept and a missing one is asked", () => {
+  assertEquals(
+    clarifyIssueLocation({ text: "The upstairs hallway light is out" }).question,
+    null,
+  )
+  assertEquals(
+    clarifyIssueLocation({ text: "The upstairs hallway near the bedrooms light is out" }).location,
+    "upstairs hallway near the bedrooms",
+  )
+  assertEquals(
+    clarifyIssueLocation({ text: "The hallway light is out" }).question,
+    HALLWAY_QUESTION,
+  )
+  assertEquals(
+    clarifyIssueLocation({ text: "The closet shelf fell" }).question?.startsWith("Which closet"),
+    true,
+  )
+  assertEquals(
+    clarifyIssueLocation({ text: "The stairs light is out" }).question?.startsWith("Which stairs"),
+    true,
+  )
+  assertEquals(
+    clarifyIssueLocation({ text: "The kitchen sink is leaking" }).question,
+    null,
+  )
+})
+
+Deno.test("a confirmed hallway location is corrected in the summary and vendor offer", () => {
+  const asked = applyQuestionPlan(applyDiagnosticAnswer({
+    issue_type: "electrical",
+    vendor_trade: "electrical",
+    primary_category: "electrical",
+    initial_message: "A new problem. The hallway fixture is out.",
+    description: "A new problem. The hallway fixture is out.",
+    diagnostic_question_type: "room_or_area",
+    diagnostic_question: HALLWAY_QUESTION,
+    location_question: HALLWAY_QUESTION,
+    diagnostic_facts: { unit_entry: "Yes" },
+    step: "room_or_area",
+    preferred_contact_method: "text",
+  }, "downstairs"))
+  assertEquals(asked.diagnostic_facts?.unit_entry, "Yes")
+  const downstairs = buildConfirmationSummary({ ...asked, step: "awaiting_confirm" })
+  if (!downstairs.includes("The light in the downstairs hallway won't turn on.")) {
+    throw new Error(downstairs)
+  }
+  assertEquals(/upstairs/i.test(downstairs), false)
+  assertEquals(downstairs.includes("A new problem"), false)
+  assertEquals(downstairs.includes("Staff or a vendor may enter if no one is home."), true)
+
+  const corrected = applyQuestionPlan(applyDiagnosticAnswer({
+    ...asked,
+    diagnostic_question_type: "room_or_area",
+    diagnostic_question: HALLWAY_QUESTION,
+    location_question: HALLWAY_QUESTION,
+    step: "room_or_area",
+    asked_question_types: (asked.asked_question_types ?? []).filter((type) => type !== "room_or_area"),
+  }, "upstairs hallway near the bedrooms"))
+  const upstairs = buildConfirmationSummary({ ...corrected, step: "awaiting_confirm" })
+  if (!upstairs.includes("The light in the upstairs hallway near the bedrooms won't turn on.")) {
+    throw new Error(upstairs)
+  }
+  assertEquals(/downstairs/i.test(upstairs), false)
+  const offer = composeVendorJobOfferIssue({
+    description: corrected.description,
+    issueHeadline: "Electrical issue",
+    locationQuestion: corrected.location_question,
+    locationAnswer: corrected.room_or_area,
+    facts: corrected.diagnostic_facts,
+  })
+  assertEquals(
+    offer,
+    "The light in the upstairs hallway near the bedrooms won't turn on.",
+  )
+})
+
+Deno.test("emergency guidance does not wait on a hallway question", () => {
+  assertEquals(clarifyIssueLocation({ text: "I smell gas in the hallway" }).question, null)
+  assertEquals(clarifyIssueLocation({ text: "I smell gas in the hallway" }).location, "hallway")
+  const distress = determineNextMaintenanceQuestion({
+    issue_type: "HVAC",
+    vendor_trade: "hvac",
+    primary_category: "hvac",
+    initial_message: "It's 100 inside and my son feels dizzy. The hallway light is out.",
+    description: "It's 100 inside and my son feels dizzy. The hallway light is out.",
+    preferred_contact_method: "text",
+  })
+  const question = distress.shouldAsk ? distress.question : ""
+  assertEquals(/which hallway/i.test(question), false)
 })
 
 Deno.test("a broad answer can be followed by a narrower question", () => {
