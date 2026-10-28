@@ -1030,7 +1030,7 @@ function finishSentence(text: string): string {
 /** Indoor °F the resident stated. Outdoor readings and unstated numbers are left out. */
 function statedIndoorTempF(text: string): number | null {
   const patterns = [
-    /\b(\d{2,3})\s*(?:degrees?(?:\s*f(?:ahrenheit)?)?|°\s*f?|f\b)?\s*(?:inside|indoors?|in here|in the (?:house|home|apartment|unit))\b/i,
+    /\b(\d{2,3})\s*(?:degrees?(?:\s*f(?:ahrenheit)?)?|°\s*f?|f(?!\w))?\s*(?:inside|indoors?|in here|in the (?:house|home|apartment|unit))\b/i,
     /\b(?:inside|indoors?|in here|in the (?:house|home|apartment|unit))\s*(?:is|was|it's|its|at|of|about|around)?\s*(\d{2,3})\b/i,
     /\b(?:indoor temperature|temperature inside)\s*(?:is|was|of|about|around)?\s*(\d{2,3})\b/i,
   ]
@@ -1247,6 +1247,13 @@ export function confirmationClarification(state: SmsIntakeState): string | null 
 }
 
 function confirmationIssueLine(state: SmsIntakeState): string {
+  // A later "no water anywhere" answer outranks the opening "no hot water".
+  const desc = state.description ?? state.initial_message ?? ""
+  const facts = Object.values(state.diagnostic_facts ?? {}).join(" ")
+  const all = stripSystemIntakeText(`${desc} ${facts}`).toLowerCase()
+  if (matchesWaterOutage(all)) {
+    return matchesWholeHomeWaterOutage(all) ? "No water in the home." : "No water."
+  }
   const reading = interpretConfirmedLocation({
     problem: state.initial_message || state.description,
     answer: state.room_or_area,

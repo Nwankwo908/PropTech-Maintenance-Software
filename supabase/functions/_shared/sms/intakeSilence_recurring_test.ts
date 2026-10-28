@@ -45,11 +45,9 @@ Deno.test("Mark Henry: repeatedly does not ask same-spot-as-last-time without pr
   assertEquals(state.prior_related_ticket_id, undefined)
 
   const planned = applyQuestionPlan(state)
-  assertEquals(planned.diagnostic_question_type, "pest_location")
-  assertMatch(
-    planned.diagnostic_question ?? "",
-    /Where are you seeing them most/i,
-  )
+  // The sighting already names the room, so Ulo does not ask where again.
+  assertEquals(planned.room_or_area, "living room")
+  assertEquals(planned.diagnostic_question_type === "pest_location", false)
   assertEquals(
     /same spot as last time|someone'?s been out before|come up before/i.test(
       planned.diagnostic_question ?? "",

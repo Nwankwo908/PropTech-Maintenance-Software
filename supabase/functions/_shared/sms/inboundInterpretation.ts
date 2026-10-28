@@ -139,7 +139,7 @@ const WEEKDAY_WORD =
   "mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?"
 
 const SCHEDULE_CHANGE =
-  /\b(reschedule|re-?schedule|different time|another time|can'?t make\b|cannot make\b|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (?:doesn'?t|does not|won'?t|will not) work|(?:doesn'?t|does not) work for me|can they come|come after|come before|after \d{1,2}|before \d{1,2})\b/i
+  /\b(reschedule|re-?schedule|different time|another time|can'?t make|cannot make|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (?:doesn'?t|does not|won'?t|will not) work|(?:doesn'?t|does not) work for me|can they come|come after|come before|after \d{1,2}|before \d{1,2})\b/i
 
 function normalizeScheduleText(text: string): string {
   return text.replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ").trim()
