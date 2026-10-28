@@ -4,6 +4,8 @@ import {
   buildEmergencySafetySms,
   buildEscalatedOtherSms,
   buildSameDayUrgencySms,
+  propertyTeamWasTexted,
+  withoutWaitingTips,
   buildSmallTalkDuringIntakeSms,
   buildSmallTalkSms,
   buildUnclearClarifySms,
@@ -96,6 +98,28 @@ Deno.test("Emergency safety SMS mentions 911 and staff alert", () => {
   })
   assertEquals(urgent.includes("911"), true)
   assertEquals(urgent.includes("No heat"), true)
+})
+
+Deno.test("a property-team text is not claimed from email or a prior log", () => {
+  assertEquals(propertyTeamWasTexted([]), false)
+  assertEquals(propertyTeamWasTexted(["  "]), false)
+  assertEquals(propertyTeamWasTexted(["+18623306458"]), true)
+})
+
+Deno.test("distress guidance drops troubleshooting tips", () => {
+  const body = withoutWaitingTips([
+    "Got it. Here's the request:",
+    "",
+    "Air conditioning is not working",
+    "",
+    "Until help arrives: check the thermostat setting and air filter.",
+    "",
+    "Reply YES to submit, or reply with any changes.",
+  ].join("\n"))
+  assertEquals(/Until help arrives/i.test(body), false)
+  assertEquals(/thermostat/i.test(body), false)
+  assertEquals(body.includes("Reply YES to submit"), true)
+  assertEquals(body.includes("Air conditioning is not working"), true)
 })
 
 Deno.test("Same-day urgency SMS alerts the team without 911", () => {

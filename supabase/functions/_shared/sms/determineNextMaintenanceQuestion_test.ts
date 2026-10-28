@@ -609,6 +609,15 @@ Deno.test("a gas emergency does not alert or submit against an open AC request",
       issue_type: "HVAC",
     },
   }), AC_TICKET, "same AC issue can stay on the AC request")
+  assertEqual(alertTicketIdForIntake({
+    draftTicketId: AC_TICKET,
+    draftTicketCategory: "hvac",
+    draftTicketStatus: "unassigned",
+    linkedTicketId: AC_TICKET,
+    linkedTicketCategory: "hvac",
+    linkedTicketStatus: "unassigned",
+    intake: GAS_INTAKE,
+  }), null, "an AC draft does not supply the gas ref")
 })
 
 Deno.test("confirmation is tenant-facing and omits priority chips", () => {

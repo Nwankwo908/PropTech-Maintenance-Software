@@ -99,11 +99,17 @@ import {
   sanitizeIntakeState,
   shouldSendUrgencyAlert,
   alertTicketIdForIntake,
+  intakeReportsGasEmergency,
   type IntakeStep,
   type SmsIntakeState,
   type UrgencyAlertTier,
 } from "./residentIntakeTypes.ts"
-import { buildEmergencySafetySms, buildSameDayUrgencySms } from "./tenantAssistantReply.ts"
+import {
+  buildEmergencySafetySms,
+  buildSameDayUrgencySms,
+  propertyTeamWasTexted,
+  withoutWaitingTips,
+} from "./tenantAssistantReply.ts"
 
 const MAX_CLASSIFICATION_CLARIFICATIONS = 2
 
@@ -746,28 +752,34 @@ async function prependEmergencySafetyIfNeeded(
       .split(/\s+/)[0] || "there"
 
   let teamAlerted = false
-  let alertTicketId: string | null = (state.draft_ticket_id ?? "").trim() || null
+  const draftId = (state.draft_ticket_id ?? "").trim()
+  const linkedId = (ctx.maintenanceRequestId ?? "").trim()
+  let alertTicketId: string | null = null
   try {
-    const linkedId = (ctx.maintenanceRequestId ?? "").trim()
-    if (!alertTicketId && linkedId) {
-      const { data: linked } = await supabase
+    const lookupIds = [...new Set([draftId, linkedId].filter(Boolean))]
+    const { data: ticketRows } = lookupIds.length
+      ? await supabase
         .from("maintenance_requests")
-        .select("issue_category, vendor_work_status")
-        .eq("id", linkedId)
+        .select("id, issue_category, vendor_work_status")
+        .in("id", lookupIds)
         .eq("landlord_id", ctx.landlordId)
-        .maybeSingle()
-      alertTicketId = alertTicketIdForIntake({
-        draftTicketId: null,
-        linkedTicketId: linked ? linkedId : null,
-        linkedTicketCategory: typeof linked?.issue_category === "string"
-          ? linked.issue_category
-          : null,
-        linkedTicketStatus: typeof linked?.vendor_work_status === "string"
-          ? linked.vendor_work_status
-          : null,
-        intake: state,
-      })
-    }
+      : { data: [] as Array<Record<string, unknown>> }
+    const rows = ticketRows ?? []
+    const draftRow = rows.find((row) => row.id === draftId)
+    const linkedRow = rows.find((row) => row.id === linkedId)
+    const categoryOf = (row: (typeof rows)[number] | undefined) =>
+      typeof row?.issue_category === "string" ? row.issue_category : null
+    const statusOf = (row: (typeof rows)[number] | undefined) =>
+      typeof row?.vendor_work_status === "string" ? row.vendor_work_status : null
+    alertTicketId = alertTicketIdForIntake({
+      draftTicketId: draftId || null,
+      draftTicketCategory: categoryOf(draftRow),
+      draftTicketStatus: statusOf(draftRow),
+      linkedTicketId: linkedRow ? linkedId : null,
+      linkedTicketCategory: categoryOf(linkedRow),
+      linkedTicketStatus: statusOf(linkedRow),
+      intake: state,
+    })
     const report = (state.description || state.initial_message || "").trim()
     const place = await landlordEmergencyPlace(
       supabase,
@@ -795,15 +807,14 @@ async function prependEmergencySafetyIfNeeded(
       nextSteps: [],
       // Keyed to the intake and tier, not the message, so answering more
       // questions cannot re-alert even if the state write is lost.
-      idempotencyKey:
-        `sms-emergency:${ctx.conversationId}:${state.draft_ticket_id ?? "intake"}:${tier}`,
+      idempotencyKey: intakeReportsGasEmergency(state)
+        ? `sms-emergency:${ctx.conversationId}:gas:${tier}`
+        : `sms-emergency:${ctx.conversationId}:${alertTicketId ?? state.draft_ticket_id ?? "intake"}:${tier}`,
       maintenanceRequestId: alertTicketId,
       unitId: ctx.identity.unit_id ?? null,
       residentId,
     })
-    teamAlerted = alert.smsSent.length > 0 ||
-      alert.emailSent.length > 0 ||
-      alert.reason === "already_sent"
+    teamAlerted = propertyTeamWasTexted(alert.smsSent)
   } catch (err) {
     console.error(
       "[sms-intake] property team alert",
@@ -853,7 +864,8 @@ async function prependEmergencySafetyIfNeeded(
       team_alerted: teamAlerted,
     },
   })
-  return { outbound: `${safety}\n\n${replyHint}`, emergency: true }
+  const hint = urgencyPolicy.leaveImmediately ? withoutWaitingTips(replyHint) : replyHint
+  return { outbound: hint ? `${safety}\n\n${hint}` : safety, emergency: true }
 }
 
 async function refreshClassificationFromFollowUp(

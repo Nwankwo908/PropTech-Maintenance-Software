@@ -1164,23 +1164,80 @@ export function intakeMayAttachToOpenTicket(params: {
  * A draft for this intake wins. Another request on the same thread is used
  * only when it is the same kind of open issue. Otherwise there is no ref yet.
  */
+function ticketRefFitsIntake(params: {
+  ticketId: string
+  category?: string | null
+  status?: string | null
+  categoryKnown: boolean
+  intake: {
+    vendor_trade?: string | null
+    issue_type?: string | null
+    initial_message?: string | null
+    description?: string | null
+    safety_concerns?: string | null
+  }
+}): string | null {
+  const category = (params.category ?? "").trim().toLowerCase()
+  // A gas report must not borrow an HVAC, plumbing, or other named trade.
+  if (
+    intakeReportsGasEmergency(params.intake) &&
+    params.categoryKnown &&
+    category &&
+    category !== "other" &&
+    category !== "general"
+  ) {
+    return null
+  }
+  if (
+    params.categoryKnown &&
+    !intakeMayAttachToOpenTicket({
+      ticketIssueCategory: params.category,
+      vendorWorkStatus: params.status,
+      intake: params.intake,
+    })
+  ) {
+    return null
+  }
+  return params.ticketId
+}
+
 export function alertTicketIdForIntake(params: {
   draftTicketId?: string | null
+  draftTicketCategory?: string | null
+  draftTicketStatus?: string | null
   linkedTicketId?: string | null
   linkedTicketCategory?: string | null
   linkedTicketStatus?: string | null
-  intake: { vendor_trade?: string | null; issue_type?: string | null }
+  intake: {
+    vendor_trade?: string | null
+    issue_type?: string | null
+    initial_message?: string | null
+    description?: string | null
+    safety_concerns?: string | null
+  }
 }): string | null {
   const draft = (params.draftTicketId ?? "").trim()
-  if (draft) return draft
+  const draftCategoryKnown = (params.draftTicketCategory ?? "").trim().length > 0
+  if (draft) {
+    const fitted = ticketRefFitsIntake({
+      ticketId: draft,
+      category: params.draftTicketCategory,
+      status: params.draftTicketStatus,
+      categoryKnown: draftCategoryKnown,
+      intake: params.intake,
+    })
+    if (fitted) return fitted
+    if (!draftCategoryKnown) return draft
+  }
   const linked = (params.linkedTicketId ?? "").trim()
   if (!linked) return null
-  if (!intakeMayAttachToOpenTicket({
-    ticketIssueCategory: params.linkedTicketCategory,
-    vendorWorkStatus: params.linkedTicketStatus,
+  return ticketRefFitsIntake({
+    ticketId: linked,
+    category: params.linkedTicketCategory,
+    status: params.linkedTicketStatus,
+    categoryKnown: true,
     intake: params.intake,
-  })) return null
-  return linked
+  })
 }
 
 /** Complete, resident-provided lines for the confirmation. No guessed details. */

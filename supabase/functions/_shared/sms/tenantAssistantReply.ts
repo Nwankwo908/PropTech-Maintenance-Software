@@ -142,6 +142,21 @@ export function buildEscalatedOtherSms(firstName: string, kind: AssistantOtherKi
   ].join("\n")
 }
 
+/** True only when this attempt handed a text to the property-team phone. */
+export function propertyTeamWasTexted(smsSent: readonly string[]): boolean {
+  return smsSent.some((phone) => phone.trim().length > 0)
+}
+
+/** Drop waiting / troubleshooting tips. Safety guidance stays. */
+export function withoutWaitingTips(body: string): string {
+  return body
+    .split(/\n{2,}/)
+    .filter((part) => !/^\s*Until help arrives\b/i.test(part.trim()))
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
 /** Resident-facing line for a property-team alert, after delivery is known. */
 export function propertyTeamAlertSentence(delivered: boolean): string {
   return delivered
