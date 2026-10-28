@@ -326,6 +326,27 @@ function sameStatement(left: string, right: string): boolean {
   return normalize(left) === normalize(right)
 }
 
+/** Street only. A reported-ago suffix stays on the location sentence. */
+function placeFromLocation(locationLine: string): string {
+  return locationLine.split(",")[0]?.replace(/[.!?]+$/g, "").trim() ?? ""
+}
+
+function withoutTrailingPlace(text: string, place: string): string {
+  const escaped = place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return text.replace(new RegExp(`\\s+at\\s+${escaped}\\s*$`, "i"), "").trim()
+}
+
+/**
+ * The location sentence already names the property. Drop that same street
+ * from the issue and the action so the address appears once.
+ */
+function besideLocation(text: string, place: string): string {
+  if (!place || !text.toLowerCase().includes(place.toLowerCase())) return text
+  const stripped = withoutTrailingPlace(text, place)
+  if (!stripped || /^repairs?$/i.test(stripped)) return ""
+  return stripped
+}
+
 const MISSING_ISSUE_SENTENCE = "The request did not include a description."
 const MISSING_PROPERTY_SENTENCE = "The property address was not included."
 const NO_NEARBY_VENDOR_SENTENCE = "No nearby vendor matched this kind of request."
@@ -360,9 +381,14 @@ function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | 
   }
 
   if (input.kind === "assign_vendor") {
-    push(summaryLine || MISSING_ISSUE_SENTENCE)
+    const place = placeFromLocation(locationLine)
+    const issueLine = place ? besideLocation(summaryLine, place) : summaryLine
+    const actionLine = place ? besideLocation(headline, place) : headline
+    const summaryWasOnlyTheAddress = Boolean(summaryLine) && !issueLine && Boolean(place)
+    if (issueLine) push(issueLine)
+    else if (!summaryWasOnlyTheAddress) push(MISSING_ISSUE_SENTENCE)
     push(locationLine || MISSING_PROPERTY_SENTENCE)
-    push(headline)
+    push(actionLine)
     if (choiceReplyHint && numbered) {
       const options = numbered
         .split("\n")

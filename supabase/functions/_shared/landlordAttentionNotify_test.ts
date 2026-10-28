@@ -295,6 +295,50 @@ Deno.test("vendor-options SMS stays a complete sentence when details are missing
   assertEquals(body.includes("gas"), false)
 })
 
+Deno.test("vendor decline SMS names the property once", () => {
+  const body = buildLandlordAttentionSms({
+    kind: "assign_vendor",
+    headline: "The vendor we asked about can't take the job at 100 Disposable Test Lane",
+    detail: "Repair at 100 Disposable Test Lane",
+    locationLine: "100 Disposable Test Lane",
+    requestRef: "C06E11F2",
+    whyLine: "",
+    nextSteps: [],
+    dashboardUrl: "https://www.ulohome.io/admin?findVendor=1&ticket=C06E11F2",
+  })
+  assertEquals(
+    body,
+    [
+      "Ulo: 100 Disposable Test Lane.",
+      "The vendor we asked about can't take the job.",
+      "No nearby vendor matched this kind of request.",
+      "Ref: C06E11F2.",
+      "Details: https://www.ulohome.io/admin?findVendor=1&ticket=C06E11F2",
+    ].join(" "),
+  )
+  assertEquals(body.split("100 Disposable Test Lane").length - 1, 1)
+})
+
+Deno.test("vendor decline SMS keeps the issue and one address", () => {
+  const body = buildLandlordAttentionSms({
+    kind: "assign_vendor",
+    headline: "Disposable test vendor can't take the job at 100 Disposable Test Lane",
+    detail: "The ceiling light in the upstairs hallway near the bedrooms is out",
+    locationLine: "100 Disposable Test Lane, reported 11h ago",
+    requestRef: "C06E11F2",
+    whyLine: "",
+    nextSteps: [],
+    dashboardUrl: "https://www.ulohome.io/admin?findVendor=1&ticket=C06E11F2",
+  })
+  assertStringIncludes(
+    body,
+    "The ceiling light in the upstairs hallway near the bedrooms is out.",
+  )
+  assertStringIncludes(body, "100 Disposable Test Lane, reported 11h ago.")
+  assertStringIncludes(body, "Disposable test vendor can't take the job.")
+  assertEquals(body.split("100 Disposable Test Lane").length - 1, 1)
+})
+
 Deno.test("vendor-options SMS omits reply numbers when no vendor is appropriate", () => {
   const body = buildLandlordAttentionSms({
     kind: "assign_vendor",

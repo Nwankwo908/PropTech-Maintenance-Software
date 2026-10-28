@@ -324,10 +324,10 @@ export async function escalateMaintenanceNeedsVendor(
     let headline: string
     let whyLine: string
     if (closedPriorAsk || opts.closeOpenAskFirst === true) {
-      const place = street || "this property"
+      const place = locationLine ? "" : ` at ${street || "this property"}`
       headline = previousVendorName
-        ? `${previousVendorName} can't take the job at ${place}`
-        : `${vendorLabel} can't take the job at ${place}`
+        ? `${previousVendorName} can't take the job${place}`
+        : `${vendorLabel} can't take the job${place}`
       whyLine = ""
     } else if (opts.escalationReason === "vendor_declined_no_vendor") {
       headline = previousVendorName
