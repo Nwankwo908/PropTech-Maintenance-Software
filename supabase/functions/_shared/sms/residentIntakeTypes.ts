@@ -30,6 +30,7 @@ import { issueCategoryToVendorTrade } from "../../../../shared/maintenance/vendo
 import { interpretBoundAnswer } from "../../../../shared/maintenance/boundAnswer.ts"
 import {
   acceptLocationReply,
+  asksOnlyGenerally,
   clarifyIssueLocation,
   withoutConversationInstruction,
 } from "../../../../shared/maintenance/locationClarification.ts"
@@ -461,7 +462,7 @@ export function resolveRoomLabel(state: SmsIntakeState): string | null {
         bedroomCount: state.property_bedroom_count,
         bathroomCount: state.property_bathroom_count,
       })
-      if (!still.question) {
+      if (!still.question || asksOnlyGenerally(still)) {
         return accepted.length >= (still.location?.length ?? 0) ? accepted : still.location
       }
     }
@@ -471,7 +472,7 @@ export function resolveRoomLabel(state: SmsIntakeState): string | null {
     bedroomCount: state.property_bedroom_count,
     bathroomCount: state.property_bathroom_count,
   })
-  if (fromConversation.question) return null
+  if (fromConversation.question && !asksOnlyGenerally(fromConversation)) return null
   if (fromConversation.location) return fromConversation.location
   return extractRoomFromText(problem)
 }
@@ -540,7 +541,7 @@ export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
         bedroomCount: state.property_bedroom_count,
         bathroomCount: state.property_bathroom_count,
       })
-      if (!still.question) {
+      if (!still.question || asksOnlyGenerally(still)) {
         return accepted === stored ? state : { ...state, room_or_area: accepted }
       }
     }
@@ -550,7 +551,7 @@ export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
     bedroomCount: state.property_bedroom_count,
     bathroomCount: state.property_bathroom_count,
   })
-  if (clarified.question) {
+  if (clarified.question && !asksOnlyGenerally(clarified)) {
     return stored ? { ...state, room_or_area: undefined } : state
   }
   if (clarified.location && !clarified.question) {

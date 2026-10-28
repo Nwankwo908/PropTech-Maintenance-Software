@@ -7,6 +7,8 @@ export type LocationClarification = {
   question: string | null
 }
 
+const GENERIC_LOCATION_QUESTION = "Where in the home is this happening?"
+
 const NOT_A_PLACE =
   /^(yes|y|no|nope|nah|ok|okay|skip|none|not sure|unsure|idk|i don't know|i dont know|unknown)$/i
 
@@ -290,5 +292,13 @@ export function clarifyIssueLocation(input: {
       question: /\bbath/i.test(text) ? "Which bathroom is it in?" : "Which bedroom is it in?",
     }
   }
-  return { location: null, question: "Where in the home is this happening?" }
+  return { location: null, question: GENERIC_LOCATION_QUESTION }
+}
+
+/**
+ * True when the follow-up only asks where in general — no broad or ambiguous
+ * place was named, so a place found another way still stands.
+ */
+export function asksOnlyGenerally(result: LocationClarification): boolean {
+  return result.question === GENERIC_LOCATION_QUESTION
 }
