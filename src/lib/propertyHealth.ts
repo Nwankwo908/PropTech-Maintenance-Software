@@ -1947,15 +1947,27 @@ async function fetchPropertyHealthVitalsSignals(
       return lookup
     })(),
     (async () => {
-      const [{ loadOnboardingDocumentArchive }, { propertyInsuranceProfileOnFile }] = await Promise.all([
+      const [
+        { loadOnboardingDocumentArchive },
+        { propertyInsuranceProfileOnFile },
+        { loadInsuredPropertyNames },
+      ] = await Promise.all([
         import('@/lib/organizationSettings'),
         import('@/lib/propertyDetailsCompleteness'),
+        import('@/lib/propertyInsuranceProfile'),
       ])
-      const archive = await loadOnboardingDocumentArchive(landlordId)
+      const [archive, insuredOnAccount] = await Promise.all([
+        loadOnboardingDocumentArchive(landlordId),
+        loadInsuredPropertyNames(landlordId),
+      ])
       const insuredAddresses = propertyPolicyAddressesFromUploads(archive.documents)
       const lookup: PropertyHealthInsuranceLookup = {
         hasPolicyFor: (propertyNames) =>
-          propertyNames.some((name) => propertyInsuranceProfileOnFile(name)) ||
+          propertyNames.some(
+            (name) =>
+              insuredOnAccount.some((saved) => buildingsLikelySamePlace(saved, name)) ||
+              propertyInsuranceProfileOnFile(name),
+          ) ||
           insuredAddresses.some((address) => insuredAddressMatchesProperty(address, propertyNames)),
       }
       return lookup

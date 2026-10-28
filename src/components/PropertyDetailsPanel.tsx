@@ -42,6 +42,11 @@ import {
   type InsuranceBinderScanStage,
 } from '@/lib/propertyInsuranceBinderExtract'
 import { notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
+import {
+  deletePropertyInsuranceProfile,
+  loadPropertyInsuranceProfile,
+  savePropertyInsuranceProfile,
+} from '@/lib/propertyInsuranceProfile'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { recordActivityLog } from '@/lib/recordActivityLog'
 import { loadPropertyBuildingProfile } from '@/lib/propertyBuildingProfile'
@@ -201,13 +206,6 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
-function writeJson(key: string, value: unknown): void {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // private mode / quota
-  }
-}
 
 function fileSizeFromAiResult(result: unknown): number {
   if (!result || typeof result !== 'object') return 0
@@ -1485,16 +1483,23 @@ export function PropertyDetailsPanel({
     const loadedHistory = loadMaintenanceHistoryDocuments({ building })
     setHistoryDocs(loadedHistory)
     setHistoryApproved(loadApprovedMaintenanceRecords({ building }))
-    const loadedInsurance = normalizeInsuranceProfile(
-      readJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE),
-    )
-    if (loadedInsurance.updatedAt) {
-      setSavedInsurance(loadedInsurance)
-      setInsurance({ ...EMPTY_INSURANCE })
-    } else {
-      setSavedInsurance(null)
-      setInsurance(loadedInsurance)
+    const applyInsurance = (raw: unknown) => {
+      const loadedInsurance = normalizeInsuranceProfile(raw ?? EMPTY_INSURANCE)
+      if (loadedInsurance.updatedAt) {
+        setSavedInsurance(loadedInsurance)
+        setInsurance({ ...EMPTY_INSURANCE })
+      } else {
+        setSavedInsurance(null)
+        setInsurance(loadedInsurance)
+      }
     }
+    // Show this browser's copy right away, then the account's saved policy.
+    applyInsurance(readJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE))
+    void loadPropertyInsuranceProfile(building, propertyId ?? null)
+      .then((stored) => {
+        if (!cancelled && stored) applyInsurance(stored)
+      })
+      .catch(() => {})
     setInsuranceRailOpen(false)
     setInsuranceRailMode('add')
     setInsuranceExtractStage('idle')
@@ -1775,12 +1780,16 @@ export function PropertyDetailsPanel({
             setError(null)
           }}
           onDeleteSaved={() => {
-            writeJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE)
             setSavedInsurance(null)
             setInsurance({ ...EMPTY_INSURANCE })
             setInsuranceRailOpen(false)
             setError(null)
-            notifyPropertyDetailsChanged(building)
+            void deletePropertyInsuranceProfile(building).then(({ deletedFromAccount }) => {
+              if (!deletedFromAccount) {
+                setError('Removed on this device, but we couldn’t remove it from your account. Try again.')
+              }
+              notifyPropertyDetailsChanged(building)
+            })
           }}
           onBinderFiles={(files) => {
             const file = files?.[0]
@@ -1837,12 +1846,16 @@ export function PropertyDetailsPanel({
               policyType: insurance.policyType.trim() || 'Homeowners',
               updatedAt: new Date().toISOString(),
             }
-            writeJson(landlordScopedKey('ulo.propertyInsurance', building), next)
             setSavedInsurance(next)
             setInsurance({ ...EMPTY_INSURANCE })
             setInsuranceRailOpen(false)
             setError(null)
-            notifyPropertyDetailsChanged(building)
+            void savePropertyInsuranceProfile(building, propertyId ?? null, next).then(({ savedToAccount }) => {
+              if (!savedToAccount) {
+                setError('Saved on this device, but we couldn’t save it to your account. Try saving again.')
+              }
+              notifyPropertyDetailsChanged(building)
+            })
           }}
         />
       </DetailCard>
