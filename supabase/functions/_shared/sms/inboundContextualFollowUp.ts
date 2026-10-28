@@ -329,6 +329,15 @@ function uniqueLabelMatch(
   return null
 }
 
+/** The resident is declining the listed requests and reporting a different one. */
+export function looksLikeSeparateNewRequest(body: string): boolean {
+  const text = body.trim()
+  if (!text) return false
+  return /^(separate|different|new)\b/i.test(text) ||
+    /\b(separate problem|different (?:issue|problem)|new (?:issue|problem|request)|none of (?:these|those|them))\b/i
+      .test(text)
+}
+
 export function matchOpenRequests(
   body: string,
   tickets: OpenRequestSummary[],

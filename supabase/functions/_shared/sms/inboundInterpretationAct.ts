@@ -67,6 +67,7 @@ import {
   dedupeTicketsByRequestLabel,
   isIdentifiableRequestLabel,
   looksLikeStatusInquiryTicketDescription,
+  looksLikeSeparateNewRequest,
   matchOpenRequests,
   resolveContextualFollowUp,
   ticketFirstLine,
@@ -2756,6 +2757,17 @@ export async function tryHandleInterpretedInbound(
   }
 
   if (intake.awaiting_which_request === true) {
+    if (looksLikeSeparateNewRequest(ctx.inbound.body)) {
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {
+        awaiting_which_request: false,
+        pending_which_request_ids: undefined,
+        pending_which_request_intent: undefined,
+      })
+      return {
+        handled: false,
+        interpretation: markAsNewMaintenanceIssue(interpretation),
+      }
+    }
     const poolIds = (intake.pending_which_request_ids ?? []).filter(Boolean)
     const pool = poolIds.length > 0
       ? tickets.filter((row) => poolIds.includes(row.id))

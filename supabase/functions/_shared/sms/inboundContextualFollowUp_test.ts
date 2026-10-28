@@ -6,6 +6,7 @@ import {
   isDistinctNewIssue,
   isIdentifiableRequestLabel,
   looksLikeAdditionalIssue,
+  looksLikeSeparateNewRequest,
   matchOpenRequests,
   resolveContextualFollowUp,
   selectUpcomingVisitForReschedule,
@@ -26,6 +27,25 @@ const ac: OpenRequestSummary = {
   vendor_work_status: "accepted",
   issue_category: "hvac",
 }
+
+Deno.test("a new problem is not one of the listed requests", () => {
+  assertEquals(looksLikeSeparateNewRequest("A new problem. The hallway fixture is out."), true)
+  assertEquals(looksLikeSeparateNewRequest("none of these"), true)
+  assertEquals(looksLikeSeparateNewRequest("The bathroom light won't turn on"), false)
+  const tickets = [
+    { id: "bath", description: "The bathroom light won't turn on", vendor_work_status: "accepted", issue_category: "electrical" },
+    { id: "gas", description: "I smell gas in the kitchen", vendor_work_status: "unassigned", issue_category: "other" },
+    { id: "ac", description: "The AC isn't working", vendor_work_status: "unassigned", issue_category: "hvac" },
+  ]
+  assertEquals(
+    matchOpenRequests("A new problem. The hallway fixture is out.", tickets).map((row) => row.id),
+    [],
+  )
+  assertEquals(
+    matchOpenRequests("The hallway light is out.", tickets).map((row) => row.id),
+    ["bath"],
+  )
+})
 
 Deno.test("follow-up phrases attach to the open request", () => {
   assertEquals(classifyFollowUpKind("It's getting worse.", false), "worse")
