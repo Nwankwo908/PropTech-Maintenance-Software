@@ -38,3 +38,6 @@ supabase/functions/ask-ulo/deno.lock
 
 # Supabase CLI local state
 supabase/.temp/
+
+# Ask Ulo performance test output
+ask-ulo-perf-*.json
