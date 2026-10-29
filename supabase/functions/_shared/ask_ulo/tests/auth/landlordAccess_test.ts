@@ -58,8 +58,22 @@ Deno.test("staff core email may use switcher landlords only", () => {
   )
   assertEquals(
     emailMayAccessLandlordId({
+      email: "osi@ulohome.io",
+      landlordId: "a13a0000-1111-4111-8111-111111111111",
+    }),
+    true,
+  )
+  assertEquals(
+    emailMayAccessLandlordId({
       email: "emeka@ulohome.io",
       landlordId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    }),
+    false,
+  )
+  assertEquals(
+    emailMayAccessLandlordId({
+      email: "limitedalpha1@ulohome.io",
+      landlordId: "a13a0000-1111-4111-8111-111111111111",
     }),
     false,
   )

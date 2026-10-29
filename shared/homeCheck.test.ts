@@ -12,6 +12,9 @@ import {
   homeCheckMetrics,
   homeCheckSummary,
   homeCheckWorkOrderTitle,
+  chooseHomeCheckContractorId,
+  homeCheckDashboardJobWindowEnd,
+  homeCheckRequestVendorCopy,
   nearestHomeCheckVendors,
   parseHomeCheckCommand,
   parseHomeCheckGuideStart,
@@ -280,6 +283,39 @@ describe('Home Check routing and outcomes', () => {
       nearestHomeCheckVendors({ latitude: 40, longitude: -74 }, vendors).map((vendor) => vendor.id),
     ).toEqual(['near', 'far'])
     expect(nearestHomeCheckVendors({ latitude: null, longitude: null }, vendors)).toEqual([])
+  })
+  it('chooses a same-state contractor when nobody has a map pin', () => {
+    const vendors = [
+      { id: 'ca', latitude: null, longitude: null, states: ['CA'] },
+      { id: 'nj', latitude: null, longitude: null, states: ['NJ'] },
+      { id: 'blank', latitude: null, longitude: null, states: [] },
+    ]
+    expect(chooseHomeCheckContractorId(
+      { latitude: null, longitude: null, state: 'NJ' },
+      vendors,
+    )).toBe('nj')
+    expect(chooseHomeCheckContractorId(
+      { latitude: null, longitude: null, state: 'NJ' },
+      vendors.filter((vendor) => vendor.id !== 'nj'),
+    )).toBeNull()
+    expect(chooseHomeCheckContractorId(
+      { latitude: 40, longitude: -74, state: 'NJ' },
+      [{ id: 'pinned', latitude: 40.01, longitude: -74, states: [] }],
+    )).toBeNull()
+    expect(chooseHomeCheckContractorId(
+      { latitude: null, longitude: null, state: 'TX' },
+      [{ id: 'ca', latitude: null, longitude: null, states: ['CA'] }],
+    )).toBeNull()
+  })
+  it('describes the dashboard contractor request and keeps the visit inside seven days', () => {
+    const now = Date.parse('2026-10-28T15:00:00.000Z')
+    const end = Date.parse(homeCheckDashboardJobWindowEnd(now))
+    expect(end).toBeGreaterThan(now)
+    expect(end).toBeLessThanOrEqual(now + 7 * 86400000)
+    expect(homeCheckRequestVendorCopy('Handyman Services By Michael')).toBe(
+      'Handyman Services By Michael will collect appliance details to help Ulo recommend maintenance and flag potential issues early.',
+    )
+    expect(homeCheckRequestVendorCopy('  ')).toMatch(/^The contractor will collect/)
   })
   it('separates funnel outcomes and conversion denominators by the completion role', () => {
     const base = {

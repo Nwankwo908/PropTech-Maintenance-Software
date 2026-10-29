@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import homeCheckInspectionArt from '@/assets/Technician against orchid coral backdrop.png'
 import waterHeaterLabelExample from '@/assets/water-heater-label-example.jpg'
 import wholeWaterHeaterExample from '@/assets/whole-water-heater-example.png'
 import heatingSystemLabelExample from '@/assets/heating-system-label-example.png'
@@ -16,6 +17,7 @@ import {
   type InspectionAssetSummary,
 } from '@/api/inspectionAssetAssess'
 import { HomeCheckPanel } from '@/components/HomeCheckPanel'
+import { HomeCheckRequestModal } from '@/components/HomeCheckRequestModal'
 import { ApplianceAssessmentReviewCard } from '@/components/ApplianceAssessmentReviewCard'
 import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
 import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
@@ -144,6 +146,8 @@ export function ApplianceInspectionUploader({
   const [heatingSystemLabelExampleOpen, setHeatingSystemLabelExampleOpen] = useState(false)
   const [wholeHeatingSystemExampleOpen, setWholeHeatingSystemExampleOpen] = useState(false)
   const [phoneCaptureOpen, setPhoneCaptureOpen] = useState(false)
+  const [homeCheckRequestOpen, setHomeCheckRequestOpen] = useState(false)
+  const [homeCheckRequestNote, setHomeCheckRequestNote] = useState<string | null>(null)
   const previewByIdRef = useRef<Record<string, string>>({})
   const removedIdsRef = useRef(new Set<string>())
   const inflightRef = useRef(0)
@@ -712,6 +716,7 @@ export function ApplianceInspectionUploader({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,300px)]">
       <section className="rounded-[10px] border border-[#e2e8f0] bg-white px-4 py-4 text-[13px] leading-5 text-[#334155]">
         <h3 className="text-[14px] font-semibold text-[#0d0f11]">Add equipment photos</h3>
         <p className="mt-2 text-[#64748b]">Upload these photos in this exact order:</p>
@@ -826,6 +831,38 @@ export function ApplianceInspectionUploader({
           JPG, PNG, WEBP, or HEIC, under 25 MB per photo. PDFs are processed as inspection reports, not equipment photos.
         </p>
       </section>
+      <section className="flex h-full flex-col overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
+        <img
+          src={homeCheckInspectionArt}
+          alt=""
+          className="min-h-[180px] w-full flex-1 object-contain object-center px-3 pt-3"
+        />
+        <div className="flex flex-col gap-3 px-4 pb-4 pt-2">
+          <button
+            type="button"
+            disabled={!propertyId}
+            onClick={() => {
+              setHomeCheckRequestNote(null)
+              setHomeCheckRequestOpen(true)
+            }}
+            className="pd-btn pd-btn-primary w-full rounded-[10px] px-4 py-2.5 text-[13px] font-semibold"
+          >
+            Request home check
+          </button>
+          {homeCheckRequestNote ? (
+            <p className="text-[12px] leading-5 text-[#334155]">{homeCheckRequestNote}</p>
+          ) : null}
+        </div>
+      </section>
+      </div>
+      {propertyId ? (
+        <HomeCheckRequestModal
+          open={homeCheckRequestOpen}
+          propertyId={propertyId}
+          onClose={() => setHomeCheckRequestOpen(false)}
+          onRequested={setHomeCheckRequestNote}
+        />
+      ) : null}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch [&>*]:min-w-0">
         {leading}
         <div className="flex h-full min-h-[220px] min-w-0 flex-col">

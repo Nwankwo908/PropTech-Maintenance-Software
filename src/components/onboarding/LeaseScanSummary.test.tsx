@@ -17,13 +17,13 @@ it('waits until the scan finishes before saying the lease is ready', () => {
   expect(html).not.toContain('Morgan Tenant')
 })
 
-it('tells you a finished scan is ready for review', () => {
+it('points a finished scan to the next step', () => {
   const raw = leaseFixture()
   raw.fields.monthly_rent.confidence = 100
   raw.fields.monthly_rent.quote = ''
   const { review } = normalizeLeaseScan(raw, [''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Your lease is ready for review')
+  expect(html).not.toContain('Your lease is ready for review')
   expect(html).toContain('Check the extracted details on the next step.')
   expect(html).not.toContain('Lease scanned')
   expect(html).not.toContain('1 of 1 page checked')
@@ -41,7 +41,7 @@ it('says when only the opening pages of a longer lease were checked', () => {
   review.pagesReviewed = [1, 2, 3, 4]
   review.coverageComplete = false
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Your lease is ready for review')
+  expect(html).not.toContain('Your lease is ready for review')
   expect(html).toContain('Check the extracted details on the next step.')
   expect(html).not.toContain('4 of 12 pages checked')
   expect(html).not.toContain('12 of 12')
@@ -54,7 +54,7 @@ it('counts every page that was checked and does not turn a coverage gap into a f
   for (const field of Object.values(raw.fields)) field.confidence = 100
   const { review } = normalizeLeaseScan(raw, ['', ''])
   const html = renderToStaticMarkup(<LeaseScanSummary review={review} processing={false} />)
-  expect(html).toContain('Your lease is ready for review')
+  expect(html).not.toContain('Your lease is ready for review')
   expect(html).toContain('Check the extracted details on the next step.')
   expect(html).not.toContain('1 of 2 pages checked')
   expect(html).not.toContain('to review')

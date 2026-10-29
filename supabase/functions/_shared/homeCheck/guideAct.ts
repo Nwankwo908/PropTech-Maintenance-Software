@@ -14,6 +14,23 @@ import {
   tickHomeCheckGuide,
 } from './guide.ts'
 
+class HomeCheckDeliveryError extends Error {
+  constructor(message: string, readonly clearGuide: boolean) {
+    super(message)
+  }
+}
+
+function requireCaptureDelivery(result: { deliveryError: string | null }, recipient: string) {
+  if (result.deliveryError) {
+    // A check already exists. End this guide so another short reply cannot
+    // create a second check while the first is awaiting delivery recovery.
+    throw new HomeCheckDeliveryError(
+      `The Home Check was created, but Ulo could not send the photo instructions to ${recipient}. Delivery is not confirmed. Please contact your property team before starting another check.`,
+      true,
+    )
+  }
+}
+
 async function loadIntake(db: SupabaseClient, conversationId: string) {
   const { data } = await db.from('sms_conversations').select('intake_state').eq('id', conversationId)
     .maybeSingle()
@@ -203,6 +220,12 @@ async function applyEffects(
         unitId: next?.unitId,
         identityType: 'resident',
       })
+      if (!conversationId) {
+        throw new HomeCheckDeliveryError(
+          'Ulo could not text the tenant to arrange the visit. No contractor link was sent. Please try the visit time again or reply CANCEL.',
+          false,
+        )
+      }
       if (conversationId && next) {
         next = { ...next, tenantConversationId: conversationId }
         const intake = await loadIntake(db, conversationId)
@@ -220,7 +243,7 @@ async function applyEffects(
       }).catch(() => undefined)
     }
     if (effect.type === 'start_tenant') {
-      await createHomeCheck(db, {
+      const result = await createHomeCheck(db, {
         landlordId,
         propertyId: effect.propertyId,
         unitId: effect.unitId,
@@ -228,9 +251,10 @@ async function applyEffects(
         authorizedBy: 'sms_guide',
         sendSms: true,
       })
+      requireCaptureDelivery(result, 'your tenant')
     }
     if (effect.type === 'start_self') {
-      await createHomeCheck(db, {
+      const result = await createHomeCheck(db, {
         landlordId,
         propertyId: effect.propertyId,
         unitId: effect.unitId,
@@ -239,9 +263,10 @@ async function applyEffects(
         sendSms: true,
         selfCapturePhone: landlordPhone ?? undefined,
       })
+      requireCaptureDelivery(result, 'your phone')
     }
     if (effect.type === 'send_contractor') {
-      await createHomeCheck(db, {
+      const result = await createHomeCheck(db, {
         landlordId,
         propertyId: effect.propertyId,
         unitId: effect.unitId,
@@ -251,6 +276,7 @@ async function applyEffects(
         authorizedBy: 'sms_guide',
         sendSms: true,
       })
+      requireCaptureDelivery(result, 'the contractor')
       if (effect.tenantBody && effect.tenantPhone) {
         await textPhone(db, {
           landlordId,
@@ -291,7 +317,7 @@ async function applyEffects(
   return next
 }
 
-export async function actHomeCheckGuide(
+async function runHomeCheckGuide(
   db: SupabaseClient,
   landlordId: string,
   input: {
@@ -347,6 +373,20 @@ export async function actHomeCheckGuide(
   if (saved) await clearOtherGuides(db, landlordId, input.conversationId)
   const replies = turn.replies.length ? turn.replies : clock.replies
   return { reply: replies.filter(Boolean).join('\n\n') }
+}
+
+export async function actHomeCheckGuide(
+  db: SupabaseClient,
+  landlordId: string,
+  input: Parameters<typeof runHomeCheckGuide>[2],
+) {
+  try {
+    return await runHomeCheckGuide(db, landlordId, input)
+  } catch (error) {
+    if (!(error instanceof HomeCheckDeliveryError)) throw error
+    if (error.clearGuide) await writeGuide(db, input.conversationId, null)
+    return { reply: error.message }
+  }
 }
 
 export async function sweepHomeCheckGuides(

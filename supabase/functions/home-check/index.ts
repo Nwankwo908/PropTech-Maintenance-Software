@@ -2,13 +2,15 @@ import { serialFormatWarnings, hasLabelPlaceholder } from '../../../shared/visio
 import { equipmentSerialFormatRules } from '../_shared/vision/getProvider.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import { assertAskUloLandlordAccess } from '../_shared/ask_ulo/auth/assertAskUloLandlordAccess.ts'
+import { recordActivityLog } from '../_shared/graph/recordActivityLog.ts'
 import {
   confirmHomeCheck,
+  createHomeCheck,
   requireData,
   uploadDashboardHomeCheckPhoto,
 } from '../_shared/homeCheck/service.ts'
 import { homeCheckTargets, homeCheckVendors } from '../_shared/homeCheck/sms.ts'
-import { homeCheckMetrics } from '../../../shared/homeCheck.ts'
+import { homeCheckDashboardJobWindowEnd, homeCheckMetrics } from '../../../shared/homeCheck.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -58,6 +60,61 @@ Deno.serve(async (req) => {
         ...(body.propertyId
           ? await homeCheckVendors(db, landlordId, str(body.propertyId))
           : { vendors: [], closest: null }),
+      })
+    }
+    if (action === 'request') {
+      const propertyId = str(body.propertyId)
+      if (!propertyId) return json({ error: 'Choose a property first.' }, 400)
+      const options = await homeCheckVendors(db, landlordId, propertyId)
+      const vendor = options.vendors.find((row) => row.id === options.closest)
+      if (!vendor?.id) {
+        return json({
+          error: options.vendors.length
+            ? 'No contractor in this property’s state can take this home check.'
+            : 'No active contractor with a phone number can take this home check.',
+        }, 400)
+      }
+      const shown = str(body.vendorId)
+      if (shown && shown !== vendor.id) {
+        return json({
+          error: 'The selected contractor changed. Review the request and continue again.',
+        }, 409)
+      }
+      const vendorName = str(vendor.name) || 'Contractor'
+      const created = await createHomeCheck(db, {
+        landlordId,
+        propertyId,
+        role: 'contractor',
+        authorizedBy: access.user.id,
+        vendorId: vendor.id,
+        jobWindowEnd: homeCheckDashboardJobWindowEnd(),
+        sendSms: true,
+      })
+      try {
+        await recordActivityLog(db, {
+          landlordId,
+          eventType: 'home_check.requested',
+          source: 'dashboard',
+          actorType: 'landlord',
+          actorId: access.user.id,
+          propertyId,
+          vendorId: vendor.id,
+          maintenanceRequestId: created.check.ticket_id,
+          workflowRunId: created.check.workflow_run_id,
+          workflowTemplateId: 'home_check',
+          metadata: {
+            message: `${vendorName} was asked to photograph the water heater and furnace for a home check.`,
+          },
+        })
+      } catch (error) {
+        console.error('[home-check] activity log', error)
+      }
+      return json({
+        ok: true,
+        checkId: created.check.id,
+        workflowRunId: created.check.workflow_run_id,
+        vendorName,
+        deliveryError: created.deliveryError,
       })
     }
     if (action === 'dashboard_photo') {

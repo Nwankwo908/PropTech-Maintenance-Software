@@ -8,6 +8,7 @@ import {
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
   isRetiredLandlordAccountId,
+  isSelfServiceLimitedAlphaLandlord,
 } from '../landlordCapabilities.ts'
 import { isStaffAdminEmail } from './staffAllowlist.ts'
 
@@ -51,7 +52,8 @@ export function seededLandlordIdForEmail(email: string | null | undefined): stri
 
 export function isStaffSwitcherLandlordId(landlordId: string | null | undefined): boolean {
   const id = canonicalizeLandlordId((landlordId ?? '').trim())
-  return (STAFF_SWITCHER_LANDLORD_IDS as readonly string[]).includes(id)
+  if ((STAFF_SWITCHER_LANDLORD_IDS as readonly string[]).includes(id)) return true
+  return isSelfServiceLimitedAlphaLandlord(id)
 }
 
 /**

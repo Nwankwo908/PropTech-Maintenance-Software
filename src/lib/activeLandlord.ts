@@ -10,7 +10,7 @@ import { isStaffAdminEmail } from '@shared/admin/staffAllowlist'
  *    o.k.okafor@gmail.com, drake@gtwgroupnwa.com,
  *    awrighthall@gmail.com → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
- *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
+ *  - staff logins              → Limited Alpha 1, with a switcher for Demo, Limited Alpha 2, and every new signup
  *
  * Full Alpha and New Landlord are retired. Stale overrides and those ids
  * resolve to Limited Alpha 1.
@@ -71,6 +71,18 @@ export function isSeededLandlordLoginEmail(email: string | null | undefined): bo
 }
 
 const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
+const staffSwitcherLabels = new Map<string, string>()
+
+/** Labels for self-service accounts loaded into the staff switcher. */
+export function rememberStaffSwitcherAccountLabels(
+  options: readonly LandlordAccountOption[],
+): void {
+  for (const option of options) {
+    const id = option.id.trim()
+    const label = option.label.trim()
+    if (id && label) staffSwitcherLabels.set(id, label)
+  }
+}
 /** Set when entering Demo via landing Try Demo (hides staff account switcher). */
 const TRY_DEMO_VISITOR_KEY = 'ulo.tryDemoVisitor'
 /** One-shot welcome modal after finishing the landing Try Demo flow. */
@@ -124,7 +136,9 @@ function readOverride(): string | null {
     const value = window.localStorage.getItem(OVERRIDE_STORAGE_KEY)?.trim()
     if (!value) return null
     const canonical = canonicalizeLandlordId(value)
-    return LANDLORD_ACCOUNT_OPTIONS.some((opt) => opt.id === canonical) ? canonical : null
+    if (LANDLORD_ACCOUNT_OPTIONS.some((opt) => opt.id === canonical)) return canonical
+    if (isSelfServiceLimitedAlphaLandlord(canonical)) return canonical
+    return null
   } catch {
     return null
   }
@@ -159,7 +173,9 @@ export function getActiveLandlordKind(): LandlordAccountKind {
 
 export function getActiveLandlordLabel(): string {
   const id = getActiveLandlordId()
-  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label ?? (isSelfServiceLimitedAlphaLandlord(id) ? sessionLandlordLabel || 'Limited Alpha' : 'Limited Alpha 1')
+  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label
+    ?? staffSwitcherLabels.get(id)
+    ?? (isSelfServiceLimitedAlphaLandlord(id) ? sessionLandlordLabel || 'Limited Alpha' : 'Limited Alpha 1')
 }
 
 export function isDemoAccountActive(): boolean {

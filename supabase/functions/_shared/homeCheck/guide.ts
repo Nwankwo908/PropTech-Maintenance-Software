@@ -9,6 +9,7 @@ import {
 import { accessInstructionKind } from '../sms/inboundInterpretation.ts'
 import { isAffirmativeReply } from '../sms/residentIntakeTypes.ts'
 import { parseAvailabilityResolved } from '../vendor_availability_parse.ts'
+import { HOME_CHECK_VENDOR_SCOPE } from './smsCopy.ts'
 
 export const HOME_CHECK_GUIDE_TTL_MS = 24 * 60 * 60 * 1000
 export const HOME_CHECK_TENANT_REMIND_MS = 24 * 60 * 60 * 1000
@@ -187,7 +188,7 @@ function propertyList(properties: HomeCheckGuideProperty[]): string {
 }
 
 function whoQuestion(): string {
-  return 'Who should do it?\n1) Your tenant\n2) A contractor\n3) You\nReply 1, 2, or 3, or CANCEL.'
+  return 'Who should do it?\n1) Your tenant takes the photos\n2) A contractor visits and takes the photos\n3) You take the photos yourself\nThe person you choose gets the link and instructions. Reply 1, 2, or 3, or CANCEL.'
 }
 
 function touch(
@@ -264,7 +265,7 @@ function contractorAsk(catalog: HomeCheckGuideCatalog): string {
   if (!nearest) {
     return 'Reply with the contractor’s name, or CANCEL. No located contractor is on file for this property.'
   }
-  return `The nearest contractor is ${nearest.name}. Reply YES to use them, or reply with a contractor’s name. Reply CANCEL to stop.`
+  return `${nearest.name} is the nearest contractor. They will ${HOME_CHECK_VENDOR_SCOPE}. No repairs are authorized. Ulo will send them the link and steps once the visit time is confirmed. Reply YES to use them, name another contractor, or CANCEL.`
 }
 
 function afterPlace(
@@ -312,13 +313,14 @@ function finishCapture(
     }
     return {
       state: null,
-      replies: [`We'll text your tenant the photo steps for ${state.placeLabel}.`],
+      replies: [`The photo instructions for ${state.placeLabel} were sent to your tenant.`],
       effects: [{ type: 'start_tenant', propertyId: state.propertyId!, unitId: state.unitId }],
     }
   }
   return {
     state: null,
-    replies: [`We'll text you the photo steps for ${state.placeLabel}.`],
+    // The self-capture instructions are themselves the reply; avoid a second text.
+    replies: [],
     effects: [{
       type: 'start_self',
       propertyId: state.propertyId!,
@@ -375,7 +377,7 @@ function sendContractor(
     note ? ` ${note}` : ''
   } The contractor will get the photo link for that visit.`
   const landlordConfirm =
-    `The equipment check is set for ${state.windowLabel}. The contractor has the photo link.`
+    `${state.vendorName || 'Your contractor'} is scheduled for ${state.placeLabel || 'the property'}, ${state.windowLabel}. They will ${HOME_CHECK_VENDOR_SCOPE}. Ulo sent the link and next steps directly to them. No repairs are authorized.`
   const canTextTenant = Boolean(state.tenantPhone) && !catalog.tenant?.optedOut
   return {
     state: null,

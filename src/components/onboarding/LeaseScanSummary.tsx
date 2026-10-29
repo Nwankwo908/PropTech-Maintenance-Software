@@ -7,8 +7,7 @@ export function LeaseScanSummary({ review, processing }: { review: LeaseScanRevi
 
   if (!processing) {
     return <section className="mt-3" aria-label="Lease scan">
-      <p className="text-sm font-medium text-[#101828]">Your lease is ready for review</p>
-      <p className="mt-1 text-xs text-[#64748b]">Check the extracted details on the next step.</p>
+      <p className="text-xs text-[#64748b]">Check the extracted details on the next step.</p>
     </section>
   }
 

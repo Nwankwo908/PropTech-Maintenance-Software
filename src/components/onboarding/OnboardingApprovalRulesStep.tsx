@@ -6,6 +6,7 @@ import {
   QUIET_HOURS_TIME_OPTIONS,
   normalizeOnboardingApprovalRules,
   validateOnboardingApprovalRules,
+  type EmergencyTypeId,
   type MarketplacePreferenceId,
   type NotificationChannelId,
   type OnboardingApprovalRules,
@@ -37,6 +38,80 @@ const COMING_SOON_OPERATION_ALERTS = [
       'Notified on missed rent, late payments, and monthly spend summaries across your portfolio.',
   },
 ] as const
+
+const setupGroupClass =
+  'rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
+
+const CHIP_ICON_HEIGHT = 16
+
+const EMERGENCY_CHIP_SHAPES: Record<
+  EmergencyTypeId,
+  { viewBox: string; width: number; paths: string[]; fillRule?: 'evenodd' }
+> = {
+  no_heat: {
+    viewBox: '22.59 16.25 54.81 67.5',
+    width: 12.99,
+    fillRule: 'evenodd',
+    paths: [
+      'm40.801 16.246c8.7109 14.074-18.207 17.43-18.207 42.621 0 12.309 8.8594 22.012 20.812 24.762-2.0117-1.8555-3.2734-4.5742-3.2734-7.6523 0-9.7969 8.7891-17.004 15.301-17.004-5.7109 10.195 4.4727 10.129 4.4727 17.004 0 3.1875-1.3477 5.9336-3.4727 7.7695 11.754-2.6562 19.965-12.902 20.926-24.879 0.48828-6.0703-3.1094-19.602-12.262-24.531 0 5.9844-3.3477 9.1523-6.8945 9.1523 6.1641-10.672-3.625-27.242-17.406-27.242z',
+    ],
+  },
+  no_hot_water: {
+    viewBox: '23.62 10.94 52.76 78.12',
+    width: 10.8,
+    paths: [
+      'm48.664 12.25c-7.7031 17.41-24.945 32.719-25.043 49.48-0.10156 17.309 13.832 27.328 26.332 27.328s26.449-9.9961 26.43-27.5c-0.023437-16.34-17.105-31.977-25.086-49.332-0.79297-1.7266-1.8633-1.7148-2.6328 0.023438zm-16.359 46.082c1.5977 7.9688 3.9688 14.328 14.027 20.379 1.5508 0.93359 1.3906 1.8047-0.41406 1.6758-11.809-0.84766-18.262-13.77-14.855-22.23 0.39844-0.98828 1.0312-0.87891 1.2422 0.17578z',
+    ],
+  },
+  flood_active_leak: {
+    viewBox: '23.62 10.94 52.76 78.12',
+    width: 10.8,
+    paths: [
+      'm48.664 12.25c-7.7031 17.41-24.945 32.719-25.043 49.48-0.10156 17.309 13.832 27.328 26.332 27.328s26.449-9.9961 26.43-27.5c-0.023437-16.34-17.105-31.977-25.086-49.332-0.79297-1.7266-1.8633-1.7148-2.6328 0.023438zm-16.359 46.082c1.5977 7.9688 3.9688 14.328 14.027 20.379 1.5508 0.93359 1.3906 1.8047-0.41406 1.6758-11.809-0.84766-18.262-13.77-14.855-22.23 0.39844-0.98828 1.0312-0.87891 1.2422 0.17578z',
+    ],
+  },
+  no_power: {
+    viewBox: '26.8 10 46.4 80',
+    width: 9.28,
+    paths: [
+      'm39.199 90 34-45.801h-20.098l8.0977-34.199h-0.39844l-34 45.801h20.102l-8.1016 34.199z',
+    ],
+  },
+  security_breach: {
+    viewBox: '14.7 2.5 70.9 95',
+    width: 11.94,
+    paths: [
+      'M82,47.4c-2.3-1-4.7-2-7.2-2.8V27.2c0-5.3-1.7-10.1-4.5-14.1l-4.2,1.8c-0.3,0.1-0.5,0.5-0.5,0.8l0.8,6.6c0,0.4-0.3,0.8-0.6,0.9l-5.3,0.6c0.4,1.1,0.6,2.2,0.6,3.4v14.1c-7.4-1.1-14.8-1.1-22.2,0V27.2c0-6.1,5-11.1,11.1-11.1c2.4,0,4.6,0.8,6.4,2.1l3.2-0.9c0.4-0.1,0.6-0.5,0.5-0.9l-1-6.9c0-0.3,0.1-0.6,0.3-0.8l3.5-2.6C59.1,3.9,54.7,2.5,50,2.5c-13.6,0-24.7,11.1-24.7,24.7v17.3c-2.6,0.9-5,1.8-7.2,2.8c-2.1,1-3.4,3-3.4,5.4v38.9c0,3.2,2.6,5.9,5.9,5.9h59.1c3.2,0,5.9-2.6,5.9-5.9V52.7C85.4,50.4,84.1,48.3,82,47.4z M56.6,80.7c0.2,0.6,0,1.2-0.3,1.6c-0.4,0.5-0.9,0.7-1.5,0.7h-9.5c-0.6,0-1.1-0.3-1.5-0.7c-0.4-0.5-0.5-1.1-0.3-1.6l3.1-11.6c-2.5-1.3-4.3-3.9-4.3-6.9c0-4.3,3.5-7.8,7.8-7.8c4.3,0,7.8,3.5,7.8,7.8c0,3-1.8,5.6-4.3,6.9L56.6,80.7z',
+    ],
+  },
+  gas_smell: {
+    viewBox: '19.8 2.5 60.4 95',
+    width: 10.17,
+    paths: [
+      'M19.8,33.4v41.3h60.4V33.4H19.8z M50.9,67.5h-1.8c-4.6,0-8.5-3.3-9.2-7.9c-0.3-1.9-0.2-4,0.4-6c0.1-0.2,0.4-0.2,0.5,0c0.3,0.9,1.1,2.5,2.3,3.3c1.1,0.7,1.3,0,0.7-2c-0.5-1.9-1.5-6.2-0.3-9.1c0.1-0.2,0.3-0.2,0.4,0c0.9,1.9,2,3.2,3,4c0,0-0.4-5.8,3.4-9.1c0.2-0.1,0.4,0,0.4,0.2c-0.3,1.7,0.1,3.9,0.8,5.5c1.4,3,1,4.7,1,4.7s2.1-1.7,1.6-5c0-0.2,0.2-0.4,0.4-0.2c1.6,1.6,3.2,4.3,1.8,8.3c-1.2,3.6-0.6,4.4,0.3,3.7c0.7-0.6,1.7-1.7,1.9-3.9c0-0.2,0.3-0.3,0.4-0.1c0.2,0.3,0.3,0.6,0.5,0.9C62.2,60.8,57.4,67.5,50.9,67.5z',
+      'M32.2,16.6c-6.7,0-12.1,5.3-12.4,11.9h60.3c-0.3-6.6-5.7-11.9-12.4-11.9h-3V7.4h2.8C68.9,7.4,70,6.3,70,5s-1.1-2.5-2.5-2.5H32.4C31.1,2.5,30,3.6,30,5s1.1,2.5,2.5,2.5h2.8v9.2H32.2z M40.1,7.4h19.8v9.2H52v-2.3h0.8c1.1,0,2-0.9,2-2s-0.9-2-2-2h-5.6c-1.1,0-2,0.9-2,2s0.9,2,2,2H48v2.3h-7.8V7.4z',
+      'M19.8,79.6c0.2,5.5,4,10,9.1,11.4v0.9c0,3.1,2.5,5.6,5.6,5.6h30.9c3.1,0,5.6-2.5,5.6-5.6v-0.9c5.1-1.4,8.9-5.9,9.1-11.4H19.8z',
+    ],
+  },
+}
+
+function EmergencyChipIcon({ id }: { id: EmergencyTypeId }) {
+  const icon = EMERGENCY_CHIP_SHAPES[id]
+  return (
+    <svg
+      viewBox={icon.viewBox}
+      width={icon.width}
+      height={CHIP_ICON_HEIGHT}
+      fill="currentColor"
+      aria-hidden
+      className="shrink-0"
+    >
+      {icon.paths.map((d) => (
+        <path key={d} d={d} fillRule={icon.fillRule} />
+      ))}
+    </svg>
+  )
+}
 
 function ComingSoonSwitch() {
   return (
@@ -129,10 +204,10 @@ export function OnboardingApprovalRulesStep({
         We’ve selected recommended settings you can adjust.
       </p>
 
-      <div className="mt-8 space-y-10">
-        {leading}
+      <div className="mt-8 space-y-6">
+        {leading ? <div className={setupGroupClass}>{leading}</div> : null}
 
-        <div className="space-y-8">
+        <div className={`${setupGroupClass} space-y-8`}>
           <div>
             <h3 className="text-[15px] font-semibold text-[#111827]">Channel preference</h3>
             <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
@@ -259,8 +334,9 @@ export function OnboardingApprovalRulesStep({
               ).map((option) => (
                 <li
                   key={option.id}
-                  className="rounded-full border border-[#d1d5db] bg-[#f3f4f6] px-3 py-1 text-[13px] font-medium text-[#111827]"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#d1d5db] bg-[#f3f4f6] px-3 py-1 text-[13px] font-medium text-[#6b7280]"
                 >
+                  <EmergencyChipIcon id={option.id} />
                   {option.label}
                 </li>
               ))}
@@ -269,7 +345,7 @@ export function OnboardingApprovalRulesStep({
         </div>
 
         {showMarketplacePreference ? (
-          <div>
+          <div className={setupGroupClass}>
             <h3 className="text-[15px] font-semibold text-[#111827]">Marketplace preference</h3>
             <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
               Choose who Ulo can assign work to.
@@ -290,7 +366,7 @@ export function OnboardingApprovalRulesStep({
           </div>
         ) : null}
 
-        <div aria-disabled="true" className="pointer-events-none">
+        <div aria-disabled="true" className={`${setupGroupClass} pointer-events-none`}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <h3 className="text-[15px] font-semibold text-[#9ca3af]">

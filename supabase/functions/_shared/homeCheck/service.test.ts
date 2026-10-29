@@ -46,7 +46,7 @@ vi.mock(
   () => ({ isLandlordAccountOrOpsPhone: vi.fn(async () => true) }),
 )
 
-function client(ownerPhone: string | null = '+15553334444') {
+function client(ownerPhone: string | null = '+15553334444', vendorPhone: string | null = '+15558889999') {
   let check: Record<string, unknown> | null = null
   const rpc = vi.fn(async (_name: string, args: { p_input: Record<string, unknown> }) => {
     check = { ...args.p_input, workflow_run_id: 'workflow', status: 'collecting' }
@@ -67,6 +67,8 @@ function client(ownerPhone: string | null = '+15553334444') {
           ? { id: 'birch-12a', unit_label: '12A' }
           : table === 'landlords'
           ? { name: 'Owner', phone: ownerPhone }
+          : table === 'vendors'
+          ? { id: 'vendor', phone: vendorPhone, active: true, roster_status: 'active' }
           : table === 'home_checks'
           ? single ? check : []
           : [],
@@ -189,5 +191,43 @@ describe('SMS self-capture recipient', () => {
     )
     expect(sendInboundAutoReply).not.toHaveBeenCalled()
     expect(resolveOutboundLandlordSmsLine).not.toHaveBeenCalled()
+  })
+  it('sends contractor instructions and the capture link only to the selected vendor', async () => {
+    const db = client()
+    await createHomeCheck(db as never, {
+      ...request, role: 'contractor', vendorId: 'vendor',
+      jobWindowEnd: new Date(Date.now() + 86400000).toISOString(),
+    })
+    expect(sendInboundAutoReply).toHaveBeenCalledTimes(1)
+    expect(sendInboundAutoReply).toHaveBeenCalledWith(db, expect.objectContaining({
+      toNumber: '+15558889999',
+      body: expect.stringContaining('Open the link for guided steps'),
+    }))
+    const body = vi.mocked(sendInboundAutoReply).mock.calls[0][1].body
+    expect(body).toContain('https://app.ulohome.io/c/')
+    expect(body).toContain('No repairs are authorized')
+    expect(body).not.toContain('For text photos:')
+    expect(body).not.toContain('Forward this')
+    expect(body).not.toContain('filter dates')
+    expect(body).not.toContain('Last service')
+    expect(body.trim().split('\n').at(-1)).toMatch(/^https:\/\/app\.ulohome\.io\/c\//)
+  })
+  it('does not forward a contractor link to the owner when no vendor is selected', async () => {
+    const db = client()
+    await expect(createHomeCheck(db as never, {
+      ...request, role: 'contractor',
+      jobWindowEnd: new Date(Date.now() + 86400000).toISOString(),
+    })).rejects.toThrow('Choose a contractor')
+    expect(db.rpc).not.toHaveBeenCalled()
+    expect(sendInboundAutoReply).not.toHaveBeenCalled()
+  })
+  it('does not fall back to the owner when the selected vendor has no phone', async () => {
+    const db = client('+15553334444', null)
+    await expect(createHomeCheck(db as never, {
+      ...request, role: 'contractor', vendorId: 'vendor',
+      jobWindowEnd: new Date(Date.now() + 86400000).toISOString(),
+    })).rejects.toThrow('active contractor with a phone number')
+    expect(db.rpc).not.toHaveBeenCalled()
+    expect(sendInboundAutoReply).not.toHaveBeenCalled()
   })
 })

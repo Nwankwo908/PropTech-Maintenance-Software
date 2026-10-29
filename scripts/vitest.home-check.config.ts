@@ -8,6 +8,7 @@ export default defineConfig({
       'shared/homeCheck.test.ts',
       'supabase/functions/_shared/homeCheck/sms.test.ts',
       'supabase/functions/_shared/homeCheck/service.test.ts',
+      'supabase/functions/_shared/homeCheck/guideAct.test.ts',
     ],
   },
 })

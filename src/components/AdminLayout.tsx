@@ -24,6 +24,7 @@ import {
   LANDLORD_ACCOUNT_OPTIONS,
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
+import { loadStaffSwitcherSignupAccounts } from '@/lib/staffSwitcherAccounts'
 import {
   readTryDemoAttentionGuideActiveStep,
   tryDemoAskUloViewModeForStep,
@@ -154,6 +155,19 @@ function AdminTopBar() {
   const { open, openAskUlo, closeAskUlo } = useAskUlo()
   const { displayName: workspaceDisplayName } = useLandlordWorkspace()
   const [resettingOnboarding, setResettingOnboarding] = useState(false)
+  const [signupAccounts, setSignupAccounts] = useState<typeof LANDLORD_ACCOUNT_OPTIONS>([])
+  const showAccountSwitcher = getSessionLandlordId() === null && !isTryDemoVisitor()
+
+  useEffect(() => {
+    if (!showAccountSwitcher) return
+    let cancelled = false
+    void loadStaffSwitcherSignupAccounts().then((options) => {
+      if (!cancelled) setSignupAccounts(options)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [showAccountSwitcher])
   const workspaceLabel = workspaceDisplayName.trim() || getActiveLandlordLabel()
   // Production testers and seeded tester logins are session-bound; hide the
   // internal "Limited Alpha 1/2" account chip. Staff keep it for the switcher.
@@ -249,16 +263,16 @@ function AdminTopBar() {
             {workspaceLabel}
           </span>
         )}
-        {getSessionLandlordId() === null && !isTryDemoVisitor() ? (
+        {showAccountSwitcher ? (
           <label className="flex shrink-0 items-center gap-2 text-[12px] text-[#6a7282]">
             Account
             <select
               value={getActiveLandlordId()}
               onChange={(e) => setActiveLandlordOverride(e.target.value)}
-              className="h-9 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-2 text-[13px] text-[#101828] outline-none focus-visible:ring-2 focus-visible:ring-[#101828]/20"
+              className="h-9 max-w-[280px] cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-2 text-[13px] text-[#101828] outline-none focus-visible:ring-2 focus-visible:ring-[#101828]/20"
               aria-label="Switch landlord account"
             >
-              {LANDLORD_ACCOUNT_OPTIONS.map((opt) => (
+              {[...LANDLORD_ACCOUNT_OPTIONS, ...signupAccounts].map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {opt.label}
                 </option>
@@ -266,7 +280,6 @@ function AdminTopBar() {
             </select>
           </label>
         ) : null}
-        <AdminHeaderActions tryDemoSpotlightHost />
         </div>
       </div>
     </header>

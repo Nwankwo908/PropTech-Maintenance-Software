@@ -5,11 +5,13 @@ import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import {
   type HomeCheckAnswers,
   type HomeCheckTarget,
+  chooseHomeCheckContractorId,
   nearestHomeCheckVendors,
   parseHomeCheckCommand,
   parseHomeCheckGuideStart,
   parseHomeCheckPhotoReply,
 } from '../../../../shared/homeCheck.ts'
+import { normalizeUsStateCode, vendorServiceStateCodes } from '../vendorServiceArea.ts'
 function homeCheckGuidePending(intake: unknown): boolean {
   if (!intake || typeof intake !== 'object') return false
   const guide = (intake as { home_check_guide?: { step?: unknown } }).home_check_guide
@@ -115,26 +117,60 @@ export async function homeCheckTargets(
   ])
 }
 export async function homeCheckVendors(db: SupabaseClient, landlordId: string, propertyId: string) {
-  const property = requireData(
-    await db.from('properties').select('latitude, longitude').eq('landlord_id', landlordId).eq(
-      'id',
-      propertyId,
-    ).single(),
+  const property = requireData<{
+    latitude: number | null
+    longitude: number | null
+    state: string | null
+  }>(
+    await db.from('properties').select('latitude, longitude, state').eq('landlord_id', landlordId)
+      .eq('id', propertyId).single(),
   )
   const vendors = requireData(
-    await db.from('vendors').select('id, name, phone, latitude, longitude, roster_status').eq(
-      'landlord_id',
-      landlordId,
-    ).eq('active', true),
+    await db.from('vendors').select(
+      'id, name, phone, latitude, longitude, roster_status, state, preferred_emergency',
+    ).eq('landlord_id', landlordId).eq('active', true),
   )
     .filter((vendor) => vendor.phone && !['suspended', 'banned'].includes(vendor.roster_status))
+  const ids = vendors.map((vendor) => vendor.id)
+  const verificationByVendor = new Map<string, { serviceArea: unknown; licenseState: string | null }>()
+  if (ids.length) {
+    const { data } = await db.from('vendor_verifications').select(
+      'vendor_id, service_area, license_state, updated_at',
+    ).eq('landlord_id', landlordId).in('vendor_id', ids).order('updated_at', { ascending: false })
+    for (const row of data ?? []) {
+      if (!row.vendor_id || verificationByVendor.has(row.vendor_id)) continue
+      verificationByVendor.set(row.vendor_id, {
+        serviceArea: row.service_area,
+        licenseState: typeof row.license_state === 'string' ? row.license_state : null,
+      })
+    }
+  }
   const ranked = nearestHomeCheckVendors(property, vendors)
+  const candidates = vendors.map((vendor) => {
+    const verification = verificationByVendor.get(vendor.id)
+    return {
+      id: vendor.id,
+      latitude: vendor.latitude,
+      longitude: vendor.longitude,
+      preferred: vendor.preferred_emergency === true,
+      states: vendorServiceStateCodes({
+        serviceArea: verification?.serviceArea,
+        licenseState: verification?.licenseState ?? null,
+        rosterState: typeof vendor.state === 'string' ? vendor.state : null,
+      }),
+    }
+  })
   return {
     vendors: vendors.map((vendor) => ({
       ...vendor,
+      states: candidates.find((row) => row.id === vendor.id)?.states ?? [],
       distanceKm: ranked.find((row) => row.id === vendor.id)?.distanceKm ?? null,
     })),
-    closest: ranked[0]?.id || null,
+    propertyState: normalizeUsStateCode(property.state),
+    closest: chooseHomeCheckContractorId(
+      { ...property, state: normalizeUsStateCode(property.state) },
+      candidates,
+    ),
   }
 }
 

@@ -33,6 +33,7 @@ import { findOrCreateConversation, normalizeSmsPhone } from '../sms/inbound_db.t
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
 import { resolveOutboundLandlordSmsLine } from '../sms/landlordSmsOnboarding.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
+import { homeCheckCaptureSms } from './smsCopy.ts'
 
 export type HomeCheckRow = {
   id: string
@@ -279,7 +280,8 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     recipientPhone = resident.phone
     residentId = resident.id
   }
-  if (input.role === 'contractor' && input.vendorId) {
+  if (input.role === 'contractor') {
+    if (!input.vendorId) throw new Error('Choose a contractor before sending the Home Check instructions.')
     const vendor = requireData<VendorRow>(
       await db.from('vendors').select('id, phone, active, roster_status').eq('id', input.vendorId)
         .eq('landlord_id', input.landlordId).single(),
@@ -290,8 +292,8 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     ) throw new Error('Choose an active contractor with a phone number.')
     recipientPhone = vendor.phone
   }
-  if (input.sendSms && !recipientPhone && !landlord.phone) {
-    throw new Error('Add a landlord phone number before texting a forwarding link.')
+  if (input.sendSms && !recipientPhone) {
+    throw new Error('The person doing the Home Check needs a usable phone number.')
   }
   const start = Date.now()
   let expires = start + 7 * 86400000
@@ -365,28 +367,19 @@ export async function createHomeCheck(db: SupabaseClient, input: {
   if (!publishLink) {
     return { check: await loadHomeCheck(db, id), link: null, deliveryError: null }
   }
-  const instructions = `${
-    HOME_CHECK_PHOTOS.map((photo, i) => `${i + 1}. ${photo.title}`).join('\n')
-  }\n5. Leaks, odd noises or smells? Yes / no.\n6. Last service and last filter change, if known.\nObservation only. Don’t open covers or touch equipment.\nFor text photos: send one photo per message with ${check.reference} and its number (1–4). Otherwise use the link.\n${link}`
   let deliveryError: string | null = null
   if (input.sendSms) {
-    const destination = recipientPhone || landlord.phone
+    const destination = recipientPhone
     if (!destination) {
       throw new Error('Add a landlord phone number before texting a forwarding link.')
     }
-    const greeting = input.role === 'tenant'
-      ? `Hi, this is Ulo for ${
-        landlord.name || 'your landlord'
-      }. Please take 4 quick photos of the water heater and furnace for ${
-        checkLocation(check)
-      }. Takes 2 minutes:`
-      : input.role === 'contractor'
-      ? `${recipientPhone ? 'Home Check' : 'Forward this contractor link'} for ${
-        checkLocation(check)
-      }. Link expires at the end of the job window.`
-      : `Your Home Check for ${checkLocation(check)}.`
     try {
-      await sendHomeCheckSms(db, check, destination, `${greeting}\n${instructions}`, residentId)
+      await sendHomeCheckSms(db, check, destination, homeCheckCaptureSms({
+        role: input.role,
+        location: checkLocation(check).replace(/ · /g, ', '),
+        company: landlord.name || 'your landlord',
+        link: link!,
+      }), residentId)
       await checked(
         db.from('home_checks').update({ sent_at: new Date().toISOString() }).eq('id', id),
       )

@@ -41,11 +41,21 @@ export type HomeCheckSummaryRow = HomeCheckMetricRow & {
   answers?: HomeCheckAnswers
   detected_warning?: string | null
 }
-export type HomeCheckVendor = { id: string; name: string; distanceKm: number | null }
+export type HomeCheckVendor = {
+  id: string
+  name: string
+  distanceKm: number | null
+  latitude?: number | null
+  longitude?: number | null
+  states?: string[]
+  preferred?: boolean
+  preferred_emergency?: boolean
+}
 export type HomeCheckOptions = {
   targets: HomeCheckTarget[]
   vendors: HomeCheckVendor[]
   closest: string | null
+  propertyState?: string | null
 }
 export type HomeCheckList = {
   checks: HomeCheckSummaryRow[]
@@ -71,6 +81,23 @@ export async function homeCheckRequest<T>(
   }
   if (data?.error) throw new Error(String(data.error))
   return data as T
+}
+
+export async function requestPlatformHomeCheck(input: {
+  propertyId: string
+  vendorId: string
+}): Promise<{
+  ok: true
+  checkId: string
+  workflowRunId: string
+  vendorName: string
+  deliveryError: string | null
+}> {
+  return homeCheckRequest({
+    action: 'request',
+    propertyId: input.propertyId,
+    vendorId: input.vendorId,
+  })
 }
 
 /** Landlord dashboard photo. No public link and no text. */

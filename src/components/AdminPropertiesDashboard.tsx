@@ -22,6 +22,7 @@ import {
   countDistinctPortfolioUnits,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
+  normalizeBuildingKey,
   resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
   shouldShowPropertyHealthScore,
@@ -43,6 +44,10 @@ import {
   buildUnitOptionsFromPropertyPayload,
   unitOptionKeyToCell,
 } from '@/lib/residentUnitKeys'
+import {
+  loadPropertiesNeedingMoreInformationCount,
+  propertiesNeedMoreInformationCopy,
+} from '@/lib/propertyInformationGaps'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
@@ -302,6 +307,7 @@ export function AdminPropertiesDashboard() {
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [addPropertyOpen, setAddPropertyOpen] = useState(false)
   const [propertyRegisterNotice, setPropertyRegisterNotice] = useState<string | null>(null)
+  const [needsMoreInformationCount, setNeedsMoreInformationCount] = useState<number | null>(null)
   const [propertyIdByBuilding, setPropertyIdByBuilding] = useState<Map<string, string>>(
     () => new Map(),
   )
@@ -551,6 +557,21 @@ export function AdminPropertiesDashboard() {
     // #endregion
     return report
   }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, healthVitals, residents, canonicalPropertiesForHealth, now])
+
+  useEffect(() => {
+    if (loading) return
+    let cancelled = false
+    const properties = healthReport.buildings.map((row) => ({
+      id: propertyIdByBuilding.get(normalizeBuildingKey(row.building)) ?? '',
+      name: row.building,
+    }))
+    void loadPropertiesNeedingMoreInformationCount(properties).then((count) => {
+      if (!cancelled) setNeedsMoreInformationCount(count)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [loading, healthReport.buildings, propertyIdByBuilding])
 
   useEffect(() => {
     if (!showPropertyCardGuide || loading) return
@@ -806,6 +827,8 @@ export function AdminPropertiesDashboard() {
     )
   }
 
+  const needsMoreInformation = propertiesNeedMoreInformationCopy(needsMoreInformationCount ?? 0)
+
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
       <SetupSuccessCheckboxGuide
@@ -832,6 +855,13 @@ export function AdminPropertiesDashboard() {
       {error ? (
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           {error}
+        </div>
+      ) : null}
+
+      {needsMoreInformation ? (
+        <div className="mb-4 rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+          <p className="text-[14px] font-semibold text-[#0d0f11]">{needsMoreInformation.title}</p>
+          <p className="mt-1 text-[13px] leading-5 text-[#64748b]">{needsMoreInformation.detail}</p>
         </div>
       ) : null}
 

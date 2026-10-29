@@ -457,6 +457,48 @@ export function homeCheckMetrics(rows: HomeCheckMetricRow[]) {
   })
 }
 
+export type HomeCheckContractorCandidate = {
+  id: string
+  latitude: number | null
+  longitude: number | null
+  /** US state codes this contractor covers. Empty means no state is on file. */
+  states?: readonly string[] | null
+  preferred?: boolean
+}
+
+/**
+ * A contractor must have a state on file, and that state must be the property's state.
+ * Among those, the nearest map pin is used. A contractor with no state is not chosen.
+ */
+export function chooseHomeCheckContractorId(
+  property: { latitude: number | null; longitude: number | null; state?: string | null },
+  vendors: readonly HomeCheckContractorCandidate[],
+): string | null {
+  const job = (property.state ?? '').trim().toUpperCase()
+  if (!job) return null
+  const statesOf = (vendor: HomeCheckContractorCandidate) =>
+    (vendor.states ?? []).map((code) => code.trim().toUpperCase()).filter(Boolean)
+  const eligible = vendors.filter((vendor) => statesOf(vendor).includes(job))
+  if (!eligible.length) return null
+  const nearest = nearestHomeCheckVendors(property, eligible)
+  if (nearest[0]) return nearest[0].id
+  return eligible.slice().sort((a, b) => {
+    const preferred = Number(Boolean(b.preferred)) - Number(Boolean(a.preferred))
+    if (preferred) return preferred
+    return a.id.localeCompare(b.id)
+  })[0]?.id ?? null
+}
+
+/** Dashboard requests give the contractor six days, inside the seven-day link limit. */
+export function homeCheckDashboardJobWindowEnd(now = Date.now()): string {
+  return new Date(now + 6 * 24 * 60 * 60 * 1000).toISOString()
+}
+
+export function homeCheckRequestVendorCopy(vendorName: string): string {
+  const name = vendorName.trim() || 'The contractor'
+  return `${name} will collect appliance details to help Ulo recommend maintenance and flag potential issues early.`
+}
+
 export function nearestHomeCheckVendors<
   T extends { id: string; latitude: number | null; longitude: number | null },
 >(property: { latitude: number | null; longitude: number | null }, vendors: T[]) {

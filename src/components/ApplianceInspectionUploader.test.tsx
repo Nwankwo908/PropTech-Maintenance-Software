@@ -42,6 +42,10 @@ describe('ApplianceInspectionUploader', () => {
     expect(screen.queryByText(/When results appear/)).toBeNull()
     expect(screen.queryByText(/If something needs fixing/)).toBeNull()
     expect(screen.getByText(/PDFs are processed as inspection reports/)).toBeTruthy()
+    const assign = screen.getByRole('button', { name: 'Request home check' })
+    expect(screen.queryByRole('heading', { name: 'Home check inspection' })).toBeNull()
+    expect(guide.compareDocumentPosition(assign) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(assign.compareDocumentPosition(appliance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('shows a water heater label example when that step is selected', () => {
