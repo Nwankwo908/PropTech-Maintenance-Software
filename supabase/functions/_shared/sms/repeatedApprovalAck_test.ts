@@ -83,6 +83,16 @@ Deno.test("several requests in the latest ask are clarified", () => {
   assertEquals(decision.body.includes("has already been notified"), false)
 })
 
+Deno.test("a pending question with nothing approved is left to its own handler", () => {
+  const decision = resolveRepeatedApproval({
+    body: "Yes",
+    pendingQuestionCount: 1,
+    latestAsk: [],
+    namedPool: [],
+  })
+  assertEquals(decision.action, "ignore")
+})
+
 Deno.test("a different pending question is clarified instead of assumed", () => {
   const decision = resolveRepeatedApproval({
     body: "Yes",
