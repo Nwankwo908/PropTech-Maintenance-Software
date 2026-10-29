@@ -48,6 +48,7 @@ export function resolveCanonicalPropertyType(value: string | undefined | null): 
   if (
     raw.includes('multi') ||
     raw.includes('apartment') ||
+    raw.includes('student') ||
     raw.includes('duplex') ||
     raw.includes('triplex') ||
     raw.includes('two family') ||

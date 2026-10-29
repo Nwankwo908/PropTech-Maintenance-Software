@@ -600,4 +600,9 @@ describe('propertyTableUnitsLabel', () => {
     expect(propertyTableUnitsLabel(singleFamily!)).toBe('n/a')
     expect(propertyTableUnitsLabel({ ...multifamily!, unitCount: 4 })).toBe('4')
   })
+
+  it('shows the count when a property saved as single family has several units', () => {
+    expect(propertyTableUnitsLabel({ unitCount: 4, propertyType: 'single_family_home' })).toBe('4')
+    expect(propertyTableUnitsLabel({ unitCount: 1, propertyType: 'single_family_home' })).toBe('n/a')
+  })
 })

@@ -222,10 +222,15 @@ export type PropertyHealthCanonicalProperty = {
   propertyType?: string | null
 }
 
-/** Units column on the properties table. Single-family homes have no unit count. */
+/**
+ * Units column on the properties table. A single-family home has no unit count,
+ * but a property with several units shows them even when its saved type says
+ * single family, so the column adds up to the Total units card.
+ */
 export function propertyTableUnitsLabel(
   row: Pick<PropertyHealthBuildingRow, 'unitCount' | 'propertyType'>,
 ): string {
+  if (row.unitCount > 1) return String(row.unitCount)
   return isSingleFamilyPropertyType(row.propertyType) ? 'n/a' : String(row.unitCount)
 }
 
