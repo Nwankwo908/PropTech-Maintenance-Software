@@ -46,14 +46,20 @@ vi.mock(
   () => ({ isLandlordAccountOrOpsPhone: vi.fn(async () => true) }),
 )
 
-function client(ownerPhone: string | null = '+15553334444', vendorPhone: string | null = '+15558889999') {
-  let check: Record<string, unknown> | null = null
+function client(
+  ownerPhone: string | null = '+15553334444',
+  vendorPhone: string | null = '+15558889999',
+  openChecks: Array<Record<string, unknown>> = [],
+) {
+  let check: Record<string, unknown> | null = openChecks[0] ?? null
+  const updates: Array<Record<string, unknown>> = []
   const rpc = vi.fn(async (_name: string, args: { p_input: Record<string, unknown> }) => {
     check = { ...args.p_input, workflow_run_id: 'workflow', status: 'collecting' }
     return { data: null, error: null }
   })
   return {
     rpc,
+    updates,
     from(table: string) {
       let single = false
       let mutation = false
@@ -70,16 +76,17 @@ function client(ownerPhone: string | null = '+15553334444', vendorPhone: string 
           : table === 'vendors'
           ? { id: 'vendor', phone: vendorPhone, active: true, roster_status: 'active' }
           : table === 'home_checks'
-          ? single ? check : []
+          ? single ? check : openChecks
           : [],
       })
       const builder: Record<string, unknown> = {
         then: (resolve: (result: unknown) => unknown) => Promise.resolve(resolve(result())),
       }
-      for (const method of ['select', 'eq', 'gte']) builder[method] = () => builder
+      for (const method of ['select', 'eq', 'gte', 'gt', 'is']) builder[method] = () => builder
       for (const method of ['insert', 'update']) {
-        builder[method] = () => {
+        builder[method] = (value: Record<string, unknown>) => {
           mutation = true
+          if (method === 'update' && table === 'home_checks') updates.push(value)
           return builder
         }
       }
@@ -229,5 +236,42 @@ describe('SMS self-capture recipient', () => {
     })).rejects.toThrow('active contractor with a phone number')
     expect(db.rpc).not.toHaveBeenCalled()
     expect(sendInboundAutoReply).not.toHaveBeenCalled()
+  })
+  it('reuses the open check for the same place and person instead of creating a second one', async () => {
+    const open = {
+      id: 'open-check',
+      reference: 'HC-OPENCHECK001',
+      landlord_id: 'landlord',
+      ulo_number: '+15550001111',
+      role: 'landlord',
+      unit_id: 'birch-12a',
+      recipient_phone: '+15551112222',
+      vendor_id: null,
+      status: 'collecting',
+      workflow_run_id: 'workflow',
+      property_label: 'Birch',
+      unit_label: '12A',
+      created_at: new Date(Date.now() - 86400000).toISOString(),
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }
+    const db = client('+15553334444', '+15558889999', [open])
+    const result = await createHomeCheck(db as never, { ...request, selfCapturePhone: '+15551112222' })
+    expect(db.rpc).not.toHaveBeenCalledWith('create_home_check', expect.anything())
+    expect(result.check.id).toBe('open-check')
+    expect(result.link).toMatch(/\/c\/open-check#/)
+    expect(db.updates).toContainEqual(expect.objectContaining({ token_hash: expect.any(String) }))
+    expect(sendInboundAutoReply).toHaveBeenCalledWith(db, expect.objectContaining({ toNumber: '+15551112222' }))
+  })
+  it('still creates a check when the open one is for someone else', async () => {
+    const open = {
+      id: 'tenant-check',
+      role: 'landlord',
+      unit_id: 'birch-12a',
+      recipient_phone: '+15550000000',
+      created_at: new Date().toISOString(),
+    }
+    const db = client('+15553334444', '+15558889999', [open])
+    await createHomeCheck(db as never, { ...request, selfCapturePhone: '+15551112222' })
+    expect(db.rpc).toHaveBeenCalledWith('create_home_check', expect.anything())
   })
 })

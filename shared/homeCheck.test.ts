@@ -21,6 +21,11 @@ import {
   parseHomeCheckPhotoReply,
   resolveHomeCheckTarget,
   supportedHomeCheckPhotoWarning,
+  homeCheckPhotoKindQuestion,
+  homeCheckSlotFromReading,
+  homeCheckSlotName,
+  parseHomeCheckPhotoChoice,
+  pickHomeCheckForPhoto,
 } from './homeCheck'
 
 const answers = {
@@ -403,5 +408,57 @@ describe('Home Check review, follow-up, and single-family wording', () => {
     )).toBe('Home Check')
     expect(homeCheckWorkOrderTitle('Home Check follow-up. A photo showed a gas smell.', 'home_check_warning'))
       .toBe('Home Check follow-up')
+  })
+})
+
+describe('uncaptioned Home Check photos', () => {
+  const at = (day: number) => `2026-10-${day}T12:00:00Z`
+  it('picks the newest check when all open checks are for the same place', () => {
+    const checks = [
+      { id: 'a', property_id: 'p', unit_id: null, created_at: at(27) },
+      { id: 'b', property_id: 'p', unit_id: null, created_at: at(28) },
+    ]
+    expect(pickHomeCheckForPhoto(checks)?.id).toBe('b')
+  })
+  it('does not pick between different places', () => {
+    expect(pickHomeCheckForPhoto([
+      { id: 'a', property_id: 'p', unit_id: null, created_at: at(27) },
+      { id: 'b', property_id: 'q', unit_id: null, created_at: at(28) },
+    ])).toBeNull()
+    expect(pickHomeCheckForPhoto([
+      { id: 'a', property_id: 'p', unit_id: '1', created_at: at(27) },
+      { id: 'b', property_id: 'p', unit_id: '2', created_at: at(28) },
+    ])).toBeNull()
+  })
+  it('reads a numbered choice only within range', () => {
+    expect(parseHomeCheckPhotoChoice('2', 2)).toBe(1)
+    expect(parseHomeCheckPhotoChoice('3', 2)).toBeNull()
+    expect(parseHomeCheckPhotoChoice('two', 2)).toBeNull()
+  })
+  it('files a readable water heater label in slot 1', () => {
+    expect(homeCheckSlotFromReading({
+      category: 'water_heater',
+      identifiedItem: { type: 'Water heater', serialNumber: 'M12345' },
+      labelReadability: { status: 'readable' },
+    }, [])).toEqual({ slot: 'water_heater_label' })
+  })
+  it('files a whole furnace with no label in slot 4', () => {
+    expect(homeCheckSlotFromReading({
+      category: 'hvac',
+      identifiedItem: { type: 'Gas furnace' },
+      labelReadability: { status: 'not_visible' },
+    }, [])).toEqual({ slot: 'heating_whole' })
+  })
+  it('asks when the photo cannot be read or is not a water heater or heating system', () => {
+    expect(homeCheckSlotFromReading(null, [])).toEqual({ slot: null, reason: 'unclear' })
+    expect(homeCheckSlotFromReading({ category: 'unknown' }, [])).toEqual({ slot: null, reason: 'unclear' })
+    expect(homeCheckSlotFromReading({ category: 'hvac', identifiedItem: { type: 'AC condenser' } }, []))
+      .toEqual({ slot: null, reason: 'not_equipment' })
+  })
+  it('names slots and asks in plain words, without codes', () => {
+    expect(homeCheckSlotName('water_heater_label')).toBe('the water heater label')
+    const question = homeCheckPhotoKindQuestion('Birch')
+    expect(question).toMatch(/1\) Water heater label/)
+    expect(question).not.toMatch(/HC-|caption/i)
   })
 })

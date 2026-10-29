@@ -315,7 +315,16 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     ? await resolveOutboundLandlordSmsLine(db, input.landlordId)
     : null
   if (input.sendSms && !line?.phone) throw new Error('Configure an active Ulo SMS number first.')
-  const recent = requireData(
+  // Dashboard uploads already reuse their own open check (ensureDashboardHomeCheck).
+  const sameRequest = !publishLink ? null : await findOpenDuplicateHomeCheck(db, {
+    landlordId: input.landlordId,
+    propertyId: property.id,
+    unitId: unit?.id ?? null,
+    role: input.role,
+    recipientPhone: recipientPhone ? normalizeSmsPhone(recipientPhone) : null,
+    vendorId: input.role === 'contractor' ? input.vendorId ?? null : null,
+  })
+  const recent = sameRequest ? [] : requireData(
     await db.from('home_checks').select('id').eq('landlord_id', input.landlordId).gte(
       'created_at',
       new Date(Date.now() - 3600000).toISOString(),
@@ -324,14 +333,26 @@ export async function createHomeCheck(db: SupabaseClient, input: {
   if (recent.length >= 20) {
     throw new Error('Too many Home Checks started this hour. Please try later.')
   }
-  const id = crypto.randomUUID()
+  const id = sameRequest?.id ?? crypto.randomUUID()
   const token = generateInspectionCaptureToken()
   const label = [
     property.name,
     property.street_address,
     [property.city, property.state].filter(Boolean).join(', '),
   ].filter(Boolean).join(' · ')
-  await checked(db.rpc('create_home_check', {
+  if (sameRequest) {
+    // Asking again for the same place and person reuses the open check: a fresh
+    // link replaces the old one, so photos never split across two checks.
+    const latestEnd = Date.parse(sameRequest.created_at) + 7 * 86400000
+    await checked(
+      db.from('home_checks').update({
+        token_hash: await hashInspectionCaptureToken(token),
+        expires_at: new Date(Math.min(expires, latestEnd)).toISOString(),
+        ulo_number: line?.phone || sameRequest.ulo_number,
+      }).eq('id', sameRequest.id),
+    )
+    await homeCheckEvent(db, sameRequest, 'reissued', { authorized_by: input.authorizedBy })
+  } else await checked(db.rpc('create_home_check', {
     p_input: {
       id,
       reference: homeCheckReference(id),
@@ -351,7 +372,7 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     },
   }))
   const check = await loadHomeCheck(db, id)
-  await logPipelineStageEvent(db, {
+  if (!sameRequest) await logPipelineStageEvent(db, {
     runId: check.workflow_run_id,
     stage: 'trigger',
     message: 'Authorized an observation-only Home Check.',
@@ -363,7 +384,9 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     },
   })
   const link = origin ? `${origin.origin}/c/${id}#${token}` : null
-  await homeCheckEvent(db, check, 'authorized', { authorized_by: input.authorizedBy })
+  if (!sameRequest) {
+    await homeCheckEvent(db, check, 'authorized', { authorized_by: input.authorizedBy })
+  }
   if (!publishLink) {
     return { check: await loadHomeCheck(db, id), link: null, deliveryError: null }
   }
@@ -394,6 +417,32 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     await homeCheckEvent(db, check, 'link_provided')
   }
   return { check: await loadHomeCheck(db, id), link, deliveryError }
+}
+
+/** The open check for the same property, unit, role and person, if one exists. */
+async function findOpenDuplicateHomeCheck(db: SupabaseClient, input: {
+  landlordId: string
+  propertyId: string
+  unitId: string | null
+  role: HomeCheckRole
+  recipientPhone: string | null
+  vendorId: string | null
+}): Promise<HomeCheckRow | null> {
+  const { data, error } = await db.from('home_checks').select('*').eq(
+    'landlord_id',
+    input.landlordId,
+  ).eq('property_id', input.propertyId).eq('role', input.role).eq('status', 'collecting').is(
+    'confirmed_at',
+    null,
+  ).gt('expires_at', new Date().toISOString())
+  if (error) throw new Error(error.message)
+  const matches = ((data ?? []) as HomeCheckRow[]).filter((row) =>
+    (row.unit_id ?? null) === input.unitId &&
+    (row.recipient_phone ?? null) === input.recipientPhone &&
+    (input.role !== 'contractor' || row.vendor_id === input.vendorId)
+  )
+  matches.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+  return matches[0] ?? null
 }
 
 export async function rebuildHomeCheckAssets(
