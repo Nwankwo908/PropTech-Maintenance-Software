@@ -20,7 +20,6 @@ import { PropertyAccessRail } from '@/components/PropertyAccessRail'
 import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
-import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, workflowMatchesPropertyScope, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
@@ -62,6 +61,7 @@ import {
   mapUnitsForPropertyHealth,
   filterTicketsForScope,
   normalizeBuildingKey,
+  propertyTableUnitsLabel,
   resolveBuildingHealthRow,
   resolvePropertyHealthKpiValue,
   type PropertyHealthAsset,
@@ -1502,9 +1502,10 @@ export function AdminPropertyDetailDashboard() {
           value={
             loading
               ? '—'
-              : isSingleFamilyPropertyType(canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType)
-                ? 'n/a'
-                : String(propertyUnitRows.length || buildingUnits.length)
+              : propertyTableUnitsLabel({
+                  unitCount: propertyUnitRows.length || buildingUnits.length,
+                  propertyType: canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType,
+                })
           }
           icon={<BuildingStatIcon />}
         />
