@@ -280,6 +280,7 @@ function AdminTopBar() {
             </select>
           </label>
         ) : null}
+        <AdminHeaderActions tryDemoSpotlightHost />
         </div>
       </div>
     </header>
