@@ -517,3 +517,104 @@ export function nearestHomeCheckVendors<
     }
   }).sort((a, b) => a.distanceKm - b.distanceKm || a.id.localeCompare(b.id))
 }
+
+type PhotoCheckChoice = {
+  id: string
+  property_id: string
+  unit_id: string | null
+  created_at: string
+}
+
+function newestFirst<T extends { created_at: string }>(checks: readonly T[]): T[] {
+  return [...checks].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+}
+
+/**
+ * Which open check an uncaptioned photo belongs to. When every open check is for
+ * the same property and unit, either choice is correct, so the newest wins.
+ * Different places return null and the sender is asked.
+ */
+export function pickHomeCheckForPhoto<T extends PhotoCheckChoice>(checks: readonly T[]): T | null {
+  if (!checks.length) return null
+  const places = new Set(checks.map((check) => `${check.property_id}::${check.unit_id ?? ''}`))
+  if (places.size !== 1) return null
+  return newestFirst(checks)[0]
+}
+
+/** Numbered choices, newest first, in the order the question lists them. */
+export function homeCheckPhotoChoices<T extends PhotoCheckChoice>(checks: readonly T[]): T[] {
+  return newestFirst(checks)
+}
+
+export function homeCheckPhotoChoiceQuestion(
+  choices: ReadonlyArray<{ location: string; created_at: string }>,
+): string {
+  const started = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })
+  const lines = choices.map((choice, index) =>
+    `${index + 1}) ${choice.location} (started ${started(choice.created_at)})`
+  )
+  return `Which home check is this photo for?\n${lines.join('\n')}\nReply ${
+    choices.map((_, index) => index + 1).join(' or ')
+  }. Ulo will keep the photo until you answer.`
+}
+
+/** A bare number that picks one of the listed checks. */
+export function parseHomeCheckPhotoChoice(body: string, count: number): number | null {
+  const match = body.trim().match(/^(\d{1,2})$/)
+  if (!match) return null
+  const index = Number(match[1]) - 1
+  return index >= 0 && index < count ? index : null
+}
+
+type SlotReading = {
+  category?: string
+  identifiedItem?: { type?: string; modelNumber?: string; serialNumber?: string }
+  labelReadability?: { status?: string }
+}
+
+/**
+ * Slot for a photo sent without a number, from what the photo shows.
+ * A recognised label or whole-system photo takes its own slot (a retake replaces it).
+ * When the photo can't be placed, the sender is asked what it shows.
+ */
+export function homeCheckSlotFromReading(
+  reading: SlotReading | null,
+  filled: readonly string[],
+): { slot: HomeCheckSlot } | { slot: null; reason: 'unclear' | 'not_equipment' } {
+  if (!reading || !reading.category || reading.category === 'unknown') {
+    return { slot: null, reason: 'unclear' }
+  }
+  const system: HomeCheckSystem | null = reading.category === 'water_heater'
+    ? 'water_heater'
+    : isHeatingSystemResult(reading)
+    ? 'heating'
+    : null
+  // HVAC that is not clearly heating (e.g. a condenser) is not a slot either.
+  if (!system) return { slot: null, reason: 'not_equipment' }
+  const status = reading.labelReadability?.status
+  const showsLabel = status === 'readable' || status === 'uncertain' ||
+    Boolean(reading.identifiedItem?.modelNumber || reading.identifiedItem?.serialNumber)
+  const showsWhole = status === 'not_visible'
+  const label: HomeCheckSlot = system === 'water_heater' ? 'water_heater_label' : 'heating_label'
+  const whole: HomeCheckSlot = system === 'water_heater' ? 'water_heater_whole' : 'heating_whole'
+  if (showsLabel) return { slot: label }
+  if (showsWhole) return { slot: whole }
+  const have = new Set(homeCheckReceivedSlots(filled))
+  if (!have.has(label)) return { slot: label }
+  if (!have.has(whole)) return { slot: whole }
+  return { slot: null, reason: 'unclear' }
+}
+
+/** Plain-language name for a slot, e.g. "the water heater label". */
+export function homeCheckSlotName(slot: HomeCheckSlot): string {
+  return `the ${HOME_CHECK_PHOTOS.find((photo) => photo.slot === slot)!.title.toLowerCase()}`
+}
+
+/** Asks what a photo shows when Ulo can't tell. Numbers match the four photos. */
+export function homeCheckPhotoKindQuestion(location: string, notEquipment = false): string {
+  const lead = notEquipment
+    ? `That photo doesn't look like a water heater or furnace/boiler. If it is, what does it show?`
+    : `What does this photo show?`
+  return `${lead} (${location})\n1) Water heater label\n2) Whole water heater\n3) Furnace or boiler label\n4) Whole furnace or boiler\nReply 1–4. Ulo will keep the photo until you answer.`
+}

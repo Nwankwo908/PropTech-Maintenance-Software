@@ -10,12 +10,57 @@ import {
   parseHomeCheckCommand,
   parseHomeCheckGuideStart,
   parseHomeCheckPhotoReply,
+  HOME_CHECK_PHOTOS,
+  homeCheckPhotoChoiceQuestion,
+  homeCheckPhotoChoices,
+  homeCheckPhotoKindQuestion,
+  homeCheckSlotFromReading,
+  homeCheckSlotName,
+  nextHomeCheckSlot,
+  parseHomeCheckPhotoChoice,
+  pickHomeCheckForPhoto,
+  type HomeCheckSlot,
 } from '../../../../shared/homeCheck.ts'
 import { normalizeUsStateCode, vendorServiceStateCodes } from '../vendorServiceArea.ts'
 function homeCheckGuidePending(intake: unknown): boolean {
   if (!intake || typeof intake !== 'object') return false
   const guide = (intake as { home_check_guide?: { step?: unknown } }).home_check_guide
   return Boolean(guide && typeof guide === 'object' && typeof guide.step === 'string')
+}
+
+/** An unnumbered photo Ulo is holding until the sender picks the check or says what it shows. */
+export type PendingHomeCheckPhoto =
+  | { step: 'check'; path: string; at: string; checkIds: string[] }
+  | { step: 'kind'; path: string; at: string; checkId: string }
+
+const PENDING_PHOTO_KEY = 'home_check_photo_pending'
+const PENDING_PHOTO_TTL_MS = 24 * 3600000
+
+function readPendingPhoto(intake: unknown): PendingHomeCheckPhoto | null {
+  if (!intake || typeof intake !== 'object') return null
+  const pending = (intake as Record<string, unknown>)[PENDING_PHOTO_KEY] as
+    | PendingHomeCheckPhoto
+    | undefined
+  if (!pending || typeof pending.path !== 'string' || typeof pending.at !== 'string') return null
+  if (Date.now() - Date.parse(pending.at) > PENDING_PHOTO_TTL_MS) return null
+  return pending
+}
+
+async function writePendingPhoto(
+  db: SupabaseClient,
+  conversationId: string,
+  pending: PendingHomeCheckPhoto | null,
+) {
+  const { data } = await db.from('sms_conversations').select('intake_state').eq(
+    'id',
+    conversationId,
+  ).maybeSingle()
+  const intake = data?.intake_state && typeof data.intake_state === 'object'
+    ? { ...(data.intake_state as Record<string, unknown>) }
+    : {}
+  if (pending) intake[PENDING_PHOTO_KEY] = pending
+  else delete intake[PENDING_PHOTO_KEY]
+  await checked(db.from('sms_conversations').update({ intake_state: intake }).eq('id', conversationId))
 }
 
 /** Reads thread state only for a short reply that could continue a guide. */
@@ -36,6 +81,7 @@ import {
   sendHomeCheckSms,
   uploadHomeCheckPhoto,
 } from './service.ts'
+import { readHomeCheckPhoto } from './photoSlot.ts'
 
 export type HomeCheckSmsAction =
   | {
@@ -47,9 +93,12 @@ export type HomeCheckSmsAction =
   | {
     kind: 'photo'
     check: HomeCheckRow
-    slot: NonNullable<ReturnType<typeof parseHomeCheckPhotoReply>>['slot']
+    /** Null: read the photo to find its slot, or ask what it shows. */
+    slot: HomeCheckSlot | null
     path: string
+    conversationId?: string
   }
+  | { kind: 'hold_photo'; conversationId: string; pending: PendingHomeCheckPhoto; reply: string }
   | { kind: 'confirm'; check: HomeCheckRow }
   | { kind: 'answers'; check: HomeCheckRow; answers: HomeCheckAnswers }
   | { kind: 'clarify'; reply: string }
@@ -206,6 +255,14 @@ export async function prepareHomeCheckSms(
       sender: 'landlord',
     }
   }
+  if (!ctx.inbound.mediaUrls.length && /^\d{1,2}$/.test(body)) {
+    const { data } = await ctx.supabase.from('sms_conversations').select('intake_state').eq(
+      'id',
+      ctx.conversationId,
+    ).maybeSingle()
+    const pending = readPendingPhoto(data?.intake_state)
+    if (pending) return await answerPendingPhoto(ctx, pending, body)
+  }
   if (
     landlord && mightContinueHomeCheckGuide(body) &&
     await isLandlordAccountOrOpsPhone(ctx.supabase, {
@@ -251,38 +308,70 @@ export async function prepareHomeCheckSms(
       }
     }
   }
+  const hasMedia = ctx.inbound.mediaUrls.length > 0
   if (
-    !ctx.inbound.mediaUrls.length && !/^OK(?:\s+HC-[A-F0-9]{12})?$/i.test(body) &&
+    !hasMedia && !/^OK(?:\s+HC-[A-F0-9]{12})?$/i.test(body) &&
     !/^HC-[A-F0-9]{12}/i.test(body)
   ) return null
-  let query = ctx.supabase.from('home_checks').select('*').eq('landlord_id', ctx.landlordId).eq(
-    'ulo_number',
-    normalizeSmsPhone(ctx.inbound.to),
-  )
-  query = landlord && /^OK/i.test(body)
-    ? query.eq('status', 'completed').not('summary_sent_at', 'is', null)
-    : query.eq('recipient_phone', normalizeSmsPhone(ctx.inbound.from)).in('status', [
-      'collecting',
-      'completed',
-    ]).gt('expires_at', new Date().toISOString())
-  const checks = requireData(await query) as HomeCheckRow[]
+  const checks = await openChecksForSender(ctx, landlord && /^OK/i.test(body) && !hasMedia)
   if (!checks.length) {
     return /^HC-/i.test(body)
       ? {
         kind: 'clarify',
         reply:
-          'That Home Check is not available for this phone number or has expired. Use your scoped link or ask the landlord for a new check.',
+          'That Home Check is not available for this phone number or has expired. Ask the landlord for a new check.',
       }
       : null
   }
   const ref = body.match(/HC-[A-F0-9]{12}/i)?.[0].toUpperCase()
+  if (hasMedia) {
+    if (ctx.inbound.mediaUrls.length !== 1 || /^https?:/i.test(ctx.inbound.mediaUrls[0])) {
+      return {
+        kind: 'clarify',
+        reply: 'Please send one photo per text. No photo has been saved yet.',
+      }
+    }
+    const path = ctx.inbound.mediaUrls[0]
+    const pool = ref ? checks.filter((check) => check.reference === ref) : checks
+    if (!pool.length) {
+      return {
+        kind: 'clarify',
+        reply: 'That Home Check is not available for this phone number or has expired. Ask the landlord for a new check.',
+      }
+    }
+    const numbered = parseHomeCheckPhotoReply(body)
+    const check = pool.length === 1 ? pool[0] : pickHomeCheckForPhoto(pool)
+    if (check) {
+      return {
+        kind: 'photo',
+        check,
+        slot: numbered?.slot ?? null,
+        path,
+        conversationId: ctx.conversationId,
+      }
+    }
+    const choices = homeCheckPhotoChoices(pool)
+    return {
+      kind: 'hold_photo',
+      conversationId: ctx.conversationId,
+      pending: {
+        step: 'check',
+        path,
+        at: new Date().toISOString(),
+        checkIds: choices.map((choice) => choice.id),
+      },
+      reply: homeCheckPhotoChoiceQuestion(
+        choices.map((choice) => ({ location: checkLocation(choice), created_at: choice.created_at })),
+      ),
+    }
+  }
   const candidates = ref ? checks.filter((check) => check.reference === ref) : checks
   if (candidates.length !== 1) {
     return {
       kind: 'clarify',
-      reply: `Please name the exact Home Check; no photo has been assigned. ${
+      reply: `Please name the exact Home Check. ${
         checks.map((check) => `${check.reference}: ${checkLocation(check)}`).join('; ')
-      }. For photos, include the reference and photo number (1–4).`,
+      }.`,
     }
   }
   const check = candidates[0]
@@ -302,16 +391,65 @@ export async function prepareHomeCheckSms(
       },
     }
   }
-  const photo = parseHomeCheckPhotoReply(body)
-  if (!photo || ctx.inbound.mediaUrls.length !== 1 || /^https?:/i.test(ctx.inbound.mediaUrls[0])) {
-    return {
-      kind: 'clarify',
-      reply: `For ${
-        checkLocation(check)
-      }, text one photo with ${check.reference} and its number: 1 water heater label, 2 whole water heater, 3 heating label, 4 whole furnace/boiler. Or use the capture link. No photo has been assigned yet.`,
-    }
+  return {
+    kind: 'clarify',
+    reply: `For ${checkLocation(check)}, text the photo itself and Ulo will file it. No photo has been saved yet.`,
   }
-  return { kind: 'photo', check, slot: photo.slot, path: ctx.inbound.mediaUrls[0] }
+}
+
+/** Open checks assigned to this sender on this Ulo line. Confirming looks at completed results. */
+async function openChecksForSender(
+  ctx: InboundSmsHandlerContext,
+  confirming: boolean,
+): Promise<HomeCheckRow[]> {
+  let query = ctx.supabase.from('home_checks').select('*').eq('landlord_id', ctx.landlordId).eq(
+    'ulo_number',
+    normalizeSmsPhone(ctx.inbound.to),
+  )
+  query = confirming
+    ? query.eq('status', 'completed').not('summary_sent_at', 'is', null)
+    : query.eq('recipient_phone', normalizeSmsPhone(ctx.inbound.from)).in('status', [
+      'collecting',
+      'completed',
+    ]).gt('expires_at', new Date().toISOString())
+  return requireData(await query) as HomeCheckRow[]
+}
+
+async function answerPendingPhoto(
+  ctx: InboundSmsHandlerContext,
+  pending: PendingHomeCheckPhoto,
+  body: string,
+): Promise<HomeCheckSmsAction> {
+  const open = await openChecksForSender(ctx, false)
+  if (pending.step === 'check') {
+    const index = parseHomeCheckPhotoChoice(body, pending.checkIds.length)
+    const check = index == null ? null : open.find((row) => row.id === pending.checkIds[index])
+    if (index == null) {
+      return {
+        kind: 'clarify',
+        reply: `Please reply with a number from 1 to ${pending.checkIds.length}.`,
+      }
+    }
+    if (!check) {
+      return { kind: 'clarify', reply: 'That home check has ended. Ask the landlord for a new one.' }
+    }
+    return { kind: 'photo', check, slot: null, path: pending.path, conversationId: ctx.conversationId }
+  }
+  const n = Number(body)
+  if (!(n >= 1 && n <= HOME_CHECK_PHOTOS.length)) {
+    return { kind: 'clarify', reply: 'Please reply with a number from 1 to 4.' }
+  }
+  const check = open.find((row) => row.id === pending.checkId)
+  if (!check) {
+    return { kind: 'clarify', reply: 'That home check has ended. Ask the landlord for a new one.' }
+  }
+  return {
+    kind: 'photo',
+    check,
+    slot: HOME_CHECK_PHOTOS[n - 1].slot,
+    path: pending.path,
+    conversationId: ctx.conversationId,
+  }
 }
 
 export async function actHomeCheckSms(
@@ -320,6 +458,10 @@ export async function actHomeCheckSms(
   action: HomeCheckSmsAction,
 ) {
   if (action.kind === 'clarify') return { reply: action.reply }
+  if (action.kind === 'hold_photo') {
+    await writePendingPhoto(db, action.conversationId, action.pending)
+    return { reply: action.reply }
+  }
   if (action.kind === 'guide') {
     const { actHomeCheckGuide } = await import('./guideAct.ts')
     const guided = await actHomeCheckGuide(db, landlordId, action)
@@ -356,34 +498,56 @@ export async function actHomeCheckSms(
   const blob = requireData(await db.storage.from('maintenance-uploads').download(action.path))
   if (
     blob.size > 10 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)
-  ) return { reply: 'Please use a JPEG, PNG or WebP photo under 10 MB, or the capture link.' }
+  ) return { reply: 'Please send a JPEG, PNG or WebP photo under 10 MB.' }
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  const location = checkLocation(action.check)
+  const { data: photoRows } = await db.from('home_check_photos').select('slot').eq(
+    'check_id',
+    action.check.id,
+  )
+  const filled = (photoRows ?? []).map((row: { slot: string }) => String(row.slot))
+  let slot = action.slot
+  if (!slot) {
+    const placed = homeCheckSlotFromReading(await readHomeCheckPhoto(bytes, blob.type), filled)
+    if (!placed.slot) {
+      if (action.conversationId) {
+        await writePendingPhoto(db, action.conversationId, {
+          step: 'kind',
+          path: action.path,
+          at: new Date().toISOString(),
+          checkId: action.check.id,
+        })
+      }
+      return { reply: homeCheckPhotoKindQuestion(location, placed.reason === 'not_equipment') }
+    }
+    slot = placed.slot
+  }
   const progress = await uploadHomeCheckPhoto(db, action.check, {
-    slot: action.slot,
-    bytes: new Uint8Array(await blob.arrayBuffer()),
+    slot,
+    bytes,
     contentType: blob.type,
     source: 'photo_text',
   })
+  if (action.conversationId) await writePendingPhoto(db, action.conversationId, null)
+  const saved = `Saved as ${homeCheckSlotName(slot)} for ${location}.`
   const retake = progress.feedback.filter((feedback) =>
     feedback.retakeMessage &&
-    feedback.slot.startsWith(action.slot.startsWith('water_heater') ? 'water_heater' : 'heating')
+    feedback.slot.startsWith(slot!.startsWith('water_heater') ? 'water_heater' : 'heating')
   )
   if (retake.length) {
     return {
       runId: action.check.workflow_run_id,
-      reply: `Saved the photo for ${checkLocation(action.check)}. ${
-        retake[0].retakeMessage
-      } Retake photo ${
-        action.slot.startsWith('water_heater')
-          ? '1 (water heater label)'
-          : '3 (furnace or boiler label)'
-      } with ${action.check.reference}. Uncertain numbers remain unknown.`,
+      reply: `${saved} ${retake[0].retakeMessage} Please send a closer photo of ${
+        homeCheckSlotName(slot.startsWith('water_heater') ? 'water_heater_label' : 'heating_label')
+      }.`,
     }
   }
+  const next = nextHomeCheckSlot([...filled, slot])
   return {
     runId: action.check.workflow_run_id,
-    reply: `Saved the photo to ${
-      checkLocation(action.check)
-    } (${action.check.reference}). Report leaks, odd noises or smells with: ${action.check.reference} ANSWERS YES or NO | last service | last filter change | details. Leave unknown dates blank.`,
+    reply: next
+      ? `${saved} Next, send a photo of ${homeCheckSlotName(next)}.`
+      : `${saved} All four photos are in. If you noticed leaks, odd noises or smells, reply: ${action.check.reference} ANSWERS YES | last service | last filter change | details (or ${action.check.reference} ANSWERS NO).`,
   }
 }
 
