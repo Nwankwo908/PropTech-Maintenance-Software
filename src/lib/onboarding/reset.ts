@@ -307,10 +307,9 @@ export async function purgeOnboardingImportedOperations(
   const useEmptyLandlordPurgeRpc = scope.landlordId === EMPTY_LANDLORD_ID
 
   // Full Alpha + Limited Alpha: portfolio purge via staff RPC when not preserving.
-  // purge_landlord_portfolio allowlists 5 ids (Demo …0001, New Landlord …0002,
-  // Full Alpha 068daf53-…, Limited Alpha 1 …0003, Limited Alpha 2 …0004), but
-  // only Alpha 1/2 are ONBOARDING_LANDLORD_IDS / Factory Reset UI targets — the
-  // other three are ops-script-only and retired from onboarding scope.
+  // purge_landlord_portfolio allowlists Demo …0001, New Landlord …0002,
+  // Full Alpha 068daf53-…, Limited Alpha 1 …0003, Limited Alpha 2 …0004,
+  // and Limited Alpha 3 …0005. Only Alpha 1/2/3 are Factory Reset UI targets.
   // Never call purge_empty_landlord_operations for those ids — that RPC is scoped to New Landlord only.
   if (!useEmptyLandlordPurgeRpc && !preservePortfolioSms) {
     const { error: alphaPurgeError } = await supabase.rpc('purge_landlord_portfolio', {

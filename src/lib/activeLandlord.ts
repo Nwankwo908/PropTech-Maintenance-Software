@@ -5,12 +5,13 @@ import { isStaffAdminEmail } from '@shared/admin/staffAllowlist'
  * Every admin dashboard query is scoped to one landlord account:
  *  - limitedalpha1@ulohome.io  → Limited Alpha 1
  *  - limitedalpha2@ulohome.io  → Limited Alpha 2 (empty new-user onboarding)
+ *  - limitedalpha3@ulohome.io  → Limited Alpha 3 (empty new-user onboarding)
  *  - ceorentalsnj@gmail.com    → Limited Alpha 1
  *  - shaquillegurley@yahoo.com, adeogunfowora@gmail.com,
  *    o.k.okafor@gmail.com, drake@gtwgroupnwa.com,
  *    awrighthall@gmail.com → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
- *  - staff logins              → Limited Alpha 1, with a switcher for Demo, Limited Alpha 2, and every new signup
+ *  - staff logins              → Limited Alpha 1, with a switcher for Demo, Limited Alpha 2, Limited Alpha 3, and every new signup
  *
  * Full Alpha and New Landlord are retired. Stale overrides and those ids
  * resolve to Limited Alpha 1.
@@ -24,15 +25,18 @@ import { isStaffAdminEmail } from '@shared/admin/staffAllowlist'
 
 import {
   isSelfServiceLimitedAlphaLandlord,
+  isLimitedAlphaLandlord,
   EMPTY_LANDLORD_ID,
   FULL_ALPHA_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
 } from '@shared/landlordCapabilities'
 import {
   DEMO_LANDLORD_ID,
   LIMITED_ALPHA_1_LOGIN_EMAIL,
   LIMITED_ALPHA_2_LOGIN_EMAIL,
+  LIMITED_ALPHA_3_LOGIN_EMAIL,
   canonicalizeLandlordId,
   seededLandlordIdForEmail,
 } from '@shared/admin/landlordAccess'
@@ -42,11 +46,12 @@ export {
   FULL_ALPHA_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
 }
 
 export const DEFAULT_LANDLORD_ID = LIMITED_ALPHA_1_LANDLORD_ID
 
-export { DEMO_LANDLORD_ID, LIMITED_ALPHA_1_LOGIN_EMAIL, LIMITED_ALPHA_2_LOGIN_EMAIL }
+export { DEMO_LANDLORD_ID, LIMITED_ALPHA_1_LOGIN_EMAIL, LIMITED_ALPHA_2_LOGIN_EMAIL, LIMITED_ALPHA_3_LOGIN_EMAIL }
 
 /** Showcase move-out WO-D777 — stable id for lease-renewal kickoff demos. */
 export const DEMO_MOVE_OUT_WO_D777_RUN_ID = 'd7770000-0000-4000-8000-000000000001'
@@ -62,6 +67,7 @@ export type LandlordAccountOption = {
 export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
   { kind: 'limited_alpha', id: LIMITED_ALPHA_1_LANDLORD_ID, label: 'Limited Alpha 1' },
   { kind: 'limited_alpha', id: LIMITED_ALPHA_2_LANDLORD_ID, label: 'Limited Alpha 2' },
+  { kind: 'limited_alpha', id: LIMITED_ALPHA_3_LANDLORD_ID, label: 'Limited Alpha 3' },
   { kind: 'demo', id: DEMO_LANDLORD_ID, label: 'Demo Property Management' },
   { kind: 'default', id: 'd15a0000-0000-4000-8000-000000000001', label: 'Home Check Test · Disposable' },
 ]
@@ -166,9 +172,7 @@ export function getActiveLandlordKind(): LandlordAccountKind {
   const id = getActiveLandlordId()
   if (id === DEMO_LANDLORD_ID) return 'demo'
   if (id === EMPTY_LANDLORD_ID) return 'empty'
-  if (isSelfServiceLimitedAlphaLandlord(id) || id === LIMITED_ALPHA_1_LANDLORD_ID || id === LIMITED_ALPHA_2_LANDLORD_ID) {
-    return 'limited_alpha'
-  }
+  if (isLimitedAlphaLandlord(id)) return 'limited_alpha'
   return 'default'
 }
 

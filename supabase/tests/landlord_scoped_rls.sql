@@ -15,6 +15,10 @@ begin
      is distinct from 'de300000-0000-4000-8000-000000000004'::uuid then
     raise exception 'LA2 seeded map mismatch';
   end if;
+  if public.seeded_landlord_id_for_email('limitedalpha3@ulohome.io')
+     is distinct from 'de300000-0000-4000-8000-000000000005'::uuid then
+    raise exception 'LA3 seeded map mismatch';
+  end if;
   if public.seeded_landlord_id_for_email('demo@ulohome.io')
      is distinct from 'de300000-0000-4000-8000-000000000001'::uuid then
     raise exception 'Demo seeded map mismatch';

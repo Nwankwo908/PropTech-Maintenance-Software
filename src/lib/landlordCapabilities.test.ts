@@ -4,9 +4,11 @@ import {
   FULL_ALPHA_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
   LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
   isLimitedAlpha1Landlord,
   isLimitedAlpha2Landlord,
+  isLimitedAlpha3Landlord,
   isLimitedAlphaLandlord,
   isOnboardingLandlordId,
   isPaymentGraphEventType,
@@ -31,8 +33,11 @@ describe('Limited Alpha 1 capabilities', () => {
     expect(isLimitedAlpha1Landlord(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
     expect(isLimitedAlpha2Landlord(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
     expect(isLimitedAlpha2Landlord(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(isLimitedAlpha3Landlord(LIMITED_ALPHA_3_LANDLORD_ID)).toBe(true)
+    expect(isLimitedAlpha3Landlord(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
     expect(isLimitedAlphaLandlord(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(isLimitedAlphaLandlord(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
+    expect(isLimitedAlphaLandlord(LIMITED_ALPHA_3_LANDLORD_ID)).toBe(true)
   })
 
   it('turns off payments but keeps Find External Vendor', () => {
@@ -72,6 +77,7 @@ describe('Limited Alpha 1 capabilities', () => {
   it('retires Full Alpha, New Landlord, and Demo from onboarding scope', () => {
     expect(isOnboardingLandlordId(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(isOnboardingLandlordId(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
+    expect(isOnboardingLandlordId(LIMITED_ALPHA_3_LANDLORD_ID)).toBe(true)
     expect(isOnboardingLandlordId(FULL_ALPHA_LANDLORD_ID)).toBe(false)
     expect(isOnboardingLandlordId(EMPTY_LANDLORD_ID)).toBe(false)
     expect(isOnboardingLandlordId('de300000-0000-4000-8000-000000000001')).toBe(false)
@@ -124,6 +130,7 @@ describe('temporary shared Alpha line access', () => {
     expect(landlordMayUseSharedAlphaLine(testLandlord)).toBe(true)
     expect(landlordMayUseSharedAlphaLine(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(landlordMayUseSharedAlphaLine(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
+    expect(landlordMayUseSharedAlphaLine(LIMITED_ALPHA_3_LANDLORD_ID)).toBe(true)
     expect(landlordMayUseSharedAlphaLine('de300000-0000-4000-8000-000000000001')).toBe(true)
     expect(landlordMayUseSharedAlphaLine(FULL_ALPHA_LANDLORD_ID)).toBe(false)
     expect(isLimitedAlphaLandlord(testLandlord)).toBe(false)

@@ -13,12 +13,14 @@
 export const DEMO_LANDLORD_ID = 'de300000-0000-4000-8000-000000000001'
 export const LIMITED_ALPHA_1_LANDLORD_ID = 'de300000-0000-4000-8000-000000000003'
 export const LIMITED_ALPHA_2_LANDLORD_ID = 'de300000-0000-4000-8000-000000000004'
+export const LIMITED_ALPHA_3_LANDLORD_ID = 'de300000-0000-4000-8000-000000000005'
 export const FULL_ALPHA_LANDLORD_ID = '068daf53-07e4-4493-bd7f-6106e3c8c62f'
 export const EMPTY_LANDLORD_ID = 'de300000-0000-4000-8000-000000000002'
 
 export const LIMITED_ALPHA_LANDLORD_IDS = [
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
 ] as const
 
 /**
@@ -59,7 +61,7 @@ export function isLimitedAlphaLandlord(landlordId: string | null | undefined): b
   return isSelfServiceLimitedAlphaLandlord(id) || (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
 }
 
-/** Disposable lease-import accounts. Not Limited Alpha 1 or 2. */
+/** Disposable lease-import accounts. Not Limited Alpha 1, 2, or 3. */
 export function isLeaseImportTestLandlord(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
   return (LEASE_IMPORT_TEST_LANDLORD_IDS as readonly string[]).includes(id)
@@ -93,6 +95,11 @@ export function isLimitedAlpha1Landlord(landlordId: string | null | undefined): 
 /** Limited Alpha 2 only. */
 export function isLimitedAlpha2Landlord(landlordId: string | null | undefined): boolean {
   return (landlordId ?? '').trim() === LIMITED_ALPHA_2_LANDLORD_ID
+}
+
+/** Limited Alpha 3 only. */
+export function isLimitedAlpha3Landlord(landlordId: string | null | undefined): boolean {
+  return (landlordId ?? '').trim() === LIMITED_ALPHA_3_LANDLORD_ID
 }
 
 /**
@@ -131,7 +138,7 @@ export function landlordMayUseSharedAlphaLine(
   return landlordUsesLimitedAlphaSurface(landlordId) || isTemporarySharedAlphaLineLandlord(landlordId)
 }
 
-/** Production Twilio DID used as Limited Alpha 1 and 2's shared landlord_main line. */
+/** Production Twilio DID used as the shared Limited Alpha landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
 /** Retired platform DID — never use as SMS intake or a test-SMS destination. */

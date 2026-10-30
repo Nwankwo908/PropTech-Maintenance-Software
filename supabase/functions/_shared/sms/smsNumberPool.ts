@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID, LIMITED_ALPHA_3_LANDLORD_ID } from "../../../../shared/landlordCapabilities.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -356,7 +356,7 @@ export async function provisionLandlordMainNumber(
 
   const existing = await findActiveLandlordMain(supabase, landlordId)
 
-  if (landlordId === LIMITED_ALPHA_2_LANDLORD_ID) {
+  if (landlordId === LIMITED_ALPHA_2_LANDLORD_ID || landlordId === LIMITED_ALPHA_3_LANDLORD_ID) {
     const twilioPhone =
       params.phoneNumber?.trim() ||
       Deno.env.get("TWILIO_FROM_NUMBER")?.trim() ||
@@ -385,7 +385,7 @@ export async function provisionLandlordMainNumber(
     }
   }
 
-  if (existing && landlordId !== LIMITED_ALPHA_2_LANDLORD_ID) {
+  if (existing && landlordId !== LIMITED_ALPHA_2_LANDLORD_ID && landlordId !== LIMITED_ALPHA_3_LANDLORD_ID) {
     return {
       smsNumberId: existing.id,
       phoneNumber: existing.phone_number,

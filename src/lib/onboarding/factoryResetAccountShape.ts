@@ -1,5 +1,5 @@
 /**
- * Factory-reset blank shape for Limited Alpha 1 / 2 Account Setup fields.
+ * Factory-reset blank shape for Limited Alpha 1, 2, and 3 Account Setup fields.
  *
  * Account Setup writes into landlords + landlord_onboarding (draft_state,
  * account_settings, emergency_contact, notification columns). Factory reset
@@ -9,6 +9,7 @@
 import {
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
 } from '@shared/landlordCapabilities'
 import {
   defaultOnboardingApprovalRules,
@@ -60,6 +61,9 @@ export function factoryResetLandlordSeed(
   }
   if (landlordId === LIMITED_ALPHA_2_LANDLORD_ID) {
     return { name: 'Limited Alpha 2', email: 'limitedalpha2@ulohome.io' }
+  }
+  if (landlordId === LIMITED_ALPHA_3_LANDLORD_ID) {
+    return { name: 'Limited Alpha 3', email: 'limitedalpha3@ulohome.io' }
   }
   return null
 }

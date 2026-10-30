@@ -5,6 +5,7 @@
 export const SEEDED_LOGIN_EMAIL_TO_LANDLORD_ID: Record<string, string> = {
   "limitedalpha1@ulohome.io": "de300000-0000-4000-8000-000000000003",
   "limitedalpha2@ulohome.io": "de300000-0000-4000-8000-000000000004",
+  "limitedalpha3@ulohome.io": "de300000-0000-4000-8000-000000000005",
   "ceorentalsnj@gmail.com": "de300000-0000-4000-8000-000000000003",
   "shaquillegurley@yahoo.com": "de300000-0000-4000-8000-000000000004",
   "adeogunfowora@gmail.com": "de300000-0000-4000-8000-000000000004",

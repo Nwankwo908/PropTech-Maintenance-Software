@@ -170,7 +170,7 @@ function AdminTopBar() {
   }, [showAccountSwitcher])
   const workspaceLabel = workspaceDisplayName.trim() || getActiveLandlordLabel()
   // Production testers and seeded tester logins are session-bound; hide the
-  // internal "Limited Alpha 1/2" account chip. Staff keep it for the switcher.
+  // internal account chip. Staff keep it for the switcher.
   const hideInternalAccountChip = getSessionLandlordId() !== null
 
   async function handleResetOnboarding() {

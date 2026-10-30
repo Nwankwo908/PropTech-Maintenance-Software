@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
   FULL_ALPHA_LANDLORD_ID,
   EMPTY_LANDLORD_ID,
 } from '@shared/landlordCapabilities'
@@ -15,7 +16,7 @@ import {
 } from './factoryResetAccountShape'
 
 describe('factoryResetAccountShape', () => {
-  it('defines seeded blank shapes for Limited Alpha 1 and 2 only', () => {
+  it('defines seeded blank shapes for Limited Alpha 1, 2, and 3', () => {
     expect(factoryResetLandlordSeed(LIMITED_ALPHA_1_LANDLORD_ID)).toEqual({
       name: 'Limited Alpha 1',
       email: 'limitedalpha1@ulohome.io',
@@ -24,13 +25,17 @@ describe('factoryResetAccountShape', () => {
       name: 'Limited Alpha 2',
       email: 'limitedalpha2@ulohome.io',
     })
+    expect(factoryResetLandlordSeed(LIMITED_ALPHA_3_LANDLORD_ID)).toEqual({
+      name: 'Limited Alpha 3',
+      email: 'limitedalpha3@ulohome.io',
+    })
     expect(factoryResetLandlordSeed(DEMO_LANDLORD_ID)).toBeNull()
     expect(factoryResetLandlordSeed(EMPTY_LANDLORD_ID)).toBeNull()
     expect(factoryResetLandlordSeed(FULL_ALPHA_LANDLORD_ID)).toBeNull()
   })
 
   it('passes when every Account Setup–writable field matches the blank shape', () => {
-    for (const landlordId of [LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_2_LANDLORD_ID]) {
+    for (const landlordId of [LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_2_LANDLORD_ID, LIMITED_ALPHA_3_LANDLORD_ID]) {
       const expected = expectedFactoryResetAccountShape(landlordId)
       expect(expected).not.toBeNull()
       if (!expected) continue

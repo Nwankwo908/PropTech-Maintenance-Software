@@ -7,6 +7,7 @@ import {
   DEMO_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
   isRetiredLandlordAccountId,
   isSelfServiceLimitedAlphaLandlord,
 } from '../landlordCapabilities.ts'
@@ -16,11 +17,13 @@ export { DEMO_LANDLORD_ID }
 
 export const LIMITED_ALPHA_1_LOGIN_EMAIL = 'limitedalpha1@ulohome.io'
 export const LIMITED_ALPHA_2_LOGIN_EMAIL = 'limitedalpha2@ulohome.io'
+export const LIMITED_ALPHA_3_LOGIN_EMAIL = 'limitedalpha3@ulohome.io'
 
 /** Landlords staff may switch into (Ask Ulo / dashboard switcher). */
 export const STAFF_SWITCHER_LANDLORD_IDS = [
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_3_LANDLORD_ID,
   DEMO_LANDLORD_ID,
   'd15a0000-0000-4000-8000-000000000001', // Designated disposable Home Check account; staff only.
 ] as const
@@ -35,6 +38,7 @@ export const EMAIL_TO_LANDLORD_ID: Readonly<Record<string, string>> = {
   'awrighthall@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,
+  [LIMITED_ALPHA_3_LOGIN_EMAIL]: LIMITED_ALPHA_3_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,
 }
 
