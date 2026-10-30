@@ -14,6 +14,10 @@ import {
   markCommunicationConversationRead,
 } from '@/lib/communicationInboxRead'
 import {
+  COMMUNICATION_CLOSED_STATUSES,
+  computeCommunicationInboxKpis,
+} from '@/lib/communicationInboxKpis'
+import {
   inboxParticipantKind,
   inboxPhoneDigits,
 } from '@/lib/communicationInboxKind'
@@ -74,29 +78,15 @@ type Conversation = {
 }
 
 type CommMetrics = {
-  openConversations: number
+  needsYourResponse: number
   unreadMessages: number
   failedDeliveries: number
   responseRate: number | null
-  openDelta: number | null
+  needsYourResponseDelta: number | null
   unreadDelta: number | null
   failedDelta: number | null
   responseRateDelta: number | null
   lastUpdated: Date
-}
-
-type ConvSnapshot = {
-  id: string
-  status: string
-  createdAtMs: number
-  updatedAtMs: number
-}
-
-type MessageSnapshot = {
-  conversationId: string
-  direction: string
-  providerStatus: string
-  createdAtMs: number
 }
 
 const KIND_BADGE: Record<ParticipantKind, { label: string; className: string }> = {
@@ -206,177 +196,53 @@ const NEEDS_ATTENTION_STATUSES = new Set([
   'new',
   'action_required',
 ])
-const CLOSED_STATUSES = new Set([
-  'completed',
-  'resolved',
-  'closed',
-  'scheduled',
-  'cancelled',
-])
-
-// Provider delivery statuses (Twilio / email) that mean "not delivered".
-function isFailedDelivery(providerStatus: string): boolean {
-  const s = providerStatus.toLowerCase()
-  if (!s) return false
-  return (
-    s.includes('fail') ||
-    s.includes('undeliver') ||
-    s.includes('bounce') ||
-    s.includes('reject') ||
-    s === 'error'
-  )
-}
+const CLOSED_STATUSES = COMMUNICATION_CLOSED_STATUSES
 
 function parseMs(value: string): number {
   const ms = Date.parse(value)
   return Number.isNaN(ms) ? 0 : ms
 }
 
-function wasOpenAt(conv: ConvSnapshot, atMs: number): boolean {
-  if (conv.createdAtMs > atMs) return false
-  if (!CLOSED_STATUSES.has(conv.status)) return true
-  return conv.updatedAtMs > atMs
-}
-
-function latestDirectionAt(messages: MessageSnapshot[] | undefined, atMs: number): string | null {
-  if (!messages?.length) return null
-  for (const message of messages) {
-    if (message.createdAtMs <= atMs) return message.direction
-  }
-  return null
-}
-
-function snapshotAt(
-  conversations: ConvSnapshot[],
-  messagesByConv: Map<string, MessageSnapshot[]>,
-  atMs: number,
-): { open: number; unread: number } {
-  let open = 0
-  let unread = 0
-  for (const conv of conversations) {
-    if (!wasOpenAt(conv, atMs)) continue
-    open += 1
-    if (latestDirectionAt(messagesByConv.get(conv.id), atMs) === 'inbound') unread += 1
-  }
-  return { open, unread }
-}
-
-function failedInWindow(messages: MessageSnapshot[], startMs: number, endMs: number): number {
-  let count = 0
-  for (const message of messages) {
-    if (message.createdAtMs < startMs || message.createdAtMs >= endMs) continue
-    if (isFailedDelivery(message.providerStatus)) count += 1
-  }
-  return count
-}
-
-function formatUpdatedAt(date: Date): string {
-  const startOfToday = new Date()
-  startOfToday.setHours(0, 0, 0, 0)
-  if (date >= startOfToday) {
-    return `Updated ${date.toLocaleTimeString(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-    })}`
-  }
-  const startOfYesterday = new Date(startOfToday)
-  startOfYesterday.setDate(startOfYesterday.getDate() - 1)
-  if (date >= startOfYesterday) return 'Updated yesterday'
-  return `Updated ${date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  })}`
-}
-
-function formatSignedPercent(delta: number): string {
-  const sign = delta > 0 ? '+' : delta < 0 ? '-' : ''
-  return `${sign}${Math.abs(delta)}%`
-}
-
-function TrendingUpIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
-      <path d="M3 17l6-6 4 4 8-8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M15 7h6v6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function TrendingDownIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
-      <path d="M3 7l6 6 4-4 8 8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M15 17h6v-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function KpiCard({
   label,
   value,
-  delta,
-  deltaSuffix = '',
-  deltaFormatter,
-  goodWhenUp = false,
-  caption,
   title,
 }: {
   label: string
   value: string
-  delta: number | null
-  deltaSuffix?: string
-  deltaFormatter?: (delta: number) => string
-  goodWhenUp?: boolean
-  caption: string
-  /** Native tooltip — e.g. distinguish Response rate from Vendor Response. */
   title?: string
 }) {
-  const positive = (delta ?? 0) > 0
-  const neutral = delta === 0
-  const good = neutral ? false : positive === goodWhenUp
   return (
     <div
-      className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+      className="sa-enter-scale flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e5e7eb] bg-white px-5 py-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
       title={title}
     >
-      <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+      <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
-      <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-        <p className="shrink-0 whitespace-nowrap text-[36px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[44px]">
-          {value}
-        </p>
-        {delta != null ? (
-          <span
-            className={[
-              'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] leading-5 tracking-[-0.1504px]',
-              neutral
-                ? 'bg-[#f3f4f6] text-[#6a7282]'
-                : good
-                  ? 'bg-[rgba(16,185,129,0.08)] text-[#008236] [&>svg]:text-[#10b981]'
-                  : 'bg-[rgba(255,83,83,0.08)] text-[#c10007] [&>svg]:text-[#fb2c36]',
-            ].join(' ')}
-          >
-            {neutral ? null : positive ? <TrendingUpIcon /> : <TrendingDownIcon />}
-            {deltaFormatter
-              ? deltaFormatter(delta ?? 0)
-              : positive
-                ? `+${delta}${deltaSuffix}`
-                : `${delta}${deltaSuffix}`}
-          </span>
-        ) : null}
-      </div>
-      <p className="min-w-0 truncate whitespace-nowrap text-[12px] leading-4 text-[#6a7282]">{caption}</p>
+      <p className="shrink-0 whitespace-nowrap text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums">
+        {value}
+      </p>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        className="ml-auto size-4 shrink-0 text-[#6a7282]"
+        aria-hidden
+      >
+        <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </div>
   )
 }
 
 function KpiCardSkeleton() {
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e5e7eb] bg-white px-5 py-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="h-4 w-28 animate-pulse rounded bg-[#f3f4f6]" />
-      <div className="h-10 w-20 animate-pulse rounded bg-[#f3f4f6]" />
-      <div className="h-3 w-32 animate-pulse rounded bg-[#f3f4f6]" />
+      <div className="h-7 w-10 animate-pulse rounded bg-[#f3f4f6]" />
+      <div className="ml-auto size-4 shrink-0 animate-pulse rounded bg-[#f3f4f6]" />
     </div>
   )
 }
@@ -781,14 +647,11 @@ export function AdminCommunicationDashboard() {
       void (async () => {
         if (!supabase) return
         const now = Date.now()
-        const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
-        const recentStart = now - fourWeeksMs
-        const previousStart = now - 2 * fourWeeksMs
 
         const [allConvResult, allMsgResult, responseRateKpi] = await Promise.all([
           supabase
             .from('sms_conversations')
-            .select('id, status, created_at, updated_at')
+            .select('id, status, conversation_type, created_at, updated_at')
             .eq('landlord_id', landlordId)
             .limit(2000)
             .then((r) => r),
@@ -809,83 +672,48 @@ export function AdminCommunicationDashboard() {
 
         if (cancelled) return
 
-        const conversations: ConvSnapshot[] = []
-        const convStatusById = new Map<string, string>()
+        const conversations = []
         if (!allConvResult.error) {
           for (const raw of (allConvResult.data ?? []) as Record<string, unknown>[]) {
             const id = asString(raw.id)
             if (!id) continue
-            const status = asString(raw.status) || 'open'
-            convStatusById.set(id, status)
             conversations.push({
               id,
-              status,
+              status: asString(raw.status) || 'open',
+              conversationType: asString(raw.conversation_type),
               createdAtMs: parseMs(asString(raw.created_at)),
               updatedAtMs: parseMs(asString(raw.updated_at) || asString(raw.created_at)),
             })
           }
         }
 
-        const messages: MessageSnapshot[] = []
-        const messagesByConv = new Map<string, MessageSnapshot[]>()
-        let failedDeliveries = 0
+        const messages = []
         if (!allMsgResult.error) {
           for (const raw of (allMsgResult.data ?? []) as Record<string, unknown>[]) {
-            const convId = asString(raw.conversation_id)
-            const direction = asString(raw.direction)
-            const providerStatus = asString(raw.provider_status)
-            const createdAtMs = parseMs(asString(raw.created_at))
-            const message: MessageSnapshot = {
-              conversationId: convId,
-              direction,
-              providerStatus,
-              createdAtMs,
-            }
-            messages.push(message)
-            if (isFailedDelivery(providerStatus)) failedDeliveries += 1
-            if (!convId) continue
-            const bucket = messagesByConv.get(convId) ?? []
-            bucket.push(message)
-            messagesByConv.set(convId, bucket)
-          }
-        }
-
-        let openConversations = 0
-        let unreadMessages = 0
-        for (const [id, status] of convStatusById) {
-          const closed = CLOSED_STATUSES.has(status)
-          if (!closed) openConversations += 1
-          const latest = messagesByConv.get(id)?.[0]
-          const lastActivityMs = latest?.createdAtMs ?? 0
-          const activityLooksUnread =
-            latest?.direction === 'inbound' && !closed
-          if (
-            isCommunicationConversationUnread({
-              landlordId,
-              conversationId: id,
-              lastActivityMs,
-              activityLooksUnread,
+            messages.push({
+              conversationId: asString(raw.conversation_id),
+              direction: asString(raw.direction),
+              providerStatus: asString(raw.provider_status),
+              createdAtMs: parseMs(asString(raw.created_at)),
             })
-          ) {
-            unreadMessages += 1
           }
         }
-
-        const currentSnapshot = snapshotAt(conversations, messagesByConv, now)
-        const previousSnapshot = snapshotAt(conversations, messagesByConv, recentStart)
-        const recentFailed = failedInWindow(messages, recentStart, now)
-        const previousFailed = failedInWindow(messages, previousStart, recentStart)
 
         setMetrics({
-          openConversations,
-          unreadMessages,
-          failedDeliveries,
-          // Same per-inbound formula for snapshot and delta (RPC, full history).
-          responseRate: responseRateKpi?.responseRate ?? null,
-          openDelta: currentSnapshot.open - previousSnapshot.open,
-          unreadDelta: currentSnapshot.unread - previousSnapshot.unread,
-          failedDelta: recentFailed - previousFailed,
-          responseRateDelta: responseRateKpi?.responseRateDelta ?? null,
+          ...computeCommunicationInboxKpis({
+            conversations,
+            messages,
+            nowMs: now,
+            responseRate: responseRateKpi?.responseRate ?? null,
+            responseRateDelta: responseRateKpi?.responseRateDelta ?? null,
+            isUnread: ({ conversationId, lastActivityMs, activityLooksUnread }) =>
+              isCommunicationConversationUnread({
+                landlordId,
+                conversationId,
+                lastActivityMs,
+                activityLooksUnread,
+              }),
+          }),
           lastUpdated: new Date(),
         })
       })()
@@ -1521,7 +1349,6 @@ export function AdminCommunicationDashboard() {
   const someFilteredSelected =
     visibleThreads.some((conversation) => selectedIds.has(conversation.id)) &&
     !allFilteredSelected
-  const updatedCaption = metrics ? formatUpdatedAt(metrics.lastUpdated) : 'Updating…'
 
   return (
     <>
@@ -1599,7 +1426,7 @@ export function AdminCommunicationDashboard() {
           </p>
         </div>
 
-        <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-4">
           {metrics == null ? (
             <>
               <KpiCardSkeleton />
@@ -1610,33 +1437,21 @@ export function AdminCommunicationDashboard() {
           ) : (
             <>
               <KpiCard
-                label="Open Conversations"
-                value={String(metrics.openConversations)}
-                delta={metrics.openDelta}
-                goodWhenUp={false}
-                caption={`Compared to 4 weeks ago · ${updatedCaption}`}
+                label="Needs your response"
+                value={String(metrics.needsYourResponse)}
+                title="A tenant or vendor wrote last, and neither you nor Ulo has replied for 4 hours."
               />
               <KpiCard
                 label="Unread Messages"
                 value={String(metrics.unreadMessages)}
-                delta={metrics.unreadDelta}
-                goodWhenUp={false}
-                caption={`Compared to 4 weeks ago · ${updatedCaption}`}
               />
               <KpiCard
                 label="Failed Deliveries"
                 value={String(metrics.failedDeliveries)}
-                delta={metrics.failedDelta}
-                goodWhenUp={false}
-                caption={`vs previous 4 weeks · ${updatedCaption}`}
               />
               <KpiCard
                 label="Response Rate"
                 value={metrics.responseRate == null ? '—' : `${metrics.responseRate}%`}
-                delta={metrics.responseRateDelta}
-                deltaFormatter={formatSignedPercent}
-                goodWhenUp={true}
-                caption={`Inbound replies in 24h · vs prior 4 weeks · ${updatedCaption}`}
                 title={MESSAGE_RESPONSE_RATE_TOOLTIP}
               />
             </>
