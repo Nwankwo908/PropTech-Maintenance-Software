@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
-import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { loadSetupSuccessProgress } from '@/lib/loadSetupSuccessProgress'
 import { PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
 import { listPropertiesForLandlord } from '@/lib/properties'
@@ -11,8 +11,10 @@ import {
   type PropertyDetailTab,
 } from '@/lib/propertyRoutes'
 import {
+  clearSetupSuccessCompleteInformationPrompt,
   dismissSetupSuccessCard,
   isSetupSuccessCardHidden,
+  isSetupSuccessCompleteInformationPrompt,
   minimizeSetupSuccessCard,
   SETUP_SUCCESS_COLLAPSED_EVENT,
   SETUP_SUCCESS_PROGRESS_CHANGED_EVENT,
@@ -29,22 +31,37 @@ import {
 export function SetupSuccessCardHost() {
   const location = useLocation()
   const landlordId = getActiveLandlordId()
-  const { profile } = useSidebarAdminProfile()
-  const firstName = profile?.name?.trim().split(/\s+/).filter(Boolean)[0] ?? null
   const eligible = setupSuccessExperienceReady(landlordId)
 
+  const [accountContactName, setAccountContactName] = useState<string | null>(null)
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
   const [hidden, setHidden] = useState(() => isSetupSuccessCardHidden(landlordId))
+  const [showPropertyAccessPrompt, setShowPropertyAccessPrompt] = useState(() =>
+    isSetupSuccessCompleteInformationPrompt(landlordId),
+  )
   const [firstPropertyId, setFirstPropertyId] = useState<string | null>(null)
 
   useEffect(() => {
-    const syncHidden = () => setHidden(isSetupSuccessCardHidden(landlordId))
-    syncHidden()
-    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncHidden)
-    window.addEventListener('storage', syncHidden)
+    let cancelled = false
+    void fetchLandlordAccountProfile(landlordId).then((account) => {
+      if (!cancelled) setAccountContactName(account.contactName)
+    })
     return () => {
-      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncHidden)
-      window.removeEventListener('storage', syncHidden)
+      cancelled = true
+    }
+  }, [landlordId])
+
+  useEffect(() => {
+    const syncCard = () => {
+      setHidden(isSetupSuccessCardHidden(landlordId))
+      setShowPropertyAccessPrompt(isSetupSuccessCompleteInformationPrompt(landlordId))
+    }
+    syncCard()
+    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCard)
+    window.addEventListener('storage', syncCard)
+    return () => {
+      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCard)
+      window.removeEventListener('storage', syncCard)
     }
   }, [landlordId])
 
@@ -107,13 +124,18 @@ export function SetupSuccessCardHost() {
   return (
     <GetSetUpForSuccessCard
       progress={progress}
-      firstName={firstName}
+      firstName={accountContactName}
+      showPropertyAccessPrompt={showPropertyAccessPrompt}
       resolveItemTo={resolveItemTo}
       onClose={() => {
+        clearSetupSuccessCompleteInformationPrompt(landlordId)
+        setShowPropertyAccessPrompt(false)
         dismissSetupSuccessCard(landlordId)
         setHidden(true)
       }}
       onMinimize={() => {
+        clearSetupSuccessCompleteInformationPrompt(landlordId)
+        setShowPropertyAccessPrompt(false)
         minimizeSetupSuccessCard(landlordId)
         setHidden(true)
       }}

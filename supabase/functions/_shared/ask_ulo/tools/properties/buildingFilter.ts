@@ -90,6 +90,8 @@ export function looksLikeOpsCategoryToken(name: string): boolean {
  * Returns null when the match is a category (e.g. "for the HVAC issues").
  */
 export function extractBuildingFilter(question: string): string | null {
+  const address = question.match(/\b(?:at|for|in|about)\s+(\d+[A-Za-z-]*\s+[A-Za-z0-9 .'-]+?)(?=[?!,]|$)/i)
+  if (address) return address[1].trim()
   const m = question.match(
     /\b(?:for|at|about|in|on|of|my)\s+(?:the\s+)?([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*){0,3})\b/,
   )

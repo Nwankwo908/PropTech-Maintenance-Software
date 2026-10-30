@@ -3,6 +3,7 @@
  * Never grants unrestricted registry access. Fail closed → empty selection.
  */
 /// <reference lib="deno.ns" />
+import { withAiDeadline } from '../../ai/deadline.ts'
 
 import {
   DOMAIN_TOOL_REGISTRY,
@@ -400,7 +401,9 @@ export async function selectDomainToolsWithOpenAI(input: {
   const allowSet = new Set(allowlist)
   const started = Date.now()
   try {
+    const { res, data } = await withAiDeadline(6000, async (signal) => {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      signal,
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -429,6 +432,8 @@ export async function selectDomainToolsWithOpenAI(input: {
     })
 
     const data = (await res.json()) as Record<string, unknown>
+    return { res, data }
+    })
     const latencyMs = Date.now() - started
     if (!res.ok) {
       const errObj = data?.error as { message?: string } | undefined

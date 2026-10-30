@@ -18,6 +18,7 @@ import type {
   AskUloRunInput,
 } from "./types.ts"
 import { getAskUloFeatureFlags, type AskUloFeatureFlags } from "./config.ts"
+import { resolveFollowUpQuestion } from "../routing/followUpContext.ts"
 
 export type { AskUloPermissions } from "./types.ts"
 
@@ -30,7 +31,9 @@ export type AskUloPropertyScope = {
 
 export type AskUloContext = {
   supabase: SupabaseClient
+  timing?: AskUloRunInput["timing"]
   question: string
+  originalQuestion?: string
   landlordId: string
   userId: string | null
   history: AskUloHistoryMessage[]
@@ -51,6 +54,7 @@ export type AskUloContext = {
 export type AskUloTurnContext = Pick<
   AskUloContext,
   | "question"
+  | "originalQuestion"
   | "landlordId"
   | "userId"
   | "history"
@@ -81,7 +85,7 @@ export function jurisdictionFromPortfolio(
 
 export function buildAskUloTurnContext(input: AskUloRunInput): AskUloTurnContext {
   const now = new Date()
-  const question = input.question.trim()
+  const originalQuestion = input.question.trim()
   const landlordId = input.landlordId.trim()
   const userId = input.userId?.trim() || null
   const agentMode = parseAskUloAgentMode(input.agentMode)
@@ -89,12 +93,14 @@ export function buildAskUloTurnContext(input: AskUloRunInput): AskUloTurnContext
     .filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim())
     .slice(-12)
   const priorUserTurns = history.filter((m) => m.role === "user").map((m) => m.content)
+  const question = resolveFollowUpQuestion(originalQuestion, history)
   const retrievalQuestion =
     history.length > 0
       ? [...priorUserTurns, question].slice(-3).join("\n")
       : question
   return {
     question,
+    originalQuestion,
     landlordId,
     userId,
     history,
@@ -135,6 +141,7 @@ export async function buildAskUloContext(
 
   return {
     supabase,
+    timing: input.timing,
     ...turn,
     portfolioJurisdiction,
     propertyScope: {
@@ -147,5 +154,6 @@ export async function buildAskUloContext(
       ...(input.permissions ?? {}),
     },
     flags: getAskUloFeatureFlags(),
+    synthesisFailure: input.synthesisFailure ?? null,
   }
 }

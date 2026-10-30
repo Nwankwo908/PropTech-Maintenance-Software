@@ -1,7 +1,9 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { CORE_VENDOR_TRADES } from '@/lib/propertyHealth/calculatePropertyHealth'
 import {
   isLeaseImportTestLandlord,
   isLimitedAlphaLandlord,
+  isTemporarySharedAlphaLineLandlord,
 } from '@shared/landlordCapabilities'
 import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 
@@ -52,59 +54,180 @@ export type SetupSuccessItemState = {
   label: string
   to: string
   done: boolean
+  /** Still missing. Counted in the setup percentage. */
+  remaining: number
+  /** Plain-language leftover line under the task. Empty when nothing is left. */
+  detail: string | null
 }
 
 export type SetupSuccessProgress = {
   items: SetupSuccessItemState[]
   doneCount: number
   total: number
+  /** Filled units across residents, vendors, trades, and properties. */
+  completedUnits: number
+  /** Units that can be filled. */
+  unitTotal: number
 }
 
-export function welcomeTextsComplete(
-  residents: { phone?: string | null; activationStatus?: string | null }[],
-): boolean {
-  return residents.some((row) => {
-    const status = (row.activationStatus ?? '').trim().toLowerCase()
-    return status !== '' && status !== 'not_started'
-  })
+type SetupResident = { phone?: string | null; activationStatus?: string | null }
+
+function welcomeWasSent(resident: SetupResident): boolean {
+  const status = (resident.activationStatus ?? '').trim().toLowerCase()
+  return status !== '' && status !== 'not_started'
+}
+
+export function welcomeTextsComplete(residents: SetupResident[]): boolean {
+  return residents.some(welcomeWasSent)
+}
+
+/** Residents who have not been sent a welcome text yet. */
+export function residentsMissingWelcomeText(residents: SetupResident[]): number {
+  return residents.filter((resident) => !welcomeWasSent(resident)).length
+}
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+/** Leftover line under a setup task. Vendors list activation and missing trades separately. */
+export function setupTaskDetail(input: {
+  id: SetupSuccessItemId
+  welcomeRemaining: number
+  vendorsNeedingActivation: number
+  tradesLeft: number
+  propertiesLeft: number
+}): string | null {
+  if (input.id === 'welcome_texts') {
+    return input.welcomeRemaining > 0
+      ? `${countLabel(input.welcomeRemaining, 'resident', 'residents')} left`
+      : null
+  }
+  if (input.id === 'verify_vendors') {
+    const parts: string[] = []
+    if (input.vendorsNeedingActivation > 0) {
+      parts.push(
+        input.vendorsNeedingActivation === 1
+          ? '1 vendor needs activation'
+          : `${input.vendorsNeedingActivation} vendors need activation`,
+      )
+    }
+    if (input.tradesLeft > 0) {
+      parts.push(
+        input.tradesLeft === 1 ? '1 trade left to add' : `${input.tradesLeft} trades left to add`,
+      )
+    }
+    return parts.length > 0 ? parts.join(', ') : null
+  }
+  if (
+    input.id === 'property_access' ||
+    input.id === 'property_intelligence' ||
+    input.id === 'property_insurance'
+  ) {
+    return input.propertiesLeft > 0
+      ? `${countLabel(input.propertiesLeft, 'property', 'properties')} left`
+      : null
+  }
+  return null
+}
+
+function boundedCount(value: number, max: number): number {
+  const count = Math.floor(value)
+  if (!Number.isFinite(count)) return 0
+  return Math.max(0, Math.min(max, count))
 }
 
 export function resolveSetupSuccessProgress(input: {
-  residents: { phone?: string | null; activationStatus?: string | null }[]
+  residents: SetupResident[]
   vendorCount: number
   /** Vendors with a verification invite started, verified, or onboarding overridden. */
   vendorOutreachStartedCount: number
-  propertyAccessComplete: boolean
-  propertyIntelligenceComplete: boolean
-  propertyInsuranceComplete: boolean
+  /** Core trades with no vendor on the roster. */
+  missingTradeCount?: number
+  propertyCount?: number
+  propertiesMissingAccess?: number
+  propertiesMissingDetails?: number
+  propertiesMissingInsurance?: number
   hasMaintenancePreferences: boolean
   maintenanceRequestCount: number
   hasTestDelivery?: boolean
 }): SetupSuccessProgress {
+  const residentTotal = input.residents.length
+  const welcomeRemaining = residentsMissingWelcomeText(input.residents)
+  const vendorTotal = Math.max(0, Math.floor(input.vendorCount))
+  const vendorsInvited = boundedCount(input.vendorOutreachStartedCount, vendorTotal)
+  const vendorsNotInvited = vendorTotal - vendorsInvited
+  const tradeTotal = CORE_VENDOR_TRADES.length
+  const tradesMissing = boundedCount(input.missingTradeCount ?? tradeTotal, tradeTotal)
+  const propertyTotal = Math.max(0, Math.floor(input.propertyCount ?? 0))
+  const accessMissing = boundedCount(input.propertiesMissingAccess ?? propertyTotal, propertyTotal)
+  const detailsMissing = boundedCount(input.propertiesMissingDetails ?? propertyTotal, propertyTotal)
+  const insuranceMissing = boundedCount(input.propertiesMissingInsurance ?? propertyTotal, propertyTotal)
+  const preferencesDone = input.hasMaintenancePreferences
+  const testDone = Boolean(input.hasTestDelivery) || input.maintenanceRequestCount > 0
+
+  const remainingById: Record<SetupSuccessItemId, number> = {
+    welcome_texts: welcomeRemaining,
+    verify_vendors: vendorsNotInvited + tradesMissing,
+    property_access: accessMissing,
+    property_intelligence: detailsMissing,
+    property_insurance: insuranceMissing,
+    maintenance_prefs: preferencesDone ? 0 : 1,
+    test_request: testDone ? 0 : 1,
+  }
   const doneById: Record<SetupSuccessItemId, boolean> = {
-    welcome_texts: welcomeTextsComplete(input.residents),
-    // Roster alone (e.g. onboarding import) is not enough — invite/override must start.
-    verify_vendors: input.vendorOutreachStartedCount > 0,
-    property_access: input.propertyAccessComplete,
-    property_intelligence: input.propertyIntelligenceComplete,
-    property_insurance: input.propertyInsuranceComplete,
-    maintenance_prefs: input.hasMaintenancePreferences,
-    test_request: Boolean(input.hasTestDelivery) || input.maintenanceRequestCount > 0,
+    welcome_texts: residentTotal > 0 && welcomeRemaining === 0,
+    verify_vendors: vendorTotal > 0 && vendorsNotInvited === 0 && tradesMissing === 0,
+    property_access: propertyTotal > 0 && accessMissing === 0,
+    property_intelligence: propertyTotal > 0 && detailsMissing === 0,
+    property_insurance: propertyTotal > 0 && insuranceMissing === 0,
+    maintenance_prefs: preferencesDone,
+    test_request: testDone,
+  }
+  const propertiesLeftById: Record<SetupSuccessItemId, number> = {
+    welcome_texts: 0,
+    verify_vendors: 0,
+    property_access: accessMissing,
+    property_intelligence: detailsMissing,
+    property_insurance: insuranceMissing,
+    maintenance_prefs: 0,
+    test_request: 0,
   }
   const items = SETUP_SUCCESS_ITEMS.map((item) => ({
     ...item,
     done: doneById[item.id],
+    remaining: remainingById[item.id],
+    detail: setupTaskDetail({
+      id: item.id,
+      welcomeRemaining,
+      vendorsNeedingActivation: vendorsNotInvited,
+      tradesLeft: tradesMissing,
+      propertiesLeft: propertiesLeftById[item.id],
+    }),
   }))
+  const completedUnits =
+    residentTotal -
+    welcomeRemaining +
+    vendorsInvited +
+    (tradeTotal - tradesMissing) +
+    (propertyTotal - accessMissing) +
+    (propertyTotal - detailsMissing) +
+    (propertyTotal - insuranceMissing) +
+    (preferencesDone ? 1 : 0) +
+    (testDone ? 1 : 0)
+  const unitTotal = residentTotal + vendorTotal + tradeTotal + propertyTotal * 3 + 2
   return {
     items,
     doneCount: items.filter((item) => item.done).length,
     total: items.length,
+    completedUnits,
+    unitTotal,
   }
 }
 
 export function setupSuccessPercent(progress: SetupSuccessProgress): number {
-  if (progress.total <= 0) return 0
-  return Math.round((progress.doneCount / progress.total) * 100)
+  if (progress.unitTotal <= 0) return 0
+  return Math.round((progress.completedUnits / progress.unitTotal) * 100)
 }
 
 export const SETUP_SUCCESS_COLLAPSED_EVENT = 'ulo:setup-success-collapsed'
@@ -158,6 +281,43 @@ function dismissedKey(landlordId: string): string {
 
 function minimizedKey(landlordId: string): string {
   return `${MINIMIZED_KEY_PREFIX}${landlordId}`
+}
+
+const COMPLETE_INFORMATION_PROMPT_KEY_PREFIX = 'ulo.setupSuccess.completeInformationPrompt.'
+
+function completeInformationPromptKey(landlordId: string): string {
+  return `${COMPLETE_INFORMATION_PROMPT_KEY_PREFIX}${landlordId}`
+}
+
+/** Properties page “Complete information” — show the access prompt on the setup card. */
+export function markSetupSuccessCompleteInformationPrompt(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.sessionStorage.setItem(completeInformationPromptKey(landlordId), '1')
+  } catch {
+    // private mode
+  }
+}
+
+export function isSetupSuccessCompleteInformationPrompt(
+  landlordId: string = getActiveLandlordId(),
+): boolean {
+  try {
+    return window.sessionStorage.getItem(completeInformationPromptKey(landlordId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function clearSetupSuccessCompleteInformationPrompt(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.sessionStorage.removeItem(completeInformationPromptKey(landlordId))
+  } catch {
+    // private mode
+  }
 }
 
 export function isSetupSuccessCardDismissed(
@@ -273,7 +433,8 @@ export function clearSetupSuccessTestDelivery(
 
 /**
  * Limited Alpha sees the card after Get Started.
- * Lease-import checks land on the dashboard directly, so they do not need that flag.
+ * Lease-import checks and the disposable maintenance-test account land on the
+ * dashboard directly, so they do not need that flag.
  * Completing setup does not mark the checklist done.
  */
 export function setupSuccessExperienceReady(
@@ -282,7 +443,7 @@ export function setupSuccessExperienceReady(
   if (isLimitedAlphaLandlord(landlordId)) {
     return hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
   }
-  return isLeaseImportTestLandlord(landlordId)
+  return isLeaseImportTestLandlord(landlordId) || isTemporarySharedAlphaLineLandlord(landlordId)
 }
 
 /** Profile setup card after setup, until every step is done or the card is closed. */

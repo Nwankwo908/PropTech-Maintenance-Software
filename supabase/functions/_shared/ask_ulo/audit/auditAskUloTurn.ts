@@ -133,7 +133,7 @@ export async function auditAskUloTurn(input: {
   const result = await writeAskUloAuditRecord(context.supabase, {
     landlordId: context.landlordId,
     conversationId: context.conversationId,
-    question: context.question,
+    question: context.originalQuestion ?? context.question,
     answer: a.answerWithSources as string,
     intent: intentResult.intent,
     intentConfidence: intentResult.confidence,

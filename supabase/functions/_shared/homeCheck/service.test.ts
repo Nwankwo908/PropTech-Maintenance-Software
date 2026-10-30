@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createHomeCheck } from './service.ts'
+import { createHomeCheck, publicHomeCheck, pendingHomeCheckSystems, notifyHomeCheckResult, saveHomeCheckAnswers } from './service.ts'
 import { resolveOutboundLandlordSmsLine } from '../sms/landlordSmsOnboarding.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
@@ -54,6 +54,7 @@ function client(
   let check: Record<string, unknown> | null = openChecks[0] ?? null
   const updates: Array<Record<string, unknown>> = []
   const rpc = vi.fn(async (_name: string, args: { p_input: Record<string, unknown> }) => {
+    if (_name === 'home_check_sms_capture_context') return { data: { ok: true, checkId: check?.id, slot: 'water_heater_label', version: 'v' }, error: null }
     check = { ...args.p_input, workflow_run_id: 'workflow', status: 'collecting' }
     return { data: null, error: null }
   })
@@ -199,7 +200,7 @@ describe('SMS self-capture recipient', () => {
     expect(sendInboundAutoReply).not.toHaveBeenCalled()
     expect(resolveOutboundLandlordSmsLine).not.toHaveBeenCalled()
   })
-  it('sends contractor instructions and the capture link only to the selected vendor', async () => {
+  it('sends MMS instructions only to the selected vendor without a retired link', async () => {
     const db = client()
     await createHomeCheck(db as never, {
       ...request, role: 'contractor', vendorId: 'vendor',
@@ -208,16 +209,18 @@ describe('SMS self-capture recipient', () => {
     expect(sendInboundAutoReply).toHaveBeenCalledTimes(1)
     expect(sendInboundAutoReply).toHaveBeenCalledWith(db, expect.objectContaining({
       toNumber: '+15558889999',
-      body: expect.stringContaining('Open the link for guided steps'),
+      body: expect.stringContaining('No caption or code needed'),
     }))
     const body = vi.mocked(sendInboundAutoReply).mock.calls[0][1].body
-    expect(body).toContain('https://app.ulohome.io/c/')
+    expect(body).not.toContain('/c/')
+    expect(body).not.toMatch(/HC-[A-F0-9]{12}/)
+    expect(body).toContain('Reply with the photo here')
     expect(body).toContain('No repairs are authorized')
     expect(body).not.toContain('For text photos:')
     expect(body).not.toContain('Forward this')
     expect(body).not.toContain('filter dates')
     expect(body).not.toContain('Last service')
-    expect(body.trim().split('\n').at(-1)).toMatch(/^https:\/\/app\.ulohome\.io\/c\//)
+    expect(body).not.toMatch(/https?:\/\//)
   })
   it('does not forward a contractor link to the owner when no vendor is selected', async () => {
     const db = client()
@@ -258,7 +261,7 @@ describe('SMS self-capture recipient', () => {
     const result = await createHomeCheck(db as never, { ...request, selfCapturePhone: '+15551112222' })
     expect(db.rpc).not.toHaveBeenCalledWith('create_home_check', expect.anything())
     expect(result.check.id).toBe('open-check')
-    expect(result.link).toMatch(/\/c\/open-check#/)
+    expect(result.link).toBeNull()
     expect(db.updates).toContainEqual(expect.objectContaining({ token_hash: expect.any(String) }))
     expect(sendInboundAutoReply).toHaveBeenCalledWith(db, expect.objectContaining({ toNumber: '+15551112222' }))
   })
@@ -274,4 +277,47 @@ describe('SMS self-capture recipient', () => {
     await createHomeCheck(db as never, { ...request, selfCapturePhone: '+15551112222' })
     expect(db.rpc).toHaveBeenCalledWith('create_home_check', expect.anything())
   })
+})
+
+
+it.each([
+  ['Photos do not match the selected equipment.', 'system_mismatch'],
+  ['Label unreadable', 'label_unreadable'],
+])('exposes structured retake feedback for %s even without model copy', async (basis, reason) => {
+ const db = { from: (table: string) => {
+   const q: any = { select: () => q, eq: () => q, in: () => q,
+     then: (resolve: (value: unknown) => unknown) => Promise.resolve(resolve({ error: null, data:
+       table === 'home_check_photos' ? [{ slot: 'water_heater_label', inspection_photo_id: 'photo' }] :
+       [{ id: 'photo', status: 'needs_review', ai_result: { estimatedAge: { basis }, labelReadability: { retakeRequested: true } } }]
+     })) }
+   return q
+ } }
+ const progress = await publicHomeCheck(db as never, { id: 'check', property_label: 'Birch' } as never)
+ expect(progress.feedback[0]).toMatchObject({ retakeReason: reason, retakeMessage: 'A clearer equipment label photo is needed.' })
+})
+
+it.each([false,true])('checks readiness from all four current photo records, pending=%s',async(pending)=>{
+ const slots=['water_heater_label','water_heater_whole','heating_label','heating_whole']
+ const db={from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,in:()=>q,then:(resolve:(v:unknown)=>unknown)=>Promise.resolve(resolve({error:null,data:table==='home_check_photos'?slots.map(slot=>({slot,inspection_photo_id:slot})):slots.map(id=>({id,status:pending&&id==='heating_whole'?'queued':'needs_review',ai_result:pending&&id==='heating_whole'?null:{category:'hvac'}}))}))};return q
+ }}
+ expect(await pendingHomeCheckSystems(db as never,'check')).toEqual(pending?['heating']:[])
+})
+
+it('failed Results delivery remains retryable and never claims the summary was sent',async()=>{
+ const db=client()
+ vi.mocked(sendInboundAutoReply).mockResolvedValueOnce({ok:false,error:'provider unavailable'})
+ const sent=await notifyHomeCheckResult(db as never,{id:'check',landlord_id:'landlord',role:'landlord',ulo_number:'+15550001111',recipient_phone:'+15553334444',property_label:'Birch',completed_at:new Date().toISOString(),summary_sent_at:null,answers:{warningSigns:false,warningDetails:'',lastService:'',lastFilterChange:''}} as never,[])
+ expect(sent).toBe(false)
+ expect(db.updates.some(row=>'summary_sent_at' in row)).toBe(false)
+})
+
+it('persisting observations after a preview does not send the equipment summary again',async()=>{
+ const check={id:'check',landlord_id:'landlord',property_label:'Birch',role:'landlord',ulo_number:'+15550001111',recipient_phone:'+15553334444',expires_at:new Date(Date.now()+86400000).toISOString(),completed_at:new Date().toISOString(),summary_sent_at:new Date().toISOString(),answers:{warningSigns:false,warningDetails:'',lastService:'',lastFilterChange:''}}
+ const db={rpc:vi.fn(async(name:string)=>({error:null,data:name==='persist_home_check_assets'?true:null})),from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,is:()=>q,in:()=>q,update:()=>q,insert:()=>q,single:()=>Promise.resolve({error:null,data:check}),then:(resolve:(v:unknown)=>unknown)=>Promise.resolve(resolve({error:null,data:table==='landlords'?{phone:'+15553334444'}:[]}))};return q
+ }}
+ vi.mocked(sendInboundAutoReply).mockClear()
+ expect(await saveHomeCheckAnswers(db as never,check as never,check.answers,{notifyResults:false})).toBe(true)
+ expect(sendInboundAutoReply).not.toHaveBeenCalled()
 })

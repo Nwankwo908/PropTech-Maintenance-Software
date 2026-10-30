@@ -93,6 +93,13 @@ export type HomeCheckGuideEffect =
     /** Sent only to the landlord when the tenant was the sender. Never includes the link. */
     landlordBody: string | null
   }
+  | {
+    type: 'invite_contractor'
+    propertyId: string
+    unitId: string | null
+    vendorId: string
+    vendorName: string
+  }
   | { type: 'cancel'; checkId: string | null }
 
 export type HomeCheckGuideTurn = {
@@ -188,7 +195,7 @@ function propertyList(properties: HomeCheckGuideProperty[]): string {
 }
 
 function whoQuestion(): string {
-  return 'Who should do it?\n1) Your tenant takes the photos\n2) A contractor visits and takes the photos\n3) You take the photos yourself\nThe person you choose gets the link and instructions. Reply 1, 2, or 3, or CANCEL.'
+  return 'Who should do it?\n1) Your tenant takes the photos\n2) A contractor visits and takes the photos\n3) You take the photos yourself\nThe person you choose gets the photo instructions by text. Reply 1, 2, or 3, or CANCEL.'
 }
 
 function touch(
@@ -265,7 +272,7 @@ function contractorAsk(catalog: HomeCheckGuideCatalog): string {
   if (!nearest) {
     return 'Reply with the contractor’s name, or CANCEL. No located contractor is on file for this property.'
   }
-  return `${nearest.name} is the nearest contractor. They will ${HOME_CHECK_VENDOR_SCOPE}. No repairs are authorized. Ulo will send them the link and steps once the visit time is confirmed. Reply YES to use them, name another contractor, or CANCEL.`
+  return `${nearest.name} is the nearest contractor. They will ${HOME_CHECK_VENDOR_SCOPE}. No repairs are authorized. Ulo will send them the photo instructions once the visit time is confirmed. Reply YES to use them, name another contractor, or CANCEL.`
 }
 
 function afterPlace(
@@ -354,7 +361,7 @@ function beginTenantWait(
   })
   return {
     state: waiting,
-    replies: [`We'll ask ${tenant.name || 'the tenant'} what time works before the contractor gets a link.`],
+    replies: [`We'll ask ${tenant.name || 'the tenant'} what time works before the contractor gets the photo instructions.`],
     effects: [{ type: 'text_tenant', phone: tenant.phone, body: homeCheckTenantAsk(catalog) }],
   }
 }
@@ -375,9 +382,9 @@ function sendContractor(
   const note = entryNote(body)
   const tenantConfirm = `We'll plan on ${state.windowLabel}.${
     note ? ` ${note}` : ''
-  } The contractor will get the photo link for that visit.`
+  } The contractor will get the photo instructions for that visit.`
   const landlordConfirm =
-    `${state.vendorName || 'Your contractor'} is scheduled for ${state.placeLabel || 'the property'}, ${state.windowLabel}. They will ${HOME_CHECK_VENDOR_SCOPE}. Ulo sent the link and next steps directly to them. No repairs are authorized.`
+    `${state.vendorName || 'Your contractor'} is scheduled for ${state.placeLabel || 'the property'}, ${state.windowLabel}. They will ${HOME_CHECK_VENDOR_SCOPE}. Ulo sent the photo instructions and next steps directly to them. No repairs are authorized.`
   const canTextTenant = Boolean(state.tenantPhone) && !catalog.tenant?.optedOut
   return {
     state: null,
@@ -479,39 +486,46 @@ function startGuide(
   }
 }
 
+function inviteSelectedContractor(
+  state: HomeCheckGuideState,
+  vendor: { id: string; name: string },
+): HomeCheckGuideTurn {
+  if (!state.propertyId) {
+    return {
+      state,
+      replies: ['Choose the property before selecting a contractor, or reply CANCEL.'],
+      effects: [],
+    }
+  }
+  const place = state.placeLabel || 'the property'
+  return {
+    state: null,
+    replies: [
+      `We asked ${vendor.name} to accept the Home Check at ${place}. If they accept, we'll set a visit time with the tenant. They'll get the photo instructions when it's time for the visit.`,
+    ],
+    effects: [{
+      type: 'invite_contractor',
+      propertyId: state.propertyId,
+      unitId: state.unitId ?? null,
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+    }],
+  }
+}
+
 function pickVendor(
   state: HomeCheckGuideState,
   body: string,
   catalog: HomeCheckGuideCatalog,
-  now: Date,
+  _now: Date,
 ): HomeCheckGuideTurn {
   const nearest = nearestVendor(catalog)
   if (isAffirmativeReply(body) && nearest) {
-    const next = touch(state, now, {
-      step: state.windowEnd ? 'pick_window' : 'pick_window',
-      vendorId: nearest.id,
-      vendorName: nearest.name,
-    })
-    if (next.windowEnd && next.windowLabel) return beginTenantWait(next, catalog, now)
-    return {
-      state: next,
-      replies: ['What visit window should we use? Reply with a day and arrival window, for example Thu 2–4pm.'],
-      effects: [],
-    }
+    return inviteSelectedContractor(state, nearest)
   }
   const named = catalog.vendors.filter((vendor) => mentions(body, vendor.name))
   if (named.length === 1) {
-    const next = touch(state, now, {
-      step: 'pick_window',
-      vendorId: named[0].id,
-      vendorName: named[0].name,
-    })
-    if (next.windowEnd && next.windowLabel) return beginTenantWait(next, catalog, now)
-    return {
-      state: next,
-      replies: [`What visit window should we use for ${named[0].name}? For example, Thu 2–4pm.`],
-      effects: [],
-    }
+    return inviteSelectedContractor(state, named[0])
   }
   if (named.length > 1) {
     const lines = named.map((vendor, index) => `${index + 1}) ${vendor.name}`)
@@ -525,19 +539,7 @@ function pickVendor(
   if (index && named.length === 0) {
     const choices = locatedVendors(catalog)
     const vendor = choices[index - 1]
-    if (vendor) {
-      const next = touch(state, now, {
-        step: 'pick_window',
-        vendorId: vendor.id,
-        vendorName: vendor.name,
-      })
-      if (next.windowEnd) return beginTenantWait(next, catalog, now)
-      return {
-        state: next,
-        replies: [`What visit window should we use for ${vendor.name}? For example, Thu 2–4pm.`],
-        effects: [],
-      }
-    }
+    if (vendor) return inviteSelectedContractor(state, vendor)
   }
   return { state, replies: [contractorAsk(catalog)], effects: [] }
 }
@@ -595,7 +597,7 @@ export function reduceHomeCheckGuide(input: {
   if (state && isCancel(body) && input.sender === 'landlord') {
     return {
       state: null,
-      replies: ['The equipment check is cancelled. No photo link was sent.'],
+      replies: ['The equipment check is cancelled. No photo instructions were sent.'],
       effects: [{ type: 'cancel', checkId: state.checkId ?? null }],
     }
   }
@@ -616,7 +618,7 @@ export function reduceHomeCheckGuide(input: {
     return {
       state,
       replies: [
-        `We're still waiting on ${state.tenantName || 'the tenant'} for a time. The contractor will not get a link until then.`,
+        `We're still waiting on ${state.tenantName || 'the tenant'} for a time. The contractor will not get the photo instructions until then.`,
       ],
       effects: [],
     }

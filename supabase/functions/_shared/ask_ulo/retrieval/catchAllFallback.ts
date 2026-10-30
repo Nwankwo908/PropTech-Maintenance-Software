@@ -9,6 +9,7 @@ import type { OperationalWorkOrder } from "../tools/maintenance/searchOperationa
 import { polishAskUloProse } from "../synthesis/formatAnswer.ts"
 import type { SearchWorkOrdersResult } from "../tools/maintenance/searchWorkOrders.ts"
 import { formatUnitReference } from "../../properties/unitLabelDisplay.ts"
+import { reportedDetailLine } from "../tools/maintenance/reportedFactAnswer.ts"
 
 /** Subjects where a work-order list is a valid answer (not a metric substitution). */
 const CATCHALL_WO_SUBJECTS = new Set<AskUloQuestionSubject>([
@@ -92,9 +93,11 @@ export function formatCatchAllWorkOrdersMarkdown(
         ? `${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"} open — past the response time`
         : `${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"}`
     lines.push(
-      `### ${wo.workOrderId} — ${wo.propertyName}, ${unitBit(wo)}`,
+    const reported = reportedDetailLine(wo)
+    lines.push(
+      `### ${wo.workOrderId} — ${placeLabel(wo)}`,
       `- **Issue:** ${issue}`,
-      `- **Urgency:** ${urgency}`,
+      ...(reported ? [`- **Reported:** ${reported}`] : []),
       `- **Category:** ${wo.category || "—"}`,
       `- **Status:** ${statusLabel(wo)}`,
       `- **Open for:** ${ageBit}`,

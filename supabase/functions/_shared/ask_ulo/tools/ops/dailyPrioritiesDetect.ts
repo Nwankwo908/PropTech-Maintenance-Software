@@ -31,6 +31,7 @@ export function isDailyPrioritiesQuestion(question: string): boolean {
   }
 
   return (
+    /\b(?:what|which)\s+(?:open\s+)?(?:repairs?|jobs?|work\s*orders?)\s+(?:need|needs|require)\s+(?:my\s+)?attention\b/i.test(q) ||
     /\bwhat\s+should\s+i\s+prioriti[sz]e(?:\s+today|\s+now|\s+right\s+now)?\b/i.test(q) ||
     /\bwhat\s+should\s+i\s+do(?:\s+today|\s+now|\s+right\s+now)?\b/i.test(q) ||
     /\bwhat\s+should\s+i\s+focus\s+on(?:\s+today|\s+now|\s+right\s+now)?\b/i.test(q) ||

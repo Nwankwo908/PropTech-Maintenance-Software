@@ -74,7 +74,7 @@ const STATUS_REWRITES: Array<[RegExp, string]> = [
   [/\bin[_\s-]?progress\b/gi, "work is currently underway"],
   [/\breview[_\s-]?required\b/gi, "waiting for your approval"],
   [/\bunassigned\b/gi, "no vendor assigned yet"],
-  [/\baccepted\b(?!\s+jobs?\b)/gi, "vendor accepted the job"],
+  [/^accepted$/gim, "vendor accepted the job"],
 ]
 
 const TIME_REWRITES: Array<[RegExp, string | ((...args: string[]) => string)]> = [

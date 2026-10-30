@@ -21,6 +21,9 @@ import {
   portfolioExtractHasData,
   type PortfolioDocumentExtractPayload,
 } from "../_shared/onboarding/portfolioDocumentExtract.ts"
+import { isPdfFile, pdfBytesToPlainText } from "../_shared/onboarding/pdfDocumentText.ts"
+import { recordActivityLog } from "../_shared/graph/recordActivityLog.ts"
+import { documentUploadActivityMessage } from "../_shared/documents/documentUploadActivity.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -132,7 +135,7 @@ async function authorizeStaff(
     return { ok: false as const, response: jsonResponse({ error: "Invalid session" }, 401) }
   }
   if (isPortalAdminEmailAllowed(email)) {
-    return { ok: true as const }
+    return { ok: true as const, email }
   }
   const admin = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -143,9 +146,44 @@ async function authorizeStaff(
     .eq("email", email)
     .maybeSingle()
   if (member?.landlord_id) {
-    return { ok: true as const }
+    return { ok: true as const, email }
   }
   return { ok: false as const, response: jsonResponse({ error: "Unauthorized" }, 403) }
+}
+
+async function saveLandlordDocumentText(
+  supabase: any,
+  input: {
+    landlordId: string
+    docId: string
+    fileName: string
+    storagePath: string
+    bytes: Uint8Array | null
+    contentType: string
+  },
+): Promise<boolean> {
+  if (!input.bytes?.length || !isPdfFile(input.fileName, input.contentType)) return false
+  const text = (await pdfBytesToPlainText(input.bytes)).trim()
+  if (!text) return false
+  const storagePath = input.storagePath || `${input.landlordId}/${input.docId}/${input.fileName}`
+  const { error } = await supabase.from("landlord_uploaded_documents").upsert({
+    landlord_id: input.landlordId,
+    file_name: input.fileName,
+    storage_path: storagePath,
+    extracted_text: text.slice(0, 120_000),
+  }, { onConflict: "landlord_id,storage_path" })
+  if (error) {
+    console.warn("[onboarding-document-extract] save text", error.message)
+    return false
+  }
+  await recordActivityLog(supabase, {
+    landlordId: input.landlordId,
+    eventType: "document.text_saved",
+    source: "edge_function",
+    actorType: "landlord",
+    metadata: { message: documentUploadActivityMessage(input.fileName) },
+  }).catch(() => undefined)
+  return true
 }
 
 Deno.serve(async (req) => {
@@ -163,9 +201,6 @@ Deno.serve(async (req) => {
 
   if (!supabaseUrl || !serviceKey || !anonKey) {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-  if (!geminiKey) {
-    return jsonResponse({ error: "GEMINI_API_KEY is not configured" }, 500)
   }
 
   const auth = await authorizeStaff(req, supabaseUrl, anonKey, serviceKey)
@@ -200,9 +235,6 @@ Deno.serve(async (req) => {
   if (!landlordId || !uuidRe.test(landlordId)) {
     return jsonResponse({ error: "landlordId is required" }, 400)
   }
-  if (!propertyInsuranceExtract && !isOnboardingLandlordId(landlordId)) {
-    return jsonResponse({ error: "Landlord not eligible for onboarding extract" }, 403)
-  }
   if (!docId || !fileName) {
     return jsonResponse({ error: "docId and fileName are required" }, 400)
   }
@@ -210,6 +242,15 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  const member = await supabase
+    .from("landlord_portal_members")
+    .select("landlord_id")
+    .eq("email", auth.email)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  if (!isPortalAdminEmailAllowed(auth.email) && !member.data) {
+    return jsonResponse({ error: "Unauthorized" }, 403)
+  }
 
   let bytes: Uint8Array | null = null
   let contentType = asString(body.contentType) || "application/octet-stream"
@@ -236,6 +277,28 @@ Deno.serve(async (req) => {
   }
   if ((/\.pdf$/i.test(fileName) || contentType === 'application/pdf') && !bytes?.length) {
     return jsonResponse({error:'Upload the complete PDF so every page can be checked.'},400)
+  }
+
+  const savedText = await saveLandlordDocumentText(supabase, {
+    landlordId,
+    docId,
+    fileName,
+    storagePath,
+    bytes,
+    contentType,
+  })
+  const fullExtract = propertyInsuranceExtract || isOnboardingLandlordId(landlordId)
+  if (!fullExtract) {
+    if (!savedText) {
+      return jsonResponse({
+        ok: false,
+        error: "I could not read text from this file. Paste the relevant clause into Ask Ulo.",
+      })
+    }
+    return jsonResponse({ ok: true, savedText: true, docId })
+  }
+  if (!geminiKey) {
+    return jsonResponse({ error: "GEMINI_API_KEY is not configured" }, 500)
   }
 
   if (req.headers.get('accept')?.includes('text/event-stream')) {

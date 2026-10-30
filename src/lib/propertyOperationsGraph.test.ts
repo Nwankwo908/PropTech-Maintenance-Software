@@ -298,6 +298,66 @@ describe('selectLandlordFacingFeedEvents', () => {
     expect(selected[0]?.label).toBe('Saad texted a repair for the kitchen sink.')
   })
 
+  it('shows one Ask Ulo answer when both activity tables carry the same line', () => {
+    const selected = selectLandlordFacingFeedEvents(
+      [
+        feedEvent({
+          id: 'overview-row',
+          eventType: 'ask_ulo.answered',
+          label: 'ask ulo answered',
+          category: 'admin',
+          message: 'Ulo answered: What indoor temperature is recorded?',
+          eventSource: 'edge_function',
+          createdAt: '2026-10-29T22:40:00.000Z',
+        }),
+        feedEvent({
+          id: 'primary-row',
+          eventType: 'ask_ulo.answered',
+          label: 'ask ulo answered',
+          category: 'admin',
+          message: 'Ulo answered: What indoor temperature is recorded?',
+          eventSource: 'edge_function',
+          createdAt: '2026-10-29T22:40:01.000Z',
+        }),
+      ],
+      8,
+    )
+
+    expect(selected).toHaveLength(1)
+    expect(selected[0]?.label).toBe('Ulo answered: What indoor temperature is recorded?')
+    expect(selected[0]?.label).not.toMatch(/eval|gpt-|workflow/i)
+  })
+
+  it('shows one uploaded-document line and hides the second copy', () => {
+    const selected = selectLandlordFacingFeedEvents(
+      [
+        feedEvent({
+          id: 'overview-doc',
+          eventType: 'document.text_saved',
+          label: 'document text saved',
+          category: 'admin',
+          message: 'Uploaded document ready to review: qa-lease.pdf.',
+          eventSource: 'edge_function',
+          createdAt: '2026-10-29T23:10:00.000Z',
+        }),
+        feedEvent({
+          id: 'primary-doc',
+          eventType: 'document.text_saved',
+          label: 'document text saved',
+          category: 'admin',
+          message: 'Uploaded document ready to review: qa-lease.pdf.',
+          eventSource: 'edge_function',
+          createdAt: '2026-10-29T23:10:01.000Z',
+        }),
+      ],
+      8,
+    )
+
+    expect(selected).toHaveLength(1)
+    expect(selected[0]?.label).toBe('Uploaded document ready to review: qa-lease.pdf.')
+    expect(selected[0]?.label).not.toMatch(/text_saved|extracted/i)
+  })
+
   it('limits the feed to the current onboarding session while setup is in progress', () => {
     const selected = selectLandlordFacingFeedEvents(
       [
@@ -467,6 +527,8 @@ describe('landlord activity feed cleanup', () => {
       ['move_in.checklist_sent', 'automation', 'move_in'],
       ['move_out.started', 'automation', 'move_out'],
       ['broadcast.sent', 'dashboard', 'admin'],
+      ['ask_ulo.answered', 'edge_function', 'admin'],
+      ['document.text_saved', 'edge_function', 'admin'],
       ['automation.message_suppressed', 'automation', 'work_order'],
     ]
     for (const [eventType, source, category] of cases) {

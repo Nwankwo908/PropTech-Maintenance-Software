@@ -1554,6 +1554,10 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
     // Ref lock — React state `loading` is too late to stop same-tick re-entry.
     if (sendInFlightRef.current || loading) return false
     sendInFlightRef.current = true
+    const waitStarted = performance.now()
+    const traceId = crypto.randomUUID()
+    let apiFinished: number | null = null
+    let revealFinished: number | null = null
 
     const gen = ++requestGenRef.current
     let rotateTimer = 0
@@ -1630,12 +1634,14 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
       }
 
       const result = await postAskUlo({
+        traceId,
         question,
         landlordId: getActiveLandlordId(),
         history,
         conversationId: activeConversationId,
         agentMode,
       })
+      apiFinished = performance.now()
       if (gen !== requestGenRef.current) return true
 
       window.clearInterval(rotateTimer)
@@ -1665,6 +1671,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
         },
         { signal: abort.signal },
       )
+      revealFinished = performance.now()
       if (gen !== requestGenRef.current) return true
 
       setMessages((prev) =>
@@ -1738,6 +1745,12 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
         ),
       )
     } finally {
+      console.info(JSON.stringify({ event: 'ask_ulo.ui_timing', schemaVersion: 1, traceId,
+        totalMs: performance.now() - waitStarted,
+        apiWaitMs: apiFinished == null ? null : apiFinished - waitStarted,
+        revealMs: revealFinished == null || apiFinished == null ? null : revealFinished - apiFinished,
+        persistenceMs: revealFinished == null ? null : performance.now() - revealFinished,
+        completed: revealFinished != null, superseded: gen !== requestGenRef.current }))
       if (gen === requestGenRef.current) {
         window.clearInterval(rotateTimer)
         setLoading(false)

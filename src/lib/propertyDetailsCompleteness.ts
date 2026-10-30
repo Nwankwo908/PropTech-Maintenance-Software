@@ -207,6 +207,30 @@ export type PropertySetupModulesComplete = {
   insurance: boolean
 }
 
+export type PropertySetupGapCounts = {
+  propertyCount: number
+  missingAccess: number
+  missingDetails: number
+  missingInsurance: number
+}
+
+/** How many named properties are still missing access, details, or insurance. */
+export async function loadPropertySetupGapCounts(
+  properties: { name: string }[],
+): Promise<PropertySetupGapCounts> {
+  const names = [...new Set(properties.map((property) => property.name.trim()).filter(Boolean))]
+  if (names.length === 0) {
+    return { propertyCount: 0, missingAccess: 0, missingDetails: 0, missingInsurance: 0 }
+  }
+  const sections = await Promise.all(names.map((name) => loadPropertyDetailsSections(name)))
+  return {
+    propertyCount: names.length,
+    missingAccess: sections.filter((section) => !section.access).length,
+    missingDetails: sections.filter((section) => !section.inspection).length,
+    missingInsurance: sections.filter((section) => !section.insurance).length,
+  }
+}
+
 /** True when at least one named property has that setup-success module filled. */
 export async function loadPropertySetupModulesComplete(
   properties: { name: string; yearBuilt?: number | null }[],

@@ -68,54 +68,24 @@ function mockSupabase(store: {
   activity: Row[]
 }) {
   const api = {
+    async rpc(_name: string, p: Record<string, unknown>) {
+      let t = store.tickets.find(t => t.landlord_id === p.p_landlord_id && t.dedup_signature === p.p_signature)
+      const created = !t
+      if (!t) { t = { id: crypto.randomUUID(), landlord_id: p.p_landlord_id, dedup_signature: p.p_signature, summary: p.p_summary, repeat_count: 0, notify_status: "pending" }; store.tickets.push(t) }
+      t.repeat_count = Number(t.repeat_count) + 1
+      const claim = created || t.notify_status === "failed" || Number(t.repeat_count)%3===0 ? crypto.randomUUID() : null
+      if (claim) { t.notify_claim = claim; t.notify_status = "pending" }
+      return { data: { ...t, created, notify_claim: claim }, error: null }
+    },
     from(table: string) {
       if (table === "support_tickets") {
-        return {
-          select(_cols: string) {
-            return {
-              eq(col: string, val: unknown) {
-                const filters: Array<[string, unknown]> = [[col, val]]
-                const chain = {
-                  eq(c: string, v: unknown) {
-                    filters.push([c, v])
-                    return chain
-                  },
-                  async maybeSingle() {
-                    const hit = store.tickets.find((t) =>
-                      filters.every(([c, v]) => t[c] === v)
-                    )
-                    return { data: hit ?? null, error: null }
-                  },
-                }
-                return chain
-              },
-            }
-          },
-          insert(row: Row) {
-            const id = crypto.randomUUID()
-            const full = { id, ...row }
-            store.tickets.push(full)
-            return {
-              select(_c: string) {
-                return {
-                  async single() {
-                    return { data: { id }, error: null }
-                  },
-                }
-              },
-            }
-          },
-          update(patch: Row) {
-            return {
-              async eq(col: string, val: unknown) {
-                for (const t of store.tickets) {
-                  if (t[col] === val) Object.assign(t, patch)
-                }
-                return { error: null }
-              },
-            }
-          },
-        }
+        return { update(patch: Row) {
+          const filters: Array<[string, unknown]> = []
+          const chain = { eq(k: string, v: unknown) { filters.push([k,v]); return chain },
+            async select(_cols: string) { const rows=store.tickets.filter(t=>filters.every(([k,v])=>t[k]===v)); rows.forEach(t=>Object.assign(t,patch)); return { data: rows.map(t=>({id:t.id})), error:null } }
+          }
+          return chain
+        } }
       }
       if (table === "support_ticket_signature_signals") {
         return {
@@ -227,7 +197,7 @@ Deno.test("create ticket emails systems@ and keeps summary generated", async () 
   assertEquals(emails[0].to, PRODUCT_SUPPORT_NOTIFY_EMAIL)
   assertEquals(store.tickets.length, 1)
   assertEquals(String(store.tickets[0].summary).includes("I need help from support — vendor"), false)
-  assertStringIncludes(result.confirmationMarkdown, "Support ticket created")
+  assertStringIncludes(result.confirmationMarkdown, "saved a support ticket")
   assertExists(result.summary)
 })
 
@@ -392,7 +362,7 @@ Deno.test("runAskUlo product support creates ticket with confirmation", async ()
       },
       job,
     )
-    assertStringIncludes(response.answer, "Support ticket")
+    assertStringIncludes(response.answer, "support ticket")
     assertExists(response.supportTicket)
     assertEquals(store.tickets.length, 1)
     const summary = String(store.tickets[0].summary).toLowerCase()
@@ -401,4 +371,17 @@ Deno.test("runAskUlo product support creates ticket with confirmation", async ()
   } finally {
     if (prev != null) Deno.env.set("RESEND_API_KEY", prev)
   }
+})
+
+Deno.test('notification transport throws cannot erase the saved support ticket', async()=>{
+ const store={tickets:[] as Row[],signals:[] as Row[],activity:[] as Row[]}
+ const result=await createOrBumpProductSupportTicket(mockSupabase(store),{landlordId:'11111111-1111-4111-8111-111111111111',question:'Synthetic support notification failure',sendEmail:async()=>{throw Error('Synthetic transport failure')}})
+ assertEquals(result.ok,true);assertEquals(store.tickets.length,1)
+ if(result.ok){assertEquals(result.notifyStatus,'failed');assertEquals(/was notified|already has|will follow up/.test(result.confirmationMarkdown),false)}
+})
+Deno.test('hung notification transport returns a controlled result within its deadline', async()=>{
+ const store={tickets:[] as Row[],signals:[] as Row[],activity:[] as Row[]};const start=performance.now()
+ const result=await createOrBumpProductSupportTicket(mockSupabase(store),{landlordId:'11111111-1111-4111-8111-111111111111',question:'Synthetic support transport timeout',sendEmail:()=>new Promise(()=>{})})
+ assertEquals(result.ok,true);assertEquals(performance.now()-start<7000,true)
+ if(result.ok)assertEquals(result.notifyStatus,'failed')
 })

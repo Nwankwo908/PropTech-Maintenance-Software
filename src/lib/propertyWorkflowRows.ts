@@ -13,6 +13,7 @@ import {
   type WorkflowKanbanCard,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
+import { homeCheckLandlordStatus } from '@shared/homeCheckVisit'
 import {
   buildInspectionWorkflowContext,
   findLifecycleRowForRun,
@@ -58,6 +59,9 @@ function workflowStatusLabel(
   card: WorkflowKanbanCard,
   lifecycle: ReturnType<typeof findLifecycleRowForRun>,
 ): string {
+  if (row.templateId === 'home_check') {
+    return homeCheckLandlordStatus(row.currentStep, row.status)
+  }
   if (isInspectionWorkflow(row, card)) {
     const suffix = formatInspectionStatusSuffix(buildInspectionWorkflowContext(row, lifecycle))
     if (suffix) return suffix
@@ -75,6 +79,7 @@ function workflowListTitle(
   urgency: string | null,
   lifecycle: ReturnType<typeof findLifecycleRowForRun>,
 ): string {
+  if (row.templateId === 'home_check') return 'Home Check'
   if (isInspectionWorkflow(row, card)) {
     const context = buildInspectionWorkflowContext(row, lifecycle)
     return inspectionWorkflowTitle(row, lifecycle, context)

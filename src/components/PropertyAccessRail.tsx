@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import { createPortal } from 'react-dom'
-import propertyAccessIcon from '@/assets/property-access.png'
+import propertyAccessIcon from '@/assets/noun_propertykey_8436012.svg'
 import {
   ADMIN_RAIL_FOOTER_CLASS,
   ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
@@ -9,12 +9,15 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
 } from '@/lib/adminRightRail'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
+import { loadPropertySetupGapCounts, notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
+import { listPropertiesForLandlord } from '@/lib/properties'
 import {
   EMPTY_PROPERTY_ACCESS,
   loadPropertyAccess,
   propertyAccessHasContent,
+  propertyAccessRemainingNotice,
   savePropertyAccess,
   type PropertyAccessProfile,
 } from '@/lib/propertyAccess'
@@ -109,6 +112,8 @@ export function PropertyAccessRail({
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [propertiesLeft, setPropertiesLeft] = useState<number | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -124,6 +129,8 @@ export function PropertyAccessRail({
     let cancelled = false
     setLoading(true)
     setError(null)
+    setSaved(false)
+    setPropertiesLeft(null)
     void loadPropertyAccess(building).then((loaded) => {
       if (cancelled) return
       setAccess({ ...loaded, updatedAt: null })
@@ -173,6 +180,17 @@ export function PropertyAccessRail({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
           {loading ? (
             <p className="py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
+          ) : saved ? (
+            <div role="status" className="rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-4">
+              <p className="text-[14px] font-semibold leading-5 text-[#166534]">
+                Your property access details were saved.
+              </p>
+              {propertiesLeft != null ? (
+                <p className="mt-1 text-[13px] leading-5 text-[#166534]">
+                  {propertyAccessRemainingNotice(propertiesLeft)}
+                </p>
+              ) : null}
+            </div>
           ) : (
             <div className="flex flex-col gap-4">
               {ACCESS_FIELDS.map((field) => (
@@ -190,38 +208,55 @@ export function PropertyAccessRail({
         </div>
 
         <footer className={ADMIN_RAIL_FOOTER_CLASS}>
-          <button type="button" onClick={onClose} className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!canSave}
-            className={ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS}
-            onClick={() => {
-              if (!access.lockboxCode.trim()) {
-                setError('Lockbox code is required.')
-                return
-              }
-              void (async () => {
-                setSaving(true)
-                setError(null)
-                try {
-                  await savePropertyAccess(building, {
-                    ...access,
-                    updatedAt: new Date().toISOString(),
-                  })
-                  notifyPropertyDetailsChanged(building)
-                  onClose()
-                } catch (err) {
-                  setError(getErrorMessage(err, 'Could not save property access.'))
-                } finally {
-                  setSaving(false)
-                }
-              })()
-            }}
-          >
-            {saving ? 'Saving…' : 'Save Details'}
-          </button>
+          {saved ? (
+            <button type="button" onClick={onClose} className={ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS}>
+              Done
+            </button>
+          ) : (
+            <>
+              <button type="button" onClick={onClose} className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!canSave}
+                className={ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS}
+                onClick={() => {
+                  if (!access.lockboxCode.trim()) {
+                    setError('Lockbox code is required.')
+                    return
+                  }
+                  void (async () => {
+                    setSaving(true)
+                    setError(null)
+                    try {
+                      await savePropertyAccess(building, {
+                        ...access,
+                        updatedAt: new Date().toISOString(),
+                      })
+                      notifyPropertyDetailsChanged(building)
+                      setSaved(true)
+                      try {
+                        const listed = await listPropertiesForLandlord(getActiveLandlordId())
+                        if (listed.ok) {
+                          const gaps = await loadPropertySetupGapCounts(listed.properties)
+                          setPropertiesLeft(gaps.missingAccess)
+                        }
+                      } catch {
+                        // The save already succeeded. Leave the remaining count blank.
+                      }
+                    } catch (err) {
+                      setError(getErrorMessage(err, 'Could not save property access.'))
+                    } finally {
+                      setSaving(false)
+                    }
+                  })()
+                }}
+              >
+                {saving ? 'Saving…' : 'Save Details'}
+              </button>
+            </>
+          )}
         </footer>
       </div>
     </div>,

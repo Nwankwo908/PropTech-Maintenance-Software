@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import propertyInfoAlertIcon from '@/assets/landing/noun-alert-4565789.svg'
+import propertyKpiIcon from '@/assets/home.png'
+import unitKpiIcon from '@/assets/bedroom (1).png'
+import occupancyKpiIcon from '@/assets/room-key.png'
+import propertyHealthIcon from '@/assets/hospital.png'
+import ytdMaintenanceCostIcon from '@/assets/price-up.png'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
@@ -48,6 +54,10 @@ import {
   loadPropertiesNeedingMoreInformationCount,
   propertiesNeedMoreInformationCopy,
 } from '@/lib/propertyInformationGaps'
+import {
+  clearSetupSuccessCardDismissed,
+  markSetupSuccessCompleteInformationPrompt,
+} from '@/lib/setupSuccessChecklist'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
@@ -216,6 +226,7 @@ function TrendingDownIcon() {
 
 function KpiCard({
   label,
+  labelIcon,
   value,
   chart,
   valueNote,
@@ -225,8 +236,11 @@ function KpiCard({
   goodWhenUp = false,
   caption,
   infoContent,
+  stagger = 0,
 }: {
   label: string
+  /** Optional icon shown in a gray rounded square to the left of the label. */
+  labelIcon?: string
   value: string
   chart?: ReactNode
   /** Replaces the large value when there is no score to chart. */
@@ -237,19 +251,36 @@ function KpiCard({
   goodWhenUp?: boolean
   caption: string
   infoContent?: ReactNode
+  stagger?: number
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
-    <div className="relative z-0 flex h-full min-w-0 flex-1 flex-col gap-4 overflow-visible rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] hover:z-20 focus-within:z-20">
+    <div
+      className="sa-stagger-scale sa-card relative z-0 flex h-full min-w-0 flex-1 flex-col gap-4 overflow-visible rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] hover:z-20 focus-within:z-20"
+      style={{ '--sa-stagger': stagger } as CSSProperties}
+    >
       <div className="flex min-w-0 items-center gap-1.5">
+        {labelIcon ? (
+          <span
+            className="flex size-[2.1rem] shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+            aria-hidden
+          >
+            <img src={labelIcon} alt="" className="size-[1.2rem] object-contain" />
+          </span>
+        ) : null}
         <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {label}
         </p>
         {infoContent}
       </div>
-      <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+      <div
+        className={[
+          'flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2',
+          labelIcon ? 'pl-[calc(2.1rem+0.375rem)]' : '',
+        ].join(' ')}
+      >
         {chart ? (
           <div className="pointer-events-none -ml-2 shrink-0 sm:-ml-3">{chart}</div>
         ) : valueNote ? (
@@ -279,7 +310,14 @@ function KpiCard({
           </span>
         ) : null}
       </div>
-      <p className="mt-auto min-w-0 truncate whitespace-nowrap text-[12px] leading-4 text-[#6a7282]">{caption}</p>
+      <p
+        className={[
+          'mt-auto min-w-0 truncate whitespace-nowrap text-[12px] leading-4 text-[#6a7282]',
+          labelIcon ? 'pl-[calc(2.1rem+0.375rem)]' : '',
+        ].join(' ')}
+      >
+        {caption}
+      </p>
     </div>
   )
 }
@@ -844,7 +882,7 @@ export function AdminPropertiesDashboard() {
       <div className="flex items-center justify-between py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-            Property Portfolio
+            Properties
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
             Monitor the health, performance, and activity of every property in one place.
@@ -859,27 +897,47 @@ export function AdminPropertiesDashboard() {
       ) : null}
 
       {needsMoreInformation ? (
-        <div className="mb-4 rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-          <p className="text-[14px] font-semibold text-[#0d0f11]">{needsMoreInformation.title}</p>
-          <p className="mt-1 text-[13px] leading-5 text-[#64748b]">{needsMoreInformation.detail}</p>
+        <div className="mb-4 flex items-center gap-3 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3">
+          <img src={propertyInfoAlertIcon} alt="" className="h-11 w-auto shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-semibold leading-5 text-[#92400e]">{needsMoreInformation.title}</p>
+            <p className="mt-1 text-[13px] leading-5 text-[#a16207]">{needsMoreInformation.detail}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              markSetupSuccessCompleteInformationPrompt()
+              clearSetupSuccessCardDismissed()
+            }}
+            className="sa-press ml-auto shrink-0 rounded-[8px] border border-[#fde68a] bg-white px-3 py-2 text-[13px] font-semibold text-[#92400e] outline-none hover:bg-[#fef3c7] focus-visible:ring-2 focus-visible:ring-[#92400e] focus-visible:ring-offset-2"
+          >
+            Complete information
+          </button>
         </div>
       ) : null}
 
+      <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[#0a0a0a]">Portfolio snapshot</h2>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
-          label="Buildings"
+          stagger={0}
+          label="Property"
+          labelIcon={propertyKpiIcon}
           value={loading ? '—' : String(kpis.buildings)}
           delta={null}
           caption={updatedCaption}
         />
         <KpiCard
+          stagger={1}
           label="Total units"
+          labelIcon={unitKpiIcon}
           value={loading ? '—' : String(kpis.totalUnits)}
           delta={null}
           caption={updatedCaption}
         />
         <KpiCard
+          stagger={2}
           label="Avg occupancy"
+          labelIcon={occupancyKpiIcon}
           value={
             loading || kpis.avgOccupancy == null ? '—' : `${kpis.avgOccupancy}%`
           }
@@ -887,7 +945,9 @@ export function AdminPropertiesDashboard() {
           caption={updatedCaption}
         />
         <KpiCard
+          stagger={3}
           label="Property Health"
+          labelIcon={propertyHealthIcon}
           value={loading || propertyHealthPercent === 0 ? (loading ? '—' : '') : healthKpiValue}
           chart={
             propertyHealthPercent > 0 ? (
@@ -914,7 +974,9 @@ export function AdminPropertiesDashboard() {
           }
         />
         <KpiCard
+          stagger={4}
           label="YTD Maintenance Cost"
+          labelIcon={ytdMaintenanceCostIcon}
           value={loading ? '—' : formatSpendCompact(kpis.ytdMaintenanceCost)}
           delta={loading ? null : kpis.ytdMaintenanceCostDelta}
           deltaFormatter={formatSignedSpend}
@@ -984,7 +1046,7 @@ export function AdminPropertiesDashboard() {
               setPropertyRegisterNotice(null)
               setAddPropertyOpen(true)
             }}
-            className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#186179]"
+            className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] border border-[#186179] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#186179]"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
               <path

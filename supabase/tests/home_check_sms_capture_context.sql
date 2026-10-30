@@ -1,0 +1,58 @@
+-- Integration regression: designated test SMS line must exist and be active.
+-- Synthetic fixtures are created and fully rolled back. No sends or AI calls.
+begin;
+create temporary table qa_capture_results(name text,pass boolean) on commit drop;
+create function pg_temp.assert_capture(label text,passed boolean) returns void language plpgsql as $$ begin
+ if passed is distinct from true then raise exception 'Failed: %',label; end if;
+ insert into qa_capture_results values(label,passed);
+end $$;
+do $$ declare a uuid:=gen_random_uuid(); b uuid:=gen_random_uuid(); pa uuid:=gen_random_uuid();pb uuid:=gen_random_uuid();line uuid;ca uuid:=gen_random_uuid();cb uuid:=gen_random_uuid();h uuid:=gen_random_uuid();newer uuid:=gen_random_uuid();foreign_h uuid:=gen_random_uuid();photo uuid:=gen_random_uuid();state jsonb;claim jsonb;later jsonb;assessment uuid;pending jsonb;
+begin
+ select id into strict line from public.sms_numbers where phone_number='+18775803356' and status='active';
+ insert into public.landlords(id,name,stripe_connect_charges_enabled,stripe_connect_payouts_enabled) values(a,'QA rollback Home Check A',false,false),(b,'QA rollback Home Check B',false,false);
+ insert into public.properties(id,landlord_id,name) values(pa,a,'QA rollback A'),(pb,b,'QA rollback B');
+ insert into public.sms_conversations(id,landlord_id,sms_number_id,external_phone_number,conversation_type) values(ca,a,line,'+14705246084','landlord_update'),(cb,b,line,'+14705246084','landlord_update');
+ perform public.create_home_check(jsonb_build_object('id',h,'reference','HC-'||upper(left(replace(h::text,'-',''),12)),'landlord_id',a,'property_id',pa,'role','landlord','recipient_phone','+14705246084','ulo_number','+18775803356','property_label','QA rollback A','token_hash','test','expires_at',now()+interval '1 day','authorized_by','QA rollback'));
+ perform public.create_home_check(jsonb_build_object('id',newer,'reference','HC-'||upper(left(replace(newer::text,'-',''),12)),'landlord_id',a,'property_id',pa,'role','landlord','recipient_phone','+14705246084','ulo_number','+18775803356','property_label','QA rollback A','token_hash','test','expires_at',now()+interval '1 day','authorized_by','QA rollback'));
+ perform public.create_home_check(jsonb_build_object('id',foreign_h,'reference','HC-'||upper(left(replace(foreign_h::text,'-',''),12)),'landlord_id',b,'property_id',pb,'role','landlord','recipient_phone','+14705246084','ulo_number','+18775803356','property_label','QA rollback B','token_hash','test','expires_at',now()+interval '1 day','authorized_by','QA rollback'));
+ insert into public.sms_messages(conversation_id,landlord_id,direction,from_number,to_number,body,media_urls,provider) values(ca,a,'inbound','+14705246084','+18775803356','',array['qa/photo-a.jpg','qa/photo-b.jpg'],'twilio');
+ state:=public.home_check_sms_capture_context('bind',a,ca,h);
+ perform pg_temp.assert_capture('explicit selected check wins over newer same-property check',state->>'checkId'=h::text and state->>'slot'='water_heater_label');
+ begin perform public.home_check_sms_capture_context('bind',a,ca,foreign_h);raise exception 'foreign bind allowed';exception when insufficient_privilege then perform pg_temp.assert_capture('cross-account check bind denied',true);end;
+ begin perform public.home_check_sms_capture_context('bind',a,cb,h);raise exception 'foreign thread allowed';exception when insufficient_privilege then perform pg_temp.assert_capture('cross-account conversation denied',true);end;
+ begin perform public.home_check_sms_capture_context('claim',a,ca,h,'water_heater_label',(state->>'version')::uuid,null,'foreign/photo.jpg');raise exception 'foreign media allowed';exception when insufficient_privilege then perform pg_temp.assert_capture('media origin verified at claim',true);end;
+ claim:=public.home_check_sms_capture_context('claim',a,ca,h,'water_heater_label',(state->>'version')::uuid,null,'qa/photo-a.jpg');
+ perform pg_temp.assert_capture('first photo claim succeeds',(claim->>'ok')::boolean and claim->>'claim' is not null);
+ later:=public.home_check_sms_capture_context('claim',a,ca,h,'water_heater_label',(state->>'version')::uuid,null,'qa/photo-b.jpg');
+ perform pg_temp.assert_capture('second claim cannot reuse expected step',later->>'reason'='busy');
+ perform pg_temp.assert_capture('restart blocked while upload claimed',not public.reset_home_check_sms_capture(a,ca));
+ select assessment_id into assessment from public.home_checks where id=h;
+ insert into public.property_inspection_photos(id,assessment_id,landlord_id,storage_path) values(photo,assessment,a,'qa/saved.jpg');
+ perform public.record_home_check_sms_photo(h,'water_heater_label',photo,'qa/saved.jpg',ca,(claim->>'claim')::uuid);
+ perform pg_temp.assert_capture('attachment is exactly the selected check and slot',exists(select 1 from public.home_check_photos where check_id=h and slot='water_heater_label' and inspection_photo_id=photo) and not exists(select 1 from public.home_check_photos where check_id in(newer,foreign_h)));
+ perform pg_temp.assert_capture('successful attachment advances to next step',exists(select 1 from public.home_check_sms_capture_sessions where conversation_id=ca and expected_slot='water_heater_whole' and claim_id is null));
+ begin perform public.record_home_check_sms_photo(h,'water_heater_label',photo,'qa/saved.jpg',ca,(claim->>'claim')::uuid);raise exception 'replay allowed';exception when insufficient_privilege then perform pg_temp.assert_capture('claim replay cannot replace photo',true);end;
+ later:=public.home_check_sms_capture_context('claim',a,ca,h,'water_heater_label',(state->>'version')::uuid,null,'qa/photo-a.jpg');
+ perform pg_temp.assert_capture('old prompt version rejected after advancing',later->>'reason'='stale');
+ state:=public.home_check_sms_capture_context('bind',a,ca,h);
+ update public.home_check_sms_capture_sessions set expires_at=now()-interval '1 second' where conversation_id=ca;
+ later:=public.home_check_sms_capture_context('claim',a,ca,h,'water_heater_whole',(state->>'version')::uuid,null,'qa/photo-a.jpg');
+ perform pg_temp.assert_capture('expired context cannot claim',later->>'reason'='stale');
+ state:=public.home_check_sms_capture_context('bind',a,ca,h);
+ update public.home_checks set recipient_phone='+18623306458' where id=h;
+ begin perform public.home_check_sms_capture_context('claim',a,ca,h,'water_heater_whole',(state->>'version')::uuid,null,'qa/photo-a.jpg');raise exception 'reassigned phone allowed';exception when insufficient_privilege then perform pg_temp.assert_capture('phone reassignment invalidates claim',true);end;
+ update public.home_checks set recipient_phone='+14705246084',ulo_number='+18623306458' where id=h;
+ begin perform public.home_check_sms_capture_context('bind',a,ca,h);raise exception 'line mismatch allowed';exception when insufficient_privilege then perform pg_temp.assert_capture('different receiving line rejected',true);end;
+ update public.home_checks set ulo_number='+18775803356' where id=h;
+ pending:=jsonb_build_object('step','kind','path','qa/photo-a.jpg','at',now(),'checkId',h);
+ perform pg_temp.assert_capture('first unclear photo held',public.hold_home_check_sms_photo(a,ca,pending));
+ perform pg_temp.assert_capture('second unclear photo cannot replace first',not public.hold_home_check_sms_photo(a,ca,pending||jsonb_build_object('path','qa/photo-b.jpg')));
+ perform public.hold_home_check_sms_photo(a,ca,null,'qa/photo-b.jpg');
+ perform pg_temp.assert_capture('wrong photo cannot clear existing held photo',exists(select 1 from public.sms_conversations where id=ca and intake_state->'home_check_photo_pending'->>'path'='qa/photo-a.jpg'));
+ perform public.reset_home_check_sms_capture(a,ca);
+ perform pg_temp.assert_capture('safe restart clears old selected and held state',not exists(select 1 from public.home_check_sms_capture_sessions where conversation_id=ca));
+ perform pg_temp.assert_capture('authenticated cannot invoke privileged context RPC',not has_function_privilege('authenticated','public.home_check_sms_capture_context(text,uuid,uuid,uuid,text,uuid,uuid,text)','EXECUTE'));
+ perform pg_temp.assert_capture('authenticated has no session read grant',not has_table_privilege('authenticated','public.home_check_sms_capture_sessions','SELECT'));
+end $$;
+select * from qa_capture_results;
+rollback;

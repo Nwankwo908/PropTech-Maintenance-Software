@@ -29,6 +29,7 @@ function sampleWo(overrides: Partial<OperationalWorkOrder> = {}): OperationalWor
     description:
       "AC compressor failed during heat advisory. SLA expired with no HVAC vendor left on roster.",
     priority: "high",
+    urgency: null,
     estimatedCost: 300,
     estimatedCostSource: "minutes_proxy",
     repairScope: "Standard Diagnostic + Repair",

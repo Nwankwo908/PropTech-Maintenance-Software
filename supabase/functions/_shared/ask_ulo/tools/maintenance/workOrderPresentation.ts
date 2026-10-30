@@ -185,6 +185,7 @@ export function isPortfolioWorkPrioritizationQuestion(question: string): boolean
     /\bmost\s+urgent\s+(?:work\s*orders?|tickets?|repairs?|items?|issues?)\b/i.test(q) ||
     /\b(?:work\s*orders?|tickets?|repairs?)\b.{0,48}\bmost\s+urgent\b/i.test(q) ||
     /\bwhat\s+should\s+happen\s+first\b.+\b(work\s*orders?|tickets?|repairs?)\b/i.test(q) ||
+    /\b(?:which|what)\s+open\s+(?:repair|work\s*orders?|tickets?).{0,48}\bfirst\b/i.test(q) ||
     (/\bprioriti[sz]e\b/i.test(q) &&
       /\b(work\s*orders?|tickets?|repairs?)\b/i.test(q) &&
       !/\btoday\b/i.test(q))

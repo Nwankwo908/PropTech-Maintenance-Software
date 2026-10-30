@@ -68,8 +68,10 @@ async function authUserFromAccessToken(
   supabaseUrl: string,
   anonKey: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<{ user: Record<string, unknown> | null; error: string | null }> {
   const res = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/user`, {
+    signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]),
     headers: {
       Authorization: `Bearer ${token}`,
       apikey: anonKey,
@@ -91,6 +93,7 @@ async function authUserFromAccessToken(
  * Call before any portfolio tool reads.
  */
 export async function assertAskUloLandlordAccess(input: {
+  signal?: AbortSignal
   req: Request
   supabase: SupabaseClient
   supabaseUrl: string
@@ -111,6 +114,7 @@ export async function assertAskUloLandlordAccess(input: {
     input.supabaseUrl,
     input.anonKey,
     token,
+    input.signal,
   )
   if (error || !user) {
     console.warn("[ask-ulo] auth user lookup failed", error ?? "no user")

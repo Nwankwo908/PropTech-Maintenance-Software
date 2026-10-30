@@ -490,6 +490,7 @@ export async function executeSelectedTools(
     {
       supabase,
       landlordId,
+      timing: context.timing,
       question,
       retrievalQuestion,
       buildingFilter,
@@ -613,6 +614,7 @@ export async function executeSelectedTools(
       plannedForSearch,
       {
         organizationId: landlordId,
+        timing: context.timing,
         question,
         buildingFilter,
       },
@@ -1122,7 +1124,7 @@ export async function executeSelectedTools(
           clarifyOnly: true,
         },
       },
-      { organizationId: landlordId, question, buildingFilter },
+      { organizationId: landlordId, question, buildingFilter, timing: context.timing },
     )
     : context.permissions.canSeeFinance && plan.runPriceHistory
     ? await executeDomainTool(
@@ -1134,7 +1136,7 @@ export async function executeSelectedTools(
           addressLine: property?.addressLine ?? null,
         },
       },
-      { organizationId: landlordId, question, buildingFilter },
+      { organizationId: landlordId, question, buildingFilter, timing: context.timing },
     )
     : null
   const priceHistory = priceHistoryRow?.toolId === "get_property_price_history"
@@ -1153,7 +1155,7 @@ export async function executeSelectedTools(
           addressLine: property?.addressLine ?? null,
         },
       },
-      { organizationId: landlordId, question, buildingFilter },
+      { organizationId: landlordId, question, buildingFilter, timing: context.timing },
     )
     : null
   const rentHistory = rentHistoryRow?.toolId === "get_rent_history"

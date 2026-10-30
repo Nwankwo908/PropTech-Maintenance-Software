@@ -3,6 +3,9 @@
  * Auth: ADMIN_REASSIGN_SECRET + user JWT with landlord access check
  * (shared secret alone is never proof of landlord scope).
  */
+import { createAskUloTiming } from "../_shared/ask_ulo/core/timing.ts"
+import { validateAskUloRequest } from "../_shared/ask_ulo/core/validateRequest.ts"
+import { withDeadline } from '../_shared/ai/deadline.ts'
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
@@ -22,17 +25,12 @@ import {
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-admin-reassign-secret, x-ulo-access-token",
+    "authorization, x-client-info, apikey, content-type, x-admin-reassign-secret, x-ulo-access-token, x-ulo-trace-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Max-Age": "86400",
+  "Access-Control-Expose-Headers": "Server-Timing, X-Ulo-Trace-Id",
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  })
-}
 
 function asString(value: unknown): string | null {
   if (typeof value !== "string") return null
@@ -41,6 +39,18 @@ function asString(value: unknown): string | null {
 }
 
 serve(async (req) => {
+  const timing = createAskUloTiming(undefined, undefined, req.headers.get('x-ulo-trace-id'))
+  const requestSignal = AbortSignal.timeout(25000)
+  function jsonResponse(body: unknown, status = 200): Response {
+    const serialized = timing.measureSync('serialization', () => JSON.stringify(body))
+    const measured = timing.emit(status)
+    return new Response(serialized, {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json',
+        'X-Ulo-Trace-Id': measured.traceId,
+        'Server-Timing': `total;dur=${measured.totalMs.toFixed(1)},` + Object.entries(measured.stagesMs).map(([stage, ms]) => `${stage};dur=${ms.toFixed(1)}`).join(',') },
+    })
+  }
   // Preflight must succeed before auth / body parsing.
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200, headers: corsHeaders })
@@ -51,14 +61,21 @@ serve(async (req) => {
       return jsonResponse({ error: "Method not allowed" }, 405)
     }
     const adminAuth = requireAdminReassignAuth(req, "[ask-ulo]", corsHeaders)
-    if (!adminAuth.ok) return adminAuth.response
+    if (!adminAuth.ok) { timing.emit(adminAuth.response.status); return adminAuth.response }
 
     let body: Record<string, unknown>
     try {
-      body = (await req.json()) as Record<string, unknown>
+      body = await timing.measure('parse', async () => {
+        const value = await req.json()
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid body')
+        return value as Record<string, unknown>
+      })
     } catch {
       return jsonResponse({ error: "Invalid JSON body" }, 400)
     }
+
+    const invalid = await timing.measure('input_validation', () => validateAskUloRequest(body))
+    if (invalid) return jsonResponse({ error: invalid }, 400)
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -68,7 +85,11 @@ serve(async (req) => {
       return jsonResponse({ error: "Server misconfiguration" }, 500)
     }
 
-    const supabase = createClient(supabaseUrl, serviceKey)
+    const supabase = createClient(supabaseUrl, serviceKey, {
+      global: { fetch: (url, init) => timing.measure('database_http', () => fetch(url, { ...init, signal: AbortSignal.any([
+        requestSignal, AbortSignal.timeout(8000), ...(init?.signal ? [init.signal] : []),
+      ]) })) },
+    })
     const action = asString(body.action)
     const landlordIdEarly =
       asString(body.landlordId) ?? asString(body.landlord_id)
@@ -77,13 +98,14 @@ serve(async (req) => {
       return jsonResponse({ error: "landlordId is required" }, 400)
     }
 
-    const access = await assertAskUloLandlordAccess({
+    const access = await timing.measure('auth', () => assertAskUloLandlordAccess({
       req,
       supabase,
       supabaseUrl,
       anonKey,
       landlordId: landlordIdEarly,
-    })
+      signal: requestSignal,
+    }))
     if (!access.ok) {
       return jsonResponse({ error: access.error }, access.status)
     }
@@ -174,7 +196,7 @@ serve(async (req) => {
     const historyRaw = body.messages ?? body.history
     const history: Array<{ role: "user" | "assistant"; content: string }> = []
     if (Array.isArray(historyRaw)) {
-      for (const item of historyRaw) {
+      for (const item of historyRaw.slice(-24)) {
         if (!item || typeof item !== "object") continue
         const row = item as Record<string, unknown>
         const role = asString(row.role)
@@ -187,14 +209,15 @@ serve(async (req) => {
     }
 
     try {
-      const result = await runAskUlo(supabase, {
+      const result = await withDeadline(Math.max(1, 25000 - timing.snapshot().totalMs), () => runAskUlo(supabase, {
         question,
+        timing,
         landlordId,
         userId: authUserId,
         history,
         conversationId,
         agentMode,
-      })
+      }))
       return jsonResponse({
         answer: result.answer,
         citations: result.citations,
@@ -211,6 +234,9 @@ serve(async (req) => {
         supportTicket: result.supportTicket ?? null,
       })
     } catch (err) {
+      if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        return jsonResponse({ answer: "I couldn't finish verifying the result before the response limit. I can't confirm an answer or action outcome. Please check the current record before retrying.", citations: [], toolsUsed: ['request_deadline'], mode: 'fallback', model: null, intent: 'general', agentMode, evalId: null, visualContext: null, legalAudit: null, safetyBoundary: null, supportTicket: null })
+      }
       console.error("[ask-ulo] failed", err)
       return jsonResponse(
         { error: err instanceof Error ? err.message : "Ask Ulo failed" },
@@ -219,6 +245,9 @@ serve(async (req) => {
     }
   } catch (err) {
     // Catch-all so unexpected failures still return CORS headers (avoids Failed to fetch).
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      return jsonResponse({ error: 'Ask Ulo could not verify the request in time. Please retry.' }, 503)
+    }
     console.error("[ask-ulo] unhandled", err)
     return jsonResponse(
       { error: err instanceof Error ? err.message : "Ask Ulo failed" },

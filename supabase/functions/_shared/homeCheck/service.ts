@@ -1,3 +1,5 @@
+import { smsUnknownLabelCorrections, type HomeCheckLabelCorrection } from './labelReview.ts'
+import { captureContextAction } from "./captureContext.ts"
 import { analyzeHomeCheckEquipmentPair } from './equipmentPair.ts'
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import {
@@ -11,7 +13,6 @@ import {
   homeCheckReference,
   type HomeCheckRole,
   type HomeCheckSlot,
-  homeCheckSummary,
   supportedHomeCheckPhotoWarning,
 } from '../../../../shared/homeCheck.ts'
 import { homeCheckFollowUpCategory } from '../../../../shared/maintenance/homeCheckRepairCategory.ts'
@@ -28,12 +29,12 @@ import type { ApplianceVisionResult } from '../vision/types.ts'
 import { logPipelineStageEvent, updateWorkflowRun } from '../engine/workflowRuns.ts'
 import { recordActivityLog } from '../graph/recordActivityLog.ts'
 import { startMaintenanceRequestWorkflow } from '../engine/startMaintenanceRequestWorkflow.ts'
-import { uloAppOrigin } from '../uloAppUrl.ts'
 import { findOrCreateConversation, normalizeSmsPhone } from '../sms/inbound_db.ts'
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
 import { resolveOutboundLandlordSmsLine } from '../sms/landlordSmsOnboarding.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
-import { homeCheckCaptureSms } from './smsCopy.ts'
+import { homeCheckCaptureSms, homeCheckResultsSms } from './smsCopy.ts'
+import { homeCheckCloserPhotoSms, homeCheckPhotoObservations } from '../../../../shared/homeCheckPhotoReview.ts'
 
 export type HomeCheckRow = {
   id: string
@@ -64,6 +65,8 @@ export type HomeCheckRow = {
   issue_ticket_id: string | null
   detected_warning: string | null
   created_at: string
+  /** Acceptance and scheduling. Empty on photo-first checks. */
+  visit?: unknown
 }
 
 type PropertyRow = {
@@ -112,6 +115,7 @@ export async function sendHomeCheckSms(
   to: string,
   body: string,
   residentId: string | null = null,
+  captureStart: { company: string } | null = null,
 ) {
   if (!check.ulo_number) {
     throw new Error('This account needs an active Ulo SMS number before sending texts.')
@@ -151,6 +155,13 @@ export async function sendHomeCheckSms(
       verified: true,
     },
   })
+  if (captureStart) {
+    const bound = await captureContextAction(db, { action: 'bind', landlordId: check.landlord_id,
+      conversationId, checkId: check.id })
+    if (!bound) throw new Error('A photo is still processing. Wait before requesting new photo instructions.')
+    body = homeCheckCaptureSms({ role: check.role, location: checkLocation(check).replace(/ · /g, ', '),
+      company: captureStart.company, reference: check.reference, nextPhoto: bound.slot })
+  }
   const result = await sendInboundAutoReply(db, {
     landlordId: check.landlord_id,
     conversationId,
@@ -205,7 +216,7 @@ export async function publicHomeCheck(db: SupabaseClient, check: HomeCheckRow) {
     feedback: photos.filter((photo) => photo.slot.endsWith('_label')).map((photo) => {
       const row = rows.find((row) => row.id === photo.inspection_photo_id)
       const quality = (row?.ai_result as ApplianceVisionResult | null)?.labelReadability
-      return { slot: photo.slot, state: row?.status || 'queued', retakeMessage: quality?.retakeRequested ? quality.retakeMessage : null, uncertainCharacters: quality?.uncertainCharacters || [], formatWarnings: quality?.formatWarnings || [] }
+      return { slot: photo.slot, state: row?.status || 'queued', retakeMessage: quality?.retakeRequested ? quality.retakeMessage || 'A clearer equipment label photo is needed.' : null, retakeReason: quality?.retakeRequested ? ((row?.ai_result as ApplianceVisionResult | null)?.estimatedAge?.basis === 'Photos do not match the selected equipment.' ? 'system_mismatch' as const : 'label_unreadable' as const) : null, uncertainCharacters: quality?.uncertainCharacters || [], formatWarnings: quality?.formatWarnings || [] }
     }),
     status: check.status,
   }
@@ -305,12 +316,6 @@ export async function createHomeCheck(db: SupabaseClient, input: {
     expires = end
   }
   const publishLink = input.publishLink !== false
-  const origin = publishLink ? new URL(uloAppOrigin()) : null
-  if (
-    origin &&
-    (origin.protocol !== 'https:' ||
-      !(origin.hostname === 'ulohome.io' || origin.hostname.endsWith('.ulohome.io')))
-  ) throw new Error('APP_URL must use the branded HTTPS Ulo domain for Home Check links.')
   const line = publishLink
     ? await resolveOutboundLandlordSmsLine(db, input.landlordId)
     : null
@@ -383,7 +388,8 @@ export async function createHomeCheck(db: SupabaseClient, input: {
       role: check.role,
     },
   })
-  const link = origin ? `${origin.origin}/c/${id}#${token}` : null
+  // Capture URLs are retired. SMS uses explicitly referenced MMS; dashboard uploads stay authenticated.
+  const link = null
   if (!sameRequest) {
     await homeCheckEvent(db, check, 'authorized', { authorized_by: input.authorizedBy })
   }
@@ -394,15 +400,15 @@ export async function createHomeCheck(db: SupabaseClient, input: {
   if (input.sendSms) {
     const destination = recipientPhone
     if (!destination) {
-      throw new Error('Add a landlord phone number before texting a forwarding link.')
+      throw new Error('Add a landlord phone number before texting the photo instructions.')
     }
     try {
       await sendHomeCheckSms(db, check, destination, homeCheckCaptureSms({
         role: input.role,
         location: checkLocation(check).replace(/ · /g, ', '),
         company: landlord.name || 'your landlord',
-        link: link!,
-      }), residentId)
+        reference: check.reference,
+      }), residentId, { company: landlord.name || 'your landlord' })
       await checked(
         db.from('home_checks').update({ sent_at: new Date().toISOString() }).eq('id', id),
       )
@@ -412,7 +418,7 @@ export async function createHomeCheck(db: SupabaseClient, input: {
       await homeCheckEvent(db, check, 'delivery_failed')
     }
   } else {
-    // The dashboard delivers the landlord's capture link directly.
+    // Authenticated dashboard capture does not publish a bearer URL.
     await checked(db.from('home_checks').update({ sent_at: new Date().toISOString() }).eq('id', id))
     await homeCheckEvent(db, check, 'link_provided')
   }
@@ -518,26 +524,39 @@ export async function rebuildHomeCheckAssets(
   return assets
 }
 
+/** Pending means not yet analyzed, never "unreadable". */
+export async function pendingHomeCheckSystems(db: SupabaseClient, checkId: string): Promise<string[]> {
+  const photos = requireData(await db.from('home_check_photos').select('slot,inspection_photo_id').eq('check_id', checkId))
+  const ids = photos.map(photo => photo.inspection_photo_id)
+  const rows = ids.length ? requireData(await db.from('property_inspection_photos').select('id,status,ai_result').in('id', ids)) : []
+  return ['water_heater','heating'].filter(system => ['label','whole'].some(view => {
+    const photo = photos.find(photo => photo.slot === `${system}_${view}`)
+    const row = rows.find(row => row.id === photo?.inspection_photo_id)
+    return !row?.ai_result || ['queued','analyzing','error'].includes(row.status)
+  }))
+}
+
 export async function notifyHomeCheckResult(
   db: SupabaseClient,
   check: HomeCheckRow,
   assets: HomeCheckAsset[],
-) {
-  if (!check.completed_at || check.summary_sent_at || check.answers.warningSigns == null) return
-  const { data: landlord } = await db.from('landlords').select('phone').eq('id', check.landlord_id)
-    .single()
-  if (!landlord?.phone || !check.ulo_number) return
-  await sendHomeCheckSms(
-    db,
-    check,
-    landlord.phone,
-    `${checkLocation(check)} — ${homeCheckSummary(assets, check.answers)}${
-      check.detected_warning ? ' A photo warning needs landlord review.' : ''
-    }\nReply OK ${check.reference} to confirm. Reply OK alone only when you have one pending Home Check.`,
-  )
-  await checked(
-    db.from('home_checks').update({ summary_sent_at: new Date().toISOString() }).eq('id', check.id),
-  )
+  resend = false,
+): Promise<boolean> {
+  if (!check.completed_at || (!resend && (check.summary_sent_at || (check.answers.warningSigns == null && !check.answers.observationsConfirmed)))) return false
+  const { data: landlord } = await db.from('landlords').select('phone').eq('id', check.landlord_id).single()
+  if (!landlord?.phone || !check.ulo_number) return false
+  const pendingSystems = await pendingHomeCheckSystems(db, check.id)
+  try {
+    await sendHomeCheckSms(db, check, landlord.phone, homeCheckResultsSms({
+      location: checkLocation(check), assets, answers: check.answers,
+      warning: check.detected_warning, pendingSystems,
+    }))
+  } catch {
+    // Keep summary_sent_at unset so RESULTS can retry a failed send.
+    return false
+  }
+  await checked(db.from('home_checks').update({ summary_sent_at: new Date().toISOString() }).eq('id', check.id))
+  return true
 }
 
 export async function uploadHomeCheckPhoto(
@@ -548,6 +567,7 @@ export async function uploadHomeCheckPhoto(
     bytes: Uint8Array
     contentType: string
     source: 'link' | 'photo_text' | 'dashboard'
+    capture?: { conversationId: string; claim: string }
     /** Dashboard uploads save the observation and do not text or open paid work. */
     skipOutreach?: boolean
   },
@@ -570,15 +590,13 @@ export async function uploadHomeCheckPhoto(
     autoConfirm: false,
     deferPhotoAnalysis: true,
   })
-  await checked(
-    db.rpc('record_home_check_photo', {
-      p_check_id: check.id,
-      p_slot: input.slot,
-      p_photo_id: photo.photo.id,
-      p_storage_path: photo.photo.storage_path,
-      p_source: input.source,
-    }),
-  )
+  await checked(input.capture
+    ? db.rpc('record_home_check_sms_photo', { p_check_id: check.id, p_slot: input.slot,
+      p_photo_id: photo.photo.id, p_storage_path: photo.photo.storage_path,
+      p_conversation_id: input.capture.conversationId, p_claim: input.capture.claim })
+    : db.rpc('record_home_check_photo', { p_check_id: check.id, p_slot: input.slot,
+      p_photo_id: photo.photo.id, p_storage_path: photo.photo.storage_path, p_source: input.source }))
+
   const result = await analyzeHomeCheckEquipmentPair(db, check.id, input.slot)
   const current = await loadHomeCheck(db, check.id)
   const assets = await rebuildHomeCheckAssets(db, current)
@@ -670,6 +688,7 @@ export async function saveHomeCheckAnswers(
   db: SupabaseClient,
   check: HomeCheckRow,
   answers: HomeCheckAnswers,
+  options: { notifyResults?: boolean } = {},
 ) {
   if (check.confirmed_at || Date.parse(check.expires_at) <= Date.now()) {
     throw new Error('This Home Check has ended.')
@@ -687,7 +706,8 @@ export async function saveHomeCheckAnswers(
   await openHomeCheckFollowUp(db, current)
   await homeCheckEvent(db, current, 'answers_saved')
   const assets = await rebuildHomeCheckAssets(db, current)
-  await notifyHomeCheckResult(db, current, assets)
+  if (options.notifyResults === false) return true
+  return await notifyHomeCheckResult(db, current, assets, true)
 }
 
 async function openHomeCheckFollowUp(db: SupabaseClient, check: HomeCheckRow) {
@@ -714,7 +734,14 @@ async function openHomeCheckFollowUp(db: SupabaseClient, check: HomeCheckRow) {
   }
 }
 
-export async function confirmHomeCheck(db: SupabaseClient, id: string, landlordId: string, labelCorrections: Array<{ assetId: string; modelNumber?: string; serialNumber?: string; manufactureYear?: number | null; manufactureMonth?: number | null }> = []) {
+export async function confirmHomeCheck(db: SupabaseClient, id: string, landlordId: string, labelCorrections: HomeCheckLabelCorrection[] = [], options: { acknowledgeUnknownLabels?: boolean } = {}) {
+  const before = await loadHomeCheck(db, id, landlordId)
+  if (before.answers.warningSigns == null && !before.answers.observationsConfirmed) throw new Error('Answer the leaks, noises or smells question before confirming.')
+  if ((await pendingHomeCheckSystems(db, id)).length) throw new Error('Photo analysis is pending. This Home Check cannot be confirmed yet.')
+  if (options.acknowledgeUnknownLabels) {
+    const assets = requireData(await db.from('unit_assets').select('id,metadata').eq('landlord_id', landlordId).eq('home_check_id', id))
+    labelCorrections = [...labelCorrections, ...smsUnknownLabelCorrections(assets)]
+  }
   await checked(db.rpc('confirm_home_check_label_review', { p_check_id: id, p_landlord_id: landlordId, p_corrections: labelCorrections }))
   const check = await loadHomeCheck(db, id, landlordId)
   const dated = labelCorrections.filter((correction) => correction.manufactureYear != null || correction.manufactureMonth != null)
@@ -739,5 +766,115 @@ export async function confirmHomeCheck(db: SupabaseClient, id: string, landlordI
     pipelineStage: 'log',
     eventStep: 'landlord_confirmed',
     eventMessage: 'Landlord confirmed the Home Check asset record.',
-  })
+  }).catch(() => console.warn('[home-check] Confirmation saved; workflow log update needs retry.'))
+}
+
+export async function reviewHomeCheckPhoto(
+  db: SupabaseClient,
+  input: {
+    landlordId: string
+    checkId: string
+    decision: 'looks_fine' | 'repair' | 'closer_photo'
+    actorId: string
+  },
+) {
+  const check = await loadHomeCheck(db, input.checkId, input.landlordId)
+  if (!check.detected_warning?.trim()) throw new Error('This photo no longer needs review.')
+  if (input.decision === 'looks_fine') {
+    await checked(
+      db.from('home_checks').update({ detected_warning: null }).eq('id', check.id).eq(
+        'landlord_id',
+        input.landlordId,
+      ),
+    )
+    await homeCheckEvent(db, check, 'photo_review_dismissed', { actor_id: input.actorId })
+    await recordActivityLog(db, {
+      landlordId: input.landlordId,
+      eventType: 'home_check.photo_looks_fine',
+      source: 'dashboard',
+      actorType: 'landlord',
+      actorId: input.actorId,
+      propertyId: check.property_id,
+      unitId: check.unit_id,
+      maintenanceRequestId: check.ticket_id,
+      workflowRunId: check.workflow_run_id,
+      metadata: { message: 'The photo looked fine. No repair was opened.', checkId: check.id },
+    }).catch(() => undefined)
+    return { ok: true as const }
+  }
+  if (input.decision === 'repair') {
+    const lines = homeCheckPhotoObservations(check.detected_warning)
+    const reason = lines.length
+      ? `A photo of the equipment needs a repair. ${lines.join('. ')}.`
+      : `A photo of the equipment needs a repair. ${check.detected_warning}`
+    const { data: ticketId, error } = await db.rpc('request_home_check_photo_repair', {
+      p_check_id: check.id,
+      p_reason: reason,
+    })
+    if (error) throw new Error(error.message)
+    if (!ticketId) throw new Error('This photo no longer needs a repair request.')
+    const current = await loadHomeCheck(db, check.id, input.landlordId)
+    await startMaintenanceRequestWorkflow(db, {
+      landlordId: current.landlord_id,
+      ticketId,
+      propertyId: current.property_id,
+      unitId: current.unit_id,
+      unitLabel: current.unit_label,
+      residentId: current.resident_id,
+      triggerType: 'home_check',
+      dueAt: new Date(Date.now() + 86400000).toISOString(),
+      issueCategory: homeCheckFollowUpCategory(reason),
+      severity: 'medium',
+      source: 'web_form',
+    })
+    await checked(
+      db.from('home_checks').update({ detected_warning: null }).eq('id', check.id).eq(
+        'landlord_id',
+        input.landlordId,
+      ),
+    )
+    await recordActivityLog(db, {
+      landlordId: input.landlordId,
+      eventType: 'home_check.photo_repair_requested',
+      source: 'dashboard',
+      actorType: 'landlord',
+      actorId: input.actorId,
+      propertyId: check.property_id,
+      unitId: check.unit_id,
+      maintenanceRequestId: ticketId,
+      workflowRunId: check.workflow_run_id,
+      metadata: { message: 'A repair request was opened from a Home Check photo.', checkId: check.id },
+    }).catch(() => undefined)
+    return { ok: true as const, ticketId }
+  }
+  if (!check.recipient_phone) {
+    throw new Error('There is no phone number for the person who took these photos.')
+  }
+  const { data: landlord } = await db.from('landlords').select('name').eq('id', check.landlord_id).maybeSingle()
+  const company = typeof landlord?.name === 'string' && landlord.name.trim()
+    ? landlord.name.trim()
+    : 'your property team'
+  await sendHomeCheckSms(
+    db,
+    check,
+    check.recipient_phone,
+    homeCheckCloserPhotoSms(company, check.detected_warning),
+    check.resident_id,
+  )
+  await homeCheckEvent(db, check, 'closer_photo_requested', { actor_id: input.actorId })
+  await recordActivityLog(db, {
+    landlordId: input.landlordId,
+    eventType: 'home_check.closer_photo_requested',
+    source: 'dashboard',
+    actorType: 'landlord',
+    actorId: input.actorId,
+    propertyId: check.property_id,
+    unitId: check.unit_id,
+    residentId: check.resident_id,
+    vendorId: check.vendor_id,
+    maintenanceRequestId: check.ticket_id,
+    workflowRunId: check.workflow_run_id,
+    metadata: { message: 'A closer photo was requested.', checkId: check.id },
+  }).catch(() => undefined)
+  return { ok: true as const }
 }

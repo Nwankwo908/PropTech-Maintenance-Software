@@ -310,12 +310,35 @@ export function textMatchesOpsTerms(
   if (!h.trim() || terms.length === 0) return false
   return terms.some((t) => {
     const term = t.toLowerCase()
-    if (term.length <= 2) {
-      // Short tokens like "ac" — word boundary only
-      return new RegExp(`\\b${term}\\b`, "i").test(h)
+    if (term.length <= 4) {
+      // Short tokens like "ac" or "gas" — word boundary only, so "air" does not match inside another word.
+      return new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(h)
     }
     return h.includes(term)
   })
+}
+
+const QUESTION_SEARCH_STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "what", "who", "how", "are", "was",
+  "were", "there", "open", "request", "about", "does", "have", "your", "portfolio",
+  "maintenance", "property", "house", "test", "recorded", "problem", "indoor",
+  "feels", "unwell", "from", "into", "only", "file", "state", "figure", "appears",
+  "which", "should", "look", "today", "first", "repair", "repairs",
+  "work", "order", "orders",
+])
+
+/** Turn a full question into words that can match a ticket description. */
+export function expandQuestionSearchTerms(terms: string[]): string[] {
+  const out = new Set<string>()
+  for (const raw of terms) {
+    const term = raw.toLowerCase().trim()
+    if (!term) continue
+    const words = term.split(/[^a-z0-9]+/).filter((word) => word.length >= 3 && !QUESTION_SEARCH_STOP_WORDS.has(word))
+    if (words.length === 1) out.add(words[0]!)
+    else if (term.length <= 40 && words.length > 0 && words.length <= 3) out.add(words.join(" "))
+    for (const word of words) out.add(word)
+  }
+  return [...out]
 }
 
 /** Typical residential repair cost bands (USD) by category / scenario. */

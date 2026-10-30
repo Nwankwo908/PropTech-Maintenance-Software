@@ -1,6 +1,7 @@
 import type { WorkflowTemplate } from './types.ts'
 import { sweepHomeCheckGuides } from '../homeCheck/guideAct.ts'
 import { actHomeCheckSms, runHomeCheckReminder } from '../homeCheck/sms.ts'
+import { startDueHomeCheckPhotoPrompts } from '../homeCheck/visitAct.ts'
 import { checked, homeCheckEvent, type HomeCheckRow, requireData } from '../homeCheck/service.ts'
 
 export const homeCheckTemplate: WorkflowTemplate = {

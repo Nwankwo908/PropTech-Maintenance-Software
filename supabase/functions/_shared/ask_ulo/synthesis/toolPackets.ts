@@ -39,6 +39,8 @@ export type AskUloToolPackets = {
   history?: AskUloHistoryMessage[]
   intent: AskUloIntent
   intentLabel: string
+  /** Retrieved card the model must use when a detailed question asks for a reported fact. */
+  retrievedRecordMarkdown?: string | null
   jurisdiction: {
     countryCode?: string | null
     stateCode: string | null

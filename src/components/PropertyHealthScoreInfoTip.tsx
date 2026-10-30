@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import infoIcon from '@/assets/noun_Info_6553140.svg'
+import { NounInfoIcon } from '@/components/NounInfoIcon'
 import {
   PROPERTY_HEALTH_SCORE_INFO_DESCRIPTION,
   type PropertyHealthFactorBreakdownLine,
 } from '@/lib/propertyHealth'
 
 function KpiInfoIcon() {
-  return (
-    <img src={infoIcon} alt="" aria-hidden className="size-4" />
-  )
+  return <NounInfoIcon className="size-4" />
 }
 
 /** Property Health KPI ⓘ — intro + Factor / Points / What it means table, portaled over the card. */

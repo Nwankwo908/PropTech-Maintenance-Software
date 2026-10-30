@@ -277,7 +277,7 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
   if (assetIds.length > 0) {
     const { data: assets, error: assetError } = await supabase
       .from('unit_assets')
-      .select('id, appliance_label, appliance_type, building, metadata, detection_source')
+      .select('id, appliance_label, appliance_type, building, metadata, detection_source, home_check_id')
       .eq('landlord_id', landlordId)
       .in('id', assetIds)
 
@@ -295,6 +295,7 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
           registryAssetType:
             typeof meta.registryAssetType === 'string' ? meta.registryAssetType : null,
         })
+        if (asset.home_check_id) continue // Home Check observations have a dedicated unverified review section.
         const defs = Array.isArray(meta.deficiencies) ? meta.deficiencies : []
         for (const raw of defs) {
           if (!raw || typeof raw !== 'object') continue

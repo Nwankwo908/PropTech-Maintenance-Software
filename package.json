@@ -22,6 +22,7 @@
     "check:behavior-backend": "bash scripts/readiness/check-behavior-backend.sh",
     "check:connected-workflows": "bash scripts/readiness/check-connected-workflows.sh",
     "check:readiness": "bash scripts/readiness/run-all.sh",
+    "verify:vendor-support-isolation": "node scripts/integration-verification/verify-vendor-support-isolation.mjs",
     "verify:account-privacy": "node scripts/integration-verification/verify-account-privacy.mjs",
     "verify:account-privacy-isolated": "node scripts/integration-verification/verify-account-privacy-isolated.mjs",
     "verify:auth-privacy-remaining": "node scripts/integration-verification/verify-auth-privacy-remaining.mjs",

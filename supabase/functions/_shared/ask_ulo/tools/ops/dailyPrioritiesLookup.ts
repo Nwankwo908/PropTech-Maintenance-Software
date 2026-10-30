@@ -45,11 +45,12 @@ function urgencyRank(priority: unknown, urgency: unknown): number {
   return 40
 }
 
-function placeFromTicket(row: Record<string, unknown>): {
+function placeFromTicket(row: Record<string, unknown>, propertyType: string | null): {
   propertyLabel: string | null
   unitLabel: string | null
   propertyId: string | null
   unitId: string | null
+  propertyType: string | null
   addressKnown: boolean
 } {
   const building =
@@ -151,11 +152,20 @@ export async function lookupDailyPriorities(
       console.error("[dailyPriorities] tickets", error.message)
       partialSources.push("maintenance_requests")
     } else {
+      const propertyIds = [...new Set((data ?? []).map(r => r.property_id).filter((id): id is string => typeof id === 'string'))]
+      const propertyNames = new Map<string, { name: string | null; street_address: string | null }>()
+      if (propertyIds.length) {
+        const properties = await supabase.from('properties').select('id,name,street_address').eq('landlord_id',landlordId).in('id',propertyIds)
+        if (properties.error) partialSources.push('properties')
+        else for (const p of properties.data ?? []) propertyNames.set(p.id,p)
+      }
       for (const raw of data ?? []) {
         const row = asRecord(raw)
         if (!row) continue
         const id = typeof row.id === "string" ? row.id : ""
         if (!id) continue
+        const property = typeof row.property_id === "string" ? propertyNames.get(row.property_id) : null
+        row.building = property?.name || property?.street_address || row.building
         const buildingHay =
           `${String(row.building ?? "")} ${String(row.unit ?? "")}`.toLowerCase()
         if (
@@ -288,6 +298,16 @@ export async function lookupDailyPriorities(
       console.error("[dailyPriorities] workflows", error.message)
       partialSources.push("workflow_runs")
     } else {
+      const inspectionPropertyTypes = new Map<string, string | null>()
+      const inspectionPropertyIds = [...new Set((data ?? []).map((row) => {
+        const record = asRecord(row)
+        return typeof record?.property_id === "string" ? record.property_id : ""
+      }).filter(Boolean))]
+      if (inspectionPropertyIds.length) {
+        const properties = await supabase.from("properties").select("id, property_type").eq("landlord_id", landlordId).in("id", inspectionPropertyIds)
+        if (properties.error) partialSources.push("properties")
+        else for (const property of properties.data ?? []) inspectionPropertyTypes.set(property.id, property.property_type ?? null)
+      }
       for (const raw of data ?? []) {
         const row = asRecord(raw)
         if (!row) continue
@@ -317,6 +337,7 @@ export async function lookupDailyPriorities(
         if (msLeft > 7 * 24 * 3600_000) continue
         const id = typeof row.id === "string" ? row.id : ""
         if (!id) continue
+        const propertyId = typeof row.property_id === "string" ? row.property_id : null
         const entityId =
           (typeof row.entity_id === "string" && row.entity_id) || id
         candidates.push({
@@ -331,7 +352,8 @@ export async function lookupDailyPriorities(
             null,
           unitLabel:
             (typeof meta?.unit_label === "string" && meta.unit_label) || null,
-          propertyId: typeof row.property_id === "string" ? row.property_id : null,
+          propertyType: propertyId ? inspectionPropertyTypes.get(propertyId) ?? null : null,
+          propertyId,
           unitId: typeof row.unit_id === "string" ? row.unit_id : null,
           instantAt: dueAt,
           blocker: msLeft < 0 ? "Overdue — financial risk if missed" : "Deadline approaching",

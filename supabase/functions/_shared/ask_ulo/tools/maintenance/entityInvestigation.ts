@@ -112,10 +112,10 @@ const VENDOR_RE =
   /\b(?:vendor|contractor)\s+([A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*){0,3})/g
 
 const LEASE_RE =
-  /\b(?:lease)\s+(?:#|L[- ]?)?([A-Za-z0-9-]{2,20})\b|\bL[- ](\d{2,8})\b/gi
+  /\b(?:lease)\s+(?:#|L[- ]?)?((?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{2,20})\b|\bL[- ](\d{2,8})\b/gi
 
 const INSPECTION_RE =
-  /\b(?:inspection)\s+(?:#|INS[- ]?)?([A-Za-z0-9-]{2,20})\b|\bINS[- ](\d{2,8})\b/gi
+  /\b(?:inspection)\s+(?:#|INS[- ]?)?((?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{2,20})\b|\bINS[- ](\d{2,8})\b/gi
 
 const PROPERTY_AT_RE =
   /\b(?:at|for|of|on)\s+([A-Z][A-Za-z0-9&.' -]{2,40}?)\b(?=\s+(?:unit|apt|apartment|building|property|'s|,|\?|$))/g

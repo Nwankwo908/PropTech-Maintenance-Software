@@ -1,4 +1,4 @@
-import feedInfoIcon from '@/assets/noun_Info_6553140.svg'
+import { NounInfoIcon } from '@/components/NounInfoIcon'
 import { workflowOperationsPath } from '@/lib/adminWorkflowKanban'
 import {
   buildActivityFeedTooltipCopy,

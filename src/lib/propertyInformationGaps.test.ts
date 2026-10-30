@@ -45,7 +45,7 @@ describe('properties that need more information', () => {
     expect(propertiesNeedMoreInformationCopy(1)?.title).toBe('1 property needs more information')
     expect(propertiesNeedMoreInformationCopy(3)?.title).toBe('3 properties need more information')
     expect(propertiesNeedMoreInformationCopy(3)?.detail).toBe(
-      'Missing property access, insurance, or a completed home check.',
+      'Add property access details, insurance information, and a completed Home Check to help Ulo spot potential problems early, so you can prevent costly repairs instead of reacting when things break.',
     )
   })
 })

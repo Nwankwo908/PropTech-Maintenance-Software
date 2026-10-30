@@ -1,83 +1,104 @@
-/** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HomeCheckRequestModal } from '@/components/HomeCheckRequestModal'
-import { homeCheckRequest, requestPlatformHomeCheck } from '@/api/homeCheck'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import { HomeCheckRequestDialog, homeCheckRequestSelection, homeCheckResendPrompt, latestCompletedHomeCheckSentAt } from '@/components/HomeCheckRequestModal'
+import { selectActiveHomeCheckVendors } from '@/lib/homeCheckActiveVendor'
+import type { HomeCheckVendor } from '@/api/homeCheck'
 
-vi.mock('@/api/homeCheck', () => ({
-  homeCheckRequest: vi.fn(),
-  requestPlatformHomeCheck: vi.fn(),
-}))
-
-vi.mock('@/lib/homeCheckEvents', () => ({
-  notifyHomeCheckChanged: vi.fn(),
-}))
-
-const homeCheckRequestMock = vi.mocked(homeCheckRequest)
-const requestPlatformHomeCheckMock = vi.mocked(requestPlatformHomeCheck)
+function dialogMarkup(input: {
+  vendor?: boolean
+  sent?: boolean
+  error?: string | null
+  loading?: boolean
+  repeatPrompt?: string | null
+}) {
+  return renderToStaticMarkup(
+    createElement(HomeCheckRequestDialog, {
+      titleId: 'home-check-title',
+      location: 'Maple Court',
+      loading: input.loading ?? false,
+      submitting: false,
+      vendor: input.vendor ?? false,
+      sent: input.sent ?? false,
+      error: input.error ?? null,
+      repeatPrompt: input.repeatPrompt,
+      onConfirm: () => undefined,
+      onDismiss: () => undefined,
+    }),
+  )
+}
 
 describe('HomeCheckRequestModal', () => {
-  afterEach(() => {
-    cleanup()
-    vi.clearAllMocks()
+  it('previews the vendor text before anything is sent', () => {
+    const html = dialogMarkup({ vendor: true })
+    expect(html).toContain('A message will be sent to your available vendor to complete your home health check.')
+    expect(html).toContain('Hi, this is Ulo. Can you complete a Home Check at Maple Court?')
+    expect(html).toContain('Reply YES to accept or NO to decline.')
+    expect(html).not.toContain('Next: send a clear photo')
+    expect(html).toContain('Cancel')
+    expect(html).toContain('>OK<')
+    expect(html).not.toContain('Message was sent successfully.')
   })
 
-  it('shows the selected contractor and requests the home check on continue', async () => {
-    homeCheckRequestMock.mockResolvedValue({
-      vendors: [{ id: 'near', name: 'Rapid Electric', distanceKm: 1.2 }],
-      closest: 'near',
-    })
-    requestPlatformHomeCheckMock.mockResolvedValue({
-      ok: true,
-      checkId: 'check-1',
-      workflowRunId: 'run-1',
-      vendorName: 'Rapid Electric',
-      deliveryError: null,
-    })
-    const onClose = vi.fn()
-    const onRequested = vi.fn()
-    render(
-      <HomeCheckRequestModal
-        open
-        propertyId="maple"
-        onClose={onClose}
-        onRequested={onRequested}
-      />,
-    )
-    expect(await screen.findByText('Rapid Electric')).toBeTruthy()
-    expect(
-      screen.getByText(
-        'Rapid Electric will collect appliance details to help Ulo recommend maintenance and flag potential issues early.',
-      ),
-    ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    await waitFor(() => {
-      expect(requestPlatformHomeCheckMock).toHaveBeenCalledWith({
-        propertyId: 'maple',
-        vendorId: 'near',
-      })
-    })
-    expect(onRequested).toHaveBeenCalledWith('Home check requested. It is on Active Tasks.')
-    expect(onClose).toHaveBeenCalled()
+  it('asks before sending again after a completed home check', () => {
+    expect(latestCompletedHomeCheckSentAt([
+      { status: 'collecting', sent_at: '2026-10-01T15:00:00.000Z', created_at: '2026-10-01T15:00:00.000Z' },
+    ])).toBeNull()
+    expect(latestCompletedHomeCheckSentAt([
+      { status: 'completed', sent_at: '2026-10-20T15:00:00.000Z', created_at: '2026-10-20T15:00:00.000Z' },
+      { status: 'completed', sent_at: '2026-10-29T15:00:00.000Z', created_at: '2026-10-29T15:00:00.000Z' },
+    ])).toBe('2026-10-29T15:00:00.000Z')
+    const prompt = homeCheckResendPrompt('2026-10-29T15:00:00.000Z')
+    expect(prompt).toMatch(/^This was sent out .+ 2026\. Are you sure you want to send again\?$/)
+    const html = dialogMarkup({ vendor: true, repeatPrompt: prompt })
+    expect(html).toContain(prompt)
+    expect(html).toContain('Cancel')
+    expect(html).not.toContain('Message preview')
   })
 
-  it('closes without requesting when cancelled', async () => {
-    homeCheckRequestMock.mockResolvedValue({
-      vendors: [{ id: 'near', name: 'Rapid Electric', distanceKm: 1.2 }],
-      closest: 'near',
+  it('confirms after the text is sent', () => {
+    const html = dialogMarkup({ sent: true })
+    expect(html).toContain('Message was sent successfully.')
+    expect(html).not.toContain('Cancel')
+  })
+
+  it('tells the landlord to set up a vendor when none is active', () => {
+    expect(homeCheckRequestSelection({
+      targets: [],
+      vendors: [],
+      closest: null,
+    })).toEqual({ vendor: null, error: null })
+    const html = dialogMarkup({})
+    expect(html).toContain('Go and set up your vendor first.')
+    expect(html).not.toContain('Home Check visit')
+    expect(html).not.toContain('Cancel')
+  })
+
+  it('drops a vendor who is not active', () => {
+    const vendors: HomeCheckVendor[] = [
+      { id: 'waiting', name: 'Waiting Electric', distanceKm: null },
+    ]
+    const active = selectActiveHomeCheckVendors(vendors, new Map([
+      ['waiting', { verificationStatus: 'invited', vendorActive: true }],
+    ]))
+    expect(homeCheckRequestSelection({
+      targets: [],
+      vendors: active,
+      closest: null,
+    })).toEqual({ vendor: null, error: null })
+  })
+
+  it('keeps the state message when active vendors cannot cover the property', () => {
+    const selection = homeCheckRequestSelection({
+      targets: [],
+      vendors: [{ id: 'far', name: 'Rapid Electric', distanceKm: null, states: ['NY'] }],
+      closest: null,
+      propertyState: 'NJ',
     })
-    const onClose = vi.fn()
-    render(
-      <HomeCheckRequestModal
-        open
-        propertyId="maple"
-        onClose={onClose}
-        onRequested={vi.fn()}
-      />,
-    )
-    expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(onClose).toHaveBeenCalled()
-    expect(requestPlatformHomeCheckMock).not.toHaveBeenCalled()
+    expect(selection.vendor).toBeNull()
+    expect(selection.error).toBe('No contractor in this property’s state can take this home check.')
+    const html = dialogMarkup({ error: selection.error })
+    expect(html).toContain('No contractor in this property’s state can take this home check.')
+    expect(html).not.toContain('Go and set up your vendor first.')
   })
 })

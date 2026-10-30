@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import unitKpiIcon from '@/assets/bedroom (1).png'
+import occupancyKpiIcon from '@/assets/room-key.png'
+import openRepairsIcon from '@/assets/repair-tool.png'
+import maintenanceCostIcon from '@/assets/price-up.png'
+import propertyHealthIcon from '@/assets/hospital.png'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { ThreeDotMenu } from '@/components/ThreeDotMenu'
@@ -20,6 +25,7 @@ import { PropertyAccessRail } from '@/components/PropertyAccessRail'
 import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, workflowMatchesPropertyScope, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
@@ -208,64 +214,23 @@ function StatTile({
 }: {
   label: string
   value: string
-  icon: ReactNode
+  icon: string
 }) {
   return (
     <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-3 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[13px] leading-5 text-[#6a7282]">{label}</p>
-        <span className="text-[#9ca3af]">{icon}</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span
+          className="flex size-[2.1rem] shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+          aria-hidden
+        >
+          <img src={icon} alt="" className="size-[1.2rem] object-contain" />
+        </span>
+        <p className="min-w-0 truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">{label}</p>
       </div>
-      <p className="text-[28px] font-bold leading-8 tracking-[0.4px] text-[#0a0a0a] tabular-nums">
+      <p className="pl-[calc(2.1rem+0.375rem)] text-[28px] font-bold leading-8 tracking-[0.4px] text-[#0a0a0a] tabular-nums">
         {value}
       </p>
     </div>
-  )
-}
-
-function BuildingStatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4">
-      <rect x="4" y="3" width="16" height="18" rx="1.5" />
-      <path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M10 21v-3h4v3" />
-    </svg>
-  )
-}
-
-function UsersStatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4">
-      <circle cx="9" cy="8" r="3" />
-      <path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 20a5 5 0 0 0-3-4.6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function WrenchStatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4">
-      <path
-        d="M14.7 6.3a4 4 0 0 0-5.66 5.66L4 17v3h3l5.04-5.04a4 4 0 0 0 5.66-5.66l-1.41 1.41-2.83-2.83 1.41-1.41z"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function DollarStatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4">
-      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function StarStatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="size-4">
-      <path d="M12 17.3l-6.18 3.7 1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z" />
-    </svg>
   )
 }
 
@@ -1181,6 +1146,10 @@ export function AdminPropertyDetailDashboard() {
     return Math.round((occupied / total) * 100)
   }, [propertyUnitRows, buildingUnits])
 
+  const hideUnitsKpi = isSingleFamilyPropertyType(
+    canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType,
+  )
+
   const propertyAnalytics = useMemo(() => {
     if (!building) return null
     return buildPropertyAnalytics({
@@ -1496,35 +1465,37 @@ export function AdminPropertyDetailDashboard() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        <StatTile
-          label="Units"
-          value={
-            loading
-              ? '—'
-              : propertyTableUnitsLabel({
-                  unitCount: propertyUnitRows.length || buildingUnits.length,
-                  propertyType: canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType,
-                })
-          }
-          icon={<BuildingStatIcon />}
-        />
+      <div className={`grid grid-cols-2 gap-4 ${hideUnitsKpi ? 'lg:grid-cols-4' : 'lg:grid-cols-5'}`}>
+        {hideUnitsKpi ? null : (
+          <StatTile
+            label="Units"
+            value={
+              loading
+                ? '—'
+                : propertyTableUnitsLabel({
+                    unitCount: propertyUnitRows.length || buildingUnits.length,
+                    propertyType: canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType,
+                  })
+            }
+            icon={unitKpiIcon}
+          />
+        )}
         <StatTile
           label="Occupied"
           value={loading || occupancyPct == null ? '—' : `${occupancyPct}%`}
-          icon={<UsersStatIcon />}
+          icon={occupancyKpiIcon}
         />
         <StatTile
           label="Open work orders"
           value={loading ? '—' : String(buildingHealth?.openTickets ?? 0)}
-          icon={<WrenchStatIcon />}
+          icon={openRepairsIcon}
         />
         <StatTile
           label="MTD maintenance"
           value={loading ? '—' : formatSpend(propertyAnalytics?.mtdTotal ?? 0)}
-          icon={<DollarStatIcon />}
+          icon={maintenanceCostIcon}
         />
-        <StatTile label="Health" value={loading ? '—' : healthValue} icon={<StarStatIcon />} />
+        <StatTile label="Health" value={loading ? '—' : healthValue} icon={propertyHealthIcon} />
       </div>
 
       {activeTab === 'overview' ? (
@@ -1704,6 +1675,7 @@ export function AdminPropertyDetailDashboard() {
         />
       ) : activeTab === 'analytics' ? (
         <PropertyAnalyticsPanel
+          propertyId={canonicalProperty?.id ?? activeCanonicalProperty?.id}
           building={building ?? ''}
           analytics={propertyAnalytics}
           loading={loading}

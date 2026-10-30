@@ -1,3 +1,4 @@
+import { withDeadline } from "../ai/deadline.ts"
 import { getVisionProvider } from '../vision/getProvider.ts'
 import { inspectionBytesToBase64 } from '../vision/ingestInspectionUpload.ts'
 import type { ApplianceVisionResult } from '../vision/types.ts'
@@ -11,11 +12,11 @@ export async function readHomeCheckPhoto(
   contentType: string,
 ): Promise<ApplianceVisionResult | null> {
   try {
-    return await getVisionProvider().analyzeImage(
+    return await withDeadline(6000, () => getVisionProvider().analyzeImage(
       inspectionBytesToBase64(bytes),
       undefined,
       contentType,
-    )
+    ))
   } catch {
     return null
   }

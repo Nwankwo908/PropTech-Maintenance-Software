@@ -6,6 +6,7 @@
  */
 
 import { resolveScheduleTimeZone } from "../../../vendor_availability_parse.ts"
+import { formatLocationWithOptionalUnit } from "../../../properties/unitLabelDisplay.ts"
 export { isDailyPrioritiesQuestion } from "./dailyPrioritiesDetect.ts"
 
 export type DailyPriorityActorRole = "landlord" | "tenant"
@@ -64,6 +65,9 @@ export type DailyPriorityListItem = {
   title: string
   propertyLabel: string | null
   unitLabel: string | null
+  propertyId: string | null
+  unitId: string | null
+  propertyType: string | null
   propertyId: string | null
   unitId: string | null
   instantAt: string | null
@@ -241,15 +245,12 @@ export function dailyPrioritySelectionMessage(
   return `I selected ${title}. There's no confirmation step for this item.`
 }
 
-function placeLabel(c: DailyPriorityCandidate): string {
-  const prop = (c.propertyLabel ?? "").trim()
-  const unit = (c.unitLabel ?? "").trim()
-  if (prop && unit) return `${prop} ${unit.startsWith("#") ? unit : `#${unit}`}`
-  if (prop) return prop
-  if (unit) return unit.startsWith("#") ? unit : `#${unit}`
-  return ""
-}
-
+function placeLabel(c: Pick<DailyPriorityCandidate, "propertyLabel" | "unitLabel" | "propertyType">): string {
+  return formatLocationWithOptionalUnit({
+    propertyLabel: c.propertyLabel,
+    unitLabel: c.unitLabel,
+    propertyType: c.propertyType,
+  })
 export function rankDailyPriorityCandidates(
   candidates: DailyPriorityCandidate[],
   opts?: { maxItems?: number },
@@ -299,6 +300,9 @@ export function rankDailyPriorityCandidates(
       unitLabel: c.unitLabel,
       propertyId: c.propertyId ?? null,
       unitId: c.unitId ?? null,
+      propertyType: c.propertyType ?? null,
+      propertyId: c.propertyId ?? null,
+      unitId: c.unitId ?? null,
       instantAt: c.instantAt,
       blocker: c.blocker,
       offeredAction,
@@ -320,21 +324,7 @@ export function formatDailyPrioritiesList(
     return { markdown: empty, smsText: empty }
   }
   const lines = items.map((item) => {
-    const place = placeLabel({
-      dedupeKey: "",
-      category: item.category,
-      entityType: item.entityType,
-      entityId: item.entityId,
-      title: item.title,
-      propertyLabel: item.propertyLabel,
-      unitLabel: item.unitLabel,
-      instantAt: item.instantAt,
-      blocker: item.blocker,
-      addressKnown: true,
-      canAssign: false,
-    })
-    const bits = [item.title]
-    if (place) bits.push(place)
+    const place = placeLabel(item)
     if (item.blocker) bits.push(item.blocker)
     else if (item.category === "visit_today" && item.instantAt) {
       bits.push("Visit scheduled today")

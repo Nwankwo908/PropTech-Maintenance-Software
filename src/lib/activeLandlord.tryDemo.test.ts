@@ -94,3 +94,17 @@ describe('getActiveLandlordId Try Demo precedence', () => {
     expect(mod.isTryDemoWelcomePending()).toBe(true)
   })
 })
+
+describe('disposable Home Check switcher scope', () => {
+  it('restores the selected disposable account and its label for staff', async () => {
+    localStorageMock.clear()
+    sessionStorageMock.clear()
+    vi.resetModules()
+    localStorageMock.setItem('ulo.adminActiveLandlord', 'd15a0000-0000-4000-8000-000000000001')
+    const mod = await import('@/lib/activeLandlord')
+    expect(mod.getActiveLandlordId()).toBe('d15a0000-0000-4000-8000-000000000001')
+    expect(mod.getActiveLandlordLabel()).toBe('Home Check Test · Disposable')
+    mod.setSessionLandlordFromEmail(LIMITED_ALPHA_1_LOGIN_EMAIL)
+    expect(mod.getActiveLandlordId()).toBe(LIMITED_ALPHA_1_LANDLORD_ID)
+  })
+})

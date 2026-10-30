@@ -147,6 +147,7 @@ export function ApplianceInspectionUploader({
   const [wholeHeatingSystemExampleOpen, setWholeHeatingSystemExampleOpen] = useState(false)
   const [phoneCaptureOpen, setPhoneCaptureOpen] = useState(false)
   const [homeCheckRequestOpen, setHomeCheckRequestOpen] = useState(false)
+  const [equipmentInstructionsOpen, setEquipmentInstructionsOpen] = useState(false)
   const [homeCheckRequestNote, setHomeCheckRequestNote] = useState<string | null>(null)
   const previewByIdRef = useRef<Record<string, string>>({})
   const removedIdsRef = useRef(new Set<string>())
@@ -716,128 +717,12 @@ export function ApplianceInspectionUploader({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,300px)]">
-      <section className="rounded-[10px] border border-[#e2e8f0] bg-white px-4 py-4 text-[13px] leading-5 text-[#334155]">
-        <h3 className="text-[14px] font-semibold text-[#0d0f11]">Add equipment photos</h3>
-        <p className="mt-2 text-[#64748b]">Upload these photos in this exact order:</p>
-        <ol className="mt-2 list-decimal space-y-1.5 pl-5">
-          <li>
-            <button
-              type="button"
-              aria-pressed={waterHeaterLabelExampleOpen}
-              onClick={() => setWaterHeaterLabelExampleOpen((open) => !open)}
-              className={[
-                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
-                waterHeaterLabelExampleOpen ? 'text-[#186179]' : '',
-              ].join(' ')}
-            >
-              Water heater label:
-            </button>{' '}
-            A clear close-up showing the model and serial number. Avoid glare.
-            {waterHeaterLabelExampleOpen ? (
-              <figure className="mt-3 max-w-xl">
-                <img
-                  src={waterHeaterLabelExample}
-                  alt="Example of a water heater label"
-                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
-                />
-                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
-                  Here is an example of a water heater label.
-                </figcaption>
-              </figure>
-            ) : null}
-          </li>
-          <li>
-            <button
-              type="button"
-              aria-pressed={wholeWaterHeaterExampleOpen}
-              onClick={() => setWholeWaterHeaterExampleOpen((open) => !open)}
-              className={[
-                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
-                wholeWaterHeaterExampleOpen ? 'text-[#186179]' : '',
-              ].join(' ')}
-            >
-              Whole water heater:
-            </button>{' '}
-            Include the entire unit and its base.
-            {wholeWaterHeaterExampleOpen ? (
-              <figure className="mt-3 max-w-xl">
-                <img
-                  src={wholeWaterHeaterExample}
-                  alt="Example of a whole water heater"
-                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
-                />
-                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
-                  Here is an example of a whole water heater.
-                </figcaption>
-              </figure>
-            ) : null}
-          </li>
-          <li>
-            <button
-              type="button"
-              aria-pressed={heatingSystemLabelExampleOpen}
-              onClick={() => setHeatingSystemLabelExampleOpen((open) => !open)}
-              className={[
-                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
-                heatingSystemLabelExampleOpen ? 'text-[#186179]' : '',
-              ].join(' ')}
-            >
-              Heating system label:
-            </button>{' '}
-            A clear close-up of the furnace or boiler&apos;s model and serial number.
-            {heatingSystemLabelExampleOpen ? (
-              <figure className="mt-3 max-w-xl">
-                <img
-                  src={heatingSystemLabelExample}
-                  alt="Example of a heating system label"
-                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
-                />
-                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
-                  Here is an example of a heating system label.
-                </figcaption>
-              </figure>
-            ) : null}
-          </li>
-          <li>
-            <button
-              type="button"
-              aria-pressed={wholeHeatingSystemExampleOpen}
-              onClick={() => setWholeHeatingSystemExampleOpen((open) => !open)}
-              className={[
-                'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
-                wholeHeatingSystemExampleOpen ? 'text-[#186179]' : '',
-              ].join(' ')}
-            >
-              Whole heating system:
-            </button>{' '}
-            Step back to capture the entire unit.
-            {wholeHeatingSystemExampleOpen ? (
-              <figure className="mt-3 max-w-xl">
-                <img
-                  src={wholeHeatingSystemExample}
-                  alt="Example of a whole heating system"
-                  className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
-                />
-                <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
-                  Here is an example of a whole heating system.
-                </figcaption>
-              </figure>
-            ) : null}
-          </li>
-        </ol>
-        <p className="mt-3">
-          <span className="font-semibold text-[#0d0f11]">File requirements:</span>{' '}
-          JPG, PNG, WEBP, or HEIC, under 25 MB per photo. PDFs are processed as inspection reports, not equipment photos.
-        </p>
-      </section>
-      <section className="flex h-full flex-col overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
-        <img
-          src={homeCheckInspectionArt}
-          alt=""
-          className="min-h-[180px] w-full flex-1 object-contain object-center px-3 pt-3"
-        />
-        <div className="flex flex-col gap-3 px-4 pb-4 pt-2">
+      <section className="flex items-center justify-between gap-6 rounded-[10px] border border-[#C3E0CC] bg-[#E6F4E9] px-5 py-4">
+        <div className="flex min-w-0 flex-col items-start gap-2">
+          <h3 className="text-[18px] font-semibold leading-6 text-[#0d0f11]">Request home check</h3>
+          <p className="max-w-[420px] text-[13px] leading-5 text-[#64748b]">
+            Have a trusted professional capture your water heating system, and appliance details for you.
+          </p>
           <button
             type="button"
             disabled={!propertyId}
@@ -845,7 +730,7 @@ export function ApplianceInspectionUploader({
               setHomeCheckRequestNote(null)
               setHomeCheckRequestOpen(true)
             }}
-            className="pd-btn pd-btn-primary w-full rounded-[10px] px-4 py-2.5 text-[13px] font-semibold"
+            className="pd-btn pd-btn-primary mt-1 rounded-[10px] px-4 py-2.5 text-[13px] font-semibold"
           >
             Request home check
           </button>
@@ -853,12 +738,18 @@ export function ApplianceInspectionUploader({
             <p className="text-[12px] leading-5 text-[#334155]">{homeCheckRequestNote}</p>
           ) : null}
         </div>
+        <img
+          src={homeCheckInspectionArt}
+          alt=""
+          className="h-[160px] w-[200px] shrink-0 object-contain"
+        />
       </section>
-      </div>
+      <h3 className="text-[18px] font-semibold leading-6 text-[#0d0f11]">Or add information yourself</h3>
       {propertyId ? (
         <HomeCheckRequestModal
           open={homeCheckRequestOpen}
           propertyId={propertyId}
+          location={building}
           onClose={() => setHomeCheckRequestOpen(false)}
           onRequested={setHomeCheckRequestNote}
         />
@@ -910,7 +801,7 @@ export function ApplianceInspectionUploader({
             Appliance equipment upload
           </p>
           <p className="text-[12px] text-[#64748b]">
-            Upload two photos per appliance: one of the whole appliance and one close-up of its model and serial number label. Keep the label clear and avoid glare.
+            Connect your phone to upload two photos per appliance: one of the whole appliance and one close-up of the model and serial number label. Keep the label clear and avoid glare.
           </p>
           <p className="text-[12px] leading-[18px] text-[#64748b]">
             JPG
@@ -978,6 +869,142 @@ export function ApplianceInspectionUploader({
       ) : null}
         </div>
       </div>
+
+      <section className="rounded-[10px] border border-[#e2e8f0] bg-white">
+        <button
+          type="button"
+          aria-expanded={equipmentInstructionsOpen}
+          onClick={() => setEquipmentInstructionsOpen((open) => !open)}
+          className="flex w-full items-center gap-3 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#186179]"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center text-[#186179]" aria-hidden>
+            <svg viewBox="0 0 24 24" fill="none" className="size-5">
+              {equipmentInstructionsOpen ? (
+                <path d="M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              ) : (
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              )}
+            </svg>
+          </span>
+          <span className="text-[14px] font-semibold text-[#0d0f11]">Add equipment instructions.</span>
+        </button>
+        {equipmentInstructionsOpen ? (
+          <div className="border-t border-[#e2e8f0] px-4 py-4 text-[13px] leading-5 text-[#334155]">
+            <h3 className="text-[14px] font-semibold text-[#0d0f11]">Add equipment photos</h3>
+            <p className="mt-2 text-[#64748b]">Upload these photos in this exact order:</p>
+            <ol className="mt-2 list-decimal space-y-1.5 pl-5">
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={waterHeaterLabelExampleOpen}
+                  onClick={() => setWaterHeaterLabelExampleOpen((open) => !open)}
+                  className={[
+                    'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                    waterHeaterLabelExampleOpen ? 'text-[#186179]' : '',
+                  ].join(' ')}
+                >
+                  Water heater label:
+                </button>{' '}
+                A clear close-up showing the model and serial number. Avoid glare.
+                {waterHeaterLabelExampleOpen ? (
+                  <figure className="mt-3 max-w-xl">
+                    <img
+                      src={waterHeaterLabelExample}
+                      alt="Example of a water heater label"
+                      className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                    />
+                    <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                      Here is an example of a water heater label.
+                    </figcaption>
+                  </figure>
+                ) : null}
+              </li>
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={wholeWaterHeaterExampleOpen}
+                  onClick={() => setWholeWaterHeaterExampleOpen((open) => !open)}
+                  className={[
+                    'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                    wholeWaterHeaterExampleOpen ? 'text-[#186179]' : '',
+                  ].join(' ')}
+                >
+                  Whole water heater:
+                </button>{' '}
+                Include the entire unit and its base.
+                {wholeWaterHeaterExampleOpen ? (
+                  <figure className="mt-3 max-w-xl">
+                    <img
+                      src={wholeWaterHeaterExample}
+                      alt="Example of a whole water heater"
+                      className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                    />
+                    <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                      Here is an example of a whole water heater.
+                    </figcaption>
+                  </figure>
+                ) : null}
+              </li>
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={heatingSystemLabelExampleOpen}
+                  onClick={() => setHeatingSystemLabelExampleOpen((open) => !open)}
+                  className={[
+                    'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                    heatingSystemLabelExampleOpen ? 'text-[#186179]' : '',
+                  ].join(' ')}
+                >
+                  Heating system label:
+                </button>{' '}
+                A clear close-up of the furnace or boiler&apos;s model and serial number.
+                {heatingSystemLabelExampleOpen ? (
+                  <figure className="mt-3 max-w-xl">
+                    <img
+                      src={heatingSystemLabelExample}
+                      alt="Example of a heating system label"
+                      className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                    />
+                    <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                      Here is an example of a heating system label.
+                    </figcaption>
+                  </figure>
+                ) : null}
+              </li>
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={wholeHeatingSystemExampleOpen}
+                  onClick={() => setWholeHeatingSystemExampleOpen((open) => !open)}
+                  className={[
+                    'font-semibold text-[#0d0f11] underline decoration-[#186179] underline-offset-2',
+                    wholeHeatingSystemExampleOpen ? 'text-[#186179]' : '',
+                  ].join(' ')}
+                >
+                  Whole heating system:
+                </button>{' '}
+                Step back to capture the entire unit.
+                {wholeHeatingSystemExampleOpen ? (
+                  <figure className="mt-3 max-w-xl">
+                    <img
+                      src={wholeHeatingSystemExample}
+                      alt="Example of a whole heating system"
+                      className="w-full rounded-[10px] border border-[#e2e8f0] object-contain"
+                    />
+                    <figcaption className="mt-2 text-[13px] leading-5 text-[#64748b]">
+                      Here is an example of a whole heating system.
+                    </figcaption>
+                  </figure>
+                ) : null}
+              </li>
+            </ol>
+            <p className="mt-3">
+              <span className="font-semibold text-[#0d0f11]">File requirements:</span>{' '}
+              JPG, PNG, WEBP, or HEIC, under 25 MB per photo. PDFs are processed as inspection reports, not equipment photos.
+            </p>
+          </div>
+        ) : null}
+      </section>
 
       <HomeCheckPanel
         key={propertyId || building}

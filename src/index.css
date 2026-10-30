@@ -1457,8 +1457,8 @@
    */
   .landing-how-it-works-stage {
     box-sizing: border-box;
-    width: 100%;
-    max-width: 100%;
+    width: 80%;
+    max-width: 80%;
     min-width: 0;
     margin-inline: auto;
     overflow: visible;

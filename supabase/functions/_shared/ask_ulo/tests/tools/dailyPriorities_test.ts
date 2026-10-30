@@ -354,3 +354,48 @@ Deno.test("unknown-address emergency offers confirm_location — not assign", ()
   assertMatch(items[0]?.replyInstruction ?? "", /address still has to be confirmed before a vendor is booked/i)
   assertEquals(/to assign/i.test(items[0]?.replyInstruction ?? ""), false)
 })
+
+Deno.test("single-family priorities omit the unit and multifamily keeps it", () => {
+  const singleFamily = formatDailyPrioritiesList(rankDailyPriorityCandidates([
+    candidate({
+      dedupeKey: "ticket:sfh",
+      category: "emergency",
+      entityId: "sfh",
+      title: "AC issue",
+      propertyLabel: "Maintenance test house",
+      unitLabel: "1",
+      propertyType: "single_family",
+      blocker: "Vendor needed",
+    }),
+  ]))
+  assertEquals(singleFamily.smsText.includes("Maintenance test house"), true)
+  assertEquals(/#1|Unit 1/.test(singleFamily.smsText), false)
+
+  const multifamily = formatDailyPrioritiesList(rankDailyPriorityCandidates([
+    candidate({
+      dedupeKey: "ticket:mf",
+      category: "emergency",
+      entityId: "mf",
+      title: "AC issue",
+      propertyLabel: "Oak Apartments",
+      unitLabel: "4B",
+      propertyType: "multifamily",
+      blocker: "Vendor needed",
+    }),
+  ]))
+  assertEquals(multifamily.smsText.includes("Unit 4B"), true)
+  assertEquals(multifamily.smsText.includes("#4B"), false)
+
+  const unknownType = formatDailyPrioritiesList(rankDailyPriorityCandidates([
+    candidate({
+      dedupeKey: "ticket:unknown",
+      category: "deadline",
+      entityId: "unknown",
+      title: "Leak",
+      propertyLabel: "Oak Apartments",
+      unitLabel: "4B",
+      blocker: "Vendor needed",
+    }),
+  ]))
+  assertEquals(unknownType.smsText.includes("Unit 4B"), true)
+})

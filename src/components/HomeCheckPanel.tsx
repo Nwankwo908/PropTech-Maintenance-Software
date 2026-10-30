@@ -1,4 +1,5 @@
 import { InspectionAssessmentTable, type InspectionAssessmentTableRow } from './InspectionAssessmentTable'
+import { PmHomeCheckPhotoReviews } from './PmHomeCheckPhotoReviews'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { ApplianceVisionResult } from '@/lib/vision/types'
 import { isUnmatchedApplianceRow } from '@/lib/inspectionAssessmentTable'
@@ -15,7 +16,6 @@ import {
   homeCheckReviewResult,
   type HomeCheckLabelDraft,
 } from '@/lib/homeCheckReview'
-import { homeCheckFollowUpExplanation } from '@shared/homeCheck'
 
 type ListedHomeCheck = HomeCheckList['checks'][number] & {
   completed_at?: string | null
@@ -168,7 +168,12 @@ export function HomeCheckPanel({
     return record.assets.length > 0 || Boolean(record.issue_ticket_id)
   }) ?? []
   if (!visibleChecks.length && equipmentRows.length === 0) {
-    return error ? <p role='alert' className='text-sm text-red-700'>{error}</p> : null
+    return (
+      <>
+        {error ? <p role='alert' className='text-sm text-red-700'>{error}</p> : null}
+        <PmHomeCheckPhotoReviews propertyId={propertyId} />
+      </>
+    )
   }
   const homeRows: InspectionAssessmentTableRow[] = visibleChecks.flatMap((check) => {
     const record = check as ListedHomeCheck
@@ -312,19 +317,7 @@ export function HomeCheckPanel({
           }}
         />
       )}
-      {visibleChecks.map((check) => {
-        const record = check as ListedHomeCheck
-        if (!record.issue_ticket_id) return null
-        return (
-          <p key={record.id} className='text-sm text-[#92400e]'>
-            {homeCheckFollowUpExplanation({
-              warningSigns: record.answers?.warningSigns,
-              warningDetails: record.answers?.warningDetails,
-              detectedWarning: record.detected_warning,
-            })}
-          </p>
-        )
-      })}
+      <PmHomeCheckPhotoReviews propertyId={propertyId} />
     </div>
   )
 }

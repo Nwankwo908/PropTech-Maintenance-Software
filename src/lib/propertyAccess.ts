@@ -56,6 +56,14 @@ export function normalizePropertyAccess(raw: unknown): PropertyAccessProfile {
   }
 }
 
+/** After a successful save: how much property access is still left across the portfolio. */
+export function propertyAccessRemainingNotice(propertiesLeft: number): string {
+  const count = Number.isFinite(propertiesLeft) ? Math.max(0, Math.floor(propertiesLeft)) : 0
+  if (count === 0) return 'Property access is complete for every property.'
+  if (count === 1) return '1 property still needs access details.'
+  return `${count} properties still need access details.`
+}
+
 export function propertyAccessHasContent(access: PropertyAccessProfile): boolean {
   return Boolean(
     access.buildingEntry ||

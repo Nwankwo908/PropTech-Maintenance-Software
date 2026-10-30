@@ -50,10 +50,16 @@ vi.mock("./service.ts", () => ({
     if (error) throw error;
     return data;
   },
-  createHomeCheck: async () => ({
+  createHomeCheck: vi.fn(async () => ({
     check: { id: "check" },
-    deliveryError: "Injected provider outage",
-  }),
+    deliveryError: null,
+  })),
+}));
+vi.mock("./visitAct.ts", () => ({
+  sendHomeCheckVendorAcceptance: vi.fn(async () => ({
+    deliveryError: null,
+    alreadySent: false,
+  })),
 }));
 const now = new Date("2026-10-28T15:00:00Z");
 const catalog = {
@@ -163,7 +169,7 @@ it("reports tenant invitation failure instead of claiming it will ask the tenant
     now,
   });
   expect(result.reply).toMatch(/failed|unable|could not|try again/i);
-  expect(result.reply).toContain('No contractor link was sent');
+  expect(result.reply).toContain('No contractor photo instructions were sent');
 });
 it("does not claim the contractor has the link when delivery failed", async () => {
   vi.mocked(sendInboundAutoReply).mockClear();

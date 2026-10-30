@@ -61,6 +61,7 @@ Deno.test("toSearchWorkOrdersToolResult wraps legacy result", () => {
         title: "Leak under sink",
         description: "",
         priority: "high",
+    urgency: null,
         estimatedCost: null,
         estimatedCostSource: null,
         repairScope: "",

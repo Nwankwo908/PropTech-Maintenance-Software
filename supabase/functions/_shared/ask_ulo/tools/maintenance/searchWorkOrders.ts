@@ -145,7 +145,7 @@ function workOrdersToEvidence(rows: OperationalWorkOrder[]): EvidenceItem[] {
     label: w.title || w.category || w.workOrderId,
     excerpt: [
       w.propertyName,
-      formatUnitReference(w.unitLabel) || null,
+      formatUnitReference(w.unitLabel, w.propertyType) || null,
       w.category,
       w.urgency || w.priority || null,
       w.daysOpen > 0 ? `${w.daysOpen}d open` : null,

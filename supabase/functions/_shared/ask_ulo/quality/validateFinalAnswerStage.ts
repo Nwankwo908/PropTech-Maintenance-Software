@@ -374,6 +374,12 @@ export async function validateFinalAnswer(input: {
     portfolioBuildings: portfolioBuildingNames ?? [],
     landlordId,
     packetSatisfied: Boolean(
+      (vendorResponseSpeed?.available && vendorResponseSpeed.markdown) ||
+      (vendorBest?.available && vendorBest.markdown) ||
+      (vendorCompletion?.available && vendorCompletion.markdown) ||
+      (vendorInactive?.available && vendorInactive.markdown) ||
+      (vendorOverload?.available && vendorOverload.markdown) ||
+      (vendorVerification?.available && vendorVerification.markdown) ||
       (residentsList?.available && residentsList.markdown) ||
         (repairsToApprove?.available && repairsToApprove.markdown) ||
         (gatedPropertyRanking?.canRank && gatedPropertyRanking.top) ||

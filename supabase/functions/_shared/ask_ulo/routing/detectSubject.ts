@@ -75,7 +75,7 @@ const LEASE_SUBJECT_RE =
   /\b(leases?|renewals?|lease\s+terms?|rent\s+(?:roll|increase)|moved?\s+in|move[\s-]?ins?|moving\s+in)\b/i
 const RESIDENT_SUBJECT_RE = /\b(residents?|tenants?|occupants?)\b/i
 const LATE_RENT_RE =
-  /\b(late\s+(?:paying|on\s+rent|with\s+rent)|past[\s-]?due|arrears|delinquen|balance\s+due|owes?\s+rent|rent\s+(?:late|owed|outstanding))\b/i
+  /\b(late\s+(?:paying|on\s+rent|with\s+rent)|past[\s-]?due|overdue\s+(?:rent|balances?|payments?)|outstanding\s+(?:rent|balances?)|arrears|delinquen|balance\s+due|owes?\s+rent|rent\s+(?:late|owed|outstanding))\b/i
 /** Move-in / occupancy questions — never portfolio briefing. */
 const MOVE_IN_QUESTION_RE =
   /\b(who\s+moved\s+in|moved\s+in\s+this\s+(?:month|week)|move[\s-]?ins?\s+(?:this|last)|new\s+(?:residents?|tenants?|occupants?)|recent\s+move[\s-]?ins?)\b/i
@@ -85,7 +85,7 @@ const MESSAGE_NONRESPONSE_RE =
 const FINANCE_SUBJECT_RE =
   /\b(invoices?|estimates?|quotes?|repair\s+cost|spent|spend(?:ing)?|costs?|costing|expenses?|budget|revenue|noi\b|cap\s*rate|maintenance\s+(?:spend|cost|expense)|losing\s+money|costing\s+(?:me\s+)?money)\b/i
 const DOCUMENT_SUBJECT_RE =
-  /\b(documents?|attachments?|cois?|certificates?\s+of\s+insurance|w-?9|passport|inspection\s+report|insurance(?:\s+polic(?:y|ies))?|polic(?:y|ies)\s+expir|this\s+(?:insurance\s+)?(?:lease|invoice|contract|policy))\b/i
+  /\b(documents?|attachments?|cois?|certificates?\s+of\s+insurance|w-?9|passport|inspection\s+report|insurance(?:\s+polic(?:y|ies))?|polic(?:y|ies)\s+expir|this\s+(?:insurance\s+)?(?:lease|invoice|contract|policy)|uploaded\s+(?:lease|document|policy|report)|lease\s+pdf|pdfs?)\b/i
 const LEGAL_SUBJECT_RE =
   /\b(fair\s+housing|eviction|habitability|security\s+deposit|landlord[\s-]tenant|legal|attorney|counsel|enter(?:ing)?\s+(?:this\s+)?(?:rental\s+)?(?:unit|property)|without\s+notice|mold|smoke\s+detectors?|compl(?:y|iance)\s+with|(?:georgia|state)\s+law)\b/i
 const VACANT_UNIT_RE =
@@ -104,7 +104,7 @@ const PERIOD_SUBJECT_RE =
 export function isMarketRentEstimateQuestion(question: string): boolean {
   const q = question.trim()
   if (!q) return false
-  if (LATE_RENT_RE.test(q) && /\b(who|which|consistently|always|repeatedly|list)\b/i.test(q)) {
+  if (LATE_RENT_RE.test(q) && /\b(who|which|show|list|total|summarize|consistently|always|repeatedly)\b/i.test(q)) {
     return false
   }
   if (/\brent\s+(?:roll|increase|control)\b/i.test(q) && !/\b(average|avg\.?|market|nearby|bedroom|comp)\b/i.test(q)) {
@@ -404,7 +404,7 @@ export function detectQuestionSubject(question: string): AskUloQuestionSubject {
   if (
     MESSAGE_NONRESPONSE_RE.test(q) ||
     (LATE_RENT_RE.test(q) &&
-      /\b(who|which|consistently|always|repeatedly|list)\b/i.test(q)) ||
+      /\b(who|which|show|list|total|summarize|consistently|always|repeatedly)\b/i.test(q)) ||
     (RESIDENT_SUBJECT_RE.test(q) &&
       /\b(which|who|show|list|summarize)\b/i.test(q))
   ) {

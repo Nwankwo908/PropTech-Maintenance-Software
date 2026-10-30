@@ -550,6 +550,7 @@ export function checkAnswerCompleteness(input: {
   }
   if (
     input.hasEvidence &&
+    !input.packetSatisfied &&
     looksLikeIgnoringTier1Intelligence(input.answer)
   ) {
     reasons.push("overstated_uncertainty_with_evidence")

@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../../delivery.ts"
+import { withDeadline } from "../../ai/deadline.ts"
 import { recordActivityLog } from "../../graph/recordActivityLog.ts"
 import {
   buildTranscriptExcerpt,
@@ -42,70 +43,14 @@ export type CreateProductSupportTicketInput = {
   sendEmail?: typeof sendResendEmail
 }
 
-function shouldNotify(created: boolean, repeatCount: number): boolean {
-  if (created) return true
-  return repeatCount > 0 && repeatCount % 3 === 0
-}
-
-function confirmationMarkdown(input: {
-  created: boolean
-  summary: string
-  repeatCount: number
-}): string {
-  if (input.created) {
-    return [
-      "## Support ticket created",
-      "",
-      `I opened a support ticket: **${input.summary}**.`,
-      "",
-      "Our product team was notified at systems@ulohome.io. Someone will follow up — you can keep chatting here in the meantime.",
-    ].join("\n")
-  }
-  return [
-    "## Support ticket updated",
-    "",
-    `I updated your existing open ticket (**${input.summary}**) — this has come up **${input.repeatCount}** times.`,
-    "",
-    input.repeatCount % 3 === 0
-      ? "I also re-notified the product team so they see the repeat."
-      : "The product team already has this ticket; repeating the ask bumps the count so they can prioritize.",
-  ].join("\n")
-}
-
-async function bumpSignatureSignal(
-  supabase: SupabaseClient,
-  input: { dedupSignature: string; landlordId: string; isNewLandlordTicket: boolean },
-): Promise<void> {
-  const now = new Date().toISOString()
-  const { data: existing } = await supabase
-    .from("support_ticket_signature_signals")
-    .select("dedup_signature, distinct_landlord_count, total_sightings")
-    .eq("dedup_signature", input.dedupSignature)
-    .maybeSingle()
-
-  if (!existing) {
-    await supabase.from("support_ticket_signature_signals").insert({
-      dedup_signature: input.dedupSignature,
-      distinct_landlord_count: 1,
-      total_sightings: 1,
-      last_seen_at: now,
-      updated_at: now,
-    })
-    return
-  }
-
-  const distinct =
-    Number(existing.distinct_landlord_count) +
-    (input.isNewLandlordTicket ? 1 : 0)
-  await supabase
-    .from("support_ticket_signature_signals")
-    .update({
-      distinct_landlord_count: Math.max(1, distinct),
-      total_sightings: Number(existing.total_sightings) + 1,
-      last_seen_at: now,
-      updated_at: now,
-    })
-    .eq("dedup_signature", input.dedupSignature)
+export function supportConfirmation(input: { created: boolean; summary: string; repeatCount: number; notifyStatus: SupportTicketNotifyStatus }): string {
+  const saved = input.created ? `I saved a support ticket: **${input.summary}**.` : `I updated your open support ticket (**${input.summary}**). Reports recorded: **${input.repeatCount}**.`
+  const notification = input.notifyStatus === "sent"
+    ? "The email service accepted the product-team notification. This does not confirm it was read."
+    : input.notifyStatus === "failed"
+    ? "Your ticket is saved, but I could not confirm the product-team notification. You can email systems@ulohome.io and include the ticket ID below."
+    : "Your ticket is saved. I cannot confirm a product-team notification yet."
+  return `${saved}\n\n${notification}`
 }
 
 async function notifySystems(input: {
@@ -117,6 +62,8 @@ async function notifySystems(input: {
   created: boolean
   transcriptExcerpt: string
   attemptedResolution: string | null
+  signal?: AbortSignal
+  deliveryKey?: string
 }): Promise<{ status: SupportTicketNotifyStatus; error: string | null }> {
   const subject = input.created
     ? `[Ask Ulo] New support ticket: ${input.summary}`
@@ -144,6 +91,7 @@ async function notifySystems(input: {
     subject,
     text,
     html,
+    { signal: input.signal, idempotencyKey: input.deliveryKey, requireMessageId: true },
   )
   if ("error" in result) {
     return { status: "failed", error: result.error.slice(0, 500) }
@@ -166,82 +114,19 @@ export async function createOrBumpProductSupportTicket(
   })
   const attemptedResolution = (input.attemptedResolution ?? "").trim().slice(0, 2000) ||
     null
-  const now = new Date().toISOString()
   const sendEmail = input.sendEmail ?? sendResendEmail
 
-  const { data: openTicket, error: lookupErr } = await supabase
-    .from("support_tickets")
-    .select(
-      "id, repeat_count, summary, status, notify_status",
-    )
-    .eq("landlord_id", landlordId)
-    .eq("dedup_signature", dedupSignature)
-    .eq("status", "open")
-    .maybeSingle()
-
-  if (lookupErr) {
-    console.error("[ask_ulo/support] lookup", lookupErr.message)
-    return { ok: false, error: lookupErr.message }
-  }
-
-  let ticketId: string
-  let created: boolean
-  let repeatCount: number
-
-  if (openTicket?.id) {
-    created = false
-    repeatCount = Number(openTicket.repeat_count) + 1
-    ticketId = String(openTicket.id)
-    const { error: updErr } = await supabase
-      .from("support_tickets")
-      .update({
-        repeat_count: repeatCount,
-        last_seen_at: now,
-        updated_at: now,
-        transcript_excerpt: transcriptExcerpt,
-        attempted_resolution: attemptedResolution,
-        summary,
-        admin_user_id: input.adminUserId?.trim() || null,
-        conversation_id: input.conversationId?.trim() || null,
-      })
-      .eq("id", ticketId)
-    if (updErr) {
-      console.error("[ask_ulo/support] bump", updErr.message)
-      return { ok: false, error: updErr.message }
-    }
-  } else {
-    created = true
-    repeatCount = 1
-    const { data: inserted, error: insErr } = await supabase
-      .from("support_tickets")
-      .insert({
-        type: "product_support",
-        summary,
-        landlord_id: landlordId,
-        admin_user_id: input.adminUserId?.trim() || null,
-        transcript_excerpt: transcriptExcerpt,
-        attempted_resolution: attemptedResolution,
-        dedup_signature: dedupSignature,
-        repeat_count: 1,
-        last_seen_at: now,
-        status: "open",
-        notify_status: "pending",
-        conversation_id: input.conversationId?.trim() || null,
-      })
-      .select("id")
-      .single()
-    if (insErr || !inserted?.id) {
-      console.error("[ask_ulo/support] insert", insErr?.message)
-      return { ok: false, error: insErr?.message ?? "insert failed" }
-    }
-    ticketId = String(inserted.id)
-  }
-
-  await bumpSignatureSignal(supabase, {
-    dedupSignature,
-    landlordId,
-    isNewLandlordTicket: created,
+  const { data: reported, error: reportError } = await supabase.rpc("report_product_support_ticket", {
+    p_landlord_id: landlordId, p_summary: summary, p_signature: dedupSignature,
+    p_transcript: transcriptExcerpt, p_resolution: attemptedResolution,
+    p_admin_user_id: input.adminUserId?.trim() || null,
+    p_conversation_id: input.conversationId?.trim() || null,
   })
+  if (reportError || !reported?.id) return { ok: false, error: reportError?.message ?? "Ticket persistence unavailable" }
+  const ticketId = String(reported.id)
+  const created = Boolean(reported.created)
+  const repeatCount = Number(reported.repeat_count)
+  const claim = reported.notify_claim as string | null
 
   await recordActivityLog(supabase, {
     landlordId,
@@ -260,33 +145,39 @@ export async function createOrBumpProductSupportTicket(
       repeat_count: repeatCount,
       summary,
     },
-  })
+  }).catch(() => { console.warn("[ask_ulo/support] activity log unavailable") })
 
-  let notifyStatus: SupportTicketNotifyStatus = "skipped"
+  let notifyStatus: SupportTicketNotifyStatus = reported.notify_status
   let notifyError: string | null = null
-  if (shouldNotify(created, repeatCount)) {
-    const notify = await notifySystems({
+  if (claim) {
+    const payload = reported.notify_payload ?? { summary, repeatCount, created, transcriptExcerpt, attemptedResolution }
+    let notify: { status: SupportTicketNotifyStatus; error: string | null }
+    try { notify = await withDeadline(6000, (signal) => notifySystems({
+      signal, deliveryKey: reported.notify_delivery_key,
       sendEmail,
       ticketId,
       landlordId,
-      summary,
-      repeatCount,
-      created,
-      transcriptExcerpt,
-      attemptedResolution,
-    })
+      summary: payload.summary,
+      repeatCount: payload.repeatCount,
+      created: payload.created,
+      transcriptExcerpt: payload.transcriptExcerpt,
+      attemptedResolution: payload.attemptedResolution,
+    })) } catch { notify = { status: "failed", error: "Notification transport failed or timed out" } }
     notifyStatus = notify.status
     notifyError = notify.error
   }
 
-  await supabase
-    .from("support_tickets")
-    .update({
-      notify_status: notifyStatus,
-      notify_error: notifyError,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", ticketId)
+  if (claim) {
+    const failed = notifyStatus === "failed"
+    const patch: Record<string, unknown> = {
+      notify_status: notifyStatus, notify_error: notifyError, notify_claim: null,
+      notify_claimed_at: null, updated_at: new Date().toISOString(),
+      next_retry_at: failed ? new Date(Date.now() + 5 * 60 * 1000).toISOString() : null,
+    }
+    if (failed) patch.notify_attempt_count = 1
+    const { data: saved, error } = await supabase.from("support_tickets").update(patch).eq("id", ticketId).eq("notify_claim", claim).select("id")
+    if (error || !saved?.length) notifyStatus = "pending"
+  }
 
   return {
     ok: true,
@@ -296,7 +187,7 @@ export async function createOrBumpProductSupportTicket(
     summary,
     dedupSignature,
     notifyStatus,
-    confirmationMarkdown: confirmationMarkdown({ created, summary, repeatCount }),
+    confirmationMarkdown: supportConfirmation({ created, summary, repeatCount, notifyStatus }) + `\n\nTicket ID: ${ticketId}`,
   }
 }
 
@@ -321,7 +212,7 @@ export function historyHadClarifyingAttempt(
 ): boolean {
   const prior = (history ?? []).filter((m) => m.role === "assistant").slice(-2)
   return prior.some((m) =>
-    /\b(can you (?:tell|clarify|share)|which |what (?:exactly|specifically)|could you (?:clarify|say more)|need a bit more|to help(?: me)?(?: with that)?)\b/i
+    /\b(are you stuck|reply with a short description|can you (?:tell|clarify|share)|which |what (?:exactly|specifically)|could you (?:clarify|say more)|need a bit more|to help(?: me)?(?: with that)?)\b/i
       .test(m.content)
   )
 }

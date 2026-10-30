@@ -78,6 +78,7 @@ import {
   type AnswerConfidence,
 } from "../retrieval/rankEvidence.ts"
 import { synthesizeAskUloAnswer } from "../synthesis/index.ts"
+import { isDetailedRecordQuestion } from "../tools/maintenance/reportedFactAnswer.ts"
 import type { AskUloResponse } from "../core/types.ts"
 import type { AskUloContext } from "../core/context.ts"
 import type { AskUloExecutionPlan } from "../routing/buildExecutionPlan.ts"
@@ -195,7 +196,7 @@ export async function synthesizeAnswer(input: {
   const property = e.property
   const portfolioBriefing = e.portfolioBriefing
 
-  if (preferred?.shortCircuit && preferred.markdown) {
+  if (preferred?.shortCircuit && preferred.markdown && !isDetailedRecordQuestion(question)) {
     for (const tag of preferred.tags) toolsUsed.push(tag)
     const synthesis = {
       answer: preferred.markdown,
@@ -230,6 +231,7 @@ export async function synthesizeAnswer(input: {
 
   const synthesis = await synthesizeAskUloAnswer({
     question,
+    retrievedRecordMarkdown: isDetailedRecordQuestion(question) ? preferred?.markdown ?? null : null,
     history,
     intent: intentResult.intent,
     intentLabel: intentResult.label,

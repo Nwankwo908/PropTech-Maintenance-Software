@@ -46,6 +46,7 @@ export async function trySendAutoReply(
     workflowHint?: string
     source: string
     workflowRoute?: string
+    inboundMessageId?: string
     /** When true, never invent a generic maintenance fallback. */
     skipGenericFallback?: boolean
   },
@@ -117,6 +118,7 @@ export async function trySendAutoReply(
     conversationId: params.conversationId,
     body: replyBody,
     scheduleState,
+    replyToInboundId: params.workflowRoute === "home_check" ? params.inboundMessageId : undefined,
   })
   if (circuit.trip) {
     console.warn("[sms-inbound] outbound circuit breaker tripped", {
@@ -145,6 +147,9 @@ export async function trySendAutoReply(
           source: params.source,
         },
       })
+      // Home Check attachment/hold state is already durable. A replayed
+      // clarification is not a repair requiring a property-team intervention.
+      if (params.workflowRoute === "home_check") return undefined
       let loopIsLandlordThread = false
       try {
         const { data: loopConv } = await supabase
@@ -325,6 +330,7 @@ export async function finishHandledInbound(
       workflowHint: reply.body,
       source: reply.source,
       workflowRoute: result.workflowRoute,
+      inboundMessageId: messageId,
       skipGenericFallback: reply.skipGenericFallback,
     })
   }

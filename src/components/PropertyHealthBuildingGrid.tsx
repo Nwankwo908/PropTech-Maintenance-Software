@@ -133,7 +133,7 @@ type PropertyHealthBuildingGridProps = {
 }
 
 const HEADER_BTN =
-  'sa-press inline-flex shrink-0 items-center justify-center rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#186179] disabled:pointer-events-none disabled:opacity-50'
+  'sa-press inline-flex shrink-0 items-center justify-center rounded-[10px] border border-[#186179] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#186179] disabled:pointer-events-none disabled:opacity-50'
 
 const HEADER_BTN_GHOST =
   'sa-press inline-flex shrink-0 items-center justify-center rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#6a7282] hover:bg-[#f3f4f6] disabled:pointer-events-none disabled:opacity-50'
@@ -196,7 +196,7 @@ export function PropertyHealthBuildingGrid({
       <div className="relative z-10 flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
         <div className="min-w-0">
           <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-            My Properties
+            All Properties
           </h2>
           <p className="text-[12px] leading-4 text-[#6a7282]">
             {selectedCount > 0 ? (

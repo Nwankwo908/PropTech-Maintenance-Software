@@ -97,3 +97,14 @@ Deno.test("portal member only for their landlord_id", () => {
     false,
   )
 })
+
+Deno.test('disposable Home Check account is staff-only and does not allow arbitrary test IDs', () => {
+  const landlordId = 'd15a0000-0000-4000-8000-000000000001'
+  for (const email of ['osi@ulohome.io', 'emeka@ulohome.io']) {
+    assertEquals(emailMayAccessLandlordId({ email, landlordId }), true)
+    assertEquals(emailMayAccessLandlordId({ email, landlordId: 'd15a0000-0000-4000-8000-000000000099' }), false)
+  }
+  for (const email of ['unrelated@example.invalid', 'limitedalpha1@ulohome.io', 'demo@ulohome.io']) {
+    assertEquals(emailMayAccessLandlordId({ email, landlordId }), false)
+  }
+})

@@ -51,6 +51,11 @@ export function classifyAskUloJob(
     }
   }
 
+  // A how-to question about a Ulo control stays help even when it names a vendor.
+  if (/\b(?:how (?:do i|can i|to) (?:invite|add|verify|onboard|upload|use|enable|disable)|where (?:is|do i find) (?:the )?(?:button|settings|menu)|(?:button|screen|app|dashboard|portal) .*(?:broken|stuck|not work|doesn.t work))\b/i.test(q)) {
+    return { job: "product_support", explicitSupportAsk: false, confidence: "high", reason: "product_control_how_to" }
+  }
+
   if (LEGAL_RE.test(q)) {
     return {
       job: "legal",
@@ -60,7 +65,7 @@ export function classifyAskUloJob(
     }
   }
 
-  const portfolio = PORTFOLIO_RE.test(q) || PORTFOLIO_RE.test(hay)
+  const portfolio = PORTFOLIO_RE.test(q) || (!PRODUCT_SUPPORT_RE.test(q) && PORTFOLIO_RE.test(hay))
   const product = PRODUCT_SUPPORT_RE.test(q)
 
   if (portfolio && !product) {

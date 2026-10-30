@@ -1,3 +1,5 @@
+import { HOME_CHECK_OBSERVATION_PROMPT, homeCheckObservationAcknowledgement, homeCheckConfirmationSms } from './smsCopy.ts'
+import { captureContextAction, readCaptureContext } from "./captureContext.ts"
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
 import { normalizeSmsPhone } from '../sms/inbound_db.ts'
@@ -16,12 +18,18 @@ import {
   homeCheckPhotoKindQuestion,
   homeCheckSlotFromReading,
   homeCheckSlotName,
-  nextHomeCheckSlot,
   parseHomeCheckPhotoChoice,
-  pickHomeCheckForPhoto,
   type HomeCheckSlot,
 } from '../../../../shared/homeCheck.ts'
+import { isVendorMatchableForDispatch } from '../vendor_assignment.ts'
 import { normalizeUsStateCode, vendorServiceStateCodes } from '../vendorServiceArea.ts'
+import {
+  homeCheckVisitAllowsPhotos,
+  homeCheckVisitPhotoSms,
+  readHomeCheckVisit,
+  type HomeCheckVisitEvent,
+} from '../../../../shared/homeCheckVisit.ts'
+import { applyHomeCheckVisitReply, prepareHomeCheckVisitReply } from './visitAct.ts'
 function homeCheckGuidePending(intake: unknown): boolean {
   if (!intake || typeof intake !== 'object') return false
   const guide = (intake as { home_check_guide?: { step?: unknown } }).home_check_guide
@@ -34,7 +42,7 @@ export type PendingHomeCheckPhoto =
   | { step: 'kind'; path: string; at: string; checkId: string }
 
 const PENDING_PHOTO_KEY = 'home_check_photo_pending'
-const PENDING_PHOTO_TTL_MS = 24 * 3600000
+const PENDING_PHOTO_TTL_MS = 30 * 60000
 
 function readPendingPhoto(intake: unknown): PendingHomeCheckPhoto | null {
   if (!intake || typeof intake !== 'object') return null
@@ -42,25 +50,17 @@ function readPendingPhoto(intake: unknown): PendingHomeCheckPhoto | null {
     | PendingHomeCheckPhoto
     | undefined
   if (!pending || typeof pending.path !== 'string' || typeof pending.at !== 'string') return null
-  if (Date.now() - Date.parse(pending.at) > PENDING_PHOTO_TTL_MS) return null
+  const age = Date.now() - Date.parse(pending.at)
+  if (!Number.isFinite(age) || age < 0 || age > PENDING_PHOTO_TTL_MS) return null
   return pending
 }
 
-async function writePendingPhoto(
-  db: SupabaseClient,
-  conversationId: string,
-  pending: PendingHomeCheckPhoto | null,
-) {
-  const { data } = await db.from('sms_conversations').select('intake_state').eq(
-    'id',
-    conversationId,
-  ).maybeSingle()
-  const intake = data?.intake_state && typeof data.intake_state === 'object'
-    ? { ...(data.intake_state as Record<string, unknown>) }
-    : {}
-  if (pending) intake[PENDING_PHOTO_KEY] = pending
-  else delete intake[PENDING_PHOTO_KEY]
-  await checked(db.from('sms_conversations').update({ intake_state: intake }).eq('id', conversationId))
+async function writePendingPhoto(db: SupabaseClient, landlordId: string, conversationId: string,
+ pending: PendingHomeCheckPhoto | null, expectedPath?: string): Promise<boolean> {
+ const { data, error } = await db.rpc('hold_home_check_sms_photo', { p_landlord_id: landlordId,
+   p_conversation_id: conversationId, p_pending: pending, p_expected_path: expectedPath ?? null })
+ if (error) throw new Error('Could not safely hold the Home Check photo')
+ return data === true
 }
 
 /** Reads thread state only for a short reply that could continue a guide. */
@@ -75,6 +75,10 @@ import {
   checked,
   checkLocation,
   confirmHomeCheck,
+  loadHomeCheck,
+  pendingHomeCheckSystems,
+  notifyHomeCheckResult,
+  rebuildHomeCheckAssets,
   type HomeCheckRow,
   requireData,
   saveHomeCheckAnswers,
@@ -97,9 +101,12 @@ export type HomeCheckSmsAction =
     slot: HomeCheckSlot | null
     path: string
     conversationId?: string
+    expectedVersion?: string
   }
   | { kind: 'hold_photo'; conversationId: string; pending: PendingHomeCheckPhoto; reply: string }
+  | { kind: 'cancel_photo'; conversationId: string }
   | { kind: 'confirm'; check: HomeCheckRow }
+  | { kind: 'results'; check: HomeCheckRow }
   | { kind: 'answers'; check: HomeCheckRow; answers: HomeCheckAnswers }
   | { kind: 'clarify'; reply: string }
   | {
@@ -109,6 +116,7 @@ export type HomeCheckSmsAction =
     initiatorPhone: string
     sender: 'landlord' | 'tenant'
   }
+  | { kind: 'visit_reply'; check: HomeCheckRow; event: HomeCheckVisitEvent }
 
 /** Explicit reference + assigned phone + receiving Ulo line takes precedence
  * over ambiguous contact identities on the shared Alpha DID. */
@@ -174,26 +182,45 @@ export async function homeCheckVendors(db: SupabaseClient, landlordId: string, p
     await db.from('properties').select('latitude, longitude, state').eq('landlord_id', landlordId)
       .eq('id', propertyId).single(),
   )
-  const vendors = requireData(
+  const roster = requireData(
     await db.from('vendors').select(
-      'id, name, phone, latitude, longitude, roster_status, state, preferred_emergency',
+      'id, name, phone, latitude, longitude, roster_status, state, preferred_emergency, active, onboarding_overridden_at',
     ).eq('landlord_id', landlordId).eq('active', true),
   )
     .filter((vendor) => vendor.phone && !['suspended', 'banned'].includes(vendor.roster_status))
-  const ids = vendors.map((vendor) => vendor.id)
-  const verificationByVendor = new Map<string, { serviceArea: unknown; licenseState: string | null }>()
+  const ids = roster.map((vendor) => vendor.id)
+  const verificationByVendor = new Map<string, {
+    serviceArea: unknown
+    licenseState: string | null
+    status: string | null
+    availability: string | null
+  }>()
   if (ids.length) {
     const { data } = await db.from('vendor_verifications').select(
-      'vendor_id, service_area, license_state, updated_at',
+      'vendor_id, service_area, license_state, status, availability, updated_at',
     ).eq('landlord_id', landlordId).in('vendor_id', ids).order('updated_at', { ascending: false })
     for (const row of data ?? []) {
       if (!row.vendor_id || verificationByVendor.has(row.vendor_id)) continue
       verificationByVendor.set(row.vendor_id, {
         serviceArea: row.service_area,
         licenseState: typeof row.license_state === 'string' ? row.license_state : null,
+        status: typeof row.status === 'string' ? row.status : null,
+        availability: typeof row.availability === 'string' ? row.availability : null,
       })
     }
   }
+  const vendors = roster.filter((vendor) => {
+    const verification = verificationByVendor.get(vendor.id)
+    return isVendorMatchableForDispatch({
+      verificationStatus: verification?.status ?? null,
+      vendorActive: vendor.active !== false,
+      availability: verification?.availability ?? null,
+      rosterStatus: typeof vendor.roster_status === 'string' ? vendor.roster_status : null,
+      onboardingOverriddenAt: typeof vendor.onboarding_overridden_at === 'string'
+        ? vendor.onboarding_overridden_at
+        : null,
+    })
+  })
   const ranked = nearestHomeCheckVendors(property, vendors)
   const candidates = vendors.map((vendor) => {
     const verification = verificationByVendor.get(vendor.id)
@@ -255,13 +282,13 @@ export async function prepareHomeCheckSms(
       sender: 'landlord',
     }
   }
-  if (!ctx.inbound.mediaUrls.length && /^\d{1,2}$/.test(body)) {
+  if (!ctx.inbound.mediaUrls.length && /^(?:\d{1,2}|cancel)$/i.test(body)) {
     const { data } = await ctx.supabase.from('sms_conversations').select('intake_state').eq(
       'id',
       ctx.conversationId,
     ).maybeSingle()
     const pending = readPendingPhoto(data?.intake_state)
-    if (pending) return await answerPendingPhoto(ctx, pending, body)
+    if (pending) return /^cancel$/i.test(body) ? { kind: 'cancel_photo', conversationId: ctx.conversationId } : await answerPendingPhoto(ctx, pending, body)
   }
   if (
     landlord && mightContinueHomeCheckGuide(body) &&
@@ -308,13 +335,61 @@ export async function prepareHomeCheckSms(
       }
     }
   }
+  const visitReply = await prepareHomeCheckVisitReply(ctx)
+  if (visitReply) return visitReply
   const hasMedia = ctx.inbound.mediaUrls.length > 0
+  if (!hasMedia && landlord && /^results$/i.test(body)) {
+    const context = await readCaptureContext(ctx.supabase, ctx.landlordId, ctx.conversationId, { allowExpiredForReply: true })
+    const checks = context ? await openChecksForSender(ctx, false) : []
+    const check = checks.find(check => check.id === context?.checkId && check.completed_at)
+    return check ? { kind: 'results', check } : { kind: 'clarify', reply: 'No completed Home Check results are selected in this conversation. Open the property in Property Intelligence to review its Home Check.' }
+  }
+  if (!hasMedia && /^(?:yes|no|none|unsure)\b/i.test(body)) {
+    const context = await readCaptureContext(ctx.supabase, ctx.landlordId, ctx.conversationId, { allowExpiredForReply: true })
+    if (context && context.slot === null) {
+      const assigned = await openChecksForSender(ctx, false)
+      const selected = assigned.find(check => check.id === context.checkId && check.completed_at && Date.parse(check.expires_at) > Date.now() && !check.confirmed_at && check.answers?.warningSigns == null && !check.answers?.observationsConfirmed)
+      if (selected) {
+        const { data: prompts } = await ctx.supabase.from('sms_messages').select('body')
+          .eq('conversation_id', ctx.conversationId).eq('landlord_id', ctx.landlordId)
+          .eq('direction', 'outbound').order('created_at', { ascending: false }).limit(1)
+        const latest = String(prompts?.[0]?.body ?? '')
+        // Do not capture a YES/NO meant for a different workflow's newer ask.
+        if (/Did you notice leaks|Reply YES followed by what you noticed|Any leaks, unusual noises or smells\?/i.test(latest)) {
+          if (/^unsure[.!]?$/i.test(body)) return { kind: 'answers', check: selected, answers: { ...selected.answers, observationsConfirmed: true, warningSigns: null, warningDetails: '' } }
+          if (/^(?:no|none)[.!]?$/i.test(body)) return { kind: 'answers', check: selected,
+            answers: { ...selected.answers, observationsConfirmed: true, warningSigns: false, warningDetails: '' } }
+          const details = body.replace(/^yes\b[,:.!\s]*/i, '').trim()
+          if (/^yes\b/i.test(body) && details && details.length <= 800) return { kind: 'answers', check: selected,
+            answers: { ...selected.answers, observationsConfirmed: true, warningSigns: true, warningDetails: details } }
+          return { kind: 'clarify', reply: `${HOME_CHECK_OBSERVATION_PROMPT} For example: YES water is leaking at the base.` }
+        }
+      }
+    }
+  }
   if (
     !hasMedia && !/^OK(?:\s+HC-[A-F0-9]{12})?$/i.test(body) &&
     !/^HC-[A-F0-9]{12}/i.test(body)
   ) return null
   const checks = await openChecksForSender(ctx, landlord && /^OK/i.test(body) && !hasMedia)
   if (!checks.length) {
+    if (landlord && !hasMedia && /^OK$/i.test(body)) {
+      const selected = await readCaptureContext(ctx.supabase, ctx.landlordId, ctx.conversationId, { allowExpiredForReply: true })
+      if (selected) {
+        const { data: confirmed } = await ctx.supabase.from('home_checks').select('*')
+          .eq('id', selected.checkId).eq('landlord_id', ctx.landlordId)
+          .eq('recipient_phone', normalizeSmsPhone(ctx.inbound.from))
+          .eq('ulo_number', normalizeSmsPhone(ctx.inbound.to)).eq('status', 'confirmed').maybeSingle()
+        if (confirmed?.confirmed_at) {
+          const { data: latest } = await ctx.supabase.from('sms_messages').select('body')
+            .eq('conversation_id', ctx.conversationId).eq('landlord_id', ctx.landlordId)
+            .eq('direction', 'outbound').order('created_at', { ascending: false }).limit(1)
+          if (/^(?:Home Check confirmed for |Your Home Check records are saved for )/i.test(String(latest?.[0]?.body ?? ''))) {
+            return { kind: 'confirm', check: confirmed as HomeCheckRow }
+          }
+        }
+      }
+    }
     return /^HC-/i.test(body)
       ? {
         kind: 'clarify',
@@ -331,6 +406,8 @@ export async function prepareHomeCheckSms(
         reply: 'Please send one photo per text. No photo has been saved yet.',
       }
     }
+    const thread = await ctx.supabase.from('sms_conversations').select('intake_state').eq('landlord_id',ctx.landlordId).eq('id',ctx.conversationId).maybeSingle()
+    if (readPendingPhoto(thread.data?.intake_state)) return { kind: 'clarify', reply: 'I am still holding your previous photo. Please answer its question before sending another.' }
     const path = ctx.inbound.mediaUrls[0]
     const pool = ref ? checks.filter((check) => check.reference === ref) : checks
     if (!pool.length) {
@@ -340,15 +417,27 @@ export async function prepareHomeCheckSms(
       }
     }
     const numbered = parseHomeCheckPhotoReply(body)
-    const check = pool.length === 1 ? pool[0] : pickHomeCheckForPhoto(pool)
-    if (check) {
+    let context = await readCaptureContext(ctx.supabase, ctx.landlordId, ctx.conversationId, { allowExpiredForReply: true })
+    if (context && Date.parse(context.expiresAt) <= Date.now()) {
+      const remembered = pool.find(check => check.id === context!.checkId)
+      // Preserve explicit selection, never infer a check from recency or a lone candidate.
+      context = remembered && pool.length === 1 && context.slot && !numbered
+        ? await captureContextAction(ctx.supabase, { action: 'bind', landlordId: ctx.landlordId,
+          conversationId: ctx.conversationId, checkId: remembered.id, slot: context.slot, version: context.version })
+        : null
+    }
+    const selected = context ? pool.find(check => check.id === context.checkId) : null
+    const check = ref && pool.length === 1 ? pool[0] : selected
+    if (check && !homeCheckVisitAllowsPhotos(readHomeCheckVisit(check.visit))) {
       return {
-        kind: 'photo',
-        check,
-        slot: numbered?.slot ?? null,
-        path,
-        conversationId: ctx.conversationId,
+        kind: 'clarify',
+        reply: 'Photo instructions arrive when it’s time for the visit. No photo has been saved yet.',
       }
+    }
+    if (check && (numbered?.slot || (selected && context?.slot))) {
+      return { kind: 'photo', check, slot: numbered?.slot ?? context!.slot,
+        path, conversationId: ctx.conversationId,
+        expectedVersion: numbered ? undefined : context!.version }
     }
     const choices = homeCheckPhotoChoices(pool)
     return {
@@ -365,13 +454,14 @@ export async function prepareHomeCheckSms(
       ),
     }
   }
-  const candidates = ref ? checks.filter((check) => check.reference === ref) : checks
+  const confirmationContext = landlord && /^OK$/i.test(body)
+    ? await readCaptureContext(ctx.supabase, ctx.landlordId, ctx.conversationId, { allowExpiredForReply: true }) : null
+  const candidates = ref ? checks.filter((check) => check.reference === ref)
+    : confirmationContext ? checks.filter(check => check.id === confirmationContext.checkId) : checks
   if (candidates.length !== 1) {
     return {
       kind: 'clarify',
-      reply: `Please name the exact Home Check. ${
-        checks.map((check) => `${check.reference}: ${checkLocation(check)}`).join('; ')
-      }.`,
+      reply: 'More than one Home Check needs a reply. Open the correct property in Property Intelligence to review and confirm its Home Check.',
     }
   }
   const check = candidates[0]
@@ -458,11 +548,23 @@ export async function actHomeCheckSms(
   action: HomeCheckSmsAction,
 ) {
   if (action.kind === 'clarify') return { reply: action.reply }
+  if (action.kind === 'visit_reply') {
+    const reply = await applyHomeCheckVisitReply(db, action.check, action.event)
+    return { runId: action.check.workflow_run_id, reply: reply || undefined }
+  }
+  if (action.kind === 'cancel_photo') {
+    const reset = await db.rpc('reset_home_check_sms_capture', { p_landlord_id: landlordId, p_conversation_id: action.conversationId })
+    return { reply: !reset.error && reset.data === true ? 'Photo collection paused. The held photo was not attached. Text HOME CHECK when you want to resume.' : 'A photo is still processing. Please wait for its reply before pausing.' }
+  }
   if (action.kind === 'hold_photo') {
-    await writePendingPhoto(db, action.conversationId, action.pending)
-    return { reply: action.reply }
+    const held = await writePendingPhoto(db, landlordId, action.conversationId, action.pending)
+    return { reply: held ? action.reply : 'I am still holding your previous photo. Please answer that photo’s question before sending another. This newer photo was not attached.' }
   }
   if (action.kind === 'guide') {
+    if (parseHomeCheckCommand(action.body) || parseHomeCheckGuideStart(action.body)) {
+      const reset = await db.rpc('reset_home_check_sms_capture', { p_landlord_id: landlordId, p_conversation_id: action.conversationId })
+      if (reset.error || reset.data !== true) return { reply: 'A photo is still processing. Please wait for its reply before restarting the Home Check.' }
+    }
     const { actHomeCheckGuide } = await import('./guideAct.ts')
     const guided = await actHomeCheckGuide(db, landlordId, action)
     return { reply: guided.reply }
@@ -473,26 +575,50 @@ export async function actHomeCheckSms(
         'Upload equipment photos from Property Intelligence. Home Check links are no longer sent by text.',
     }
   }
+  if (action.kind === 'results') {
+    const sent = await notifyHomeCheckResult(db, action.check, await rebuildHomeCheckAssets(db, action.check), true)
+    return { runId: action.check.workflow_run_id, reply: sent ? undefined : 'Your results could not be sent. Please review this Home Check in Property Intelligence.' }
+  }
   if (action.kind === 'confirm') {
-    await confirmHomeCheck(db, action.check.id, landlordId)
+    if (action.check.confirmed_at) return { runId: action.check.workflow_run_id, reply: homeCheckConfirmationSms(checkLocation(action.check), action.check.detected_warning) }
+    if (action.check.answers?.warningSigns == null && !action.check.answers?.observationsConfirmed) return { runId: action.check.workflow_run_id, reply: HOME_CHECK_OBSERVATION_PROMPT }
+    try {
+      if ((await pendingHomeCheckSystems(db, action.check.id)).length) return { runId: action.check.workflow_run_id, reply: 'Photo analysis is pending. Your Home Check is not confirmed yet. Text RESULTS to review the current results.' }
+      await confirmHomeCheck(db, action.check.id, landlordId, [], { acknowledgeUnknownLabels: true })
+    } catch (error) {
+      // A network/logging failure after commit must not falsely say it failed.
+      const latest = await loadHomeCheck(db, action.check.id, landlordId).catch(() => null)
+      if (!latest?.confirmed_at) return { runId: action.check.workflow_run_id,
+        reply: latest
+          ? /flagged label|label.*review/i.test(String(error))
+            ? 'A label still needs review in Property Intelligence. Your Home Check is not confirmed. Text RESULTS to review it.'
+            : 'Your Home Check is not confirmed. Please retry OK, or review it in Property Intelligence.'
+          : 'I could not verify confirmation. Please check this Home Check in Property Intelligence before retrying.',
+      }
+    }
     return {
       runId: action.check.workflow_run_id,
-      reply: `Confirmed the water heater and heating system records for ${
-        checkLocation(action.check)
-      }. Their ages remain estimates.`,
+      reply: homeCheckConfirmationSms(checkLocation(action.check), action.check.detected_warning),
     }
   }
   if (action.kind === 'answers') {
-    await saveHomeCheckAnswers(db, action.check, action.answers)
+    const previewShown = action.check.role === 'landlord' && Boolean(action.check.summary_sent_at)
+    const sent = await saveHomeCheckAnswers(db, action.check, action.answers, { notifyResults: !previewShown })
+    if (previewShown && sent) return { runId: action.check.workflow_run_id,
+      reply: homeCheckObservationAcknowledgement(action.answers, (await pendingHomeCheckSystems(db, action.check.id)).length > 0, Boolean(action.check.detected_warning)),
+    }
     return {
       runId: action.check.workflow_run_id,
-      reply: `Saved the observations for ${checkLocation(action.check)}.${
-        action.answers.warningSigns
-          ? ' A linked follow-up is waiting for landlord review. If you smell gas, see smoke, or feel unsafe, leave the area and contact emergency services or your utility.'
-          : ''
-      }`,
+      // The Results SMS is the acknowledgement; never send a second saved notice.
+      reply: sent ? action.check.role === 'landlord' ? undefined : 'Thank you. Your observations were sent to your property team for review. No repairs are authorized.' : 'Your Home Check is not confirmed yet. Text RESULTS to review the results before confirming.',
     }
   }
+  if (!action.conversationId) return { reply: 'Please send this photo in the same Home Check conversation.' }
+  const proof = await db.from('sms_messages').select('id').eq('landlord_id', landlordId)
+    .eq('conversation_id', action.conversationId).eq('direction', 'inbound')
+    .eq('from_number', action.check.recipient_phone).eq('to_number', action.check.ulo_number)
+    .contains('media_urls', [action.path]).limit(1)
+  if (proof.error || !proof.data?.length) return { reply: 'I could not verify this photo in your Home Check conversation. No photo was attached.' }
   // Media was already fetched through the authenticated provider and rehosted
   // by inbound_processor. Never fetch a user-provided URL here.
   const blob = requireData(await db.storage.from('maintenance-uploads').download(action.path))
@@ -507,47 +633,71 @@ export async function actHomeCheckSms(
   )
   const filled = (photoRows ?? []).map((row: { slot: string }) => String(row.slot))
   let slot = action.slot
-  if (!slot) {
+  if (!slot || action.expectedVersion) {
     const placed = homeCheckSlotFromReading(await readHomeCheckPhoto(bytes, blob.type), filled)
-    if (!placed.slot) {
+    if (!placed.slot || (action.expectedVersion && placed.slot !== slot)) {
       if (action.conversationId) {
-        await writePendingPhoto(db, action.conversationId, {
+        const held = await writePendingPhoto(db, landlordId, action.conversationId, {
           step: 'kind',
           path: action.path,
           at: new Date().toISOString(),
           checkId: action.check.id,
         })
+        if (!held) return { reply: 'I am still holding your previous photo. Please answer its question before sending another.' }
       }
-      return { reply: homeCheckPhotoKindQuestion(location, placed.reason === 'not_equipment') }
+      return { reply: homeCheckPhotoKindQuestion(location, 'reason' in placed && placed.reason === 'not_equipment') }
     }
     slot = placed.slot
   }
-  const progress = await uploadHomeCheckPhoto(db, action.check, {
+  const bound = action.expectedVersion
+    ? { version: action.expectedVersion }
+    : await captureContextAction(db, { action: 'bind', landlordId, conversationId: action.conversationId,
+      checkId: action.check.id, slot })
+  if (!bound) return { reply: 'Another photo is processing. Please wait for its reply before sending this one again. This photo was not attached.' }
+  const claimed = await captureContextAction(db, { action: 'claim', landlordId, conversationId: action.conversationId,
+    checkId: action.check.id, slot, version: bound.version, path: action.path })
+  if (!claimed?.claim) return { reply: 'The Home Check step changed or another photo is processing. This photo was not attached. Please wait for Ulo’s next prompt before resending it.' }
+  let progress: Awaited<ReturnType<typeof uploadHomeCheckPhoto>>
+  try { progress = await uploadHomeCheckPhoto(db, action.check, {
     slot,
     bytes,
     contentType: blob.type,
     source: 'photo_text',
-  })
-  if (action.conversationId) await writePendingPhoto(db, action.conversationId, null)
-  const saved = `Saved as ${homeCheckSlotName(slot)} for ${location}.`
+    capture: { conversationId: action.conversationId, claim: claimed.claim },
+  }) } catch {
+    await captureContextAction(db, { action: 'release', landlordId, conversationId: action.conversationId,
+      checkId: action.check.id, claim: claimed.claim }).catch(() => null)
+    return { reply: 'I could not finish verifying this photo. Please retry when the Home Check is available; I will not guess where it belongs.' }
+  }
+  if (action.conversationId) await writePendingPhoto(db, landlordId, action.conversationId, null, action.path)
+  const savedReply = homeCheckVisitPhotoSms({ location, company: '', savedSlot: slot, filled })
   const retake = progress.feedback.filter((feedback) =>
     feedback.retakeMessage &&
     feedback.slot.startsWith(slot!.startsWith('water_heater') ? 'water_heater' : 'heating')
   )
   if (retake.length) {
+    const water = slot.startsWith('water_heater')
+    const mismatch = retake[0].retakeReason === 'system_mismatch'
+    // A mismatch does not tell us which member of the pair is wrong. Ask for
+    // the other view first, one step at a time; do not keep asking for the
+    // photo that just arrived or claim that the equipment was verified.
+    const retakeSlot = mismatch && slot.endsWith('_label')
+      ? water ? 'water_heater_whole' : 'heating_whole'
+      : water ? 'water_heater_label' : 'heating_label'
+    const rebound = await captureContextAction(db, { action: 'bind', landlordId, conversationId: action.conversationId,
+      checkId: action.check.id, slot: retakeSlot })
     return {
       runId: action.check.workflow_run_id,
-      reply: `${saved} ${retake[0].retakeMessage} Please send a closer photo of ${
-        homeCheckSlotName(slot.startsWith('water_heater') ? 'water_heater_label' : 'heating_label')
-      }.`,
+      reply: !rebound
+        ? `Your photo was received for ${location}, but verification needs another photo. Please wait before sending it; I could not prepare the next step.`
+        : mismatch
+        ? `Your photo was received for ${location}, but I could not verify these as ${water ? 'water heater' : 'furnace or boiler'} photos. They may show different equipment. Next, send a clear photo of ${homeCheckSlotName(retakeSlot)}. Keep both views of the same equipment.`
+        : `Your photo was received for ${location}, but I could not read the ${water ? 'water heater' : 'furnace or boiler'} label clearly. Next, send a closer, well-lit photo of ${homeCheckSlotName(retakeSlot)}.`,
     }
   }
-  const next = nextHomeCheckSlot([...filled, slot])
   return {
     runId: action.check.workflow_run_id,
-    reply: next
-      ? `${saved} Next, send a photo of ${homeCheckSlotName(next)}.`
-      : `${saved} All four photos are in. If you noticed leaks, odd noises or smells, reply: ${action.check.reference} ANSWERS YES | last service | last filter change | details (or ${action.check.reference} ANSWERS NO).`,
+    reply: savedReply,
   }
 }
 

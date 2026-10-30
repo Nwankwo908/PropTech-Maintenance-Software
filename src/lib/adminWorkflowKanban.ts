@@ -13,6 +13,7 @@ import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
+import { homeCheckLandlordStatus } from '@shared/homeCheckVisit'
 import {
   isMaintenanceAdminVendorEscalationReason,
   isStalePendingAcceptNeedsAdminVendor,

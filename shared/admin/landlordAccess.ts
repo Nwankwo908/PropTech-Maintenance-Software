@@ -22,6 +22,7 @@ export const STAFF_SWITCHER_LANDLORD_IDS = [
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
   DEMO_LANDLORD_ID,
+  'd15a0000-0000-4000-8000-000000000001', // Designated disposable Home Check account; staff only.
 ] as const
 
 /** Seeded portal login email → fixed landlord id. */

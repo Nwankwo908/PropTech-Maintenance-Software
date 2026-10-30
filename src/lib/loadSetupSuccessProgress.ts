@@ -1,6 +1,10 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { readLocalOnboardingState } from '@/lib/onboarding'
-import { loadPropertySetupModulesComplete } from '@/lib/propertyDetailsCompleteness'
+import { loadPropertySetupGapCounts } from '@/lib/propertyDetailsCompleteness'
+import {
+  CORE_VENDOR_TRADES,
+  coreTradesForVendorCategory,
+} from '@/lib/propertyHealth/calculatePropertyHealth'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
   isSetupSuccessTestDeliveryComplete,
@@ -28,7 +32,7 @@ export async function loadSetupSuccessProgress(
       .limit(2000),
     supabase
       .from('vendors')
-      .select('id, onboarding_overridden_at')
+      .select('id, category, onboarding_overridden_at')
       .eq('landlord_id', landlordId)
       .eq('active', true)
       .limit(500),
@@ -46,6 +50,7 @@ export async function loadSetupSuccessProgress(
 
   const vendorRows = ((vendorsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
     id: asString(row.id),
+    category: asString(row.category),
     overridden: Boolean(row.onboarding_overridden_at),
   }))
   const vendorIds = vendorRows.map((row) => row.id).filter(Boolean)
@@ -65,17 +70,27 @@ export async function loadSetupSuccessProgress(
     }
   }
 
+  const coveredTrades = new Set<string>()
+  for (const row of vendorRows) {
+    for (const trade of coreTradesForVendorCategory(row.category)) {
+      coveredTrades.add(trade)
+    }
+  }
+  const missingTradeCount = CORE_VENDOR_TRADES.filter((trade) => !coveredTrades.has(trade)).length
+
   const properties = propertiesResult.ok ? propertiesResult.properties : []
-  const propertySetup = await loadPropertySetupModulesComplete(properties)
+  const propertyGaps = await loadPropertySetupGapCounts(properties)
   const rules = readLocalOnboardingState()?.approvalRules
 
   return resolveSetupSuccessProgress({
     residents,
     vendorCount: vendorRows.length,
     vendorOutreachStartedCount: outreachStartedIds.size,
-    propertyAccessComplete: propertySetup.access,
-    propertyIntelligenceComplete: propertySetup.intelligence,
-    propertyInsuranceComplete: propertySetup.insurance,
+    missingTradeCount,
+    propertyCount: propertyGaps.propertyCount,
+    propertiesMissingAccess: propertyGaps.missingAccess,
+    propertiesMissingDetails: propertyGaps.missingDetails,
+    propertiesMissingInsurance: propertyGaps.missingInsurance,
     hasMaintenancePreferences:
       Array.isArray(rules?.emergencyTypes) && rules.emergencyTypes.length > 0,
     maintenanceRequestCount: ticketsResult.count ?? 0,

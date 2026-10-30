@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { analyzeHomeCheckEquipmentPair } from './equipmentPair.ts'
+import { analyzeHomeCheckEquipmentPair, reconcileHomeCheckSerialReading } from './equipmentPair.ts'
 
 vi.mock('../vision/analyzeInspectionPhoto.ts', () => ({ analyzeInspectionPhotoRow: vi.fn() }))
 vi.mock(
@@ -166,4 +166,23 @@ describe('Scoped paired equipment photos', () => {
       }),
     }))
   })
+})
+
+const conflictingReading={category:'hvac',identifiedItem:{type:'heat pump',serialNumber:'X1327635655'},estimatedAge:{value:13,confidence:'high',basis:'Manufacture date July 2013.'},labelReadability:{status:'readable',serialConfidence:100,modelConfidence:100,readings:{serialNumber:'X132765565'},formatWarnings:[],uncertainCharacters:[],retakeRequested:false}}
+describe('independent serial OCR disagreement',()=>{
+ it('keeps conflicting serials unknown instead of overwriting a confident reading',()=>{
+  const guarded=reconcileHomeCheckSerialReading(conflictingReading as never)
+  expect(guarded.identifiedItem.serialNumber).toBeUndefined()
+  expect(guarded.labelReadability).toMatchObject({status:'uncertain',serialConfidence:0,retakeRequested:true})
+  expect(guarded.labelReadability?.readings?.serialNumber).toBe('X132765565 / X1327635655')
+  expect(guarded.estimatedAge.value).toBe(13)
+  expect(conflictingReading.identifiedItem.serialNumber).toBe('X1327635655')
+ })
+ it('also clears an age inferred only from the conflicting serial',()=>{
+  expect(reconcileHomeCheckSerialReading({...conflictingReading,estimatedAge:{...conflictingReading.estimatedAge,basis:'Serial number decode'}} as never).estimatedAge.value).toBeNull()
+ })
+ it('preserves agreement after case and whitespace normalization',()=>{
+  const matching={...conflictingReading,identifiedItem:{...conflictingReading.identifiedItem,serialNumber:' x132765565 '}}
+  expect(reconcileHomeCheckSerialReading(matching as never)).toBe(matching)
+ })
 })

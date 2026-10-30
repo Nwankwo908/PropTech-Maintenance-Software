@@ -413,12 +413,12 @@ describe('Home Check review, follow-up, and single-family wording', () => {
 
 describe('uncaptioned Home Check photos', () => {
   const at = (day: number) => `2026-10-${day}T12:00:00Z`
-  it('picks the newest check when all open checks are for the same place', () => {
+  it('does not infer which check was selected from its creation date', () => {
     const checks = [
       { id: 'a', property_id: 'p', unit_id: null, created_at: at(27) },
       { id: 'b', property_id: 'p', unit_id: null, created_at: at(28) },
     ]
-    expect(pickHomeCheckForPhoto(checks)?.id).toBe('b')
+    expect(pickHomeCheckForPhoto(checks)).toBeNull()
   })
   it('does not pick between different places', () => {
     expect(pickHomeCheckForPhoto([

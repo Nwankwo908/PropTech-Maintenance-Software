@@ -89,7 +89,7 @@ export type AskUloCapabilityResult = {
 }
 
 const LATE_RENT_CAPABILITY_RE =
-  /\b(late\s+(?:paying|on\s+rent|with\s+rent)|past[\s-]?due|arrears|delinquen|balance\s+due|owes?\s+rent|rent\s+(?:late|owed|outstanding)|consistently\s+late)\b/i
+  /\b(late\s+(?:paying|on\s+rent|with\s+rent)|past[\s-]?due|overdue\s+(?:rent|balances?|payments?)|outstanding\s+(?:rent|balances?)|arrears|delinquen|balance\s+due|owes?\s+rent|rent\s+(?:late|owed|outstanding)|consistently\s+late)\b/i
 
 /**
  * Detect the operational capability implied by the question.

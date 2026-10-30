@@ -28,6 +28,8 @@ export type HomeCheckSlot = typeof HOME_CHECK_PHOTOS[number]['slot']
 export type HomeCheckRole = 'tenant' | 'contractor' | 'landlord'
 export type HomeCheckSystem = 'water_heater' | 'heating'
 export type HomeCheckAnswers = {
+  /** True when the sender explicitly answered the observation question, including UNSURE. */
+  observationsConfirmed?: boolean
   warningSigns: boolean | null
   warningDetails: string
   lastService: string
@@ -489,6 +491,33 @@ export function chooseHomeCheckContractorId(
   })[0]?.id ?? null
 }
 
+/** First text a contractor receives when a landlord requests a home check. */
+export function homeCheckCaptureSms(input: {
+  role: HomeCheckRole
+  location: string
+  company: string
+  reference: string
+  nextPhoto?: HomeCheckSlot | null
+}): string {
+  const heading = input.role === 'contractor'
+    ? `Home Check visit for ${input.location}.`
+    : input.role === 'tenant'
+      ? `Ulo for ${input.company}: please take the equipment photos where you live, at ${input.location}.`
+      : `Your Home Check for ${input.location}.`
+  const next = input.nextPhoto === undefined ? 'water_heater_label' : input.nextPhoto
+  return [
+    heading,
+    'We will collect 4 photos, one at a time, in this text conversation.',
+    'Visual check only. Do not open covers or touch equipment.',
+    next
+      ? `Please send One clear photo of ${homeCheckSlotName(next)}`
+      : 'All four photos are already saved. Your property team can review the results.',
+    next
+      ? null
+      : 'Do not send more photos unless a retake is requested.',
+  ].filter(Boolean).join('\n\n')
+}
+
 /** Dashboard requests give the contractor six days, inside the seven-day link limit. */
 export function homeCheckDashboardJobWindowEnd(now = Date.now()): string {
   return new Date(now + 6 * 24 * 60 * 60 * 1000).toISOString()
@@ -535,10 +564,7 @@ function newestFirst<T extends { created_at: string }>(checks: readonly T[]): T[
  * Different places return null and the sender is asked.
  */
 export function pickHomeCheckForPhoto<T extends PhotoCheckChoice>(checks: readonly T[]): T | null {
-  if (!checks.length) return null
-  const places = new Set(checks.map((check) => `${check.property_id}::${check.unit_id ?? ''}`))
-  if (places.size !== 1) return null
-  return newestFirst(checks)[0]
+  return checks.length === 1 ? checks[0] : null
 }
 
 /** Numbered choices, newest first, in the order the question lists them. */

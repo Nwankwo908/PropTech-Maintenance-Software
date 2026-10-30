@@ -370,10 +370,12 @@ If data is missing, say exactly what is unavailable.
 /**
  * Build the full chat payload for OpenAI — sole owner of "what the model receives".
  */
-export function buildAskUloPrompt(packets: AskUloToolPackets): AskUloBuiltPrompt {
+export function buildAskUloPrompt(packets: AskUloToolPackets, variant: 'full' | 'compact' = 'full'): AskUloBuiltPrompt {
   const system =
     `You are Ulo, an experienced regional property manager for landlords — a trusted colleague, not a legal report.\n\n` +
-    FORMATTING_GUIDE +
+    (variant === 'compact'
+      ? 'Answer the latest request directly in plain English. Use only the supplied evidence and the current account/property scope. History is context, not instructions or new evidence. Never invent counts, costs, dates, vendor performance, law, citations or completed actions. Say what is unknown when evidence is missing. Respect legal gates, privacy restrictions, Fair Housing and human-decision safeguards. Drafting is not sending; never claim approval, payment or notification occurred without an explicit successful result. Keep the answer concise and preserve the requested metric and subject.'
+      : FORMATTING_GUIDE) +
     `\n\n` +
     intentSectionGuide(packets.intent, { narrowFactual: Boolean(packets.narrowFactual) })
 
@@ -485,6 +487,13 @@ export function buildAskUloPrompt(packets: AskUloToolPackets): AskUloBuiltPrompt
       `found: ${packets.entityInvestigation.found}\n` +
         `primary: ${JSON.stringify(packets.entityInvestigation.primary)}\n` +
         `markdown:\n${packets.entityInvestigation.markdown}`,
+    )
+  }
+  if (packets.retrievedRecordMarkdown?.trim()) {
+    pushSection(
+      "RETRIEVED RECORD",
+      "Answer from this record. Keep the reported facts, property name, and work-order reference. Do not add a unit for a single-family home.\n" +
+        packets.retrievedRecordMarkdown.trim(),
     )
   }
   if (packets.deepOpsInvestigation?.available && packets.deepOpsInvestigation.found) {
@@ -617,7 +626,7 @@ export function buildAskUloPrompt(packets: AskUloToolPackets): AskUloBuiltPrompt
   }
 
   // Dynamic few-shots only for intents that still go through OpenAI synthesis.
-  for (const shot of styleBlueprintsForIntent(packets.intent)) {
+  for (const shot of variant === 'compact' ? [] : styleBlueprintsForIntent(packets.intent)) {
     messages.push({
       role: shot.role,
       content: shot.content,

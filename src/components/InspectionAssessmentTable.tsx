@@ -2,14 +2,11 @@ import { EquipmentLabelNotice } from './EquipmentLabelNotice'
 import type { ReactNode } from 'react'
 import type { ApplianceVisionResult, ConditionRating, VisionCategory } from '@/lib/vision/types'
 import { InspectionPhotoExtractProgress } from '@/components/InspectionPhotoExtractProgress'
-import { NounInfoIcon } from '@/components/NounInfoIcon'
 import {
   assessmentActionLabel,
   assessmentBrandModel,
   assessmentCategoryLabel,
   assessmentConditionLabel,
-  assessmentConfidencePercent,
-  assessmentConfidenceReason,
   assessmentTableDescription,
   assessmentSerial,
 } from '@/lib/inspectionAssessmentTable'
@@ -33,31 +30,9 @@ const CELL =
 
 function assetGridClass(selectable: boolean, extra = '') {
   const columns = selectable
-    ? '[grid-template-columns:1.75rem_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)_minmax(0,0.7fr)_minmax(0,0.65fr)_minmax(0,0.85fr)_minmax(0,0.65fr)]'
-    : '[grid-template-columns:minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)_minmax(0,0.7fr)_minmax(0,0.65fr)_minmax(0,0.85fr)_minmax(0,0.65fr)]'
+    ? '[grid-template-columns:1.75rem_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)_minmax(0,0.7fr)_minmax(0,0.65fr)_minmax(0,0.85fr)]'
+    : '[grid-template-columns:minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)_minmax(0,0.7fr)_minmax(0,0.65fr)_minmax(0,0.85fr)]'
   return `grid w-full min-w-0 items-center gap-x-2 gap-y-1 px-3 py-4 sm:gap-x-3 sm:px-4 ${columns} ${extra}`.trim()
-}
-
-function ConfidenceReasonButton({ reason }: { reason: string }) {
-  return (
-    <span className="group/conf relative inline-flex shrink-0">
-      <button
-        type="button"
-        tabIndex={0}
-        onClick={(e) => e.stopPropagation()}
-        className="inline-flex rounded-full p-0.5 text-[#94a3b8] outline-none hover:text-[#64748b] focus-visible:ring-2 focus-visible:ring-[#186179]"
-        aria-label="Why this confidence"
-      >
-        <NounInfoIcon />
-      </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute right-0 bottom-full z-30 mb-1.5 w-[min(260px,calc(100vw-3rem))] rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-left text-[12px] font-medium leading-4 text-[#475569] opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/conf:opacity-100 group-focus-within/conf:opacity-100"
-      >
-        {reason}
-      </span>
-    </span>
-  )
 }
 
 export type InspectionAssessmentTableRow = {
@@ -159,7 +134,6 @@ export function InspectionAssessmentTable({
           <p className="min-w-0 break-words text-right">Serial number</p>
           <p className="min-w-0 break-words text-right">Condition</p>
           <p className="min-w-0 break-words text-right">Action</p>
-          <p className="min-w-0 break-words text-right">Confidence</p>
         </div>
         {rows.map((row, index) => {
           const { result, editable, previewUrl, extracting, extractComplete } = row
@@ -242,7 +216,7 @@ export function InspectionAssessmentTable({
                 ) : null}
               </div>
               {extracting ? (
-                <div className="col-span-6 flex min-w-0 items-center">
+                <div className="col-span-5 flex min-w-0 items-center">
                   <InspectionPhotoExtractProgress
                     photoId={row.id}
                     complete={Boolean(extractComplete)}
@@ -400,10 +374,6 @@ export function InspectionAssessmentTable({
                 >
                   {actionLabel}
                 </p>
-              </div>
-              <div className="flex min-w-0 items-center justify-end gap-1 overflow-hidden font-medium text-[#68717a]">
-                <p className="min-w-0 tabular-nums">{assessmentConfidencePercent(result)}%</p>
-                <ConfidenceReasonButton reason={assessmentConfidenceReason(result)} />
               </div>
                 </>
               ) : null}

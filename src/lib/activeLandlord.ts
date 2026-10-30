@@ -63,6 +63,7 @@ export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
   { kind: 'limited_alpha', id: LIMITED_ALPHA_1_LANDLORD_ID, label: 'Limited Alpha 1' },
   { kind: 'limited_alpha', id: LIMITED_ALPHA_2_LANDLORD_ID, label: 'Limited Alpha 2' },
   { kind: 'demo', id: DEMO_LANDLORD_ID, label: 'Demo Property Management' },
+  { kind: 'default', id: 'd15a0000-0000-4000-8000-000000000001', label: 'Home Check Test · Disposable' },
 ]
 
 /** True when this address is a seeded portal / Alpha login (not a company support email). */

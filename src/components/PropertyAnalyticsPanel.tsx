@@ -12,6 +12,7 @@ import { PmComplianceTaskCard } from '@/components/PmComplianceTaskCard'
 
 type PropertyAnalyticsPanelProps = {
   building: string
+  propertyId?: string | null
   analytics: PropertyAnalyticsSnapshot | null
   loading?: boolean
   onPmChanged?: () => void | Promise<void>
@@ -88,6 +89,7 @@ function MaintenanceSpendBar({
 
 /** Property detail — Performance tab: monthly maintenance cost + PM compliance. */
 export function PropertyAnalyticsPanel({
+  propertyId,
   building,
   analytics,
   loading = false,

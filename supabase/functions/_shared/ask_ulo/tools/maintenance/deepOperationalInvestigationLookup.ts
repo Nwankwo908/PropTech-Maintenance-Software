@@ -18,6 +18,8 @@ import {
 import { searchWorkOrders } from "./searchWorkOrders.ts"
 import { summarizeWorkOrderIssue } from "./workOrderPresentation.ts"
 import { sanitizeBuildingFilter } from "../properties/buildingFilter.ts"
+import { formatBareUnitLabel, formatUnitReference } from "../../../properties/unitLabelDisplay.ts"
+import { reportedDetailLine } from "./reportedFactAnswer.ts"
 
 export type DeepOpsTicket = {
   id: string

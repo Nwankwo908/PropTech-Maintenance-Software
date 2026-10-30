@@ -85,6 +85,18 @@ export function deriveAskUloResponseStatus(input: {
   return "answered"
 }
 
+/** Plain activity line. Audit ids stay in metadata and off the Overview label. */
+export function askUloActivityMessage(status: AskUloResponseStatus, question: string): string {
+  const topic = question.replace(/\s+/g, " ").trim().slice(0, 160)
+  if (status === "refused" || status === "blocked") {
+    return topic ? `Ulo could not answer: ${topic}` : "Ulo could not answer that question."
+  }
+  if (status === "clarified") {
+    return topic ? `Ulo needed a clearer question: ${topic}` : "Ulo needed a clearer question."
+  }
+  return topic ? `Ulo answered: ${topic}` : "Ulo answered a question."
+}
+
 export function deriveAskUloRefusalReason(input: {
   responseStatus: AskUloResponseStatus
   qualitySummary?: string | null

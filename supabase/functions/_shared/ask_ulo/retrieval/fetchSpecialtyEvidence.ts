@@ -1,3 +1,4 @@
+import type { AskUloTiming } from "../core/timing.ts"
 /**
  * Specialty retrieval — executes plannedTools through executePlannedDomainTools only.
  *
@@ -49,6 +50,7 @@ export type SpecialtyFetchConfig = {
 export type SpecialtyFetchContext = {
   supabase: SupabaseClient
   landlordId: string
+  timing?: AskUloTiming
   question: string
   retrievalQuestion: string
   buildingFilter: string | null
@@ -255,6 +257,7 @@ export async function fetchSpecialtyEvidence(
   const domainExecuted = enrichedPlanned.length
     ? await executePlannedDomainTools(supabase, enrichedPlanned, {
       organizationId: landlordId,
+      timing: ctx.timing,
       question,
       buildingFilter,
       analytical,

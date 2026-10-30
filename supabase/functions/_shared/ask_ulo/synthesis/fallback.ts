@@ -292,6 +292,10 @@ function buildFallbackPeriodSummary(packets: AskUloToolPackets): string {
   ].join("\n")
 }
 
+/** Said when a detailed question has no retrieved record that contains the asked fact. */
+export const ASK_ULO_EVIDENCE_UNAVAILABLE =
+  "I can't fully answer that with what I can see right now. Once the relevant request history is available, I'll give you a clear finding."
+
 /** Deterministic answer when OpenAI is unavailable. */
 export function buildFallbackAskUloAnswer(packets: AskUloToolPackets): string {
   if (

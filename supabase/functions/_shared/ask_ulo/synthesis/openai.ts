@@ -1,4 +1,5 @@
 import { observeAiJson } from "../../ai/telemetry.ts";
+import { withAiDeadline } from '../../ai/deadline.ts'
 /**
  * OpenAI synthesis — model call, prompts (via buildPrompt), temperature.
  */
@@ -17,12 +18,13 @@ function stripJsonFence(s: string): string {
 export async function synthesizeWithOpenAI(
   apiKey: string,
   packets: AskUloToolPackets,
+  options: { timeoutMs?: number; promptVariant?: 'full' | 'compact' } = {},
 ): Promise<
   { text: string; usage: AskUloTokenUsage | null; synthesizeMs: number } | null
 > {
-  const prompt = buildAskUloPrompt(packets);
+  const prompt = buildAskUloPrompt(packets, options.promptVariant);
   const started = Date.now();
-  const { response: res, data } = await observeAiJson<{
+  const { response: res, data } = await withAiDeadline(options.timeoutMs ?? 12000, (signal) => observeAiJson<{
     choices?: Array<{ message?: { content?: string } }>;
     usage?: {
       prompt_tokens?: number;
@@ -38,6 +40,7 @@ export async function synthesizeWithOpenAI(
     },
     () =>
       fetch("https://api.openai.com/v1/chat/completions", {
+        signal,
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -53,7 +56,7 @@ export async function synthesizeWithOpenAI(
         }),
       }),
     (value) => Boolean(value?.choices?.[0]?.message?.content?.trim()),
-  );
+  ));
   if (!res.ok) {
     return null;
   }

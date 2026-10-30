@@ -68,3 +68,36 @@ Deno.test("normalizeOutboundForLoopCompare strips Hi there / Hi Name greetings",
     false,
   )
 })
+
+
+Deno.test("Home Check repeat gate anchors to the exact inbound and keeps same-turn protection", async () => {
+  const { shouldTripOutboundCircuit } = await import("./sms_inbound_guard.ts")
+  const now = Date.now()
+  const inboundAt = new Date(now - 5000).toISOString()
+  const outboundAt = new Date(now - 1000).toISOString()
+  const body = "What does this photo show? Reply 1–4."
+  const filters: Array<[string, unknown, unknown]> = []
+  let includeSameTurn = false
+  const db = { from: () => {
+    let cutoff = ""
+    const q: any = {
+      select: () => q, order: () => q, limit: () => q,
+      eq: (key: string, value: unknown) => { filters.push(['eq', key, value]); return q },
+      gte: (key: string, value: string) => { cutoff = value; filters.push(['gte', key, value]); return q },
+      maybeSingle: async () => ({ data: { created_at: inboundAt }, error: null }),
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve(resolve({ data: [
+        { body, created_at: new Date(now - 10000).toISOString(), provider_status: 'delivered' },
+        ...(includeSameTurn ? [{ body, created_at: outboundAt, provider_status: 'delivered' }] : []),
+      ].filter(row => row.created_at >= cutoff), error: null })),
+    }
+    return q
+  } }
+  // Normal workflows keep the hour-long protection.
+  assertEquals((await shouldTripOutboundCircuit(db as never, { conversationId: 'conv', body })).trip, true)
+  // A new Home Check photo may legitimately need the same clarification.
+  assertEquals((await shouldTripOutboundCircuit(db as never, { conversationId: 'conv', body, replyToInboundId: 'exact-inbound' })).trip, false)
+  assertEquals(filters.some(([op, key, value]) => op === 'eq' && key === 'id' && value === 'exact-inbound'), true)
+  // Reprocessing that same inbound still suppresses the duplicate reply.
+  includeSameTurn = true
+  assertEquals((await shouldTripOutboundCircuit(db as never, { conversationId: 'conv', body, replyToInboundId: 'exact-inbound' })).trip, true)
+})

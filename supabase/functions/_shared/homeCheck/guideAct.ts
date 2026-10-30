@@ -1,5 +1,5 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
-import { nearestHomeCheckVendors } from '../../../../shared/homeCheck.ts'
+import { homeCheckDashboardJobWindowEnd, nearestHomeCheckVendors } from '../../../../shared/homeCheck.ts'
 import { recordActivityLog } from '../graph/recordActivityLog.ts'
 import { findOrCreateConversation, normalizeSmsPhone } from '../sms/inbound_db.ts'
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
@@ -222,7 +222,7 @@ async function applyEffects(
       })
       if (!conversationId) {
         throw new HomeCheckDeliveryError(
-          'Ulo could not text the tenant to arrange the visit. No contractor link was sent. Please try the visit time again or reply CANCEL.',
+          'Ulo could not text the tenant to arrange the visit. No contractor photo instructions were sent. Please try the visit time again or reply CANCEL.',
           false,
         )
       }
@@ -303,7 +303,7 @@ async function applyEffects(
         unitId: effect.unitId,
         vendorId: effect.vendorId,
         metadata: {
-          message: 'Sent the contractor the equipment-check link after a visit time was set.',
+          message: 'Sent the contractor the equipment photo instructions after a visit time was set.',
         },
       }).catch(() => undefined)
     }

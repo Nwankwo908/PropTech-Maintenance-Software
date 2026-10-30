@@ -1,4 +1,5 @@
 /// <reference lib="deno.ns" />
+import { withAiDeadline } from '../../ai/deadline.ts'
 /**
  * Legal RAG: hybrid retrieval — semantic (pgvector) + keyword (FTS / token), fused with RRF.
  * Prefer official sources; mirrors are discovery-only.
@@ -166,7 +167,9 @@ export function fuseLegalHitsRrf(
 }
 
 async function embedQuery(apiKey: string, text: string): Promise<number[] | null> {
+  return await withAiDeadline(6000, async (signal) => {
   const res = await fetch("https://api.openai.com/v1/embeddings", {
+    signal,
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -187,6 +190,7 @@ async function embedQuery(apiKey: string, text: string): Promise<number[] | null
   }
   const emb = data.data?.[0]?.embedding
   return Array.isArray(emb) && emb.length === 1536 ? emb : null
+  })
 }
 
 function parsePublicationStatus(raw: unknown): LegalPublicationStatus {

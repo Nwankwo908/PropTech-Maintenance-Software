@@ -23,7 +23,7 @@ vi.mock('@/components/HomeCheckPanel', () => ({
 describe('ApplianceInspectionUploader', () => {
   afterEach(() => cleanup())
 
-  it('places the photo order above both upload cards', () => {
+  it('opens the photo order below both upload cards from a plus', () => {
     render(
       <ApplianceInspectionUploader
         building="14 Maple Ave"
@@ -31,11 +31,17 @@ describe('ApplianceInspectionUploader', () => {
         leading={<p>Upload inspection report</p>}
       />,
     )
-    const guide = screen.getByRole('heading', { name: 'Add equipment photos' })
     const report = screen.getByText('Upload inspection report')
     const appliance = screen.getByText('Appliance equipment upload')
-    expect(guide.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(guide.compareDocumentPosition(appliance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const instructions = screen.getByRole('button', { name: 'Add equipment instructions.' })
+    expect(instructions.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('heading', { name: 'Add equipment photos' })).toBeNull()
+    expect(report.compareDocumentPosition(appliance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(appliance.compareDocumentPosition(instructions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(instructions)
+    expect(instructions.getAttribute('aria-expanded')).toBe('true')
+    const guide = screen.getByRole('heading', { name: 'Add equipment photos' })
+    expect(instructions.compareDocumentPosition(guide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByText(/Upload these photos in this exact order/)).toBeTruthy()
     expect(screen.getByText(/Water heater label:/)).toBeTruthy()
     expect(screen.getByText(/Whole heating system:/)).toBeTruthy()
@@ -43,8 +49,18 @@ describe('ApplianceInspectionUploader', () => {
     expect(screen.queryByText(/If something needs fixing/)).toBeNull()
     expect(screen.getByText(/PDFs are processed as inspection reports/)).toBeTruthy()
     const assign = screen.getByRole('button', { name: 'Request home check' })
-    expect(screen.queryByRole('heading', { name: 'Home check inspection' })).toBeNull()
-    expect(guide.compareDocumentPosition(assign) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const title = screen.getByRole('heading', { name: 'Request home check' })
+    const caption = screen.getByText('Have a trusted professional capture your water heating system, and appliance details for you.')
+    const art = document.querySelector('img[src*="Technician"]')
+    expect(title.closest('section')?.className).toContain('bg-[#E6F4E9]')
+    expect(title.closest('section')?.className).toContain('border-[#C3E0CC]')
+    expect(title.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(caption.compareDocumentPosition(assign) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(art).toBeTruthy()
+    expect(assign.compareDocumentPosition(art!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const yourself = screen.getByRole('heading', { name: 'Or add information yourself' })
+    expect(title.compareDocumentPosition(yourself) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(yourself.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(assign.compareDocumentPosition(appliance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
@@ -56,6 +72,7 @@ describe('ApplianceInspectionUploader', () => {
         leading={<p>Upload inspection report</p>}
       />,
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Add equipment instructions.' }))
     expect(screen.queryByRole('img', { name: 'Example of a water heater label' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Water heater label:' }))
     expect(screen.getByRole('img', { name: 'Example of a water heater label' })).toBeTruthy()
@@ -70,6 +87,7 @@ describe('ApplianceInspectionUploader', () => {
         leading={<p>Upload inspection report</p>}
       />,
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Add equipment instructions.' }))
     expect(screen.queryByRole('img', { name: 'Example of a whole water heater' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Whole water heater:' }))
     expect(screen.getByRole('img', { name: 'Example of a whole water heater' })).toBeTruthy()

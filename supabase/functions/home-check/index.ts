@@ -7,9 +7,11 @@ import {
   confirmHomeCheck,
   createHomeCheck,
   requireData,
+  reviewHomeCheckPhoto,
   uploadDashboardHomeCheckPhoto,
 } from '../_shared/homeCheck/service.ts'
 import { homeCheckTargets, homeCheckVendors } from '../_shared/homeCheck/sms.ts'
+import { sendHomeCheckVendorAcceptance } from '../_shared/homeCheck/visitAct.ts'
 import { homeCheckDashboardJobWindowEnd, homeCheckMetrics } from '../../../shared/homeCheck.ts'
 
 const cors = {
@@ -54,6 +56,18 @@ Deno.serve(async (req) => {
     })
     if (!access.ok) return json({ error: access.error }, access.status)
     const landlordId = access.landlordId
+    if (action === 'photo_reviews') {
+      const propertyId = str(body.propertyId)
+      if (!propertyId && body.portfolio !== true) return json({ error: 'Choose a property first.' }, 400)
+      let query = db.from('home_checks')
+        .select('id, property_id, property_label, detected_warning')
+        .eq('landlord_id', landlordId)
+        .not('detected_warning', 'is', null)
+        .in('status', ['completed', 'confirmed'])
+        .order('created_at', { ascending: false })
+      if (propertyId) query = query.eq('property_id', propertyId)
+      return json({ reviews: requireData(await query) })
+    }
     if (action === 'options') {
       return json({
         targets: await homeCheckTargets(db, landlordId),
@@ -71,7 +85,7 @@ Deno.serve(async (req) => {
         return json({
           error: options.vendors.length
             ? 'No contractor in this property’s state can take this home check.'
-            : 'No active contractor with a phone number can take this home check.',
+            : 'Go and set up your vendor first.',
         }, 400)
       }
       const shown = str(body.vendorId)
@@ -88,9 +102,10 @@ Deno.serve(async (req) => {
         authorizedBy: access.user.id,
         vendorId: vendor.id,
         jobWindowEnd: homeCheckDashboardJobWindowEnd(),
-        sendSms: true,
+        sendSms: false,
       })
-      try {
+      const acceptance = await sendHomeCheckVendorAcceptance(db, created.check)
+      if (!acceptance.alreadySent) try {
         await recordActivityLog(db, {
           landlordId,
           eventType: 'home_check.requested',
@@ -103,7 +118,7 @@ Deno.serve(async (req) => {
           workflowRunId: created.check.workflow_run_id,
           workflowTemplateId: 'home_check',
           metadata: {
-            message: `${vendorName} was asked to photograph the water heater and furnace for a home check.`,
+            message: `${vendorName} was asked to accept a home check. Photo instructions wait until the visit time is confirmed.`,
           },
         })
       } catch (error) {
@@ -114,7 +129,7 @@ Deno.serve(async (req) => {
         checkId: created.check.id,
         workflowRunId: created.check.workflow_run_id,
         vendorName,
-        deliveryError: created.deliveryError,
+        deliveryError: acceptance.deliveryError,
       })
     }
     if (action === 'dashboard_photo') {
@@ -144,6 +159,21 @@ Deno.serve(async (req) => {
         contentType: mime,
       })
       return json({ ok: true, checkId: saved.checkId, slot: saved.slot })
+    }
+    if (action === 'photo_review') {
+      const decision = str(body.decision)
+      if (decision !== 'looks_fine' && decision !== 'repair' && decision !== 'closer_photo') {
+        return json({ error: 'Choose whether the photo looks fine, needs a repair, or needs a closer photo.' }, 400)
+      }
+      const id = str(body.id)
+      if (!id) return json({ error: 'Choose a photo review first.' }, 400)
+      const result = await reviewHomeCheckPhoto(db, {
+        landlordId,
+        checkId: id,
+        decision,
+        actorId: access.user.id,
+      })
+      return json(result)
     }
     if (action === 'confirm') {
       const corrections = body.labelCorrections || []

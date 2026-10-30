@@ -3,6 +3,9 @@ import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_2_LANDLORD_ID } from '@share
 import { markLimitedAlphaPostOnboardingWelcomeSeen } from './postOnboardingWelcome'
 import {
   clearSetupSuccessCardDismissed,
+  clearSetupSuccessCompleteInformationPrompt,
+  isSetupSuccessCompleteInformationPrompt,
+  markSetupSuccessCompleteInformationPrompt,
   clearSetupSuccessCardMinimized,
   clearSetupSuccessNavPercentBaseline,
   clearSetupSuccessTestDelivery,
@@ -28,9 +31,11 @@ function progressInput(
     residents: [],
     vendorCount: 0,
     vendorOutreachStartedCount: 0,
-    propertyAccessComplete: false,
-    propertyIntelligenceComplete: false,
-    propertyInsuranceComplete: false,
+    missingTradeCount: 8,
+    propertyCount: 0,
+    propertiesMissingAccess: 0,
+    propertiesMissingDetails: 0,
+    propertiesMissingInsurance: 0,
     hasMaintenancePreferences: false,
     maintenanceRequestCount: 0,
     ...overrides,
@@ -92,46 +97,70 @@ describe('setupSuccessChecklist', () => {
     ).toBe(true)
   })
 
-  it('marks invite vendors complete after outreach starts, not roster alone', () => {
+  it('marks invite vendors complete only when every vendor is invited and every trade is covered', () => {
     expect(
-      resolveSetupSuccessProgress(progressInput()).items.find((item) => item.id === 'verify_vendors')
-        ?.done,
-    ).toBe(false)
+      resolveSetupSuccessProgress(progressInput()).items.find((item) => item.id === 'verify_vendors'),
+    ).toMatchObject({ done: false, remaining: 8 })
     expect(
       resolveSetupSuccessProgress(progressInput({ vendorCount: 1 })).items.find(
         (item) => item.id === 'verify_vendors',
-      )?.done,
-    ).toBe(false)
+      ),
+    ).toMatchObject({ done: false, remaining: 9 })
     expect(
       resolveSetupSuccessProgress(
-        progressInput({ vendorCount: 1, vendorOutreachStartedCount: 1 }),
-      ).items.find((item) => item.id === 'verify_vendors')?.done,
-    ).toBe(true)
+        progressInput({ vendorCount: 1, vendorOutreachStartedCount: 1, missingTradeCount: 0 }),
+      ).items.find((item) => item.id === 'verify_vendors'),
+    ).toMatchObject({ done: true, remaining: 0 })
   })
 
-  it('counts completed steps for the progress bar', () => {
+  it('puts missing property, vendor, trade, and welcome counts into the percentage', () => {
     const progress = resolveSetupSuccessProgress(
       progressInput({
-        residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
-        vendorCount: 1,
+        residents: [
+          { phone: '2015550100', activationStatus: 'waiting' },
+          { phone: '2015550101', activationStatus: 'not_started' },
+        ],
+        vendorCount: 2,
         vendorOutreachStartedCount: 1,
-        propertyAccessComplete: true,
-        propertyIntelligenceComplete: true,
-        propertyInsuranceComplete: true,
+        missingTradeCount: 3,
+        propertyCount: 4,
+        propertiesMissingAccess: 2,
+        propertiesMissingDetails: 1,
+        propertiesMissingInsurance: 4,
         hasMaintenancePreferences: true,
       }),
     )
-    expect(progress.total).toBe(7)
-    expect(progress.doneCount).toBe(6)
-    expect(progress.items.map((item) => [item.id, item.done])).toEqual([
-      ['welcome_texts', true],
-      ['verify_vendors', true],
-      ['property_access', true],
-      ['property_intelligence', true],
-      ['property_insurance', true],
-      ['maintenance_prefs', true],
-      ['test_request', false],
-    ])
+    expect(progress.items.find((item) => item.id === 'welcome_texts')).toMatchObject({
+      done: false,
+      remaining: 1,
+      detail: '1 resident left',
+    })
+    expect(
+      resolveSetupSuccessProgress(
+        progressInput({
+          residents: Array.from({ length: 8 }, () => ({
+            phone: '2015550100',
+            activationStatus: 'not_started',
+          })),
+        }),
+      ).items.find((item) => item.id === 'welcome_texts')?.detail,
+    ).toBe('8 residents left')
+    expect(progress.items.find((item) => item.id === 'verify_vendors')).toMatchObject({
+      done: false,
+      remaining: 4,
+      detail: '1 vendor needs activation, 3 trades left to add',
+    })
+    expect(progress.items.find((item) => item.id === 'property_access')?.detail).toBe('2 properties left')
+    expect(progress.items.find((item) => item.id === 'property_intelligence')?.detail).toBe(
+      '1 property left',
+    )
+    expect(progress.items.find((item) => item.id === 'property_insurance')?.detail).toBe(
+      '4 properties left',
+    )
+    // 1 welcome + 1 invite + 5 trades + 2 access + 3 details + 0 insurance + prefs.
+    expect(progress.completedUnits).toBe(13)
+    expect(progress.unitTotal).toBe(26)
+    expect(setupSuccessPercent(progress)).toBe(50)
   })
 
   it('sends the test request step to Notifications Test delivery', () => {
@@ -171,14 +200,23 @@ describe('setupSuccessChecklist', () => {
     })
     const filled = resolveSetupSuccessProgress(
       progressInput({
-        propertyAccessComplete: true,
-        propertyIntelligenceComplete: true,
-        propertyInsuranceComplete: true,
+        propertyCount: 2,
+        propertiesMissingAccess: 0,
+        propertiesMissingDetails: 0,
+        propertiesMissingInsurance: 0,
       }),
     )
     expect(filled.items.find((item) => item.id === 'property_access')?.done).toBe(true)
     expect(filled.items.find((item) => item.id === 'property_intelligence')?.done).toBe(true)
     expect(filled.items.find((item) => item.id === 'property_insurance')?.done).toBe(true)
+  })
+
+  it('shows the property access prompt only after Complete information', () => {
+    expect(isSetupSuccessCompleteInformationPrompt(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    markSetupSuccessCompleteInformationPrompt(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCompleteInformationPrompt(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    clearSetupSuccessCompleteInformationPrompt(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCompleteInformationPrompt(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 
   it('remembers when the setup card is closed until onboarding reset', () => {
@@ -206,9 +244,17 @@ describe('setupSuccessChecklist', () => {
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
         vendorOutreachStartedCount: 1,
+        missingTradeCount: 0,
+        propertyCount: 1,
+        propertiesMissingAccess: 0,
+        propertiesMissingDetails: 0,
+        propertiesMissingInsurance: 1,
       }),
     )
-    expect(setupSuccessPercent(progress)).toBe(29)
+    // 1 welcome + 1 invite + 8 trades + access + details + preferences off + test off.
+    expect(progress.completedUnits).toBe(12)
+    expect(progress.unitTotal).toBe(15)
+    expect(setupSuccessPercent(progress)).toBe(80)
   })
 
   it('keeps the Profile setup nav hint until checklist is complete even if the card is open', () => {
@@ -221,6 +267,7 @@ describe('setupSuccessChecklist', () => {
       shouldShowSetupSuccessNavHint(incomplete, 'de300000-0000-4000-8000-0000000000a2'),
     ).toBe(true)
     expect(setupSuccessExperienceReady('de300000-0000-4000-8000-0000000000a2')).toBe(true)
+    expect(setupSuccessExperienceReady('d15a0000-0000-4000-8000-000000000001')).toBe(true)
     expect(setupSuccessExperienceReady(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
     markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_2_LANDLORD_ID)
     expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
@@ -229,9 +276,11 @@ describe('setupSuccessChecklist', () => {
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
         vendorOutreachStartedCount: 1,
-        propertyAccessComplete: true,
-        propertyIntelligenceComplete: true,
-        propertyInsuranceComplete: true,
+        missingTradeCount: 0,
+        propertyCount: 1,
+        propertiesMissingAccess: 0,
+        propertiesMissingDetails: 0,
+        propertiesMissingInsurance: 0,
         hasMaintenancePreferences: true,
         maintenanceRequestCount: 1,
       }),

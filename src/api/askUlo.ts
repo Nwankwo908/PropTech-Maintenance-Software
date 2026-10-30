@@ -185,7 +185,19 @@ type InvokeAskUloResult = {
  * Invoke ask-ulo via the shared Supabase client (same project as VITE_SUPABASE_URL).
  * Distinguishes CORS/network, HTTP, auth, and invalid-body failures in logs + thrown errors.
  */
-async function invokeAskUlo(payload: Record<string, unknown>): Promise<InvokeAskUloResult> {
+async function invokeAskUlo(payload: Record<string, unknown>, traceId: string = crypto.randomUUID()): Promise<InvokeAskUloResult> {
+  const started = performance.now()
+  let status: number | null = null
+  try {
+    const result = await invokeAskUloRequest(payload, traceId)
+    status = result.status
+    return result
+  } finally {
+    console.info(JSON.stringify({ event: 'ask_ulo.client_timing', schemaVersion: 1, traceId, status, totalMs: performance.now() - started }))
+  }
+}
+
+async function invokeAskUloRequest(payload: Record<string, unknown>, traceId: string): Promise<InvokeAskUloResult> {
   const secret = getAdminEdgeSecret()
   const host = expectedAskUloHost()
   if (!supabase) {
@@ -217,6 +229,7 @@ async function invokeAskUlo(payload: Record<string, unknown>): Promise<InvokeAsk
       headers: {
         'x-admin-reassign-secret': secret,
         'x-ulo-access-token': accessToken,
+        'x-ulo-trace-id': traceId,
       },
     })
 
@@ -371,6 +384,7 @@ function parseSupportTicket(
 }
 
 export async function postAskUlo(input: {
+  traceId?: string
   question: string
   landlordId?: string | null
   /** Prior turns in this conversation (excludes the current question). */
@@ -395,7 +409,7 @@ export async function postAskUlo(input: {
     messages: history,
     conversationId: input.conversationId?.trim() || null,
     agentMode: input.agentMode?.trim() || null,
-  })
+  }, input.traceId)
 
   return parseAskUloOk(data)
 }

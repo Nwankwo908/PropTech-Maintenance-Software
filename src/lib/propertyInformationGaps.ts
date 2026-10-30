@@ -51,7 +51,8 @@ export function propertiesNeedMoreInformationCopy(count: number): { title: strin
       : `${count} properties need more information`
   return {
     title,
-    detail: 'Missing property access, insurance, or a completed home check.',
+    detail:
+      'Add property access details, insurance information, and a completed Home Check to help Ulo spot potential problems early, so you can prevent costly repairs instead of reacting when things break.',
   }
 }
 

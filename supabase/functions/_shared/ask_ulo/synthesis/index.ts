@@ -13,7 +13,8 @@ import { resolveIncompleteRankingSignal } from "../guards/incompleteEvidence.ts"
 import type { AskUloCitation } from "../retrieval/searchInternalData.ts"
 import { formatAskUloAnswer } from "./formatAnswer.ts"
 import { synthesizeWithOpenAI, ANSWER_MODEL } from "./openai.ts"
-import { buildFallbackAskUloAnswer } from "./fallback.ts"
+import { ASK_ULO_EVIDENCE_UNAVAILABLE, buildFallbackAskUloAnswer } from "./fallback.ts"
+import { isDetailedRecordQuestion, preparedAnswerCoversAskedFacts, retrievedRecordMatchesQuestionSubject } from "../tools/maintenance/reportedFactAnswer.ts"
 import {
   mergeCitations,
   ensureReasoningTransparency,
@@ -53,9 +54,9 @@ function emptyUsageSynthesis(
 
 export async function synthesizeAskUloAnswer(
   packets: AskUloToolPackets,
+  options: { timeoutMs?: number; forceFailure?: "timeout" | "error" } = {},
 ): Promise<AskUloSynthesis> {
   const citations = mergeCitations(packets)
-  const hasOpenAi = Boolean(Deno.env.get("OPENAI_API_KEY")?.trim())
 
   const finish = (
     answer: string,
@@ -102,26 +103,31 @@ export async function synthesizeAskUloAnswer(
     if (packets.priceHistory?.markdown) {
       return finish(
         packets.priceHistory.markdown,
-        hasOpenAi ? "openai" : "fallback",
-        hasOpenAi ? ANSWER_MODEL : null,
+        'fallback',
+        null,
       )
     }
   }
   if (packets.intent === "rent_history" && packets.rentHistory?.markdown) {
     return finish(
       packets.rentHistory.markdown,
-      hasOpenAi ? "openai" : "fallback",
-      hasOpenAi ? ANSWER_MODEL : null,
+      'fallback',
+      null,
     )
   }
 
-  // Specialty / incomplete / catch-all — same policy as prefer stage.
+  // Counts never reach this function. Other prepared cards stay as written.
+  // A question about a reported fact is written by the model from that record.
   const preferredSynth = resolvePreferPacket(preferPacketBagFromToolPackets(packets))
-  if (preferredSynth.prefer) {
+  const detailedRecord = isDetailedRecordQuestion(packets.question)
+  const retrievedRecord = preferredSynth.prefer
+    ? preferredSynth.markdown
+    : packets.retrievedRecordMarkdown ?? null
+  if (!detailedRecord && preferredSynth.prefer && preparedAnswerCoversAskedFacts(packets.question, preferredSynth.markdown)) {
     return finish(
       preferredSynth.markdown,
-      hasOpenAi ? "openai" : "fallback",
-      hasOpenAi ? ANSWER_MODEL : null,
+      'fallback',
+      null,
     )
   }
 
@@ -184,7 +190,10 @@ export async function synthesizeAskUloAnswer(
                 },
               }
             : packets
-      const openai = await synthesizeWithOpenAI(apiKey, safePackets)
+      if (options.forceFailure === "error") throw new TypeError("isolated_provider_failure")
+      const openai = await synthesizeWithOpenAI(apiKey, safePackets, {
+        timeoutMs: options.forceFailure === "timeout" ? 1 : options.timeoutMs,
+      })
       if (openai) {
         return finish(openai.text, "openai", ANSWER_MODEL, {
           usage: openai.usage,
@@ -192,8 +201,18 @@ export async function synthesizeAskUloAnswer(
         })
       }
     } catch (err) {
-      console.error("[ask_ulo/synthesize] threw", err)
+      console.warn('[ask_ulo/synthesize] provider_fallback', { reason: err instanceof Error ? err.name : 'unknown' })
     }
+  }
+  if (detailedRecord) {
+    if (
+      retrievedRecord &&
+      preparedAnswerCoversAskedFacts(packets.question, retrievedRecord) &&
+      retrievedRecordMatchesQuestionSubject(packets.question, retrievedRecord)
+    ) {
+      return finish(retrievedRecord, "fallback", null)
+    }
+    return finish(ASK_ULO_EVIDENCE_UNAVAILABLE, "fallback", null)
   }
   return finish(buildFallbackAskUloAnswer(packets), "fallback", null)
 }

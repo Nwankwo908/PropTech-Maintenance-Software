@@ -1,3 +1,4 @@
+import type { AskUloTiming } from "../../core/timing.ts"
 /**
  * Unified executor for live domain tools (bounded allowlist only).
  */
@@ -48,6 +49,7 @@ import {
 
 export type ExecuteDomainToolContext = {
   organizationId: string
+  timing?: AskUloTiming
   question: string
   propertyId?: string | null
   buildingFilter?: string | null
@@ -146,7 +148,7 @@ function asResidentFilter(v: unknown): ListResidentsFilter | null {
   return null
 }
 
-export async function executeDomainTool(
+async function executeDomainToolInternal(
   supabase: SupabaseClient,
   call: PlannedDomainToolCall,
   ctx: ExecuteDomainToolContext,
@@ -426,6 +428,11 @@ export async function executeDomainTool(
     default:
       return null
   }
+}
+
+/** Registered tool names only; timing records contain no inputs or results. */
+export async function executeDomainTool(supabase: SupabaseClient, call: PlannedDomainToolCall, ctx: ExecuteDomainToolContext): Promise<ExecuteDomainToolResult | null> {
+  return ctx.timing ? await ctx.timing.measure(`tool_${call.name}`, () => executeDomainToolInternal(supabase, call, ctx)) : await executeDomainToolInternal(supabase, call, ctx)
 }
 
 export async function executePlannedDomainTools(

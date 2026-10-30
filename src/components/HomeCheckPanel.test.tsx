@@ -181,3 +181,14 @@ describe('retired Home Check links', () => {
     expect(html.container.querySelector('input')).toBeNull()
   })
 })
+
+describe('Home Check document table placement', () => {
+  afterEach(cleanup)
+  it('does not render photo follow-up prose below the equipment table', async () => {
+    vi.mocked(homeCheckRequest).mockResolvedValue({ checks: [{ ...openCheck, issue_ticket_id: 'photo-review', detected_warning: 'The TPR line must run downward' }], metrics: [] })
+    render(<HomeCheckPanel building='14 Maple Ave' propertyId='maple' />)
+    expect(await screen.findByText('Water heater')).toBeTruthy()
+    expect(screen.queryByText(/Follow-up opened/)).toBeNull()
+    expect(screen.queryByText(/TPR line must/)).toBeNull()
+  })
+})

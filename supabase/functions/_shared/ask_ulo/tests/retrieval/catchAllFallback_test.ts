@@ -21,6 +21,7 @@ function sampleWo(overrides: Partial<OperationalWorkOrder> = {}): OperationalWor
     title: "Leak under sink",
     description: "Kitchen sink leak under the cabinet",
     priority: "high",
+    urgency: null,
     estimatedCost: 300,
     estimatedCostSource: "minutes_proxy",
     repairScope: "Repair",

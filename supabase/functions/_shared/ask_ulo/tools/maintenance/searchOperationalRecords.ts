@@ -6,6 +6,8 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
+  detectOpsCategories,
+  expandQuestionSearchTerms,
   textMatchesOpsTerms,
   type OpsCategoryId,
 } from "./deepOperationalInvestigation.ts"
@@ -66,6 +68,27 @@ export type SearchOperationalRecordsInput = {
 
 export type SearchOperationalRecordsResult = {
   available: boolean
+  /** When false, completed and cancelled tickets stay out of open answers. */
+  includeCompleted?: boolean
+}
+
+const CLOSED_TICKET_STATUSES = new Set([
+  "completed",
+  "closed",
+  "cancelled",
+  "canceled",
+  "resolved",
+])
+
+/** Same open rule as the portfolio work-order count. */
+export function isClosedMaintenanceTicket(ticket: {
+  completed_at?: unknown
+  cancelled_at?: unknown
+  status?: unknown
+}): boolean {
+  if (ticket.completed_at) return true
+  if (ticket.cancelled_at) return true
+  return CLOSED_TICKET_STATUSES.has(String(ticket.status ?? "").toLowerCase())
   workOrders: OperationalWorkOrder[]
   tablesQueried: string[]
   filters: Record<string, unknown>
@@ -260,15 +283,18 @@ export async function searchOperationalRecords(
     ...(input.searchTerms ?? []),
     ...(input.query?.trim() ? [input.query.trim()] : []),
   ].map((t) => t.toLowerCase())
+  const searchTerms = expandQuestionSearchTerms([
+    ...(input.searchTerms ?? []),
+    ...(input.query?.trim() ? [input.query.trim()] : []),
+  ])
+  const detectedCategory = detectOpsCategories(
+    [input.query, ...(input.searchTerms ?? [])].filter(Boolean).join(" "),
+  )[0] ?? null
 
   // Prefer structured category equality before free-text title matching.
   const structuredCategory = input.category
     ? String(input.category).toLowerCase().trim()
-    : null
-
-  const filters: Record<string, unknown> = {
-    organizationId,
-    propertyId: input.propertyId ?? null,
+    : detectedCategory
     unitId: input.unitId ?? null,
     buildingFilter,
     buildingFilterRaw: input.buildingFilter ?? null,
@@ -369,6 +395,10 @@ export async function searchOperationalRecords(
     )
     .eq("landlord_id", organizationId)
     .gte("created_at", sinceIso)
+      "id, landlord_id, property_id, created_at, priority, urgency, severity, resident_name, unit, description, vendor_work_status, issue_category, assigned_vendor_id, assigned_at, due_at, estimated_minutes, recognized_spend_amount, spend_status, status, completed_at, cancelled_at",
+    )
+    .eq("landlord_id", organizationId)
+    .gte("created_at", sinceIso)
     .order("created_at", { ascending: false })
     .limit(120)
 
@@ -399,11 +429,7 @@ export async function searchOperationalRecords(
     const { data: extraTickets, error: extraErr } = await supabase
       .from("maintenance_requests")
       .select(
-        "id, landlord_id, created_at, priority, urgency, severity, resident_name, unit, description, vendor_work_status, issue_category, assigned_vendor_id, assigned_at, due_at, estimated_minutes, recognized_spend_amount, spend_status",
-      )
-      .in("id", missingRunTicketIds)
-    if (extraErr) {
-      console.error("[ask_ulo/searchOperationalRecords] maintenance_requests:extra", extraErr.message)
+        "id, landlord_id, property_id, created_at, priority, urgency, severity, resident_name, unit, description, vendor_work_status, issue_category, assigned_vendor_id, assigned_at, due_at, estimated_minutes, recognized_spend_amount, spend_status, status, completed_at, cancelled_at",
     } else {
       for (const row of (extraTickets ?? []) as TicketRow[]) {
         if (typeof row.id === "string") ticketById.set(row.id, row)
@@ -477,6 +503,29 @@ export async function searchOperationalRecords(
   for (const run of maintenanceRuns) {
     const tid = String(run.entity_id)
     const existing = runByTicket.get(tid)
+  tablesQueried.push("properties")
+  const propertyIds = new Set<string>()
+  for (const ticket of ticketById.values()) {
+    if (typeof ticket.property_id === "string" && ticket.property_id) propertyIds.add(ticket.property_id)
+  }
+  for (const run of maintenanceRuns) {
+    if (run.property_id) propertyIds.add(run.property_id)
+  }
+  const propertyById = new Map<string, { name: string; property_type: string | null }>()
+  if (propertyIds.size > 0) {
+    const { data: propertyRows } = await supabase
+      .from("properties")
+      .select("id, name, property_type")
+      .in("id", [...propertyIds])
+    for (const row of propertyRows ?? []) {
+      if (typeof row.id !== "string") continue
+      propertyById.set(row.id, {
+        name: typeof row.name === "string" ? row.name.trim() : "",
+        property_type: typeof row.property_type === "string" ? row.property_type : null,
+      })
+    }
+  }
+
     if (!existing) {
       runByTicket.set(tid, run)
       continue
@@ -495,7 +544,21 @@ export async function searchOperationalRecords(
   for (const [ticketId, ticket] of ticketById) {
     const run = runByTicket.get(ticketId) ?? null
     const metadata = asRecord(run?.metadata)
+  const termHitIds = new Set<string>()
+
+  for (const [ticketId, ticket] of ticketById) {
+    const run = runByTicket.get(ticketId) ?? null
+    const metadata = asRecord(run?.metadata)
     const unitRow = run?.unit_id ? unitById.get(run.unit_id) : null
+    const propertyId =
+      (typeof ticket.property_id === "string" && ticket.property_id) || run?.property_id || null
+    const property = propertyId ? propertyById.get(propertyId) : null
+    const wantClosed = CLOSED_TICKET_STATUSES.has((input.status ?? "").toLowerCase())
+    if (!wantClosed && !input.includeCompleted && isClosedMaintenanceTicket({
+      completed_at: ticket.completed_at,
+      cancelled_at: ticket.cancelled_at,
+      status: ticket.status,
+    })) continue
     const parsed = parseBuildingAndUnit(
       typeof ticket.unit === "string" ? ticket.unit : null,
       {
@@ -503,9 +566,14 @@ export async function searchOperationalRecords(
         building: metadata.building ?? unitRow?.building ?? null,
         unit_label: metadata.unit_label ?? unitRow?.unit_label ?? null,
       },
+      property?.name || null,
     )
+    const propertyName =
+      !parsed.propertyName || parsed.propertyName === "Property"
+        ? property?.name || parsed.propertyName
+        : parsed.propertyName
 
-    if (!buildingMatch(parsed.propertyName, buildingFilter)) continue
+    if (!buildingMatch(propertyName, buildingFilter)) continue
     if (!unitMatch(parsed.unitLabel, unitLabelFilter)) continue
     if (input.propertyId && run?.property_id && run.property_id !== input.propertyId) continue
     if (input.unitId && run?.unit_id && run.unit_id !== input.unitId) continue
@@ -518,7 +586,7 @@ export async function searchOperationalRecords(
       (typeof ticket.description === "string" && ticket.description.trim()) || ""
     const issueLabel = summarizeWorkOrderIssue(rawDescription, category)
     const hay =
-      `${category} ${rawDescription} ${parsed.propertyName} ${parsed.unitLabel ?? ""}`
+      `${category} ${rawDescription} ${propertyName} ${parsed.unitLabel ?? ""}`
 
     // Structural category match first (issue_category = hvac). Do not require "HVAC" in the title.
     const categoryNorm = category.toLowerCase()
@@ -528,13 +596,8 @@ export async function searchOperationalRecords(
         categoryNorm.includes(structuredCategory) ||
         categoryNorm.replace(/_/g, " ").includes(structuredCategory.replace(/_/g, " ")))
 
-    if (structuredCategory) {
-      if (!structuredHit && !(searchTerms.length > 0 && textMatchesOpsTerms(hay, searchTerms))) {
-        continue
-      }
-    } else if (searchTerms.length > 0 && !textMatchesOpsTerms(hay, searchTerms)) {
-      continue
-    }
+    const termHit = searchTerms.length > 0 && textMatchesOpsTerms(hay, searchTerms)
+    if (structuredCategory && !structuredHit && !termHit) continue
 
     const vendorStatus =
       typeof ticket.vendor_work_status === "string" ? ticket.vendor_work_status : null
@@ -574,16 +637,20 @@ export async function searchOperationalRecords(
     const priority =
       (typeof ticket.priority === "string" && ticket.priority) || urgency || null
 
+    if (termHit) termHitIds.add(ticketId)
     workOrders.push({
       workOrderId: formatWorkOrderId(ticketId),
       maintenanceRequestId: ticketId,
       workflowRunId: run?.id ?? null,
-      propertyName: parsed.propertyName,
+      propertyName,
       unitLabel: parsed.unitLabel,
       category,
       // Shared extractor — never surface "Tenant update:" / "Timing note:" scaffolding.
       title: issueLabel,
       description: issueLabel,
+      reportedDetail: rawDescription,
+      propertyType: property?.property_type ?? null,
+      propertyId,
       priority,
       urgency,
       estimatedCost: cost.amount,
@@ -608,8 +675,17 @@ export async function searchOperationalRecords(
     })
   }
 
-  // Prefer structured category hits, then escalated / open, then newest.
-  workOrders.sort((a, b) => {
+  const categoryHits = structuredCategory
+    ? workOrders.filter((order) => {
+      const category = order.category.toLowerCase()
+      return category === structuredCategory || category.includes(structuredCategory)
+    })
+    : []
+  if (categoryHits.length > 0) {
+    const categoryAndTerm = categoryHits.filter((order) => termHitIds.has(order.maintenanceRequestId))
+    workOrders = categoryAndTerm.length > 0 ? categoryAndTerm : categoryHits
+  } else if (termHitIds.size > 0) {
+    workOrders = workOrders.filter((order) => termHitIds.has(order.maintenanceRequestId))
     const aCat =
       structuredCategory != null &&
       a.category.toLowerCase().includes(structuredCategory)

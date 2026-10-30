@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import propertyAccessIcon from '@/assets/property-access.png'
+import propertyAccessIcon from '@/assets/noun_propertykey_8436012.svg'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
 import {

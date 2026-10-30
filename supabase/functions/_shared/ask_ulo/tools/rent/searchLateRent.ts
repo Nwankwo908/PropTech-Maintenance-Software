@@ -94,7 +94,7 @@ export function formatLateRentMarkdown(rows: LateRentRow[]): string {
     ].join("\n")
   }
   const lines = [
-    `**${rows.length}** resident${rows.length === 1 ? "" : "s"} currently look late on rent or carrying a balance:`,
+    `**${rows.length}** resident${rows.length === 1 ? "" : "s"} currently ${rows.length === 1 ? "looks" : "look"} late on rent or ${rows.length === 1 ? "is" : "are"} carrying a balance:`,
     "",
   ]
   for (const r of rows.slice(0, 12)) {

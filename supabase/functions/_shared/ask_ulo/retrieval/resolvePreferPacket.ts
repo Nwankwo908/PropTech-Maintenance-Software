@@ -305,7 +305,7 @@ export function resolvePreferPacket(bag: PreferPacketBag): PreferPacketResult {
   ) {
     return hit(
       "get_daily_priorities",
-      polishAskUloProse(bag.dailyPriorities.markdown),
+      polishAskUloProse(bag.dailyPriorities.markdown.replace(/\. Reply \d+ to select this job\. A vendor is not assigned until you confirm on the vendor text\./g, '. Open the request to review the next step.')),
       "daily_priorities",
     )
   }

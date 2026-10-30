@@ -167,6 +167,8 @@ export async function shouldTripOutboundCircuit(
     body: string
     /** @deprecated Ignored — kept for call-site compatibility. */
     scheduleState?: VendorScheduleFsmState | null
+    /** For scoped interactive workflows, compare only sends since this inbound. */
+    replyToInboundId?: string
     lookbackMs?: number
     maxSame?: number
   },
@@ -176,7 +178,17 @@ export async function shouldTripOutboundCircuit(
 
   const maxSame = params.maxSame ?? OUTBOUND_LOOP_MAX_SAME
   const lookbackMs = params.lookbackMs ?? OUTBOUND_LOOP_LOOKBACK_MS
-  const since = new Date(Date.now() - lookbackMs).toISOString()
+  let since = new Date(Date.now() - lookbackMs).toISOString()
+  if (params.replyToInboundId) {
+    // A new photo may need the same clarification as the previous photo.
+    // Anchor to this exact inbound, never the newest message on the thread.
+    const { data: inbound, error } = await supabase.from("sms_messages")
+      .select("created_at").eq("id", params.replyToInboundId)
+      .eq("conversation_id", params.conversationId).eq("direction", "inbound").maybeSingle()
+    if (!error && inbound?.created_at && Number.isFinite(Date.parse(inbound.created_at))) {
+      since = new Date(Math.max(Date.parse(since), Date.parse(inbound.created_at))).toISOString()
+    }
+  }
 
   const { data: rows } = await supabase
     .from("sms_messages")

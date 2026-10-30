@@ -194,6 +194,7 @@ export function categorizePropertyOperationsEvent(
   if (domain === 'move_in') return 'move_in'
   if (domain === 'move_out') return 'move_out'
   if (domain === 'maintenance' || domain === 'workflow') return 'work_order'
+  if (domain === 'ask_ulo' || domain === 'document') return 'admin'
 
   const systemSource = source === 'automation' || source === 'edge_function' || source === 'system'
   const landlordAction =

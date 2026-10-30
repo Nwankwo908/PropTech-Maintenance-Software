@@ -4,6 +4,27 @@ import type { ApplianceVisionResult } from '../vision/types.ts'
 import { analyzeInspectionPhotoRow } from '../vision/analyzeInspectionPhoto.ts'
 import { inspectionBytesToBase64 } from '../vision/ingestInspectionUpload.ts'
 
+/** Never promote disagreement between the main reading and serial OCR to a fact. */
+export function reconcileHomeCheckSerialReading(result: ApplianceVisionResult): ApplianceVisionResult {
+  const first = result.labelReadability?.readings?.serialNumber?.replace(/\s/g, '').toUpperCase()
+  const second = result.identifiedItem?.serialNumber?.replace(/\s/g, '').toUpperCase()
+  if (!first || !second || first === second) return result
+  const identifiedItem = { ...result.identifiedItem }
+  delete identifiedItem.serialNumber
+  return {
+    ...result, identifiedItem,
+    estimatedAge: /serial/i.test(result.estimatedAge?.basis || '')
+      ? { value: null, confidence: 'low', basis: 'Serial readings disagree; age cannot be verified from the serial.' }
+      : result.estimatedAge,
+    labelReadability: {
+      ...result.labelReadability!, status: 'uncertain', serialConfidence: 0,
+      readings: { ...result.labelReadability?.readings, serialNumber: `${first} / ${second}` },
+      retakeRequested: true, retakeMessage: 'The serial number readings disagree. Please review the label before confirming this number.',
+      formatWarnings: [...(result.labelReadability?.formatWarnings ?? []), 'Serial readings disagree; serial remains unknown.'],
+    },
+  }
+}
+
 /** A pair is identified by check + named system slots, never by upload recency. */
 export async function analyzeHomeCheckEquipmentPair(
   db: SupabaseClient,
@@ -50,7 +71,9 @@ export async function analyzeHomeCheckEquipmentPair(
         }],
       },
     )
-    const reading = result.ai_result as ApplianceVisionResult | null
+    const rawReading = result.ai_result as ApplianceVisionResult | null
+    const reading = rawReading ? reconcileHomeCheckSerialReading(rawReading) : null
+    result.ai_result = reading
     if (
       reading && reading.category !== 'unknown' &&
       !(water
@@ -98,9 +121,14 @@ export async function analyzeHomeCheckEquipmentPair(
       status: result.status,
       ai_result: result.ai_result || null,
       provider: result.provider || null,
+      ...(rawReading?.identifiedItem?.serialNumber && !reading?.identifiedItem?.serialNumber ? {
+        serial_review: { ...((result.serial_review ?? {}) as Record<string, unknown>), serial: null,
+          readable: false, formatOk: false, formatReason: 'Serial readings disagree', retake: true,
+          retakePrompt: 'Review the serial label; independent readings disagree.' },
+      } : {}),
       error_message: result.error_message || null,
       updated_at: new Date().toISOString(),
-    }).eq('id', whole.inspection_photo_id)
+    }).in('id', ids)
     if (updateError) throw new Error(updateError.message)
     return result.ai_result as ApplianceVisionResult || null
   } catch {

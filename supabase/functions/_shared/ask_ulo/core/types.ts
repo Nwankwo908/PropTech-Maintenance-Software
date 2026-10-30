@@ -105,6 +105,7 @@ export type AskUloPermissions = {
 }
 
 export type AskUloRunInput = {
+  timing?: import('./timing.ts').AskUloTiming
   question: string
   landlordId: string
   /** Authenticated staff user (optional until Edge always forwards it). */
