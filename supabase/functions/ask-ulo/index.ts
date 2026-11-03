@@ -87,7 +87,7 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, serviceKey, {
       global: { fetch: (url, init) => timing.measure('database_http', () => fetch(url, { ...init, signal: AbortSignal.any([
-        requestSignal, AbortSignal.timeout(8000), ...(init?.signal ? [init.signal] : []),
+        requestSignal, AbortSignal.timeout(8000), ...((init as RequestInit | undefined)?.signal ? [(init as RequestInit).signal!] : []),
       ]) })) },
     })
     const action = asString(body.action)
