@@ -5,6 +5,7 @@
  * Rent collection must only absorb PAID/PARTIAL/QUESTIONS (and near-equivalents),
  * not a repair description that already classified as maintenance_new.
  */
+import { hasProblemSignal } from "../../../../shared/maintenance/deterministicRules.ts"
 import type { InboundInterpretation } from "../sms/inboundInterpretation.ts"
 import { isRepairRecognition } from "../sms/recognizeInboundIntent.ts"
 import { parseTenantRentReply } from "../sms/tenantRentReplyParse.ts"
@@ -85,6 +86,7 @@ export function activeNonMaintenanceRunShouldYield(input: {
 
   if (templateId === "rent_collection") {
     if (isPlausibleRentCollectionReply(input.body)) return false
+    if (hasProblemSignal(input.body)) return true
     return hasClearUnrelatedMaintenanceIntent(input.interpretation)
   }
 
@@ -95,4 +97,47 @@ export function activeNonMaintenanceRunShouldYield(input: {
     return true
   }
   return false
+}
+
+/**
+ * Whether an existing rent_collection run may keep this inbound.
+ * Paused rent never claims a non-rent message. Explicit PAID / PARTIAL /
+ * QUESTIONS stay claimed so the paused-ack path can answer them.
+ * Repair text and photos are not rent replies, even without an interpretation.
+ * The run row is left in place either way.
+ */
+export function rentCollectionShouldStayPinned(input: {
+  body: string
+  interpretation: InboundInterpretation | null | undefined
+  mediaCount?: number
+  rentPaused: boolean
+}): boolean {
+  if (isPlausibleRentCollectionReply(input.body)) return true
+  if (input.rentPaused) return false
+  if ((input.mediaCount ?? 0) > 0) return false
+  if (
+    activeNonMaintenanceRunShouldYield({
+      activeTemplateId: "rent_collection",
+      body: input.body,
+      interpretation: input.interpretation,
+    })
+  ) {
+    return false
+  }
+  return true
+}
+
+/** The PAID / PARTIAL / QUESTIONS fallback. Not used when rent is paused or the text is a repair. */
+export function shouldSendRentInvalidReplyFallback(input: {
+  body: string
+  rentPaused: boolean
+  mediaCount?: number
+  interpretation?: InboundInterpretation | null
+}): boolean {
+  return rentCollectionShouldStayPinned({
+    body: input.body,
+    interpretation: input.interpretation,
+    mediaCount: input.mediaCount,
+    rentPaused: input.rentPaused,
+  }) && !isPlausibleRentCollectionReply(input.body)
 }

@@ -5,7 +5,9 @@ import {
   shouldUnpinMaintenanceForInterpretation,
 } from "../sms/inboundInterpretation.ts"
 import { classifyTenantComplianceKeyword } from "../sms/tenantMessaging.ts"
-import { activeNonMaintenanceRunShouldYield } from "./activeRunYield.ts"
+import { activeNonMaintenanceRunShouldYield, rentCollectionShouldStayPinned } from "./activeRunYield.ts"
+import { isRentCollectionPaused } from "./rentCollectionPolicy.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
 import { listWorkflowTemplates } from "./registry.ts"
 import { findActiveWorkflowRun } from "./workflowRuns.ts"
 import type {
@@ -13,6 +15,30 @@ import type {
   WorkflowExecutionContext,
   WorkflowTemplateId,
 } from "./types.ts"
+
+async function rentRunMayKeepInbound(
+  supabase: SupabaseClient,
+  landlordId: string,
+  sms: NonNullable<WorkflowExecutionContext["sms"]>,
+  pause: { value: boolean | null },
+): Promise<boolean> {
+  if (pause.value == null) {
+    try {
+      const operational = await loadLandlordOperationalSettings(supabase, landlordId)
+      pause.value = isRentCollectionPaused(operational.rentCollectionPaused)
+    } catch (err) {
+      console.error("[workflow-classify] rent pause lookup failed", err)
+      pause.value = false
+    }
+  }
+  const media = sms.inbound.mediaUrls
+  return rentCollectionShouldStayPinned({
+    body: sms.inbound.body,
+    interpretation: sms.interpretation,
+    mediaCount: Array.isArray(media) ? media.length : 0,
+    rentPaused: pause.value,
+  })
+}
 
 /** Classify inbound context into a workflow template (highest-confidence wins). */
 export async function classifyWorkflow(
@@ -32,6 +58,9 @@ export async function classifyWorkflow(
   }
 
   if (sms) {
+    const rentPause = { value: null as boolean | null }
+    const keepRent = () =>
+      rentRunMayKeepInbound(supabase, ctx.landlordId, sms, rentPause)
     const byConversation = await findActiveWorkflowRun(supabase, {
       landlordId: ctx.landlordId,
       conversationId: sms.conversationId,
@@ -65,6 +94,8 @@ export async function classifyWorkflow(
         body: sms.inbound.body,
         interpretation: sms.interpretation,
       })
+      const rentPinReleased = byConversation.template_id === "rent_collection" &&
+        !await keepRent()
 
       // Don't pin unknown / unlinked senders to a stuck maintenance_intake run —
       // that path only loops "need your unit number" without parsing unit replies.
@@ -72,7 +103,8 @@ export async function classifyWorkflow(
         !stuckMaintenanceWithoutResident &&
         !leaseInquiryOnMaintenance &&
         !interpretedNonMaintenance &&
-        !yieldForUnrelatedIntent
+        !yieldForUnrelatedIntent &&
+        !rentPinReleased
       ) {
         ctx.activeRun = byConversation
         ctx.runId = byConversation.id
@@ -92,12 +124,13 @@ export async function classifyWorkflow(
         })
       }
 
-      if (yieldForUnrelatedIntent) {
+      if (yieldForUnrelatedIntent || rentPinReleased) {
         console.info("[workflow-classify] clear unrelated intent overrides active run pin", {
           runId: byConversation.id,
           conversationId: sms.conversationId,
           activeTemplateId: byConversation.template_id,
           intent: sms.interpretation?.intent ?? null,
+          rent_pin_released: rentPinReleased,
         })
       } else {
         console.info("[workflow-classify] skipping stuck maintenance_intake run", {
@@ -139,14 +172,7 @@ export async function classifyWorkflow(
         residentId,
         templateId: "rent_collection",
       })
-      if (
-        rentRun &&
-        !activeNonMaintenanceRunShouldYield({
-          activeTemplateId: "rent_collection",
-          body: sms.inbound.body,
-          interpretation: sms.interpretation,
-        })
-      ) {
+      if (rentRun && await keepRent()) {
         ctx.activeRun = rentRun
         ctx.runId = rentRun.id
         return {

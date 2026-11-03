@@ -154,6 +154,7 @@ async function tryStaffReplyHandler(
     identityType: ctx.identity.identity_type,
     residentId: ctx.identity.resident_id,
     maintenanceRequestId: ctx.maintenanceRequestId,
+    mediaUrls: ctx.inbound.mediaUrls,
   })
   if (!result.handled) return { handled: false }
   return {
@@ -995,7 +996,7 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   pm_service_yes_hvac:
     "intake_state.awaiting_pm_service on the landlord thread and the reply is YES HVAC",
   staff_reply:
-    "intake_state.awaiting_staff_reply on a resident thread (property-team message ending in ? within 24h)",
+    "intake_state.awaiting_staff_reply on a resident thread (property-team photo or information request within 24h; a question mark is not required). Emergencies fall through.",
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",

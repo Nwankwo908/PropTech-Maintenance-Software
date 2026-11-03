@@ -5,6 +5,8 @@ import {
   activeNonMaintenanceRunShouldYield,
   hasClearUnrelatedMaintenanceIntent,
   isPlausibleRentCollectionReply,
+  rentCollectionShouldStayPinned,
+  shouldSendRentInvalidReplyFallback,
 } from "./activeRunYield.ts"
 
 function repairInterpretation(
@@ -90,6 +92,61 @@ Deno.test("ambiguous short reply without repair intent stays on rent", () => {
     }),
     false,
   )
+})
+
+const LEAK =
+  "The leak is in the baseboard heater for the first floor. In the basement"
+
+Deno.test("paused rent does not keep a leak, and does not send the PAID fallback", () => {
+  assertEquals(rentCollectionShouldStayPinned({
+    body: LEAK,
+    interpretation: null,
+    rentPaused: true,
+  }), false)
+  assertEquals(shouldSendRentInvalidReplyFallback({
+    body: LEAK,
+    rentPaused: true,
+  }), false)
+  assertEquals(shouldSendRentInvalidReplyFallback({
+    body: "ok",
+    rentPaused: true,
+  }), false)
+})
+
+Deno.test("an old rent run does not claim a repair or a photo when rent is enabled", () => {
+  assertEquals(rentCollectionShouldStayPinned({
+    body: LEAK,
+    interpretation: null,
+    rentPaused: false,
+  }), false)
+  assertEquals(shouldSendRentInvalidReplyFallback({
+    body: LEAK,
+    rentPaused: false,
+  }), false)
+  assertEquals(rentCollectionShouldStayPinned({
+    body: "",
+    interpretation: null,
+    mediaCount: 1,
+    rentPaused: false,
+  }), false)
+  assertEquals(rentCollectionShouldStayPinned({
+    body: "ok",
+    interpretation: null,
+    rentPaused: false,
+  }), true)
+  assertEquals(shouldSendRentInvalidReplyFallback({
+    body: "ok",
+    rentPaused: false,
+  }), true)
+  assertEquals(rentCollectionShouldStayPinned({
+    body: "PAID",
+    interpretation: null,
+    rentPaused: true,
+  }), true)
+  assertEquals(shouldSendRentInvalidReplyFallback({
+    body: "PAID",
+    rentPaused: true,
+  }), false)
 })
 
 Deno.test("maintenance_intake pin is not yielded by this helper", () => {

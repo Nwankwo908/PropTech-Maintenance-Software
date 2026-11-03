@@ -6,6 +6,7 @@
  * blanket state notice like "rent collection is paused" that also parses YES
  * as PAID.
  */
+import { landlordMessageAwaitsTenantReply } from "./landlordAwait.ts"
 import { isBareYesInvoicePaidReply } from "./invoicePaidConfirmation.ts"
 import {
   isExplicitRentCollectionReply,
@@ -116,7 +117,7 @@ export function outboundQuestionWithin24h(
 ): boolean {
   const body = lastOutbound?.body?.trim() ?? ""
   if (!body || looksLikeRentCollectionAsk(body)) return false
-  if (!/\?\s*$/.test(body)) return false
+  if (!landlordMessageAwaitsTenantReply(body)) return false
   const sent = Date.parse(lastOutbound?.sentAt ?? "")
   if (!Number.isFinite(sent)) return false
   const delta = now.getTime() - sent

@@ -39,7 +39,7 @@ import { offerLandlordRentReceiptAsk } from "../rentReceiptConfirmation.ts"
 import { maybeSendOfflineTenantGraceReminder } from "../offlineTenantRentReminder.ts"
 import { landlordHasPayments } from "../../../../../shared/landlordCapabilities.ts"
 import { householdRentBillingAmounts } from "../../../../../shared/residents/householdRent.ts"
-import { activeNonMaintenanceRunShouldYield } from "../activeRunYield.ts"
+import { activeNonMaintenanceRunShouldYield, shouldSendRentInvalidReplyFallback } from "../activeRunYield.ts"
 import {
   buildRentClassificationMetadata,
   classifyRentCollection,
@@ -157,6 +157,9 @@ export function shouldStartRentCollection(
 ): boolean {
   return isRentDueDateReached(rentDueDay, date)
 }
+
+export const RENT_INVALID_REPLY_FALLBACK =
+  "I didn't quite catch that — reply PAID if you've sent payment, PARTIAL for a partial payment, or QUESTIONS to talk with your property manager."
 
 function parsePaymentIntent(body: string): PaymentIntent | null {
   const t = body.trim().toLowerCase()
@@ -1278,6 +1281,32 @@ async function processPaymentIntentReply(
     }
   }
 
+  const operational = await loadLandlordOperationalSettings(supabase, ctx.landlordId)
+  const rentPaused = isRentCollectionPaused(operational.rentCollectionPaused)
+  const mediaCount = Array.isArray(sms.inbound.mediaUrls) ? sms.inbound.mediaUrls.length : 0
+  const paymentIntentEarly = parsePaymentIntent(sms.inbound.body)
+  if (
+    !paymentIntentEarly &&
+    !shouldSendRentInvalidReplyFallback({
+      body: sms.inbound.body,
+      rentPaused,
+      mediaCount,
+      interpretation: sms.interpretation,
+    })
+  ) {
+    // Leave the rent run row for audit. Do not text, and do not attach this
+    // thread to the old run. Returning control to Ulo must not resume it.
+    return {
+      templateId: "rent_collection",
+      route: workflowRouteForTemplate("rent_collection"),
+      metadata: {
+        invalid_reply_suppressed: true,
+        rent_collection_paused: rentPaused,
+        preserved_run: true,
+      },
+    }
+  }
+
   let run =
     ctx.activeRun ??
     (intent.runId
@@ -1319,8 +1348,7 @@ async function processPaymentIntentReply(
       templateId: "rent_collection",
       route: workflowRouteForTemplate("rent_collection"),
       runId: run.id,
-      replyHint:
-        "I didn't quite catch that — reply PAID if you've sent payment, PARTIAL for a partial payment, or QUESTIONS to talk with your property manager.",
+      replyHint: RENT_INVALID_REPLY_FALLBACK,
       metadata: { step: state.step ?? "awaiting_payment", invalid_reply: true },
     }
   }

@@ -24,6 +24,11 @@ import {
   replyLoopNeedsIntervention,
 } from "./replyLoopAttention.ts"
 import { normalizeOutboundForLoopCompare } from "./sms_inbound_guard.ts"
+import { matchEmergencyNet } from "../../../../shared/maintenance/deterministicRules.ts"
+import { isRentCollectionPaused } from "../engine/rentCollectionPolicy.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
+import { suppressAutomatedRentReply } from "./landlordAwait.ts"
+import { isStaffReplyPendingOpen, readAwaitingStaffReply } from "./staffReplyPending.ts"
 import type {
   IdentityResolutionSource,
   SelfHealingPhase,
@@ -47,6 +52,8 @@ export async function trySendAutoReply(
     source: string
     workflowRoute?: string
     inboundMessageId?: string
+    /** Resident text that produced this reply. Emergencies are never held. */
+    inboundBody?: string
     /** When true, never invent a generic maintenance fallback. */
     skipGenericFallback?: boolean
   },
@@ -100,17 +107,53 @@ export async function trySendAutoReply(
   }
 
   let scheduleState = null
+  let intakeState: unknown = null
   try {
     const { data: convo } = await supabase
       .from("sms_conversations")
       .select("intake_state")
       .eq("id", params.conversationId)
       .maybeSingle()
+    intakeState = convo?.intake_state ?? null
     scheduleState = readVendorScheduleFsm(
       (convo?.intake_state as Record<string, unknown> | null) ?? null,
     )
   } catch {
     scheduleState = null
+  }
+
+  const source = params.source ?? ""
+  const rentReply = params.workflowRoute === "rent_collection" ||
+    source === "tenant_rent_reply" ||
+    source.includes("rent_collection")
+  if (rentReply) {
+    let rentPaused = false
+    try {
+      const operational = await loadLandlordOperationalSettings(
+        supabase,
+        params.landlordId,
+      )
+      rentPaused = isRentCollectionPaused(operational.rentCollectionPaused)
+    } catch (err) {
+      console.error("[sms-inbound] rent pause lookup failed", err)
+    }
+    if (
+      suppressAutomatedRentReply({
+        workflowRoute: params.workflowRoute,
+        source,
+        replyBody,
+        rentPaused,
+        staffAwaiting: isStaffReplyPendingOpen(readAwaitingStaffReply(intakeState)),
+        inboundIsEmergency: matchEmergencyNet(params.inboundBody ?? "") != null,
+      })
+    ) {
+      console.info("[sms-inbound] suppressed rent reply", {
+        conversationId: params.conversationId,
+        workflowRoute: params.workflowRoute,
+        source,
+      })
+      return undefined
+    }
   }
 
   // All automated replies — vendor + resident — share the identical-body loop gate.
@@ -331,6 +374,7 @@ export async function finishHandledInbound(
       source: reply.source,
       workflowRoute: result.workflowRoute,
       inboundMessageId: messageId,
+      inboundBody: inbound.body,
       skipGenericFallback: reply.skipGenericFallback,
     })
   }

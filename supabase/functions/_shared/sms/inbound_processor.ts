@@ -676,6 +676,7 @@ export async function processInboundSms(
     workflowHint: workflow.replyHint,
     source: `workflow_${workflow.route}`,
     workflowRoute: workflow.route,
+    inboundBody: inbound.body,
     skipGenericFallback: workflow.metadata?.skipGenericAutoReply === true ||
       workflow.route === "vendor_response",
   })
