@@ -89,7 +89,6 @@ function MaintenanceSpendBar({
 
 /** Property detail — Performance tab: monthly maintenance cost + PM compliance. */
 export function PropertyAnalyticsPanel({
-  propertyId,
   building,
   analytics,
   loading = false,

@@ -8,7 +8,7 @@ import type { AskUloQuestionSubject } from "../routing/detectSubject.ts"
 import type { OperationalWorkOrder } from "../tools/maintenance/searchOperationalRecords.ts"
 import { polishAskUloProse } from "../synthesis/formatAnswer.ts"
 import type { SearchWorkOrdersResult } from "../tools/maintenance/searchWorkOrders.ts"
-import { formatUnitReference } from "../../properties/unitLabelDisplay.ts"
+import { formatLocationWithOptionalUnit } from "../../properties/unitLabelDisplay.ts"
 import { reportedDetailLine } from "../tools/maintenance/reportedFactAnswer.ts"
 
 /** Subjects where a work-order list is a valid answer (not a metric substitution). */
@@ -54,8 +54,12 @@ function urgencyLabel(wo: OperationalWorkOrder): string {
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
 
-function unitBit(wo: OperationalWorkOrder): string {
-  return formatUnitReference(wo.unitLabel) || "common area / property"
+function placeLabel(wo: OperationalWorkOrder): string {
+  return formatLocationWithOptionalUnit({
+    propertyLabel: wo.propertyName,
+    unitLabel: wo.unitLabel,
+    propertyType: wo.propertyType,
+  }) || wo.propertyName || "the property"
 }
 
 /**
@@ -85,18 +89,18 @@ export function formatCatchAllWorkOrdersMarkdown(
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 160)
-    const urgency = urgencyLabel(wo)
     const est =
       wo.estimatedCost != null ? formatMoney(wo.estimatedCost) : "No estimate on file"
     const ageBit =
       wo.slaExpired
         ? `${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"} open — past the response time`
         : `${wo.daysOpen} day${wo.daysOpen === 1 ? "" : "s"}`
-    lines.push(
+    const urgency = urgencyLabel(wo)
     const reported = reportedDetailLine(wo)
     lines.push(
       `### ${wo.workOrderId} — ${placeLabel(wo)}`,
       `- **Issue:** ${issue}`,
+      `- **Urgency:** ${urgency}`,
       ...(reported ? [`- **Reported:** ${reported}`] : []),
       `- **Category:** ${wo.category || "—"}`,
       `- **Status:** ${statusLabel(wo)}`,

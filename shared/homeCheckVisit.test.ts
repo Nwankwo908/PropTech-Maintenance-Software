@@ -160,7 +160,7 @@ describe('home check visit from the request button', () => {
       filled: [],
     })
     expect(first).toContain('Home Check visit for 14 Maple Ave, Unit 2.')
-    expect(first).toContain('No repairs are authorized')
+    expect(first).toContain('Visual check only. Do not open covers or touch equipment.')
     expect(first).toContain('water heater label')
     expect(first).not.toContain('furnace or boiler label')
 

@@ -1,3 +1,4 @@
+import { matchHomeCheckVendorNames } from './vendorNameMatch.ts'
 import {
   type HomeCheckRole,
   parseHomeCheckGuideStart,
@@ -37,13 +38,15 @@ export type HomeCheckGuideState = {
   unitLabel?: string | null
   vendorId?: string
   vendorName?: string
+  vendorConfirmId?: string
+  vendorChoices?: string[]
   windowLabel?: string
   windowEnd?: string
   checkId?: string | null
   tenantName?: string
   tenantPhone?: string | null
   tenantConversationId?: string | null
-  handoffReason?: 'silent' | 'opted_out'
+  handoffReason?: 'silent' | 'opted_out' | 'no_tenant' | 'missing_contact'
   propertyChoices?: string[]
   unitChoices?: string[]
 }
@@ -247,8 +250,14 @@ function presetWindow(window: string | null, now: Date, timeZone?: string | null
   return parseHomeCheckVisitWindow(window, now, timeZone)
 }
 
-function tenantHandoff(state: HomeCheckGuideState, reason: 'silent' | 'opted_out'): string {
+function tenantHandoff(state: HomeCheckGuideState, reason: NonNullable<HomeCheckGuideState['handoffReason']>): string {
   const name = state.tenantName?.trim() || 'The tenant'
+  if (reason === 'no_tenant' || reason === 'missing_contact') {
+    const explanation = reason === 'no_tenant'
+      ? 'No tenant contact is linked to this Home Check.'
+      : `There is no SMS number for ${name}.`
+    return `${explanation} Can you arrange access${state.windowLabel ? ` for ${state.windowLabel}` : ''}? Reply YES to confirm, send another visit window, or CANCEL.`
+  }
   const where = state.unitLabel?.trim()
     ? `${name} at ${state.unitLabel}`
     : name
@@ -270,7 +279,7 @@ function entryNote(body: string): string | null {
 function contractorAsk(catalog: HomeCheckGuideCatalog): string {
   const nearest = nearestVendor(catalog)
   if (!nearest) {
-    return 'Reply with the contractor’s name, or CANCEL. No located contractor is on file for this property.'
+    return 'Which contractor should take the photos? Reply with their name, or CANCEL.'
   }
   return `${nearest.name} is the nearest contractor. They will ${HOME_CHECK_VENDOR_SCOPE}. No repairs are authorized. Ulo will send them the photo instructions once the visit time is confirmed. Reply YES to use them, name another contractor, or CANCEL.`
 }
@@ -347,10 +356,11 @@ function beginTenantWait(
     tenantPhone: tenant?.phone ?? state.tenantPhone ?? null,
   })
   if (!tenant?.phone || tenant.optedOut) {
-    const handed = touch(next, now, { step: 'awaiting_landlord', handoffReason: 'opted_out' })
+    const reason = !tenant ? 'no_tenant' : tenant.optedOut ? 'opted_out' : 'missing_contact'
+    const handed = touch(next, now, { step: 'awaiting_landlord', handoffReason: reason })
     return {
       state: handed,
-      replies: [tenantHandoff(handed, 'opted_out')],
+      replies: [tenantHandoff(handed, reason)],
       effects: [],
     }
   }
@@ -380,11 +390,11 @@ function sendContractor(
     }
   }
   const note = entryNote(body)
-  const tenantConfirm = `We'll plan on ${state.windowLabel}.${
+  const tenantConfirm = `Your proposed window is ${state.windowLabel}.${
     note ? ` ${note}` : ''
-  } The contractor will get the photo instructions for that visit.`
+  } Ulo will confirm the time with the contractor before scheduling the visit.`
   const landlordConfirm =
-    `${state.vendorName || 'Your contractor'} is scheduled for ${state.placeLabel || 'the property'}, ${state.windowLabel}. They will ${HOME_CHECK_VENDOR_SCOPE}. Ulo sent the photo instructions and next steps directly to them. No repairs are authorized.`
+    `We’re asking ${state.vendorName || 'your contractor'} to accept the Home Check at ${state.placeLabel || 'the property'}. Ulo will coordinate the visit time with them and the access contact before confirming the schedule.`
   const canTextTenant = Boolean(state.tenantPhone) && !catalog.tenant?.optedOut
   return {
     state: null,
@@ -517,13 +527,34 @@ function pickVendor(
   state: HomeCheckGuideState,
   body: string,
   catalog: HomeCheckGuideCatalog,
-  _now: Date,
+  now: Date,
 ): HomeCheckGuideTurn {
+  let confirmedVendor: HomeCheckGuideVendor | undefined
+  if (state.vendorConfirmId) {
+    if (isAffirmativeReply(body)) {
+      confirmedVendor = catalog.vendors.find(vendor => vendor.id === state.vendorConfirmId)
+      if (!confirmedVendor) return { state: touch(state, now, { vendorConfirmId: undefined, vendorChoices: undefined }), replies: ['That contractor is no longer available. Please name another contractor, or reply CANCEL.'], effects: [] }
+    } else if (isNo(body)) {
+      return { state: touch(state, now, { vendorConfirmId: undefined, vendorChoices: undefined }), replies: ['Which contractor would you like? Reply with their name, or CANCEL.'], effects: [] }
+    }
+    state = touch(state, now, { vendorConfirmId: undefined, vendorChoices: undefined })
+  }
+  if (!confirmedVendor && state.vendorChoices?.length && choiceIndex(body)) {
+    const id = state.vendorChoices[choiceIndex(body)! - 1]
+    const chosen = catalog.vendors.find(vendor => vendor.id === id)
+    if (!chosen) return { state, replies: ['Please choose one of the listed numbers, name another contractor, or reply CANCEL.'], effects: [] }
+    return { state: touch(state, now, { vendorConfirmId: chosen.id, vendorChoices: undefined }), replies: [`Did you mean ${chosen.name}? Reply YES to use them, NO to choose someone else, or CANCEL.`], effects: [] }
+  }
   const nearest = nearestVendor(catalog)
-  if (isAffirmativeReply(body) && nearest) {
+  if (!confirmedVendor && isAffirmativeReply(body) && nearest && !state.vendorChoices?.length) {
     return inviteSelectedContractor(state, nearest)
   }
-  const named = catalog.vendors.filter((vendor) => mentions(body, vendor.name))
+  if (!confirmedVendor) {
+    const matches = matchHomeCheckVendorNames(body, catalog.vendors)
+    if (matches.length === 1) return { state: touch(state, now, { vendorConfirmId: matches[0].id, vendorChoices: undefined }), replies: [`Did you mean ${matches[0].name}? Reply YES to use them, NO to choose someone else, or CANCEL.`], effects: [] }
+    if (matches.length > 1) return { state: touch(state, now, { vendorConfirmId: undefined, vendorChoices: matches.map(vendor => vendor.id) }), replies: [`Which contractor did you mean?\n${matches.map((vendor,index)=>`${index+1}) ${vendor.name}`).join('\n')}\nReply with a number, name another contractor, or CANCEL.`], effects: [] }
+  }
+  const named = confirmedVendor ? [confirmedVendor] : []
   if (named.length === 1) {
     return inviteSelectedContractor(state, named[0])
   }
@@ -536,7 +567,7 @@ function pickVendor(
     }
   }
   const index = choiceIndex(body)
-  if (index && named.length === 0) {
+  if (index && named.length === 0 && !state.vendorChoices?.length) {
     const choices = locatedVendors(catalog)
     const vendor = choices[index - 1]
     if (vendor) return inviteSelectedContractor(state, vendor)
@@ -674,7 +705,8 @@ export function reduceHomeCheckGuide(input: {
   }
 
   if (state.step === 'pick_unit') {
-    const property = input.catalog.properties.find((row) => row.id === state.propertyId)
+    const selectedPropertyId = state.propertyId
+    const property = input.catalog.properties.find((row) => row.id === selectedPropertyId)
     const units = (state.unitChoices ?? [])
       .map((id) => property?.units.find((unit) => unit.id === id))
       .filter((unit): unit is { id: string; label: string } => Boolean(unit))
@@ -750,6 +782,17 @@ export function reduceHomeCheckGuide(input: {
   }
 
   if (state.step === 'awaiting_landlord' && input.sender === 'landlord') {
+    // Also recover existing handoffs that incorrectly called a missing contact opted-out.
+    if (!input.catalog.tenant) state = touch(state, now, { handoffReason: 'no_tenant', tenantPhone: null, tenantName: undefined })
+    else if (!input.catalog.tenant.phone && !input.catalog.tenant.optedOut) state = touch(state, now, { handoffReason: 'missing_contact', tenantName: input.catalog.tenant.name, tenantPhone: null })
+    const ownerAccess = state.handoffReason === 'no_tenant' || state.handoffReason === 'missing_contact'
+    if (ownerAccess && isAffirmativeReply(body)) {
+      if (!state.windowEnd || !Number.isFinite(Date.parse(state.windowEnd)) || Date.parse(state.windowEnd) <= now.getTime()) {
+        return { state: touch(state, now, { step: 'pick_window', windowEnd: undefined, windowLabel: undefined }), replies: ['That visit window has passed. Please send a new day and arrival window, or CANCEL.'], effects: [] }
+      }
+      return sendContractor(state, body, input.catalog, 'landlord')
+    }
+    if (ownerAccess && isNo(body)) return { state, replies: ['Send a visit window when you can arrange access, or reply CANCEL.'], effects: [] }
     const window = parseHomeCheckVisitWindow(body, now, input.catalog.timeZone)
     if (!window) {
       return { state, replies: [tenantHandoff(state, state.handoffReason ?? 'silent')], effects: [] }

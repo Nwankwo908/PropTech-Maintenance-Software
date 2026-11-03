@@ -52,7 +52,6 @@ it('renders the desktop request screens for a full vendor handoff', () => {
     }
   }
   const sorted = [...samples].sort((a, b) => a - b)
-  const p50 = sorted[Math.ceil(0.5 * sorted.length) - 1]
   const p95 = sorted[Math.ceil(0.95 * sorted.length) - 1]
   expect(p95).toBeLessThan(50)
 })

@@ -54,6 +54,7 @@ Deno.test("catch-all card keeps the reported temperature and omits a single-fami
     propertyName: "Maintenance test house",
     unitLabel: "1",
     propertyType: "single_family",
+    propertyId: null,
     category: "hvac",
     title: "AC issue",
     description: "AC issue",

@@ -42,6 +42,7 @@ export type DailyPriorityCandidate = {
   unitLabel: string | null
   propertyId?: string | null
   unitId?: string | null
+  propertyType?: string | null
   /** Exact deadline / appointment instant (UTC ISO). */
   instantAt: string | null
   blocker: string | null
@@ -68,8 +69,6 @@ export type DailyPriorityListItem = {
   propertyId: string | null
   unitId: string | null
   propertyType: string | null
-  propertyId: string | null
-  unitId: string | null
   instantAt: string | null
   blocker: string | null
   offeredAction: DailyPriorityOfferedAction
@@ -251,6 +250,8 @@ function placeLabel(c: Pick<DailyPriorityCandidate, "propertyLabel" | "unitLabel
     unitLabel: c.unitLabel,
     propertyType: c.propertyType,
   })
+}
+
 export function rankDailyPriorityCandidates(
   candidates: DailyPriorityCandidate[],
   opts?: { maxItems?: number },
@@ -301,8 +302,6 @@ export function rankDailyPriorityCandidates(
       propertyId: c.propertyId ?? null,
       unitId: c.unitId ?? null,
       propertyType: c.propertyType ?? null,
-      propertyId: c.propertyId ?? null,
-      unitId: c.unitId ?? null,
       instantAt: c.instantAt,
       blocker: c.blocker,
       offeredAction,
@@ -325,6 +324,8 @@ export function formatDailyPrioritiesList(
   }
   const lines = items.map((item) => {
     const place = placeLabel(item)
+    const bits = [item.title]
+    if (place) bits.push(place)
     if (item.blocker) bits.push(item.blocker)
     else if (item.category === "visit_today" && item.instantAt) {
       bits.push("Visit scheduled today")
