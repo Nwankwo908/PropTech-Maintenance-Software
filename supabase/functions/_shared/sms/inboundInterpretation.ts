@@ -93,6 +93,12 @@ export type InterpretationPendingContext = {
   hasMedia?: boolean
 }
 
+const TRADE_PERSON =
+  /\b(?:plumbers?|electricians?|technicians?|techs?|handym[ae]n|contractors?|vendors?|exterminators?|repair\s*(?:man|men|person))\b/gi
+
+/** Slot set when a message reads as both a visit change and a repair report. */
+export const SCHEDULE_OR_REPAIR = "schedule_or_repair"
+
 /** Intents that are not an answer to the current maintenance question. */
 const PENDING_BREAKOUT_INTENTS = new Set<TenantSmsIntent>([
   "lease_info",
@@ -143,8 +149,11 @@ const WEEKDAY_WORD =
 const SCHEDULE_CHANGE =
   /\b(reschedule|re-?schedule|different time|another time|can'?t make|cannot make|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (?:doesn'?t|does not|won'?t|will not) work|(?:doesn'?t|does not) work for me|can they come|come after|come before|after \d{1,2}|before \d{1,2})\b/i
 
+/** "Good morning" is a greeting, not a visit time. */
+const GREETING = /\b(?:good\s+)?(?:morning|afternoon|evening)\b(?=\s*[,.!]|\s*$)|\bgood\s+(?:morning|afternoon|evening|night)\b/gi
+
 function normalizeScheduleText(text: string): string {
-  return text.replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ").trim()
+  return text.replace(/[‘’ʼ]/g, "'").replace(GREETING, " ").replace(/\s+/g, " ").trim()
 }
 
 /** A resident is asking to move a visit, including a counter-window such as "Thursday 2–4 works better". */
@@ -229,8 +238,9 @@ export function existingVisitDayHints(text: string): string[] {
 const NEW_VISIT_CLOCK =
   /\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b|\b(?:after|before|between|from)\s+\d{1,2}\b|\b\d{1,2}\s*[–—-]\s*\d{1,2}\b|\b(?:morning|afternoon|evening|noon)\b/i
 
+// "May" is a month only beside a day number; "may need" is not a date.
 const NEW_VISIT_DATE =
-  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})\b/i
+  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})\b|\bmay\s+\d{1,2}(?:st|nd|rd|th)?\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?may\b/i
 
 /** The resident offered a different day and a time, not only the visit they want to move. */
 export function hasClearNewVisitWindow(text: string): boolean {
@@ -662,10 +672,16 @@ function heuristicIntent(
 
   if (looksLikeTenantScheduleChange(text) && (!pending.activeIntake || pending.draftTicketId)) {
     const weekday = offeredVisitWeekday(text)
+    // A visit time beside a repair description could be either; let the model decide.
+    // "Can the plumber come…" names the visit, not a new problem.
+    const alsoRepair = Boolean(inferIssueTypeFromText(text.replace(TRADE_PERSON, " ")))
     return {
       intent: "schedule_change",
-      extractedSlots: weekday ? { preferred_day: weekday } : {},
-      confident: true,
+      extractedSlots: {
+        ...(weekday ? { preferred_day: weekday } : {}),
+        ...(alsoRepair ? { ambiguous: SCHEDULE_OR_REPAIR } : {}),
+      },
+      confident: !alsoRepair,
     }
   }
 
@@ -797,7 +813,7 @@ export function heuristicInterpretInbound(
       addressesPending: false,
       intent: guessed.intent,
       extractedSlots: guessed.extractedSlots,
-      needsClarification: false,
+      needsClarification: guessed.extractedSlots.ambiguous === SCHEDULE_OR_REPAIR,
       source: "heuristic",
     })
   }
@@ -918,6 +934,11 @@ export function shouldRejectMaintenanceTemplateForInterpretation(
   return shouldUnpinMaintenanceForInterpretation(interpretation, body)
 }
 
+function withoutAmbiguity(slots: Record<string, string>): Record<string, string> {
+  const { ambiguous: _ambiguous, ...rest } = slots
+  return rest
+}
+
 function interpretationFromLlm(
   draft: LlmClassificationDraft | null | undefined,
 ): Partial<InboundInterpretation> | null {
@@ -930,6 +951,26 @@ function interpretationFromLlm(
     extractedSlots: asSlots(raw.extractedSlots),
     needsClarification: raw.needsClarification,
   }
+}
+
+/**
+ * Whether the rules are unsure enough to ask the model. On a fresh thread intake
+ * still classifies repairs, so the model is asked only when a message reads as
+ * both a visit change and a repair report. During a pending ask, any unmatched
+ * reply is asked.
+ */
+export function shouldWidenWithLlm(
+  heuristic: Pick<InboundInterpretation, "source" | "needsClarification" | "extractedSlots">,
+  pending: InterpretationPendingContext,
+): boolean {
+  if (heuristic.source === "fast_path_skip" || !heuristic.needsClarification) return false
+  if (heuristic.extractedSlots.ambiguous === SCHEDULE_OR_REPAIR) return true
+  return Boolean(
+    pending.activeIntake ||
+      pending.awaitingTicketUpdateConfirm ||
+      pending.awaitingTicketCancelConfirm ||
+      pending.awaitingMoveOutConfirm,
+  )
 }
 
 export async function interpretInboundSms(params: {
@@ -960,20 +1001,7 @@ export async function interpretInboundSms(params: {
     smsContext.recentTurns,
   ), smsContext }
 
-  if (heuristic.source === "fast_path_skip") return heuristic
-  if (!heuristic.needsClarification) return heuristic
-  if (params.skipLlm) return heuristic
-
-  // Don't add a second model call on a fresh thread — intake still classifies repairs.
-  // Use the widened LLM only when a pending intake ask didn't match.
-  if (
-    !pending.activeIntake &&
-    !pending.awaitingTicketUpdateConfirm &&
-    !pending.awaitingTicketCancelConfirm &&
-    !pending.awaitingMoveOutConfirm
-  ) {
-    return heuristic
-  }
+  if (params.skipLlm || !shouldWidenWithLlm(heuristic, pending)) return heuristic
 
   const classification = await classifyMaintenanceRequest({
     rawDescription: params.body,
@@ -991,10 +1019,10 @@ export async function interpretInboundSms(params: {
     addressesPending: fromLlm.addressesPending ?? false,
     pendingAnswer: fromLlm.pendingAnswer,
     intent: fromLlm.intent,
-    extractedSlots: {
+    extractedSlots: withoutAmbiguity({
       ...heuristic.extractedSlots,
       ...fromLlm.extractedSlots,
-    },
+    }),
     needsClarification: fromLlm.needsClarification ?? false,
     source: "llm",
     recognition: heuristic.recognition,
