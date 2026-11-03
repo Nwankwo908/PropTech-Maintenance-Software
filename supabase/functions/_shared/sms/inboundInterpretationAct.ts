@@ -151,6 +151,14 @@ function shouldStartMaintenanceInsteadOfHandoff(body: string): boolean {
     looksLikeMaintenanceRelatedMessage(body)
 }
 
+/** A booked visit exists that a reschedule could move. */
+function hasUpcomingVisit(tickets: OpenTicket[]): boolean {
+  return tickets.some((row) =>
+    isActiveMaintenanceTicketStatus(row.vendor_work_status) &&
+    Boolean(row.scheduled_window_text?.trim() || row.scheduled_at?.trim())
+  )
+}
+
 function markAsNewMaintenanceIssue(
   interpretation: InboundInterpretation,
 ): InboundInterpretation {
@@ -3076,6 +3084,13 @@ export async function tryHandleInterpretedInbound(
         profile?.full_name ?? null,
       )
     case "schedule_change":
+      // Nothing is booked to move, and the text describes a repair: start intake.
+      if (
+        !hasUpcomingVisit(tickets) &&
+        shouldStartMaintenanceInsteadOfHandoff(ctx.inbound.body)
+      ) {
+        return { handled: false, interpretation: markAsNewMaintenanceIssue(interpretation) }
+      }
       return handleScheduleChange(
         ctx,
         intake,

@@ -14,6 +14,8 @@ import {
   shouldSkipInboundInterpretation,
   shouldUnpinMaintenanceForInterpretation,
   shouldRejectMaintenanceTemplateForInterpretation,
+  shouldWidenWithLlm,
+  SCHEDULE_OR_REPAIR,
 } from "./inboundInterpretation.ts"
 
 Deno.test("STOP/START/HELP skip the interpreter (fast path)", () => {
@@ -527,4 +529,51 @@ Deno.test("photo follow-up without an active photo step is not a pending answer"
     shouldHandleInterpretedIntent(interp, "Here's a better picture."),
     true,
   )
+})
+
+Deno.test("Ganaia: a greeting and 'may need' do not turn a leak report into a reschedule", () => {
+  for (
+    const body of [
+      "Good morning, there is a leak under my kitchen sink and the pipe may need to be replaced.",
+      "Good morning. My water heater is leaking and may need to be replaced",
+      "Good morning! The smoke detector keeps beeping, may need a new battery",
+      "Good morning, the sink in the bathroom is clogged and may overflow",
+    ]
+  ) {
+    const interp = heuristicInterpretInbound(body)
+    assertEquals(interp.intent, "maintenance_new", body)
+    assertEquals(hasClearNewVisitWindow(body), false, body)
+  }
+})
+
+Deno.test("real visit changes still read as reschedules, greeting or not", () => {
+  for (
+    const body of [
+      "Good morning, can we reschedule to Friday afternoon?",
+      "I need to reschedule, can they come May 5 in the morning?",
+      "Can we change the visit to May 12 at 9am?",
+      "Can the plumber come Thursday morning instead?",
+      "Tomorrow doesn't work for me, Friday 2-4 works better",
+    ]
+  ) {
+    const interp = heuristicInterpretInbound(body)
+    assertEquals(interp.intent, "schedule_change", body)
+    assertEquals(interp.needsClarification, false, body)
+    assertEquals(shouldWidenWithLlm(interp, { activeIntake: false }), false, body)
+  }
+})
+
+Deno.test("a visit time beside a repair description goes to the model, even on a new thread", () => {
+  const interp = heuristicInterpretInbound(
+    "Good morning, the leak is worse, can they come today instead of Friday?",
+  )
+  assertEquals(interp.intent, "schedule_change")
+  assertEquals(interp.extractedSlots.ambiguous, SCHEDULE_OR_REPAIR)
+  assertEquals(interp.needsClarification, true)
+  assertEquals(shouldWidenWithLlm(interp, { activeIntake: false }), true)
+})
+
+Deno.test("an unclear message on a new thread still skips the extra model call", () => {
+  const interp = heuristicInterpretInbound("Thank you!")
+  assertEquals(shouldWidenWithLlm(interp, { activeIntake: false }), false)
 })

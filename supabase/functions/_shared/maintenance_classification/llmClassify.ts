@@ -162,6 +162,9 @@ function smsContextPrompt(smsContext: ClassifyMaintenanceSmsContext): string {
     `lease_info = asking for a copy of the lease, lease dates, or other leasing information (not a repair and not a renewal).`,
     `rent_balance = asking what they currently owe / their balance / amount due / whether they are paid up — in any natural wording (word order does not matter; "rent" is optional).`,
     `Do not use rent_balance for: when rent is due, send payment link, did my payment go through, or I'm going to be late.`,
+    `schedule_change = asking to move an already-booked repair visit to another day or time.`,
+    `A greeting such as "good morning" is not a visit time, and "may" in "may need" is not the month of May.`,
+    `A message that reports a new or worsening problem is maintenance_new or maintenance_update, even if it mentions a time of day.`,
     `other = not a repair and not one of the other intents.`,
     `Do not treat a lease-copy or rent-balance question as a maintenance request, even if a work order is open.`,
   ]
