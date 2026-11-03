@@ -11,6 +11,7 @@ import {
   isOpenWorkflowKanbanCard,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
+import { correctedPropertyTypeFromLabels } from '@/lib/propertyInventoryType'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
@@ -295,6 +296,10 @@ export function buildPropertyUnitRows(input: {
     workflowData,
   } = input
   const workflowRows = workflowData ? collectAdminWorkflowRuns(workflowData) : []
+  const displayType = correctedPropertyTypeFromLabels(
+    propertyType,
+    units.map((unit) => unit.unitLabel),
+  )
 
   // Caller passes property-scoped units; match residents/workflows per unit building alias.
   return units
@@ -316,7 +321,7 @@ export function buildPropertyUnitRows(input: {
       const balanceDue = household.length > 0 ? Math.max(...household.map((member) => member.balanceDue), 0) : 0
       const leaseEndDate =
         household.find((member) => member.leaseEndDate?.trim())?.leaseEndDate ?? null
-      const unitDisplay = propertyUnitColumnLabel(unit.unitLabel, propertyType)
+      const unitDisplay = propertyUnitColumnLabel(unit.unitLabel, displayType)
 
       return {
         id: unit.id,

@@ -69,7 +69,7 @@ function placeFromTicket(row: Record<string, unknown>, propertyType: string | nu
   const propertyId = typeof row.property_id === "string" ? row.property_id : null
   const unitId = typeof row.unit_id === "string" ? row.unit_id : null
   const addressKnown = Boolean(building || propertyId || unitLabel)
-  return { propertyLabel: building, unitLabel, propertyId, unitId, addressKnown }
+  return { propertyLabel: building, unitLabel, propertyId, unitId, propertyType, addressKnown }
 }
 
 export type DailyPrioritiesLookupInput = {
@@ -153,9 +153,9 @@ export async function lookupDailyPriorities(
       partialSources.push("maintenance_requests")
     } else {
       const propertyIds = [...new Set((data ?? []).map(r => r.property_id).filter((id): id is string => typeof id === 'string'))]
-      const propertyNames = new Map<string, { name: string | null; street_address: string | null }>()
+      const propertyNames = new Map<string, { name: string | null; street_address: string | null; property_type: string | null }>()
       if (propertyIds.length) {
-        const properties = await supabase.from('properties').select('id,name,street_address').eq('landlord_id',landlordId).in('id',propertyIds)
+        const properties = await supabase.from('properties').select('id,name,street_address,property_type').eq('landlord_id',landlordId).in('id',propertyIds)
         if (properties.error) partialSources.push('properties')
         else for (const p of properties.data ?? []) propertyNames.set(p.id,p)
       }
@@ -174,7 +174,7 @@ export async function lookupDailyPriorities(
         ) {
           continue
         }
-        const place = placeFromTicket(row)
+        const place = placeFromTicket(row, property?.property_type ?? null)
         const issueCategory =
           typeof row.issue_category === "string" ? row.issue_category : null
         const title = summarizeWorkOrderIssue(

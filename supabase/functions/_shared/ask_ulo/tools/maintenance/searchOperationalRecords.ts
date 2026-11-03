@@ -41,6 +41,9 @@ export type OperationalWorkOrder = {
   workflowStatus: string | null
   vendorName: string | null
   vendorWorkStatus: string | null
+  reportedDetail: string
+  propertyType: string | null
+  propertyId: string | null
   slaExpired: boolean
   approvalStatus: "review_required" | "not_required"
   dueAt: string | null
@@ -64,12 +67,18 @@ export type SearchOperationalRecordsInput = {
   query?: string | null
   dateRangeDays?: number
   limit?: number
+  /** When false, completed and cancelled tickets stay out of open answers. */
+  includeCompleted?: boolean
 }
 
 export type SearchOperationalRecordsResult = {
   available: boolean
-  /** When false, completed and cancelled tickets stay out of open answers. */
-  includeCompleted?: boolean
+  workOrders: OperationalWorkOrder[]
+  tablesQueried: string[]
+  filters: Record<string, unknown>
+  error: string | null
+  /** Structured log payload for every Ask Ulo ops retrieval. */
+  log: OperationalRetrievalLog
 }
 
 const CLOSED_TICKET_STATUSES = new Set([
@@ -89,12 +98,6 @@ export function isClosedMaintenanceTicket(ticket: {
   if (ticket.completed_at) return true
   if (ticket.cancelled_at) return true
   return CLOSED_TICKET_STATUSES.has(String(ticket.status ?? "").toLowerCase())
-  workOrders: OperationalWorkOrder[]
-  tablesQueried: string[]
-  filters: Record<string, unknown>
-  error: string | null
-  /** Structured log payload for every Ask Ulo ops retrieval. */
-  log: OperationalRetrievalLog
 }
 
 export type OperationalRetrievalLog = {
@@ -279,10 +282,6 @@ export async function searchOperationalRecords(
   // Never treat HVAC / plumbing / etc. as a property name filter.
   const buildingFilter = sanitizeBuildingFilter(input.buildingFilter)
   const unitLabelFilter = input.unitLabel?.trim() || null
-  const searchTerms = [
-    ...(input.searchTerms ?? []),
-    ...(input.query?.trim() ? [input.query.trim()] : []),
-  ].map((t) => t.toLowerCase())
   const searchTerms = expandQuestionSearchTerms([
     ...(input.searchTerms ?? []),
     ...(input.query?.trim() ? [input.query.trim()] : []),
@@ -295,6 +294,10 @@ export async function searchOperationalRecords(
   const structuredCategory = input.category
     ? String(input.category).toLowerCase().trim()
     : detectedCategory
+
+  const filters: Record<string, unknown> = {
+    organizationId,
+    propertyId: input.propertyId ?? null,
     unitId: input.unitId ?? null,
     buildingFilter,
     buildingFilterRaw: input.buildingFilter ?? null,
@@ -303,6 +306,7 @@ export async function searchOperationalRecords(
     status: input.status ?? null,
     searchTerms,
     dateRangeDays,
+    includeCompleted: input.includeCompleted ?? false,
     includeWorkflowMetadata: true,
   }
 
@@ -391,10 +395,6 @@ export async function searchOperationalRecords(
   const { data: recentTickets, error: recentErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, created_at, priority, urgency, severity, resident_name, unit, description, vendor_work_status, issue_category, assigned_vendor_id, assigned_at, due_at, estimated_minutes, recognized_spend_amount, spend_status",
-    )
-    .eq("landlord_id", organizationId)
-    .gte("created_at", sinceIso)
       "id, landlord_id, property_id, created_at, priority, urgency, severity, resident_name, unit, description, vendor_work_status, issue_category, assigned_vendor_id, assigned_at, due_at, estimated_minutes, recognized_spend_amount, spend_status, status, completed_at, cancelled_at",
     )
     .eq("landlord_id", organizationId)
@@ -430,6 +430,10 @@ export async function searchOperationalRecords(
       .from("maintenance_requests")
       .select(
         "id, landlord_id, property_id, created_at, priority, urgency, severity, resident_name, unit, description, vendor_work_status, issue_category, assigned_vendor_id, assigned_at, due_at, estimated_minutes, recognized_spend_amount, spend_status, status, completed_at, cancelled_at",
+      )
+      .in("id", missingRunTicketIds)
+    if (extraErr) {
+      console.error("[ask_ulo/searchOperationalRecords] maintenance_requests:extra", extraErr.message)
     } else {
       for (const row of (extraTickets ?? []) as TicketRow[]) {
         if (typeof row.id === "string") ticketById.set(row.id, row)
@@ -499,10 +503,6 @@ export async function searchOperationalRecords(
     }
   }
 
-  const runByTicket = new Map<string, RunRow>()
-  for (const run of maintenanceRuns) {
-    const tid = String(run.entity_id)
-    const existing = runByTicket.get(tid)
   tablesQueried.push("properties")
   const propertyIds = new Set<string>()
   for (const ticket of ticketById.values()) {
@@ -526,6 +526,10 @@ export async function searchOperationalRecords(
     }
   }
 
+  const runByTicket = new Map<string, RunRow>()
+  for (const run of maintenanceRuns) {
+    const tid = String(run.entity_id)
+    const existing = runByTicket.get(tid)
     if (!existing) {
       runByTicket.set(tid, run)
       continue
@@ -540,10 +544,6 @@ export async function searchOperationalRecords(
   }
 
   let workOrders: OperationalWorkOrder[] = []
-
-  for (const [ticketId, ticket] of ticketById) {
-    const run = runByTicket.get(ticketId) ?? null
-    const metadata = asRecord(run?.metadata)
   const termHitIds = new Set<string>()
 
   for (const [ticketId, ticket] of ticketById) {
@@ -684,8 +684,12 @@ export async function searchOperationalRecords(
   if (categoryHits.length > 0) {
     const categoryAndTerm = categoryHits.filter((order) => termHitIds.has(order.maintenanceRequestId))
     workOrders = categoryAndTerm.length > 0 ? categoryAndTerm : categoryHits
-  } else if (termHitIds.size > 0) {
+  } else if (searchTerms.length > 0) {
     workOrders = workOrders.filter((order) => termHitIds.has(order.maintenanceRequestId))
+  }
+
+  // Prefer structured category hits, then escalated / open, then newest.
+  workOrders.sort((a, b) => {
     const aCat =
       structuredCategory != null &&
       a.category.toLowerCase().includes(structuredCategory)

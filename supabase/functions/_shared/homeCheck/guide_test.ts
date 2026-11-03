@@ -81,11 +81,33 @@ Deno.test("landlord tenant, self, and contractor paths", () => {
   turn = say(turn.state, "2")
   assertStringIncludes(turn.replies[0], "Rapid Electric")
   turn = say(turn.state, "YES")
-  turn = say(turn.state, "Thu 2-4pm")
-  assertEquals(turn.effects.map((effect) => effect.type), ["text_tenant"])
-  assertEquals(turn.effects.some((effect) => effect.type === "send_contractor"), false)
-  assertStringIncludes(turn.effects[0].type === "text_tenant" ? turn.effects[0].body : "", "water heater and furnace")
-  const waiting = turn.state
+  assertEquals(turn.state, null)
+  const invite = turn.effects.find((effect) => effect.type === "invite_contractor")
+  assertEquals(invite?.type, "invite_contractor")
+  if (invite?.type === "invite_contractor") {
+    assertEquals(invite.propertyId, "oak")
+    assertEquals(invite.unitId, "u2")
+    assertEquals(invite.vendorId, "near")
+    assertEquals(invite.vendorName, "Rapid Electric")
+  }
+  assertEquals(turn.effects.some((effect) => effect.type === "text_tenant" || effect.type === "send_contractor"), false)
+  noLink(turn.replies.join("\n"))
+
+  const scheduled = say({
+    step: "pick_window",
+    updatedAt: NOW.toISOString(),
+    role: "contractor",
+    propertyId: "oak",
+    unitId: "u2",
+    placeLabel: "12 Oak St · Unit 2B",
+    vendorId: "near",
+    vendorName: "Rapid Electric",
+    checkId: null,
+  }, "Thu 2-4pm")
+  assertEquals(scheduled.effects.map((effect) => effect.type), ["text_tenant"])
+  assertEquals(scheduled.effects.some((effect) => effect.type === "send_contractor"), false)
+  assertStringIncludes(scheduled.effects[0].type === "text_tenant" ? scheduled.effects[0].body : "", "water heater and furnace")
+  const waiting = scheduled.state
   turn = say(waiting, "Thu 2-4pm and I'll be home", "tenant")
   const sent = turn.effects.find((effect) => effect.type === "send_contractor")
   assertEquals(sent?.type, "send_contractor")
@@ -126,7 +148,24 @@ Deno.test("contractor link waits for a time, then a reminder, handoff, confirm, 
   let turn = say(null, "CHECK CONTRACTOR 12 Oak St / 2B")
   turn = say(turn.state, "YES")
   turn = say(turn.state, "YES")
-  turn = say(turn.state, "Thu 2-4pm")
+  assertEquals(turn.state, null)
+  assertEquals(turn.effects[0]?.type, "invite_contractor")
+  assertEquals(turn.effects.some((effect) => effect.type === "send_contractor"), false)
+
+  turn = say({
+    step: "pick_window",
+    updatedAt: NOW.toISOString(),
+    role: "contractor",
+    propertyId: "oak",
+    unitId: "u2",
+    unitLabel: "2B",
+    placeLabel: "12 Oak St · Unit 2B",
+    vendorId: "near",
+    vendorName: "Rapid Electric",
+    tenantName: "Avery Stone",
+    tenantPhone: "+19088843069",
+    checkId: null,
+  }, "Thu 2-4pm")
   assertEquals(turn.state?.step, "awaiting_tenant")
   assertEquals(turn.effects.some((effect) => effect.type === "send_contractor"), false)
 
@@ -176,11 +215,18 @@ Deno.test("an opted-out tenant goes straight to the landlord handoff", () => {
     ...catalog,
     tenant: { name: "Avery Stone", phone: "+19088843069", optedOut: true },
   }
-  let turn = say(null, "home check 12 Oak St / 2B", "landlord", NOW, opted)
-  turn = say(turn.state, "YES", "landlord", NOW, opted)
-  turn = say(turn.state, "2", "landlord", NOW, opted)
-  turn = say(turn.state, "YES", "landlord", NOW, opted)
-  turn = say(turn.state, "Thu 2-4pm", "landlord", NOW, opted)
+  let turn = say({
+    step: "pick_window",
+    updatedAt: NOW.toISOString(),
+    role: "contractor",
+    propertyId: "oak",
+    unitId: "u2",
+    unitLabel: "2B",
+    placeLabel: "12 Oak St · Unit 2B",
+    vendorId: "near",
+    vendorName: "Rapid Electric",
+    checkId: null,
+  }, "Thu 2-4pm", "landlord", NOW, opted)
   assertEquals(turn.state?.step, "awaiting_landlord")
   assertStringIncludes(turn.replies[0], "+19088843069")
   assertStringIncludes(turn.replies[0], "Avery Stone")

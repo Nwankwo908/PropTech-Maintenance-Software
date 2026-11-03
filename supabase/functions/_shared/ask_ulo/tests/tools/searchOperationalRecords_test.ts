@@ -24,6 +24,9 @@ function sampleWo(overrides: Partial<OperationalWorkOrder> = {}): OperationalWor
     workflowRunId: "ee7041d0-52ef-44d9-82bf-f920229590af",
     propertyName: "Maple Heights",
     unitLabel: "207",
+    propertyType: null,
+    propertyId: null,
+    reportedDetail: "",
     category: "hvac",
     title: "AC compressor failed during heat advisory",
     description:

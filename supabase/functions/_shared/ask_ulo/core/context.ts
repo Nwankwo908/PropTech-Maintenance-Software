@@ -154,6 +154,5 @@ export async function buildAskUloContext(
       ...(input.permissions ?? {}),
     },
     flags: getAskUloFeatureFlags(),
-    synthesisFailure: input.synthesisFailure ?? null,
   }
 }

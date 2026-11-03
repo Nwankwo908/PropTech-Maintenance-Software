@@ -117,7 +117,7 @@ function FeedEventInfo({
             : `More information about ${copy.title}`
         }
       >
-        <img src={feedInfoIcon} alt="" aria-hidden className="size-5" />
+        <NounInfoIcon className="size-5" />
       </button>
       <div
         role="tooltip"

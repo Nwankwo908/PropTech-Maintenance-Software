@@ -1,3 +1,4 @@
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import homeCheckInspectionArt from '@/assets/Technician against orchid coral backdrop.png'
 import waterHeaterLabelExample from '@/assets/water-heater-label-example.jpg'
@@ -5,20 +6,17 @@ import wholeWaterHeaterExample from '@/assets/whole-water-heater-example.png'
 import heatingSystemLabelExample from '@/assets/heating-system-label-example.png'
 import wholeHeatingSystemExample from '@/assets/whole-heating-system-example.jpg'
 import {
-  confirmInspectionPhoto,
   listInspectionAssets,
   loadBuildingInspectionSession,
   signInspectionUploadUrls,
   removeInspectionAsset,
   removeInspectionPhoto,
   retryInspectionPhoto,
-  updateInspectionAssetDetails,
   uploadAndAnalyzeInspectionPhoto,
   type InspectionAssetSummary,
 } from '@/api/inspectionAssetAssess'
 import { HomeCheckPanel } from '@/components/HomeCheckPanel'
 import { HomeCheckRequestModal } from '@/components/HomeCheckRequestModal'
-import { ApplianceAssessmentReviewCard } from '@/components/ApplianceAssessmentReviewCard'
 import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
 import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
 import type { InspectionCapturePhoto } from '@/api/inspectionCapture'
@@ -41,7 +39,6 @@ import {
   notifyInspectionSessionChanged,
 } from '@/lib/inspectionSession'
 import type {
-  ApplianceVisionResult,
   InspectionPhotoRow,
   InspectionPhotoStatus,
   VisionHintCategory,
@@ -117,7 +114,11 @@ type ApplianceInspectionUploaderProps = {
 }
 
 /** Multi-photo AI appliance / systems assessment for Smart Inspection Report. */
-export function ApplianceInspectionUploader({
+export function ApplianceInspectionUploader(props: ApplianceInspectionUploaderProps) {
+  return <ScopedApplianceInspectionUploader key={`${getActiveLandlordId()}:${props.propertyId || props.building}`} {...props} />
+}
+
+function ScopedApplianceInspectionUploader({
   building,
   propertyId,
   leading,
@@ -132,12 +133,7 @@ export function ApplianceInspectionUploader({
   const [assetPreviewById, setAssetPreviewById] = useState<Record<string, string>>({})
   const [dragging, setDragging] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [confirmingId, setConfirmingId] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
   const [assetCheckedIds, setAssetCheckedIds] = useState<string[]>([])
-  const [editingAssetIds, setEditingAssetIds] = useState<string[]>([])
-  const [assetDrafts, setAssetDrafts] = useState<Record<string, ApplianceVisionResult>>({})
-  const [savingAssetEdits, setSavingAssetEdits] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [chooserOpen, setChooserOpen] = useState(false)
@@ -542,112 +538,7 @@ export function ApplianceInspectionUploader({
     }
   }
 
-  async function onConfirm(photoId: string, result: ApplianceVisionResult) {
-    setConfirmingId(photoId)
-    try {
-      const confirmed = await confirmInspectionPhoto({ photoId, result })
-      setPhotos((prev) =>
-        prev.map((p) =>
-          p.id === photoId
-            ? {
-                ...p,
-                status: 'confirmed',
-                confirmedResult: result,
-                aiResult: result,
-                unitAssetId: confirmed.unitAssetId ?? p.unitAssetId,
-              }
-            : p,
-        ),
-      )
-      setSuccess('Appliance saved')
-      notifyAssetRegistryChanged(building)
-      await refreshAssets()
-    } finally {
-      setConfirmingId(null)
-    }
-  }
-
-  async function onDeletePhotos(photoIds: string[]) {
-    setDeleting(true)
-    setError(null)
-    try {
-      for (const id of photoIds) {
-        const photo = photos.find((row) => row.id === id)
-        if (photo) {
-          await onRemove(photo)
-          continue
-        }
-        removedIdsRef.current.add(id)
-        setPhotos((prev) => prev.filter((row) => row.id !== id))
-        if (!id.startsWith('local-')) {
-          await removeInspectionPhoto(id)
-        }
-      }
-      await refreshAssets()
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  async function onSaveAssetEdits() {
-    if (editingAssetIds.length === 0) return
-    setSavingAssetEdits(true)
-    setError(null)
-    try {
-      for (const id of editingAssetIds) {
-        const asset = assets.find((row) => row.id === id)
-        const result = assetDrafts[id] ?? (asset ? visionResultFromSavedInspectionAsset(asset) : null)
-        if (!result) continue
-        await updateInspectionAssetDetails({ assetId: id, result })
-      }
-      setEditingAssetIds([])
-      setAssetCheckedIds([])
-      setSuccess('Appliance saved')
-      notifyAssetRegistryChanged(building)
-      await refreshAssets()
-    } catch (err) {
-      setError(getErrorMessage(err, 'Could not save the selected asset details.'))
-    } finally {
-      setSavingAssetEdits(false)
-    }
-  }
-
-  async function onDeleteSavedAssets(assetIds: string[]) {
-    setDeleting(true)
-    setError(null)
-    try {
-      for (const id of assetIds) {
-        const asset = assets.find((row) => row.id === id)
-        const photoId =
-          typeof asset?.metadata?.photoId === 'string' ? asset.metadata.photoId : null
-        if (photoId) {
-          const photo = photos.find((row) => row.id === photoId)
-          if (photo) await onRemove(photo)
-          else {
-            removedIdsRef.current.add(photoId)
-            try {
-              await removeInspectionPhoto(photoId)
-            } catch {
-              // photo may already be gone
-            }
-          }
-        }
-        try {
-          await removeInspectionAsset(id)
-        } catch {
-          // hosted function may not support remove_asset yet
-        }
-        setAssets((prev) => prev.filter((row) => row.id !== id))
-        setAssetCheckedIds((prev) => prev.filter((rowId) => rowId !== id))
-      }
-      await refreshAssets()
-    } finally {
-      setDeleting(false)
-    }
-  }
-
   const equipmentPhotos = photos.filter((photo) => !isInspectionReportPhoto(photo))
-  const reviewPhotos = equipmentPhotos.filter((p) => p.status !== 'error')
 
   const safetyAssets = assets.filter((a) => {
     const defs = a.metadata?.deficiencies
@@ -662,62 +553,23 @@ export function ApplianceInspectionUploader({
     )
   })
 
-  const hasFollowUp = equipmentPhotos.length > 0 || safetyAssets.length > 0
+  const hasFollowUp =
+    equipmentPhotos.some((photo) => photo.status === 'error') || safetyAssets.length > 0
   const equipmentRows = assets.map((asset) => ({
     id: asset.id,
-    result: assetDrafts[asset.id] ?? visionResultFromSavedInspectionAsset(asset),
+    result: visionResultFromSavedInspectionAsset(asset),
     previewUrl: assetPreviewById[asset.id] ?? null,
-    editable: editingAssetIds.includes(asset.id),
+    editable: false,
   }))
-  const equipmentActions = assetCheckedIds.length > 0 || deleting || savingAssetEdits || editingAssetIds.length > 0 ? (
-    <>
-      {assetCheckedIds.length > 0 ? (
-        <button
-          type="button"
-          disabled={deleting || savingAssetEdits}
-          onClick={() => {
-            setAssetDrafts((prev) => {
-              const next = { ...prev }
-              for (const id of assetCheckedIds) {
-                if (next[id]) continue
-                const asset = assets.find((row) => row.id === id)
-                if (asset) next[id] = visionResultFromSavedInspectionAsset(asset)
-              }
-              return next
-            })
-            setEditingAssetIds((prev) => [...new Set([...prev, ...assetCheckedIds])])
-          }}
-          className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff] disabled:text-[#94a3b8]"
-        >
-          Edit selected ({assetCheckedIds.length})
-        </button>
-      ) : null}
-      {editingAssetIds.length > 0 ? (
-        <button
-          type="button"
-          disabled={deleting || savingAssetEdits}
-          onClick={() => void onSaveAssetEdits()}
-          className="pd-btn pd-btn-primary rounded-[10px] px-4 py-2.5 text-[13px] font-semibold disabled:text-[#94a3b8]"
-        >
-          {savingAssetEdits ? 'Saving…' : 'Save edits'}
-        </button>
-      ) : null}
-      {assetCheckedIds.length > 0 || deleting ? (
-        <button
-          type="button"
-          disabled={deleting || savingAssetEdits}
-          onClick={() => void onDeleteSavedAssets(assetCheckedIds)}
-          className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b] disabled:text-[#94a3b8]"
-        >
-          {deleting ? 'Deleting…' : `Delete selected (${assetCheckedIds.length})`}
-        </button>
-      ) : null}
-    </>
-  ) : null
-
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <section className="flex items-center justify-between gap-6 rounded-[10px] border border-[#C3E0CC] bg-[#E6F4E9] px-5 py-4">
+      <section
+        className="flex items-center justify-between gap-6 rounded-[10px] border border-[#e5e7eb] px-5 py-4"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, rgba(224, 242, 239, 0.6) 0%, rgba(224, 242, 239, 0) 100%)',
+        }}
+      >
         <div className="flex min-w-0 flex-col items-start gap-2">
           <h3 className="text-[18px] font-semibold leading-6 text-[#0d0f11]">Request home check</h3>
           <p className="max-w-[420px] text-[13px] leading-5 text-[#64748b]">
@@ -886,7 +738,7 @@ export function ApplianceInspectionUploader({
               )}
             </svg>
           </span>
-          <span className="text-[14px] font-semibold text-[#0d0f11]">Add equipment instructions.</span>
+          <span className="text-[14px] font-semibold text-[#0d0f11]">Add appliance equipment instructions.</span>
         </button>
         {equipmentInstructionsOpen ? (
           <div className="border-t border-[#e2e8f0] px-4 py-4 text-[13px] leading-5 text-[#334155]">
@@ -1013,31 +865,10 @@ export function ApplianceInspectionUploader({
         equipmentRows={equipmentRows}
         equipmentCheckedIds={assetCheckedIds}
         onEquipmentCheckedIdsChange={setAssetCheckedIds}
-        onEquipmentChangeRow={(id, result) => {
-          setAssetDrafts((prev) => ({ ...prev, [id]: result }))
-        }}
-        equipmentActions={equipmentActions}
       />
-
-      {equipmentPhotos.some((photo) => photo.aiResult?.serialReview?.retakePrompt) ? (
-        <ul className="space-y-2">
-          {equipmentPhotos
-            .filter((photo) => photo.aiResult?.serialReview?.retakePrompt)
-            .map((photo) => (
-              <li
-                key={`retake-${photo.id}`}
-                className="rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]"
-              >
-                {photo.aiResult?.serialReview?.retakePrompt}
-              </li>
-            ))}
-        </ul>
-      ) : null}
 
       {hasFollowUp ? (
       <div className="min-w-0 w-full">
-      {equipmentPhotos.length > 0 ? (
-        <>
       {equipmentPhotos.some((photo) => photo.status === 'error') ? (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {equipmentPhotos
@@ -1100,20 +931,6 @@ export function ApplianceInspectionUploader({
             </li>
           ))}
         </ul>
-      ) : null}
-        </>
-      ) : null}
-
-      {reviewPhotos.length > 0 ? (
-        <div className="mt-1 w-full">
-          <ApplianceAssessmentReviewCard
-            photos={reviewPhotos}
-            confirming={Boolean(confirmingId)}
-            deleting={deleting}
-            onConfirm={onConfirm}
-            onDeletePhotos={onDeletePhotos}
-          />
-        </div>
       ) : null}
 
       {safetyAssets.length > 0 ? (
