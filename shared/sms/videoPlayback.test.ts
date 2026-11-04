@@ -103,5 +103,15 @@ describe('sms video playback', () => {
       url: 'https://signed.example/play.mp4',
       downloadUrl: 'https://signed.example/original.3gp',
     })
+    expect(choosePlaybackPreview({
+      needsConversion: true,
+      playbackReady: false,
+      playbackUrl: 'https://signed.example/play.mp4',
+      downloadUrl: 'https://signed.example/original.3gp',
+      status: 'ready',
+    })).toMatchObject({
+      previewStatus: 'ready',
+      url: 'https://signed.example/play.mp4',
+    })
   })
 })

@@ -136,7 +136,9 @@ export function choosePlaybackPreview(input: {
       previewStatus: input.downloadUrl ? 'ready' : 'unavailable',
     }
   }
-  if (input.playbackReady && input.playbackUrl) {
+  // A signed sibling plus a ready status is enough. The byte probe can fail in the
+  // browser (CORS on Range) even when the playable copy is already saved.
+  if (input.playbackUrl && (input.playbackReady || input.status === 'ready')) {
     return {
       url: input.playbackUrl,
       downloadUrl: input.downloadUrl || input.playbackUrl,
