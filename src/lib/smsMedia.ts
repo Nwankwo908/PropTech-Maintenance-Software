@@ -152,6 +152,35 @@ async function checkPlaybackCopies(
   return checked
 }
 
+/**
+ * Private maintenance-uploads is not selectable by the browser session.
+ * When a playable sibling already exists, the convert endpoint (service role)
+ * returns signed playback + original URLs for landlords who can access the thread.
+ */
+async function enrichUnresolvedPlayback(items: SmsMediaItem[]): Promise<SmsMediaItem[]> {
+  const { requestSmsVideoPlayback } = await import('@/api/convertSmsMedia')
+  return Promise.all(
+    items.map(async (item) => {
+      if (!item.storagePath || !needsBrowserVideoConversion(item.storagePath)) return item
+      if (item.previewStatus === 'ready' && item.url) return item
+      const next = await requestSmsVideoPlayback(item.storagePath)
+      if (next.previewStatus === 'ready' && next.url) {
+        return {
+          ...item,
+          url: next.url,
+          downloadUrl: next.downloadUrl || item.downloadUrl,
+          previewStatus: 'ready',
+        }
+      }
+      return {
+        ...item,
+        downloadUrl: next.downloadUrl || item.downloadUrl,
+        previewStatus: next.previewStatus || item.previewStatus || 'unavailable',
+      }
+    }),
+  )
+}
+
 /** Resolve stored MMS refs into browser-safe signed URLs (skips Twilio). */
 export async function resolveSmsMediaItems(refs: unknown): Promise<SmsMediaItem[]> {
   const list = normalizeMediaRefs(refs)
@@ -165,7 +194,7 @@ export async function resolveSmsMediaItems(refs: unknown): Promise<SmsMediaItem[
     .filter((path): path is string => Boolean(path))
   const signedByPath = await signStoragePaths([...stored, ...siblings, ...statusPaths])
   const checked = await checkPlaybackCopies(list, signedByPath)
-  return itemsFromRefs(list, signedByPath, checked)
+  return enrichUnresolvedPlayback(itemsFromRefs(list, signedByPath, checked))
 }
 
 export async function resolveSmsMediaForMessages(
@@ -183,5 +212,7 @@ export async function resolveSmsMediaForMessages(
     .filter((path): path is string => Boolean(path))
   const signedByPath = await signStoragePaths([...stored, ...siblings, ...statusPaths])
   const checked = await checkPlaybackCopies(unique, signedByPath)
-  return refsByMessage.map((refs) => itemsFromRefs(refs, signedByPath, checked))
+  const flat = await enrichUnresolvedPlayback(itemsFromRefs(unique, signedByPath, checked))
+  const byRef = new Map(unique.map((ref, index) => [ref, flat[index]]))
+  return refsByMessage.map((refs) => refs.map((ref) => byRef.get(ref)).filter((item): item is SmsMediaItem => Boolean(item)))
 }

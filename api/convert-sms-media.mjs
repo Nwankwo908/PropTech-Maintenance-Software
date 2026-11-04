@@ -36,9 +36,24 @@ async function signPath(supabase, objectPath) {
   return data.signedUrl
 }
 
+function applyCors(req, res) {
+  const origin = headerValue(req.headers, 'origin')
+  const allowed =
+    origin === 'https://www.ulohome.io' ||
+    origin === 'https://ulohome.io' ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, x-ulo-convert-secret')
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+  }
+}
+
 export default async function handler(req, res) {
+  applyCors(req, res)
   if (req.method === 'OPTIONS') {
-    res.status(204).json({})
+    res.status(204).end()
     return
   }
   if (req.method !== 'POST') {
