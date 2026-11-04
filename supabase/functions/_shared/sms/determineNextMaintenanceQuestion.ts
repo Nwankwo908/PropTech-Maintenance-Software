@@ -22,6 +22,15 @@ import {
 } from "../../../../shared/maintenance/locationClarification.ts"
 import { interpretConfirmedLocation } from "../../../../shared/maintenance/requestConfirmation.ts"
 import {
+  activeSafetyNotes,
+  formatSafetyNotes,
+  parseSafetyNotes,
+  resolveSafetyNote,
+  resolvedSafetyNotes,
+  safetyConcernSentence,
+  upsertActiveSafetyNote,
+} from "../../../../shared/maintenance/safetyNotes.ts"
+import {
   applyPhotoRequestPolicy,
   applyRecurringIssueSignal,
   computeIntakeSeverity,
@@ -62,6 +71,7 @@ export type MaintenanceQuestionType =
   | "pest_frequency"
   | "pest_location"
   | "structural_risk"
+  | "safety_concern_status"
   | "door_part"
   | "door_safety"
   | "lock_secure"
@@ -106,7 +116,51 @@ function asked(state: SmsIntakeState, type: MaintenanceQuestionType): boolean {
 
 function isYes(text: string): boolean {
   return /^(y|yes|yeah|yep|yup|yea)\b/.test(text.trim().toLowerCase()) ||
-    /\b(it is|still is|overflowing|pouring|leaking|flowing)\b/i.test(text)
+    /\b(it is|still is|overflowing|pouring|flowing)\b/i.test(text)
+}
+
+/** Short follow-up when a flow answer does not say whether water is uncontrolled. */
+export const WATER_FLOW_CLARIFICATION =
+  "Is water pouring out or pooling on the floor, or is it only a slow drip?"
+
+const WATER_FLOW_UNCERTAIN =
+  /\b(?:might|may|maybe|perhaps|possibly|i think|not sure|unsure|don'?t know|do not know|haven'?t checked|have not checked|didn'?t check|did not check)\b/i
+
+function deniesWaterOnFloor(text: string): boolean {
+  return /\bno water (?:is )?on the floor\b/i.test(text) ||
+    /\b(?:no|not|without|isn'?t|is not)\b[^.]{0,40}\bwater\b[^.]{0,24}\b(?:on|onto)\s+the\s+floor\b/i.test(text)
+}
+
+/**
+ * Full answer to "is water still flowing?"
+ * A bare "leaking" is not uncontrolled flow. Pouring or water on the floor is.
+ */
+export function readWaterFlowAnswer(
+  answer: string,
+): "uncontrolled" | "contained" | "uncertain" | "ambiguous" {
+  const text = answer.replace(/\s+/g, " ").trim()
+  if (!text) return "ambiguous"
+  const noFloor = deniesWaterOnFloor(text)
+  const deniedFlow =
+    /\b(?:not|no|isn'?t|is not|without|no longer)\s+(?:actively\s+)?(?:overflowing|flooding|pouring|gushing|flowing|leaking)\b/i
+      .test(text)
+  const uncontrolled = !noFloor && !deniedFlow &&
+    /\b(?:pour(?:ing|s)?|gush(?:ing|es)?|flood(?:ing|ed)?|overflow(?:ing)?|water everywhere|pooling|pooled|onto the floor|on the floor|still\s+(?:flowing|pouring|gushing)|actively\s+(?:flowing|overflowing|leaking))\b/i
+      .test(text)
+  const contained =
+    /\b(?:dripping slowly|slow drip|only dripping|just a drip|just dripping)\b/i.test(text) ||
+    noFloor ||
+    /\b(?:not|no|isn'?t|is not)\s+(?:actively\s+)?(?:overflowing|flooding|pouring|gushing|flowing)\b/i.test(text) ||
+    /\b(?:the\s+)?water\s+(?:has\s+|have\s+)?stopped\b/i.test(text) ||
+    /^(?:no|nope|nah)\b/i.test(text)
+  if (WATER_FLOW_UNCERTAIN.test(text) && !/^(?:y|yes|yeah|yep|yup)\b/i.test(text)) {
+    return "uncertain"
+  }
+  if (uncontrolled) return "uncontrolled"
+  if (contained) return "contained"
+  if (/^(?:y|yes|yeah|yep|yup)\b/i.test(text)) return "uncontrolled"
+  if (/\b(?:leak(?:ing|s)?)\b/i.test(text)) return "ambiguous"
+  return "ambiguous"
 }
 
 function isNo(text: string): boolean {
@@ -209,7 +263,1331 @@ function isAppliance(state: SmsIntakeState, hay: string): boolean {
   const cat = (state.primary_category ?? state.vendor_trade ?? state.issue_type ?? "")
     .toLowerCase()
   return cat.includes("appliance") ||
-    /\b(washer|washing machine|dryer|dishwasher|fridge|oven|stove|microwave)\b/.test(hay)
+    /\b(washer|washing machine|dryer|dishwasher|fridge|refrigerator|freezer|oven|stove|microwave)\b/
+      .test(hay)
+}
+
+type NamedAppliance =
+  | "freezer"
+  | "fridge"
+  | "washer"
+  | "dryer"
+  | "dishwasher"
+  | "oven"
+  | "stove"
+  | "microwave"
+
+/** Kept for an appliance report that does not name one of the appliances above. */
+export const GENERIC_APPLIANCE_SYMPTOM_QUESTION =
+  "What happens when you try to start it? For example: won't power on, won't drain, leaking, loud noise, stuck door, or something else."
+
+const APPLIANCE_WATER_ON_FLOOR =
+  /\b(pouring|leaking onto|water on the floor)\b/i
+
+const APPLIANCE_MENTION =
+  /\b(freezer|dishwasher|washing machine|washer|dryer|microwave|oven|stove|fridge|refrigerator)\b/i
+
+/** A real failure mode. "Broken" or "not working" is not specific enough. Leak words are handled separately so a negated leak is not treated as the symptom. */
+const STATED_APPLIANCE_SYMPTOM =
+  /\b(?:not cooling|isn'?t cooling|won'?t cool|will not cool|not cold|isn'?t cold|warm|thaw(?:ing|ed)?|frost|iced over|ice build(?:-|\s)?up|not running|isn'?t running|won'?t run|will not run|not starting|won'?t start|will not start|won'?t turn on|will not turn on|won'?t power on|will not power on|no power|not draining|won'?t drain|will not drain|doesn'?t drain|loud|nois(?:e|y)|banging|grinding|stuck door|door (?:is )?stuck|door won'?t|not heating|isn'?t heating|won'?t heat|will not heat|not tumbling|won'?t tumble|not spinning|won'?t spin|not cleaning|won'?t clean|not lighting|won'?t light|burner|spark(?:ing|s)?|turntable|not freezing|isn'?t freezing)\b/i
+
+/** A leak the resident has taken back, or one they say has already stopped. */
+const NEGATED_OR_RESOLVED_LEAK =
+  /\b(?:(?:is|was|are|were)n'?t|(?:is|was|are|were) not|aren'?t|are not|not|no|without|never|no longer|stopped|has stopped|have stopped)\s+(?:actively\s+)?(?:leaking|leaks?)\b|\b(?:was|were)\s+leaking\b[^.]{0,48}\b(?:stopped|quit|isn'?t|is not|not anymore|no longer)\b|\bleaking\s+(?:has\s+|have\s+)?(?:stopped|quit)\b|\bno\s+leak\b/gi
+
+/** Clear confirmation that the leak is over. Uncertainty is a separate check. */
+const LEAK_CLEARLY_STOPPED =
+  /\b(?:the\s+)?leaks?\s+(?:has\s+|have\s+)?(?:stopped|is over|is fixed)\b|\bstopped\s+leaking\b|\bno longer leaking\b|\b(?:isn'?t|is not|it is not|it'?s not)\s+leaking(?:\s+anymore|\s+now)?\b|\bnot\s+leaking(?:\s+anymore|\s+now)\b|\b(?:was|were)\s+leaking\b[^.]{0,48}\b(?:stopped|quit|isn'?t|is not|not anymore|no longer)\b|\bleaking\s+(?:has\s+|have\s+)?(?:stopped|quit)\b|\bno\s+leak\b/i
+
+/** The resident is not sure. This must not resolve or reopen a leak by itself. */
+const LEAK_UNCERTAIN =
+  /\b(?:might|may|maybe|perhaps|possibly|i think|not sure|unsure|don'?t know|do not know|haven'?t checked|have not checked|didn'?t check|did not check|haven'?t looked|have not looked)\b/i
+
+/** A current leak, including one that started again. */
+const LEAK_AFFIRMATIVE =
+  /\b(?:still leaking|leaking again|(?:leak|leaking) is back|it(?:'s| is) leaking|is leaking|started leaking)\b/i
+
+function withoutStoppedLeakPhrases(text: string): string {
+  return text
+    .replace(new RegExp(LEAK_CLEARLY_STOPPED.source, "gi"), " ")
+    .replace(new RegExp(NEGATED_OR_RESOLVED_LEAK.source, "gi"), " ")
+}
+
+function reportsActiveApplianceLeak(text: string): boolean {
+  const raw = text.replace(/\s+/g, " ").trim()
+  if (!raw) return false
+  if (LEAK_UNCERTAIN.test(raw) && !LEAK_AFFIRMATIVE.test(raw)) return false
+  const remaining = withoutStoppedLeakPhrases(raw)
+  if (!deniesWaterOnFloor(remaining) && APPLIANCE_WATER_ON_FLOOR.test(remaining)) return true
+  if (
+    !deniesWaterOnFloor(remaining) &&
+    /\bpour(?:ing|s)?\b/i.test(remaining) &&
+    /\b(?:onto|on)\s+the\s+floor\b/i.test(remaining)
+  ) {
+    return true
+  }
+  return /\b(?:leaking|leaks|leak)\b/i.test(remaining)
+}
+
+function leakSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function latestSentence(text: string): string {
+  const parts = leakSentences(text)
+  return parts[parts.length - 1] ?? text.trim()
+}
+
+function sentenceIsCurrent(current: string, sentence: string | null): boolean {
+  if (!sentence) return false
+  return current === sentence || current.includes(sentence)
+}
+
+/** The latest sentence that talks about a leak. An earlier "leaking" must not outvote it. */
+function latestMatchingSentence(text: string, mention: RegExp): string | null {
+  const parts = leakSentences(text)
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (mention.test(parts[index])) return parts[index]
+  }
+  return null
+}
+
+function latestLeakSentence(text: string): string | null {
+  return latestMatchingSentence(text, /\b(?:leak(?:ing|s)?|pour(?:ing|s)?)\b/i)
+}
+
+const SPARK_MENTION = /\b(?:spark(?:ing|s|ed)?|burning smell|smells? like (?:smoke|burning)|smoke)\b/i
+const SPARK_STOPPED =
+  /\b(?:stopped sparking|not sparking|no longer sparking|isn'?t sparking|is not sparking|sparks? (?:have |has )?stopped|sparking (?:has |have )?stopped|no more sparks|smoke (?:has )?stopped|no more smoke|burning smell (?:has |have )?stopped)\b/i
+const SPARK_AFFIRMATIVE =
+  /\b(?:sparking again|sparks? (?:are )?back|still sparking|it(?:'s| is) sparking|is sparking|there are sparks|i see sparks)\b/i
+
+const HEAT_MENTION = /\b(?:overheat(?:ing|ed)?|too hot|dangerously hot|dangerously cold)\b/i
+const HEAT_STOPPED =
+  /\b(?:stopped overheating|not overheating|no longer overheating|isn'?t overheating|is not overheating|overheating (?:has |have )?stopped|cooled down|has cooled down)\b/i
+const HEAT_AFFIRMATIVE =
+  /\b(?:overheating again|still overheating|it(?:'s| is) overheating|is overheating|too hot|dangerously hot|dangerously cold)\b/i
+
+function mentionsAppliance(state: SmsIntakeState | undefined, text: string): boolean {
+  if (namedAppliance(text)) return true
+  const cat = `${state?.primary_category ?? ""} ${state?.issue_type ?? ""} ${state?.vendor_trade ?? ""}`
+    .toLowerCase()
+  return cat.includes("appliance")
+}
+
+function concernIsResolved(
+  current: string | null | undefined,
+  note: string,
+): boolean {
+  const key = note.trim().toLowerCase()
+  return resolvedSafetyNotes(current).some((item) => item.trim().toLowerCase() === key)
+}
+
+function applyConcernUpdate(
+  current: string | null | undefined,
+  latest: string | null,
+  note: string,
+  uncertain: RegExp,
+  affirmative: RegExp,
+  stopped: RegExp,
+  active: (sentence: string) => boolean,
+  sentenceIsLatest: boolean,
+): string | undefined {
+  const existing = current?.trim() || undefined
+  if (!latest) return existing
+  // An older report must not reopen a concern a later reply already stopped.
+  if (!sentenceIsLatest && concernIsResolved(existing, note)) return existing
+  if (uncertain.test(latest) && !affirmative.test(latest)) return existing
+  if (affirmative.test(latest) || active(latest)) {
+    return upsertActiveSafetyNote(existing, note)
+  }
+  if (stopped.test(latest)) return resolveSafetyNote(existing, note)
+  return existing
+}
+
+/**
+ * Record a supported concern once, beside any other note.
+ * A clear stop keeps that concern as history. Uncertainty leaves it active.
+ * Saying the same problem started again makes that note active, not a second copy.
+ */
+function applyReportedSafetyUpdates(
+  current: string | null | undefined,
+  text: string,
+  state?: SmsIntakeState,
+): string | undefined {
+  const raw = text.replace(/\s+/g, " ").trim()
+  let next = current?.trim() || undefined
+  const currentSentence = latestSentence(raw)
+  const leak = latestLeakSentence(raw)
+  const spark = latestMatchingSentence(raw, SPARK_MENTION)
+  const heat = latestMatchingSentence(raw, HEAT_MENTION)
+  if (leak && mentionsAppliance(state, raw)) {
+    next = applyConcernUpdate(
+      next,
+      leak,
+      SYSTEM_SAFETY_NOTES.applianceLeak,
+      LEAK_UNCERTAIN,
+      LEAK_AFFIRMATIVE,
+      LEAK_CLEARLY_STOPPED,
+      (sentence) => reportsActiveApplianceLeak(sentence),
+      sentenceIsCurrent(currentSentence, leak),
+    )
+  } else if (leak && LEAK_CLEARLY_STOPPED.test(leak) && !LEAK_UNCERTAIN.test(leak)) {
+    next = resolveSafetyNote(next, SYSTEM_SAFETY_NOTES.applianceLeak)
+  }
+  const hazardOpen = openConcerns(next).some((note) =>
+    sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard)
+  )
+  const partialElectricalStop = Boolean(
+    spark &&
+      hazardOpen &&
+      SPARK_STOPPED.test(spark) &&
+      !LEAK_UNCERTAIN.test(spark) &&
+      electricalStopIsPartial(spark, raw),
+  )
+  if (!partialElectricalStop) {
+    next = applyConcernUpdate(
+      next,
+      spark,
+      sparkFacetLine(next) ?? SYSTEM_SAFETY_NOTES.electricalHazard,
+      LEAK_UNCERTAIN,
+      SPARK_AFFIRMATIVE,
+      SPARK_STOPPED,
+      (sentence) =>
+        SPARK_AFFIRMATIVE.test(sentence) ||
+        (SPARK_MENTION.test(sentence) &&
+          !SPARK_STOPPED.test(sentence) &&
+          !/\b(?:no|not|without|isn'?t|is not|no more)\b/i.test(sentence)),
+      sentenceIsCurrent(currentSentence, spark),
+    )
+  }
+  next = dropRedundantElectricalTemplate(next)
+  next = applyConcernUpdate(
+    next,
+    heat,
+    SYSTEM_SAFETY_NOTES.dangerousTemp,
+    LEAK_UNCERTAIN,
+    HEAT_AFFIRMATIVE,
+    HEAT_STOPPED,
+    (sentence) =>
+      HEAT_AFFIRMATIVE.test(sentence) ||
+      (HEAT_MENTION.test(sentence) &&
+        !HEAT_STOPPED.test(sentence) &&
+        !/\b(?:no|not|isn'?t|is not|no longer)\b/i.test(sentence)),
+    sentenceIsCurrent(currentSentence, heat),
+  )
+  return next
+}
+
+function answerIsKnownConcern(text: string): boolean {
+  const raw = text.replace(/\s+/g, " ").trim()
+  return Boolean(
+    latestLeakSentence(raw) ||
+      latestMatchingSentence(raw, SPARK_MENTION) ||
+      latestMatchingSentence(raw, HEAT_MENTION),
+  )
+}
+
+const CUSTOM_NOTE_STOPWORDS = new Set([
+  "the", "a", "an", "is", "it", "its", "was", "are", "be", "to", "of", "and", "or",
+  "my", "our", "that", "this", "no", "not", "longer", "anymore", "still", "again",
+  "back", "stopped", "has", "have", "been", "now", "just", "really", "very", "too",
+  "there", "reported",
+])
+
+type CustomSafetyUpdate =
+  | { kind: "unchanged" }
+  | { kind: "handled" }
+  | { kind: "updated"; notes: string | undefined }
+  | { kind: "clarify"; question: string }
+
+function stemToken(word: string): string {
+  const lower = word.toLowerCase()
+  if (lower.length > 5 && lower.endsWith("ing")) return lower.slice(0, -3)
+  if (lower.length > 4 && lower.endsWith("ed")) return lower.slice(0, -2)
+  if (lower.length > 4 && lower.endsWith("s") && !lower.endsWith("ss")) return lower.slice(0, -1)
+  return lower
+}
+
+function contentTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 3 && !CUSTOM_NOTE_STOPWORDS.has(word))
+}
+
+function sameToken(left: string, right: string): boolean {
+  const a = stemToken(left)
+  const b = stemToken(right)
+  if (a === b) return true
+  return a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))
+}
+
+function openConcerns(current: string | null | undefined): string[] {
+  return activeSafetyNotes(current).filter((note) => !/^none reported$/i.test(note))
+}
+
+function trackedConcerns(current: string | null | undefined): string[] {
+  const parsed = parseSafetyNotes(current)
+  return [...parsed.active, ...parsed.resolved].filter((note) => !/^none reported$/i.test(note))
+}
+
+function sameConcern(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase()
+}
+
+/** Shared words. A paraphrase such as "cooled down" is handled separately. */
+function bestNoteMatches(notes: string[], reply: string): string[] {
+  const replyTokens = contentTokens(reply)
+  if (replyTokens.length === 0) return []
+  const scored = notes
+    .map((note) => ({
+      note,
+      score: contentTokens(note).reduce(
+        (sum, token) => sum + (replyTokens.some((replyToken) => sameToken(replyToken, token)) ? 1 : 0),
+        0,
+      ),
+    }))
+    .filter((item) => item.score > 0)
+  const best = scored.reduce((max, item) => Math.max(max, item.score), 0)
+  if (best === 0) return []
+  return scored.filter((item) => item.score === best).map((item) => item.note)
+}
+
+function concernLabel(note: string): string {
+  const sentence = safetyConcernSentence(note, "active") ?? note
+  const text = sentence.replace(/[.]+$/g, "").trim()
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function whichConcernQuestion(notes: string[]): string {
+  const labels = notes.map(concernLabel)
+  if (labels.length === 2) {
+    return `Which one has stopped: ${labels[0]}, or ${labels[1]}?`
+  }
+  const choices = labels.map((label, index) => `${index + 1}. ${label}`).join(" ")
+  return `Which concern has stopped? Reply with the number. ${choices}`
+}
+
+function isBareStop(text: string): boolean {
+  const stripped = text
+    .replace(/[.!?]+$/g, "")
+    .replace(LEAK_UNCERTAIN, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return /^(?:(?:it|that|this)(?:\s+has)?\s+stopped)(?:\s+(?:it|that|this)(?:\s+has)?\s+stopped)*$/i.test(stripped)
+}
+
+function hasClearStop(text: string): boolean {
+  if (/\bstopped working\b/i.test(text)) return false
+  if (/\b(?:not|never|hasn'?t|have not|isn'?t|is not|didn'?t|did not)\s+(?:yet\s+)?stopped\b/i.test(text)) {
+    return false
+  }
+  return /\b(?:no longer|not anymore|has stopped|have stopped|no more|stopped)\b/i.test(text)
+}
+
+function deniesMatchedWord(text: string, note: string): boolean {
+  const match = text.match(/\b(?:isn'?t|is not|aren'?t|are not)\s+([a-z]+)/i)
+  if (!match?.[1]) return false
+  return contentTokens(note).some((token) => sameToken(token, match[1]))
+}
+
+function replySaysStill(text: string): boolean {
+  return /\b(?:still|again)\b/i.test(text) ||
+    /\b(?:is|are) back\b/i.test(text) ||
+    /\bremains?\b/i.test(text)
+}
+
+/**
+ * An uncertain status reply, such as "I think it cooled down".
+ * Uncertainty blocks resolution even when the words paraphrase a saved note.
+ */
+function uncertainStatusOnly(text: string): boolean {
+  if (!LEAK_UNCERTAIN.test(text)) return false
+  const extra = contentTokens(text.replace(LEAK_UNCERTAIN, " "))
+  return extra.every((token) =>
+    /^(?:cool|cooled|down|stop|stopped|warm|hot|cold|fine|okay|ok|smell|smells|gone|noise|noisy|bang|banging|drip|dripping|leak|leaking|spark|sparking|sparks|smoke|flood|flooding|overflow|overflowing|sagging|hanging|secure)$/.test(token)
+  )
+}
+
+type ConcernSense =
+  | "warmth"
+  | "cold"
+  | "smell"
+  | "smoke"
+  | "spark"
+  | "noise"
+  | "leak"
+  | "overflow"
+  | "door"
+  | "illness"
+  | "collapse"
+  | "structuralWater"
+  | "secure"
+
+const SENSE_WORDS = new Set([
+  "warm", "warmth", "hot", "heat", "overheating", "overheat",
+  "cooled", "cool", "down", "off", "cold",
+  "smell", "smells", "smelling", "odor", "odour", "gone", "burning", "smoke",
+  "spark", "sparks", "sparking", "sparked",
+  "noise", "noisy", "bang", "banging", "rattle", "rattling", "grind", "grinding", "loud",
+  "drip", "dripping", "drippy", "leak", "leaking", "leaks",
+  "flood", "flooding", "overflow", "overflowing", "gushing",
+  "still", "again", "back", "stopped", "longer", "remains", "remain", "remaining",
+  "sagging", "hanging", "secure", "dizzy", "faint", "unwell",
+])
+
+const APPLIANCE_SUBJECTS = new Set([
+  "outlet", "oven", "stove", "freezer", "fridge", "refrigerator", "washer", "dryer",
+  "dishwasher", "furnace", "toilet", "sink", "faucet", "heater", "microwave",
+])
+
+type SenseFacet = {
+  sense: ConcernSense
+  label: string
+  subjects: string[]
+}
+
+type SenseAction = {
+  action: "resolve" | "reactivate"
+  sense: ConcernSense
+  subjects: string[]
+}
+
+function sensesOf(text: string): Set<ConcernSense> {
+  const found = new Set<ConcernSense>()
+  const raw = text.trim()
+  if (/^sparks reported\b/i.test(raw)) {
+    found.add("spark")
+    return found
+  }
+  if (/^smoke reported\b/i.test(raw)) {
+    found.add("smoke")
+    return found
+  }
+  if (/^burning smell reported\b/i.test(raw)) {
+    found.add("smell")
+    return found
+  }
+  if (sameConcern(raw, SYSTEM_SAFETY_NOTES.electricalHazard)) {
+    found.add("spark")
+    found.add("smoke")
+    found.add("smell")
+    return found
+  }
+  if (sameConcern(raw, SYSTEM_SAFETY_NOTES.applianceLeak)) {
+    found.add("leak")
+    return found
+  }
+  if (
+    sameConcern(raw, SYSTEM_SAFETY_NOTES.overflowYes) ||
+    sameConcern(raw, SYSTEM_SAFETY_NOTES.overflowNo)
+  ) {
+    found.add("overflow")
+    return found
+  }
+  if (
+    sameConcern(raw, SYSTEM_SAFETY_NOTES.doorAtRisk) ||
+    sameConcern(raw, SYSTEM_SAFETY_NOTES.doorSafe)
+  ) {
+    found.add("door")
+    return found
+  }
+  if (sameConcern(raw, SYSTEM_SAFETY_NOTES.heatIllness)) {
+    found.add("illness")
+    return found
+  }
+  if (sameConcern(raw, SYSTEM_SAFETY_NOTES.structuralCollapse)) {
+    found.add("collapse")
+    return found
+  }
+  if (sameConcern(raw, SYSTEM_SAFETY_NOTES.structuralWater)) {
+    found.add("structuralWater")
+    return found
+  }
+  if (
+    sameConcern(raw, SYSTEM_SAFETY_NOTES.cannotSecure) ||
+    sameConcern(raw, SYSTEM_SAFETY_NOTES.canSecure)
+  ) {
+    found.add("secure")
+    return found
+  }
+  if (sameConcern(raw, SYSTEM_SAFETY_NOTES.dangerousTemp)) {
+    found.add("warmth")
+    found.add("cold")
+    return found
+  }
+  if (/\b(?:warm|hot|overheat(?:ing|ed)?|too hot)\b/i.test(raw)) found.add("warmth")
+  if (/\b(?:dangerously cold|too cold|freezing)\b/i.test(raw)) found.add("cold")
+  if (/\b(?:burn(?:ing)?\s+smell|smells?\s+like\s+(?:smoke|burning)|(?:burning|smoke)\s+odor|(?:a\s+)?(?:burning\s+)?smell)\b/i.test(raw)) {
+    found.add("smell")
+  }
+  if (/\bsmoke\b/i.test(raw) && !/\bsmells?\s+like\s+smoke\b/i.test(raw) && !/\bsmoke\s+odor\b/i.test(raw)) {
+    found.add("smoke")
+  }
+  if (/\bspark(?:ing|s|ed)?\b/i.test(raw)) found.add("spark")
+  if (/\b(?:loud|bang(?:ing)?|noise|noisy|rattl(?:e|ing)|grind(?:ing)?)\b/i.test(raw)) found.add("noise")
+  if (/\b(?:dripp(?:ing|y)?|leak(?:ing|s)?)\b/i.test(raw)) found.add("leak")
+  if (/\b(?:overflow(?:ing)?|flood(?:ing)?|gushing)\b/i.test(raw)) found.add("overflow")
+  if (/\b(?:door (?:is )?(?:stuck|hanging)|hanging loose|at risk of falling)\b/i.test(raw)) found.add("door")
+  if (/\b(?:dizzy|faint|unwell from the heat|feeling faint)\b/i.test(raw)) found.add("illness")
+  if (/\b(?:sagging|collapse|collapsing)\b/i.test(raw)) found.add("collapse")
+  if (/\bwater coming through\b/i.test(raw)) found.add("structuralWater")
+  if (/\b(?:can(?:not|'t) (?:lock|secure)|unable to secure)\b/i.test(raw)) found.add("secure")
+  return found
+}
+
+function residentEvidence(context: string): string {
+  let text = context
+  for (const note of Object.values(SYSTEM_SAFETY_NOTES)) {
+    text = text.split(note).join(" ")
+  }
+  return text.replace(/\s+/g, " ").trim()
+}
+
+function facetLabel(part: string): string {
+  const cleaned = part
+    .replace(/[.]+$/g, "")
+    .replace(/^(?:there (?:is|are)|i (?:see|hear|smell)|we have)\s+/i, "")
+    .trim()
+  if (!cleaned) return part.trim()
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function placedLabel(label: string, subjects: string[]): string {
+  const places = subjects.filter((token) => APPLIANCE_SUBJECTS.has(token))
+  if (places.length !== 1) return label
+  if (label.toLowerCase().includes(places[0])) return label
+  return `${label} at the ${places[0]}`
+}
+
+function andFacets(note: string): SenseFacet[] | null {
+  if (sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard)) return null
+  if (!/\band\b/i.test(note)) return null
+  const parts = note.split(/\s+\band\b\s+/i).map((part) => part.trim()).filter(Boolean)
+  if (parts.length < 2) return null
+  const inherited = subjectsOf(note)
+  const facets: SenseFacet[] = []
+  for (const part of parts) {
+    const senses = [...sensesOf(part)]
+    if (senses.length !== 1) return null
+    const own = subjectsOf(part)
+    facets.push({
+      sense: senses[0],
+      label: facetLabel(part),
+      subjects: own.length > 0 ? own : inherited,
+    })
+  }
+  if (new Set(facets.map((facet) => facet.sense)).size !== facets.length) return null
+  return facets
+}
+
+function electricalFacetsFromContext(context: string):
+  | { kind: "facets"; facets: SenseFacet[] }
+  | { kind: "unsure" } {
+  const evidence = residentEvidence(context)
+  const senses = sensesOf(evidence)
+  const subjects = subjectsOf(evidence)
+  const facets: SenseFacet[] = []
+  if (senses.has("spark")) {
+    facets.push({
+      sense: "spark",
+      label: placedLabel(SYSTEM_SAFETY_NOTES.sparksReported, subjects),
+      subjects,
+    })
+  }
+  if (senses.has("smoke")) {
+    facets.push({
+      sense: "smoke",
+      label: placedLabel(SYSTEM_SAFETY_NOTES.smokeReported, subjects),
+      subjects,
+    })
+  }
+  if (senses.has("smell")) {
+    facets.push({
+      sense: "smell",
+      label: placedLabel(SYSTEM_SAFETY_NOTES.burningSmellReported, subjects),
+      subjects,
+    })
+  }
+  if (facets.length === 0) return { kind: "unsure" }
+  return { kind: "facets", facets }
+}
+
+function defaultElectricalFacets(): SenseFacet[] {
+  return [
+    { sense: "spark", label: SYSTEM_SAFETY_NOTES.sparksReported, subjects: [] },
+    { sense: "smoke", label: SYSTEM_SAFETY_NOTES.smokeReported, subjects: [] },
+    { sense: "smell", label: SYSTEM_SAFETY_NOTES.burningSmellReported, subjects: [] },
+  ]
+}
+
+function facetsForNote(note: string, context: string): SenseFacet[] | "unsure" | null {
+  if (sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard)) {
+    const split = electricalFacetsFromContext(context)
+    return split.kind === "unsure" ? "unsure" : split.facets
+  }
+  const split = andFacets(note)
+  if (split) return split
+  if (/\band\b/i.test(note) && sensesOf(note).size >= 2) return "unsure"
+  return null
+}
+
+function sparkFacetLine(current: string | null | undefined): string | null {
+  const notes = trackedConcerns(current)
+  if (notes.some((note) => sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard))) return null
+  return notes.find((note) => sensesOf(note).size === 1 && sensesOf(note).has("spark")) ?? null
+}
+
+function stoppedElectricalSenses(sentence: string): Set<ConcernSense> {
+  const stopped = new Set<ConcernSense>()
+  if (/\b(?:stopped sparking|not sparking|no longer sparking|isn'?t sparking|is not sparking|sparks? (?:have |has )?stopped|sparking (?:has |have )?stopped|no more sparks)\b/i.test(sentence)) {
+    stopped.add("spark")
+  }
+  if (/\b(?:smoke (?:has |have )?stopped|no more smoke|smoke is gone)\b/i.test(sentence)) {
+    stopped.add("smoke")
+  }
+  if (/\b(?:burning smell (?:has |have )?stopped|(?:the )?smell is gone|no more smell|smell (?:has |have )?stopped)\b/i.test(sentence)) {
+    stopped.add("smell")
+  }
+  return stopped
+}
+
+function electricalStopIsPartial(sentence: string, context: string): boolean {
+  const split = electricalFacetsFromContext(context)
+  if (split.kind === "unsure") return true
+  const stopped = stoppedElectricalSenses(sentence)
+  if (stopped.size === 0) return false
+  return split.facets.some((facet) => !stopped.has(facet.sense))
+}
+
+function dropActiveNote(
+  current: string | null | undefined,
+  note: string,
+): string | undefined {
+  const parsed = parseSafetyNotes(current)
+  const active = parsed.active.filter((item) => !sameConcern(item, note))
+  return formatSafetyNotes(active, parsed.resolved)
+}
+
+function dropRedundantElectricalTemplate(
+  current: string | null | undefined,
+): string | undefined {
+  const active = openConcerns(current)
+  if (!active.some((note) => sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard))) {
+    return current?.trim() || undefined
+  }
+  const separated = active.some((note) =>
+    /^sparks reported\b/i.test(note) ||
+    /^smoke reported\b/i.test(note) ||
+    /^burning smell reported\b/i.test(note) ||
+    (sensesOf(note).size === 1 && sensesOf(note).has("spark"))
+  )
+  const custom = active.some((note) =>
+    andFacets(note)?.some((facet) =>
+      facet.sense === "spark" || facet.sense === "smell" || facet.sense === "smoke"
+    )
+  )
+  if (!separated && !custom) return current?.trim() || undefined
+  return dropActiveNote(current, SYSTEM_SAFETY_NOTES.electricalHazard)
+}
+
+function retireFacet(current: string | null | undefined, label: string): string | undefined {
+  return resolveSafetyNote(upsertActiveSafetyNote(current, label), label)
+}
+
+function replaceCombinedNote(
+  current: string | null | undefined,
+  note: string,
+  keep: SenseFacet[],
+  stop: SenseFacet[],
+): string | undefined {
+  if (keep.length === 0) return resolveSafetyNote(current, note)
+  let next = dropActiveNote(current, note)
+  for (const facet of keep) next = upsertActiveSafetyNote(next, facet.label)
+  for (const facet of stop) next = retireFacet(next, facet.label)
+  return next
+}
+
+function subjectsOf(clause: string): string[] {
+  return contentTokens(clause).filter((token) => !SENSE_WORDS.has(token) && !SENSE_WORDS.has(stemToken(token)))
+}
+
+function sharesSubject(note: string, subjects: string[]): boolean {
+  if (subjects.length === 0) return false
+  const tokens = contentTokens(note)
+  return subjects.some((subject) => tokens.some((token) => sameToken(token, subject)))
+}
+
+function clauseHasStatus(text: string): boolean {
+  return warmthStopped(text) ||
+    smellStopped(text) ||
+    sparkStopped(text) ||
+    noiseStopped(text) ||
+    leakDripStopped(text) ||
+    overflowStopped(text) ||
+    doorStopped(text) ||
+    illnessEased(text) ||
+    collapseStopped(text) ||
+    structuralWaterStopped(text) ||
+    homeSecured(text) ||
+    coldEased(text) ||
+    replySaysStill(text) ||
+    negatedStatus(text)
+}
+
+function splitStatusClauses(text: string): string[] {
+  const parts = text
+    .split(/\s*(?:,|\b(?:but|although|though)\b|(?<=[.!?]))\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const clauses = (parts.length > 0 ? parts : [text]).flatMap((part) => {
+    const sides = part.split(/\s+\band\b\s+/i).map((side) => side.trim()).filter(Boolean)
+    if (sides.length >= 2 && sides.every((side) => clauseHasStatus(side))) return sides
+    return [part]
+  })
+  return clauses.length > 0 ? clauses : [text]
+}
+
+function warmthStopped(text: string): boolean {
+  if (/\b(?:not|never|hasn'?t|have not|isn'?t|is not|won'?t|will not|didn'?t|did not)\s+(?:yet\s+)?(?:cooled|cool(?:ed)?\s+down)\b/i.test(text)) {
+    return false
+  }
+  return /\b(?:cooled(?:\s+(?:down|off))?|has cooled|no longer (?:warm|hot)|not (?:warm|hot) anymore|(?:isn'?t|is not) (?:warm|hot))\b/i.test(text)
+}
+
+function smellStopped(text: string): boolean {
+  if (replySaysStill(text) && /\b(?:smell|odor|odour|smoke)\b/i.test(text)) return false
+  if (/\b(?:smell|odor|odour)\s+(?:isn'?t|is not|hasn'?t|has not)\s+gone\b/i.test(text)) return false
+  if (/\b(?:isn'?t|is not|not)\s+gone\b/i.test(text)) return false
+  return /\b(?:(?:burning|smoke)\s+)?(?:smell|odor|odour)\s+(?:is\s+|has\s+)?(?:gone|went away|stopped)\b/i.test(text) ||
+    /\b(?:no more|no longer any) (?:burning\s+|smoke\s+)?smell\b/i.test(text) ||
+    /\b(?:can(?:not|'t)|do not|don't) smell\b/i.test(text) ||
+    /\bburning smell (?:has |have )?stopped\b/i.test(text)
+}
+
+function sparkStopped(text: string): boolean {
+  if (replySaysStill(text) && /\bspark/i.test(text)) return false
+  if (/\b(?:hasn'?t|have not|isn'?t|is not|not|never)\s+(?:yet\s+)?(?:stopped\s+)?spark/i.test(text)) return false
+  return /\b(?:stopped sparking|not sparking|no longer sparking|isn'?t sparking|is not sparking|sparks? (?:have |has )?stopped|sparking (?:has |have )?stopped|no more sparks)\b/i.test(text)
+}
+
+function smokeStopped(text: string): boolean {
+  if (replySaysStill(text) && /\bsmoke\b/i.test(text)) return false
+  if (/\b(?:hasn'?t|have not|isn'?t|is not|not|never)\s+(?:stopped\s+)?smoke\b/i.test(text)) return false
+  return /\b(?:smoke (?:has |have )?stopped|no more smoke|smoke is gone|no longer any smoke)\b/i.test(text)
+}
+
+function noiseStopped(text: string): boolean {
+  if (/\b(?:hasn'?t|have not|isn'?t|is not|not|never)\s+(?:yet\s+)?(?:stopped\s+)?(?:the\s+)?(?:noise|banging|rattling|grinding)\b/i.test(text)) {
+    return false
+  }
+  if (replySaysStill(text) && /\b(?:noise|bang|banging|rattl|grind)\b/i.test(text)) return false
+  return /\b(?:noise|banging|rattling|grinding)\s+(?:has\s+|have\s+)?stopped\b/i.test(text) ||
+    /\b(?:stopped|no more|no longer)\s+(?:making\s+)?(?:a\s+)?(?:loud\s+)?(?:noise|banging|rattling|grinding)\b/i.test(text) ||
+    /\bthe noise stopped\b/i.test(text)
+}
+
+function leakDripStopped(text: string): boolean {
+  if (/\b(?:hasn'?t|have not|isn'?t|is not|not|never)\s+(?:yet\s+)?(?:stopped\s+)?(?:dripp|leak)/i.test(text)) {
+    return false
+  }
+  if (replySaysStill(text) && /\b(?:dripp|leak)\b/i.test(text)) return false
+  return /\b(?:dripp(?:ing)?|leak(?:ing)?)\s+(?:has\s+|have\s+)?stopped\b/i.test(text) ||
+    /\b(?:stopped|no longer|no more)\s+(?:dripp(?:ing)?|leak(?:ing)?)\b/i.test(text) ||
+    /\bthe dripping stopped\b/i.test(text)
+}
+
+function overflowStopped(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  return /\b(?:flooding|overflow(?:ing)?)\s+(?:has\s+)?stopped\b/i.test(text) ||
+    /\bstopped\s+overflowing\b/i.test(text) ||
+    /\bno longer (?:overflowing|flooding)\b/i.test(text)
+}
+
+function doorStopped(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  return /\bdoor is (?:secure|fixed|no longer (?:stuck|hanging))\b/i.test(text) ||
+    /\b(?:not hanging anymore|no longer at risk of falling)\b/i.test(text)
+}
+
+function illnessEased(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  return /\b(?:feeling better|feels better|no longer (?:dizzy|faint|unwell))\b/i.test(text)
+}
+
+function collapseStopped(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  return /\b(?:not sagging anymore|sagging (?:has )?stopped|no longer sagging)\b/i.test(text)
+}
+
+function structuralWaterStopped(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  return /\bwater (?:has )?stopped coming through\b/i.test(text) ||
+    /\bno longer coming through the (?:ceiling|wall|roof)\b/i.test(text)
+}
+
+function homeSecured(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  return /\b(?:can lock (?:it|the door|the home) now|the home is secure now|able to (?:lock|secure) it now)\b/i.test(text)
+}
+
+function coldEased(text: string): boolean {
+  if (replySaysStill(text) || LEAK_UNCERTAIN.test(text)) return false
+  if (/\b(?:hasn'?t|has not|not|never)\s+warmed up\b/i.test(text)) return false
+  return /\b(?:warmed up|no longer (?:so )?cold|isn'?t cold anymore)\b/i.test(text)
+}
+
+function negatedStatus(text: string): boolean {
+  return /\b(?:hasn'?t|have not|isn'?t|is not|not|never)\s+(?:yet\s+)?(?:cooled|cool(?:ed)?\s+down|warmed up)\b/i.test(text) ||
+    /\b(?:smell|odor|odour)\s+(?:isn'?t|is not|hasn'?t|has not)\s+gone\b/i.test(text) ||
+    /\b(?:isn'?t|is not)\s+gone\b/i.test(text) ||
+    /\b(?:hasn'?t|have not|isn'?t|is not|not|never)\s+(?:yet\s+)?(?:stopped\s+)?(?:the\s+)?(?:noise|banging|rattling|grinding|dripp(?:ing)?|leak(?:ing)?|spark(?:ing|s)?)\b/i.test(text) ||
+    /\b(?:noise|banging|rattling|grinding|dripp(?:ing)?|leak(?:ing)?|spark(?:ing|s)?)\s+(?:hasn'?t|have not|isn'?t|is not|has not)\s+stopped\b/i.test(text)
+}
+
+function continuesSense(clause: string, sense: ConcernSense): boolean {
+  if (!replySaysStill(clause)) return false
+  const senses = sensesOf(clause)
+  if (sense === "smell") return senses.has("smell") || senses.has("smoke") || /\b(?:smell|odor|odour)\b/i.test(clause)
+  return senses.has(sense)
+}
+
+function actionsIn(clause: string): SenseAction[] {
+  if (LEAK_UNCERTAIN.test(clause) && !replySaysStill(clause)) return []
+  const subjects = subjectsOf(clause)
+  const actions: SenseAction[] = []
+  const resolve = (sense: ConcernSense, stopped: boolean) => {
+    if (continuesSense(clause, sense)) {
+      actions.push({ action: "reactivate", sense, subjects })
+      return
+    }
+    if (stopped) actions.push({ action: "resolve", sense, subjects })
+  }
+  resolve("warmth", warmthStopped(clause))
+  resolve("smell", smellStopped(clause))
+  resolve("spark", sparkStopped(clause))
+  resolve("smoke", smokeStopped(clause))
+  resolve("noise", noiseStopped(clause))
+  resolve("leak", leakDripStopped(clause))
+  resolve("overflow", overflowStopped(clause))
+  resolve("door", doorStopped(clause))
+  resolve("illness", illnessEased(clause))
+  resolve("collapse", collapseStopped(clause))
+  resolve("structuralWater", structuralWaterStopped(clause))
+  resolve("secure", homeSecured(clause))
+  resolve("cold", coldEased(clause))
+  if (/\b(?:warm|hot|overheating)\s+again\b/i.test(clause) || (replySaysStill(clause) && /\b(?:warm|hot)\b/i.test(clause))) {
+    actions.push({ action: "reactivate", sense: "warmth", subjects })
+  }
+  if (
+    /\b(?:smell|odor|odour)\s+(?:is\s+)?back\b/i.test(clause) ||
+    /\bsmell(?:ing)?\s+(?:it\s+)?again\b/i.test(clause) ||
+    /\b(?:smell|odor|odour)\s+(?:is\s+)?(?:still\s+)?(?:here|remains|remaining)\b/i.test(clause)
+  ) {
+    actions.push({ action: "reactivate", sense: "smell", subjects })
+  }
+  if (
+    (replySaysStill(clause) && /\bspark(?:ing|s|ed)?\b/i.test(clause)) ||
+    /\bspark(?:ing|s)?\s+(?:are\s+)?back\b/i.test(clause)
+  ) {
+    actions.push({ action: "reactivate", sense: "spark", subjects })
+  }
+  if (
+    (replySaysStill(clause) && /\b(?:noise|bang(?:ing)?|rattl(?:e|ing)|grind(?:ing)?)\b/i.test(clause)) ||
+    /\b(?:noise|banging|rattling|grinding)\s+(?:is\s+)?back\b/i.test(clause)
+  ) {
+    actions.push({ action: "reactivate", sense: "noise", subjects })
+  }
+  if (
+    (replySaysStill(clause) && /\b(?:dripp(?:ing)?|leak(?:ing)?)\b/i.test(clause)) ||
+    /\b(?:dripp(?:ing)?|leak(?:ing)?)\s+(?:is\s+)?back\b/i.test(clause) ||
+    /\b(?:dripping|leaking) again\b/i.test(clause)
+  ) {
+    actions.push({ action: "reactivate", sense: "leak", subjects })
+  }
+  return actions
+}
+
+const PLACE_SUBJECTS = new Set([
+  ...APPLIANCE_SUBJECTS,
+  "door", "window", "kitchen", "bathroom", "bedroom", "basement", "garage", "hallway",
+  "attic", "closet", "porch", "yard", "ceiling", "wall", "roof", "floor", "home",
+])
+
+function locatingSubjects(subjects: string[]): string[] {
+  return subjects.filter((subject) => PLACE_SUBJECTS.has(subject))
+}
+
+function pickConcerns(
+  action: SenseAction,
+  notes: string[],
+  context: string,
+): { kind: "notes"; notes: string[] } | { kind: "ambiguous"; notes: string[] } | { kind: "none" } {
+  let sensed = notes.filter((note) => sensesOf(note).has(action.sense))
+  if (action.action === "resolve") {
+    const onlyThisSense = sensed.filter((note) => sensesOf(note).size === 1)
+    if (onlyThisSense.length > 0) sensed = onlyThisSense
+  }
+  if (sensed.length === 0) return { kind: "none" }
+  const places = locatingSubjects(action.subjects)
+  if (places.length > 0) {
+    const named = sensed.filter((note) => sharesSubject(note, places))
+    if (named.length === 1) return { kind: "notes", notes: named }
+    if (named.length > 1) return { kind: "ambiguous", notes: named }
+    if (sensed.length === 1 && sharesSubject(context, places)) {
+      return { kind: "notes", notes: sensed }
+    }
+    return { kind: "none" }
+  }
+  if (sensed.length === 1) return { kind: "notes", notes: sensed }
+  const narrowed = sensed.filter((note) => sharesSubject(note, subjectsOf(context)))
+  if (narrowed.length === 1) return { kind: "notes", notes: narrowed }
+  return { kind: "ambiguous", notes: sensed }
+}
+
+/**
+ * Clear paraphrases, one concern at a time.
+ * "Cooled down" can resolve a warm note. "The smell is gone" resolves a smell note.
+ * A stored line is only changed when it is one of the notes already saved.
+ */
+function facetQuestion(note: string, facets: SenseFacet[] | "unsure"): string {
+  if (facets === "unsure") {
+    const labels = sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard)
+      ? defaultElectricalFacets().map((facet) => facet.label)
+      : [note]
+    return whichConcernQuestion(labels)
+  }
+  return whichConcernQuestion(facets.map((facet) => facet.label))
+}
+
+function applySenseResolution(
+  current: string | null | undefined,
+  note: string,
+  sense: ConcernSense,
+  context: string,
+): { notes: string | undefined; clarify?: string } | null {
+  const facets = facetsForNote(note, context)
+  if (facets === "unsure") {
+    return { notes: current?.trim() || undefined, clarify: facetQuestion(note, facets) }
+  }
+  if (!facets) {
+    if (!sensesOf(note).has(sense)) return null
+    return { notes: resolveSafetyNote(current, note) }
+  }
+  const stopped = facets.filter((facet) => facet.sense === sense)
+  if (stopped.length === 0) return null
+  if (stopped.length !== 1) {
+    return { notes: current?.trim() || undefined, clarify: facetQuestion(note, facets) }
+  }
+  const keep = facets.filter((facet) => facet.sense !== sense)
+  return { notes: replaceCombinedNote(current, note, keep, stopped) }
+}
+
+function bothHaveStopped(text: string): boolean {
+  return /\bboth\s+(?:have\s+|has\s+)?(?:stopped|are gone|have gone)\b/i.test(text)
+}
+
+function applyBothStopped(
+  current: string | null | undefined,
+  context: string,
+): CustomSafetyUpdate {
+  const active = openConcerns(current)
+  const expanded: Array<{ note: string; facets: SenseFacet[] | null }> = []
+  for (const note of active) {
+    const facets = facetsForNote(note, context)
+    if (facets === "unsure") {
+      return { kind: "clarify", question: facetQuestion(note, facets) }
+    }
+    expanded.push({ note, facets })
+  }
+  const count = expanded.reduce((sum, item) => sum + (item.facets?.length ?? 1), 0)
+  if (count !== 2) {
+    const labels = expanded.flatMap((item) => item.facets?.map((facet) => facet.label) ?? [item.note])
+    return {
+      kind: "clarify",
+      question: whichConcernQuestion(labels.length > 0 ? labels : active),
+    }
+  }
+  let notes: string | undefined = current ?? undefined
+  for (const item of expanded) {
+    notes = resolveSafetyNote(notes, item.note)
+  }
+  return { kind: "updated", notes }
+}
+
+function isSeparableConcern(note: string, context: string): boolean {
+  const facets = facetsForNote(note, context)
+  return facets === "unsure" || (Array.isArray(facets) && facets.length > 1)
+}
+
+/**
+ * Clear paraphrases, one concern at a time.
+ * A combined line is split when each part can be named. Otherwise the reply
+ * is asked about and the line stays active.
+ */
+function applyMeaningUpdates(
+  current: string | null | undefined,
+  reply: string,
+  context: string,
+): CustomSafetyUpdate | null {
+  if (bothHaveStopped(reply)) {
+    if (LEAK_UNCERTAIN.test(reply) && !replySaysStill(reply)) return { kind: "handled" }
+    return applyBothStopped(current, context)
+  }
+  const clauses = splitStatusClauses(reply)
+  const actions = clauses.flatMap((clause) => actionsIn(clause))
+  const negatedOnly = actions.length === 0 && clauses.some((clause) => negatedStatus(clause))
+  if (actions.length === 0) return negatedOnly ? { kind: "handled" } : null
+
+  let notes = dropRedundantElectricalTemplate(current)
+  let changed = false
+  let matched = false
+  let ambiguous: string[] | null = null
+  let clarifyQuestion: string | null = null
+  const reactivated = new Set<string>()
+  const allowed = new Set(trackedConcerns(current).map((note) => note.trim().toLowerCase()))
+  const remember = (value: string | null | undefined) => {
+    for (const note of trackedConcerns(value)) allowed.add(note.trim().toLowerCase())
+  }
+  remember(notes)
+  const reopen = actions.filter((action) => action.action === "reactivate")
+  const resolve = actions.filter((action) => action.action === "resolve")
+
+  for (const action of reopen) {
+    const pool = trackedConcerns(notes).filter((note) => allowed.has(note.trim().toLowerCase()))
+    const picked = pickConcerns(action, pool, context)
+    if (picked.kind === "ambiguous") ambiguous = picked.notes
+    if (picked.kind !== "notes") continue
+    matched = true
+    for (const note of picked.notes) {
+      const next = upsertActiveSafetyNote(notes, note)
+      if ((next ?? "").trim() !== (notes ?? "").trim()) changed = true
+      notes = next
+      remember(notes)
+      reactivated.add(`${note.trim().toLowerCase()}::${action.sense}`)
+    }
+  }
+  for (const action of resolve) {
+    const pool = openConcerns(notes).filter((note) => allowed.has(note.trim().toLowerCase()))
+    const picked = pickConcerns(action, pool, context)
+    if (picked.kind === "ambiguous") ambiguous = picked.notes
+    if (picked.kind !== "notes") continue
+    matched = true
+    for (const note of picked.notes) {
+      if (reactivated.has(`${note.trim().toLowerCase()}::${action.sense}`)) continue
+      const applied = applySenseResolution(notes, note, action.sense, context)
+      if (!applied) continue
+      if (applied.clarify) {
+        clarifyQuestion = applied.clarify
+        continue
+      }
+      if ((applied.notes ?? "").trim() !== (notes ?? "").trim()) changed = true
+      notes = applied.notes
+      remember(notes)
+    }
+  }
+
+  if (!changed && clarifyQuestion) return { kind: "clarify", question: clarifyQuestion }
+  if (!changed && ambiguous && ambiguous.length > 1) {
+    return { kind: "clarify", question: whichConcernQuestion(ambiguous) }
+  }
+  if (changed) return { kind: "updated", notes }
+  if (negatedOnly || matched) return { kind: "handled" }
+  return null
+}
+
+/**
+ * Update one saved note from shared words or a clear paraphrase.
+ * A bare "it stopped" uses the only active note, or asks which one.
+ * Resident text is matched as a status update. It is not followed as an instruction.
+ */
+function interpretCustomSafetyReply(
+  current: string | null | undefined,
+  reply: string,
+  context = "",
+): CustomSafetyUpdate {
+  const text = reply.replace(/\s+/g, " ").trim()
+  if (!text) return { kind: "unchanged" }
+  if (
+    (/\b(?:ignore|disregard)\b/i.test(text) && /\b(?:notes|concerns|instructions)\b/i.test(text)) ||
+    /\b(?:mark|resolve|clear|close)\s+(?:everything|all|every)\b/i.test(text)
+  ) {
+    return { kind: "handled" }
+  }
+  const active = openConcerns(current)
+  const matches = bestNoteMatches(trackedConcerns(current), text)
+  const uncertain = LEAK_UNCERTAIN.test(text)
+  const still = replySaysStill(text)
+  const unique = matches.length === 1 ? matches[0] : null
+  const stop = hasClearStop(text) || (unique != null && deniesMatchedWord(text, unique))
+
+  if (uncertain && !still) {
+    if (matches.length > 0 || isBareStop(text) || actionsIn(text).length > 0 || uncertainStatusOnly(text)) {
+      return { kind: "handled" }
+    }
+    return { kind: "unchanged" }
+  }
+
+  let meaning: CustomSafetyUpdate | null = null
+  try {
+    meaning = applyMeaningUpdates(current, text, context)
+  } catch {
+    meaning = null
+  }
+  if (meaning) return meaning
+
+  if (isBareStop(text) && matches.length === 0) {
+    if (active.length > 1) return { kind: "clarify", question: whichConcernQuestion(active) }
+    if (active.length === 1 && isSeparableConcern(active[0], context)) {
+      return { kind: "clarify", question: facetQuestion(active[0], facetsForNote(active[0], context) ?? "unsure") }
+    }
+    if (active.length === 1) return { kind: "updated", notes: resolveSafetyNote(current, active[0]) }
+    return { kind: "unchanged" }
+  }
+
+  if (matches.length > 1 && (stop || still)) {
+    const activeMatches = matches.filter((note) => active.some((item) => sameConcern(item, note)))
+    const choices = activeMatches.length > 0 ? activeMatches : matches
+    if (choices.length > 1) return { kind: "clarify", question: whichConcernQuestion(choices) }
+    if (choices.length === 1 && stop && !still && !isSeparableConcern(choices[0], context)) {
+      return { kind: "updated", notes: resolveSafetyNote(current, choices[0]) }
+    }
+    if (choices.length === 1 && still) {
+      return { kind: "updated", notes: upsertActiveSafetyNote(current, choices[0]) }
+    }
+  }
+
+  if (unique && stop && !still && !isSeparableConcern(unique, context)) {
+    return { kind: "updated", notes: resolveSafetyNote(current, unique) }
+  }
+  if (unique && still) return { kind: "updated", notes: upsertActiveSafetyNote(current, unique) }
+  return { kind: "unchanged" }
+}
+
+function withApplianceLeakNote(
+  current: string | null | undefined,
+  text: string,
+  state?: SmsIntakeState,
+): string | undefined {
+  const predefined = applyReportedSafetyUpdates(current, text, state)
+  const prior = leakSentences(text).slice(0, -1).join(" ")
+  const custom = interpretCustomSafetyReply(predefined, latestSentence(text), prior)
+  if (custom.kind === "updated") return custom.notes
+  return predefined
+}
+
+function appendTenantUpdate(description: string | undefined, answer: string): string {
+  return [description?.trim(), `${TENANT_UPDATE_PREFIX} ${answer}`].filter(Boolean).join("\n")
+}
+
+function chooseCombinedFacet(
+  current: string | null | undefined,
+  answer: string,
+  context: string,
+): CustomSafetyUpdate | null {
+  const active = openConcerns(current)
+  if (active.length !== 1) return null
+  const note = active[0]
+  const known = sameConcern(note, SYSTEM_SAFETY_NOTES.electricalHazard)
+    ? defaultElectricalFacets()
+    : facetsForNote(note, context)
+  const facets = known === "unsure" ? andFacets(note) : known
+  if (!facets || facets.length < 2) return null
+  const bare = answer.replace(/[.!]+$/g, "").trim()
+  if (splitStatusClauses(bare).length > 1) return null
+  const namedSenses = new Set(facets.filter((facet) => sensesOf(bare).has(facet.sense)).map((facet) => facet.sense))
+  if (namedSenses.size > 1) return null
+  const numbered = bare.match(/^(\d+)\b/)
+  const chosen = numbered
+    ? facets[Number(numbered[1]) - 1]
+    : facets.filter((facet) => sensesOf(bare).has(facet.sense)).length === 1
+      ? facets.filter((facet) => sensesOf(bare).has(facet.sense))[0]
+      : undefined
+  if (!chosen) {
+    if (numbered) return { kind: "clarify", question: whichConcernQuestion(facets.map((facet) => facet.label)) }
+    return null
+  }
+  return {
+    kind: "updated",
+    notes: replaceCombinedNote(
+      current,
+      note,
+      facets.filter((facet) => facet.sense !== chosen.sense),
+      [chosen],
+    ),
+  }
+}
+
+function applySafetyStatusChoice(state: SmsIntakeState, answer: string): SmsIntakeState {
+  const active = openConcerns(state.safety_concerns)
+  const bare = answer.replace(/[.!]+$/g, "").trim()
+  const facetChoice = chooseCombinedFacet(state.safety_concerns, bare, tenantAuthoredText(state))
+  if (facetChoice?.kind === "updated") {
+    return applyQuestionPlan({
+      ...state,
+      safety_concerns: facetChoice.notes,
+      description: appendTenantUpdate(state.description, answer),
+      diagnostic_question_type: undefined,
+      diagnostic_question: undefined,
+    })
+  }
+  if (active.length === 0 || /^(?:none|no|n\/a|nothing|nope|nah)$/i.test(bare)) {
+    return applyQuestionPlan({
+      ...state,
+      description: appendTenantUpdate(state.description, answer),
+      diagnostic_question_type: undefined,
+      diagnostic_question: undefined,
+    })
+  }
+  const numbered = bare.match(/^(\d+)\b/)
+  if (!numbered) {
+    const interpreted = interpretCustomSafetyReply(
+      state.safety_concerns,
+      answer,
+      tenantAuthoredText(state),
+    )
+    if (interpreted.kind === "updated") {
+      return applyQuestionPlan({
+        ...state,
+        safety_concerns: interpreted.notes,
+        description: appendTenantUpdate(state.description, answer),
+        diagnostic_question_type: undefined,
+        diagnostic_question: undefined,
+      })
+    }
+    if (interpreted.kind === "clarify") {
+      return {
+        ...state,
+        step: "diagnostic",
+        diagnostic_question_type: "safety_concern_status",
+        diagnostic_question: interpreted.question,
+      }
+    }
+  }
+  const picked = numbered ? active[Number(numbered[1]) - 1] : undefined
+  const matches = picked ? [picked] : bestNoteMatches(active, answer)
+  if (matches.length === 1) {
+    return applyQuestionPlan({
+      ...state,
+      safety_concerns: resolveSafetyNote(state.safety_concerns, matches[0]),
+      description: appendTenantUpdate(state.description, answer),
+      diagnostic_question_type: undefined,
+      diagnostic_question: undefined,
+    })
+  }
+  return {
+    ...state,
+    step: "diagnostic",
+    diagnostic_question_type: "safety_concern_status",
+    diagnostic_question: whichConcernQuestion(active),
+  }
+}
+
+/**
+ * Add a safety-concerns reply without erasing notes already stored.
+ * "None" keeps existing active and resolved lines.
+ */
+export function mergeSafetyConcernAnswer(
+  current: string | null | undefined,
+  answer: string,
+): string | undefined {
+  const trimmed = answer.replace(/\s+/g, " ").trim()
+  if (!trimmed) {
+    const kept = (current ?? "").trim()
+    return kept || undefined
+  }
+  const bare = trimmed.replace(/[.!]+$/g, "")
+  if (/^(?:none|no|n\/a|nothing|nope|nah)$/i.test(bare)) {
+    const kept = (current ?? "").trim()
+    return kept || SYSTEM_SAFETY_NOTES.noneReported
+  }
+  const updated = applyReportedSafetyUpdates(current, trimmed)
+  const custom = interpretCustomSafetyReply(updated, trimmed, current ?? "")
+  if (custom.kind === "updated") return custom.notes
+  if (custom.kind === "handled" || custom.kind === "clarify") return updated
+  if (answerIsKnownConcern(trimmed)) return updated
+  if (uncertainStatusOnly(trimmed)) return updated
+  return upsertActiveSafetyNote(updated, trimmed)
+}
+
+/** Add one safety note without dropping a different concern already stored. */
+function setSafetyNote(
+  current: string | null | undefined,
+  note: string,
+  drop: readonly string[] = [],
+): string {
+  const dropKeys = new Set(drop.map((item) => item.toLowerCase()))
+  if (dropKeys.size === 0) return upsertActiveSafetyNote(current, note)
+  const parsed = parseSafetyNotes(current)
+  const active = parsed.active.filter((item) => !dropKeys.has(item.toLowerCase()))
+  const resolved = parsed.resolved.filter((item) => !dropKeys.has(item.toLowerCase()))
+  return upsertActiveSafetyNote(formatSafetyNotes(active, resolved), note)
+}
+
+function namedAppliance(text: string): { kind: NamedAppliance; label: string } | null {
+  const match = text.match(APPLIANCE_MENTION)
+  const word = match?.[1]?.toLowerCase()
+  if (!word) return null
+  if (word === "freezer") return { kind: "freezer", label: "freezer" }
+  if (word === "dishwasher") return { kind: "dishwasher", label: "dishwasher" }
+  if (word === "washing machine") return { kind: "washer", label: "washing machine" }
+  if (word === "washer") return { kind: "washer", label: "washer" }
+  if (word === "dryer") return { kind: "dryer", label: "dryer" }
+  if (word === "microwave") return { kind: "microwave", label: "microwave" }
+  if (word === "oven") return { kind: "oven", label: "oven" }
+  if (word === "stove") return { kind: "stove", label: "stove" }
+  if (word === "refrigerator") return { kind: "fridge", label: "refrigerator" }
+  return { kind: "fridge", label: "fridge" }
+}
+
+function symptomQuestionFor(kind: NamedAppliance, label: string): string {
+  switch (kind) {
+    case "freezer":
+      return "Is your freezer not cooling, building up frost, not running, or doing something else?"
+    case "fridge":
+      return `Is your ${label} not cooling, leaking, making a loud noise, or doing something else?`
+    case "washer":
+      return `Is your ${label} not starting, not draining, leaking, making a loud noise, or is the door stuck?`
+    case "dryer":
+      return `Is your ${label} not heating, not tumbling, making a loud noise, or doing something else?`
+    case "dishwasher":
+      return `Is your ${label} not starting, not draining, leaking, or doing something else?`
+    case "oven":
+      return `Is your ${label} not heating, not turning on, or doing something else?`
+    case "stove":
+      return `Is your ${label} not heating, not lighting, or doing something else?`
+    case "microwave":
+      return `Is your ${label} not heating, not starting, sparking, or doing something else?`
+  }
+}
+
+/**
+ * Symptom question for this appliance, or null when it should not be asked.
+ * Null covers a non-appliance, water already on the floor, and a symptom
+ * the resident already stated. "Broken" still needs the question.
+ */
+export function applianceSymptomQuestion(input: {
+  tenantText: string
+  categoryText?: string
+}): string | null {
+  const text = input.tenantText.replace(/\s+/g, " ").trim()
+  const category = (input.categoryText ?? "").toLowerCase()
+  const named = namedAppliance(text)
+  const appliance = named != null || category.includes("appliance")
+  if (!appliance) return null
+  // Water on the floor stays its own skip. A plain "it's leaking" is a known
+  // symptom and also skips, but it is not treated as water on the floor.
+  if (APPLIANCE_WATER_ON_FLOOR.test(text)) return null
+  if (reportsActiveApplianceLeak(text)) return null
+  if (STATED_APPLIANCE_SYMPTOM.test(text)) return null
+  if (!named) return GENERIC_APPLIANCE_SYMPTOM_QUESTION
+  return symptomQuestionFor(named.kind, named.label)
 }
 
 function isPest(state: SmsIntakeState, hay: string): boolean {
@@ -351,8 +1729,9 @@ function doorFollowUpsPending(state: SmsIntakeState, hay: string): boolean {
 function knownOverflow(state: SmsIntakeState, hay: string): boolean | null {
   const stored = fact(state, "plumbing_overflow") || fact(state, "toilet_overflow")
   if (stored) {
-    if (isYes(stored)) return true
-    if (isNo(stored)) return false
+    const reading = readWaterFlowAnswer(stored)
+    if (reading === "uncontrolled") return true
+    if (reading === "contained") return false
   }
   if (/\b(?:no|not|without)\s+(?:an?\s+)?(?:active\s+)?overflow(?:ing)?\b/.test(hay)) return false
   if (/\b(overflow(?:ing)?|pouring|gushing|flooding|water everywhere)\b/.test(hay)) return true
@@ -362,8 +1741,9 @@ function knownOverflow(state: SmsIntakeState, hay: string): boolean | null {
 function knownActiveFlow(state: SmsIntakeState, hay: string): boolean | null {
   const stored = fact(state, "plumbing_active_flow")
   if (stored) {
-    if (isYes(stored)) return true
-    if (isNo(stored)) return false
+    const reading = readWaterFlowAnswer(stored)
+    if (reading === "uncontrolled") return true
+    if (reading === "contained") return false
   }
   if (/\b(pouring|gushing|still (?:leaking|flowing)|actively leaking)\b/.test(hay)) return true
   return null
@@ -742,11 +2122,14 @@ function resolveNextMaintenanceQuestion(
     if (q) return q
   }
 
-  if (isAppliance(state, hay) && !/\b(pouring|leaking onto|water on the floor)\b/.test(hay)) {
-    const q = tryAsk(
-      "appliance_symptom",
-      "What happens when you try to start it? For example: won't power on, won't drain, leaking, loud noise, stuck door, or something else.",
-    )
+  const symptomQuestion = applianceSymptomQuestion({
+    tenantText: tenantAuthoredText(state),
+    categoryText: [state.primary_category, state.vendor_trade, state.issue_type]
+      .filter(Boolean)
+      .join(" "),
+  })
+  if (symptomQuestion) {
+    const q = tryAsk("appliance_symptom", symptomQuestion)
     if (q) return q
   }
 
@@ -913,6 +2296,23 @@ function resolveNextMaintenanceQuestion(
 }
 
 export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
+  const authored = tenantAuthoredText(state)
+  const notes = withApplianceLeakNote(state.safety_concerns, authored, state)
+  const prior = leakSentences(authored).slice(0, -1).join(" ")
+  const custom = interpretCustomSafetyReply(notes, latestSentence(authored), prior)
+  state = { ...state, safety_concerns: notes }
+  if (custom.kind === "clarify") {
+    const urgency = recommendUrgency(state)
+    return {
+      ...state,
+      recommended_urgency: urgency,
+      urgency,
+      severity: computeIntakeSeverity({ ...state, urgency }),
+      step: "diagnostic",
+      diagnostic_question_type: "safety_concern_status",
+      diagnostic_question: custom.question,
+    }
+  }
   const rememberedLocationQuestion = state.location_question?.trim() ||
     (state.diagnostic_question_type === "room_or_area" ? state.diagnostic_question?.trim() : "")
   if (rememberedLocationQuestion) {
@@ -1016,8 +2416,55 @@ export function applyDiagnosticAnswer(
 ): SmsIntakeState {
   const type = state.diagnostic_question_type || "general_clarify"
   let answer = body.trim()
+  if (type === "safety_concern_status") return applySafetyStatusChoice(state, answer)
   const askedTypes = [...(state.asked_question_types ?? [])]
   if (!askedTypes.includes(type)) askedTypes.push(type)
+
+  if (
+    type === "plumbing_overflow" ||
+    type === "toilet_overflow" ||
+    type === "plumbing_active_flow"
+  ) {
+    const reading = readWaterFlowAnswer(answer)
+    const duringWater = interpretCustomSafetyReply(
+      state.safety_concerns,
+      answer,
+      tenantAuthoredText(state),
+    )
+    const answersSavedConcern = duringWater.kind === "updated" || duringWater.kind === "clarify"
+    if ((reading === "ambiguous" || reading === "uncertain") && !answersSavedConcern) {
+      const index = askedTypes.indexOf(type)
+      if (index >= 0) askedTypes.splice(index, 1)
+      return {
+        ...state,
+        asked_question_types: askedTypes,
+        step: "diagnostic",
+        diagnostic_question_type: type,
+        diagnostic_question: WATER_FLOW_CLARIFICATION,
+      }
+    }
+  }
+
+  const customReply = interpretCustomSafetyReply(
+    state.safety_concerns,
+    answer,
+    tenantAuthoredText(state),
+  )
+  if (customReply.kind !== "unchanged") {
+    const index = askedTypes.indexOf(type)
+    if (index >= 0) askedTypes.splice(index, 1)
+    const facts = { ...(state.diagnostic_facts ?? {}) }
+    delete facts[type]
+    return applyQuestionPlan({
+      ...state,
+      safety_concerns: customReply.kind === "updated" ? customReply.notes : state.safety_concerns,
+      description: appendTenantUpdate(state.description, answer),
+      diagnostic_facts: facts,
+      asked_question_types: askedTypes,
+      diagnostic_question_type: undefined,
+      diagnostic_question: undefined,
+    })
+  }
 
   if (type === "unit_entry" && isUnitEntryNotSure(answer)) {
     answer = "not_sure"
@@ -1039,12 +2486,22 @@ export function applyDiagnosticAnswer(
   let vendorTrade = state.vendor_trade
 
   if (type === "plumbing_overflow" || type === "toilet_overflow" || type === "plumbing_active_flow") {
-    if (isNo(answer)) safety = SYSTEM_SAFETY_NOTES.overflowNo
-    if (isYes(answer)) safety = SYSTEM_SAFETY_NOTES.overflowYes
+    const reading = readWaterFlowAnswer(answer)
+    if (reading === "contained") {
+      safety = resolveSafetyNote(safety, SYSTEM_SAFETY_NOTES.overflowYes) ?? safety
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.overflowNo)
+    }
+    if (reading === "uncontrolled") {
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.overflowYes, [SYSTEM_SAFETY_NOTES.overflowNo])
+    }
   }
   if (type === "lock_secure") {
-    if (isNo(answer)) safety = SYSTEM_SAFETY_NOTES.cannotSecure
-    if (isYes(answer)) safety = SYSTEM_SAFETY_NOTES.canSecure
+    if (isNo(answer)) {
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.cannotSecure, [SYSTEM_SAFETY_NOTES.canSecure])
+    }
+    if (isYes(answer)) {
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.canSecure, [SYSTEM_SAFETY_NOTES.cannotSecure])
+    }
   }
   if (type === "door_part") {
     const partHay = answer.toLowerCase()
@@ -1058,9 +2515,14 @@ export function applyDiagnosticAnswer(
   }
   if (type === "door_safety") {
     if (/\b(hang|fall|loose|stuck|off)\b/i.test(answer) && !isNo(answer)) {
-      safety = SYSTEM_SAFETY_NOTES.doorAtRisk
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.doorAtRisk, [SYSTEM_SAFETY_NOTES.doorSafe])
     }
-    if (isNo(answer)) safety = safety ?? SYSTEM_SAFETY_NOTES.doorSafe
+    if (
+      isNo(answer) &&
+      !activeSafetyNotes(safety).includes(SYSTEM_SAFETY_NOTES.doorAtRisk)
+    ) {
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.doorSafe, [SYSTEM_SAFETY_NOTES.doorAtRisk])
+    }
   }
   if (type === "hvac_heat_check") {
     if (!askedTypes.includes("hvac_behavior")) askedTypes.push("hvac_behavior")
@@ -1069,19 +2531,21 @@ export function applyDiagnosticAnswer(
     if (behavior) facts.hvac_behavior = behavior
     if (indicatesImmediateHeatDanger(answer)) {
       facts.hvac_immediate_danger = "yes"
-      safety = SYSTEM_SAFETY_NOTES.heatIllness
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.heatIllness)
     }
   }
   if (type === "hvac_dangerous_temp" && isYes(answer)) {
-    safety = SYSTEM_SAFETY_NOTES.dangerousTemp
+    safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.dangerousTemp)
   }
   if (type === "electrical_hazard" && isYes(answer)) {
-    safety = SYSTEM_SAFETY_NOTES.electricalHazard
+    safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.electricalHazard)
   }
   if (type === "structural_risk") {
-    if (/\bwater\b/i.test(answer)) safety = SYSTEM_SAFETY_NOTES.structuralWater
+    if (/\bwater\b/i.test(answer)) {
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.structuralWater)
+    }
     if (/\b(?:sag(?:ging)?|collaps(?:e|ed|ing)?|fall(?:ing)?)\b/i.test(answer)) {
-      safety = SYSTEM_SAFETY_NOTES.structuralCollapse
+      safety = setSafetyNote(safety, SYSTEM_SAFETY_NOTES.structuralCollapse)
     }
   }
   if (type === "item_detail") {
@@ -1115,9 +2579,11 @@ export function applyDiagnosticAnswer(
   if (type === "duration_material") {
     firstNoticed = answer
   }
-  if (type === "appliance_symptom" && /\b(leak|pour|water|floor)\b/i.test(answer)) {
-    safety = SYSTEM_SAFETY_NOTES.applianceLeak
-  }
+  safety = withApplianceLeakNote(
+    safety,
+    `${tenantAuthoredText({ ...state, diagnostic_facts: facts })} ${answer}`,
+    state,
+  )
 
   // Replace clarify-menu / bare-repair seed with the real symptom.
   if (type === "symptom_clarify") {

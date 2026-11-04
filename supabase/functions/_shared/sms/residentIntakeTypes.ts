@@ -29,6 +29,11 @@ import {
 import { issueCategoryToVendorTrade } from "../../../../shared/maintenance/vendorTrades.ts"
 import { interpretBoundAnswer } from "../../../../shared/maintenance/boundAnswer.ts"
 import {
+  activeSafetyNotes,
+  resolvedSafetyNotes,
+  safetyConcernSentence,
+} from "../../../../shared/maintenance/safetyNotes.ts"
+import {
   acceptLocationReply,
   asksOnlyGenerally,
   clarifyIssueLocation,
@@ -244,7 +249,7 @@ function tipInputFromIntakeState(state: SmsIntakeState) {
     vendorTrade: state.vendor_trade,
     text: [state.initial_message, state.description].filter(Boolean).join(" "),
     diagnosticFacts: state.diagnostic_facts,
-    safetyConcerns: state.safety_concerns,
+    safetyConcerns: activeSafetyNotes(state.safety_concerns).join("\n") || null,
   }
 }
 
@@ -1006,10 +1011,16 @@ export function buildIntakeDescription(state: SmsIntakeState): string {
   if (itemDetail && itemDetail !== "not_sure") {
     parts.push(`Item: ${itemDetail}.`)
   }
-  const safetyLine = state.safety_concerns?.trim()
-    ? safetyConfirmationSentence(state.safety_concerns, tenantAuthoredText(state))
-    : null
-  if (safetyLine) parts.push(safetyLine)
+  const safetyAuthored = tenantAuthoredText(state)
+  for (const note of activeSafetyNotes(state.safety_concerns)) {
+    if (!isCleanDiagnosticFact(note, state)) continue
+    const safetyLine = safetyConfirmationSentence(note, safetyAuthored)
+    if (safetyLine) parts.push(safetyLine)
+  }
+  for (const note of resolvedSafetyNotes(state.safety_concerns)) {
+    const safetyLine = safetyConcernSentence(note, "resolved")
+    if (safetyLine) parts.push(safetyLine)
+  }
   if (state.first_noticed?.trim()) {
     parts.push(`First noticed: ${state.first_noticed.trim()}.`)
   }
@@ -1043,8 +1054,8 @@ function narrativeSummary(state: SmsIntakeState): string {
   }).replace(/^an?\s+/i, "")
   if (phrase && !/^maintenance issue$/i.test(phrase)) {
     const room = resolveRoomLabel(state)
-    const safety = state.safety_concerns?.trim()
-    const hasSafety = safety && !/^(no|none|n\/a|nothing)/i.test(safety)
+    const safety = activeSafetyText(state)
+    const hasSafety = Boolean(safety)
     const base = phrase.charAt(0).toUpperCase() + phrase.slice(1)
     if (room && !phrase.toLowerCase().includes(room.toLowerCase())) {
       return `${base} in the ${room}${hasSafety ? `: ${safety}` : "."}`
@@ -1053,8 +1064,8 @@ function narrativeSummary(state: SmsIntakeState): string {
   }
 
   const room = resolveRoomLabel(state)
-  const safety = state.safety_concerns?.trim()
-  const hasSafety = safety && !/^(no|none|n\/a|nothing)/i.test(safety)
+  const safety = activeSafetyText(state)
+  const hasSafety = Boolean(safety)
 
   if (room) {
     return `There is a ${formatIssueTypeLabel(state.issue_type).toLowerCase()} issue in the ${room}${hasSafety ? `: ${safety}` : "."}`
@@ -1125,26 +1136,20 @@ function statedWellnessSentence(text: string): string | null {
   return null
 }
 
+function activeSafetyText(state: SmsIntakeState): string {
+  const notes = activeSafetyNotes(state.safety_concerns).filter(
+    (note) => !/^(no|none|n\/a|nothing)$/i.test(note),
+  )
+  return notes.join(". ")
+}
+
 function safetyConfirmationSentence(note: string, authored: string): string | null {
   const trimmed = note.trim()
   if (!trimmed || trimmed === SYSTEM_SAFETY_NOTES.noneReported) return null
   if (trimmed === SYSTEM_SAFETY_NOTES.heatIllness) {
     return statedWellnessSentence(authored)
   }
-  const known: Record<string, string> = {
-    [SYSTEM_SAFETY_NOTES.overflowNo]: "Water is not actively overflowing.",
-    [SYSTEM_SAFETY_NOTES.overflowYes]: "Water is actively overflowing or leaking.",
-    [SYSTEM_SAFETY_NOTES.cannotSecure]: "The home cannot be secured.",
-    [SYSTEM_SAFETY_NOTES.canSecure]: "The home can be secured.",
-    [SYSTEM_SAFETY_NOTES.doorAtRisk]: "The door may be stuck, hanging loose, or at risk of falling.",
-    [SYSTEM_SAFETY_NOTES.doorSafe]: "The door is not hanging or at risk of falling.",
-    [SYSTEM_SAFETY_NOTES.dangerousTemp]: "The temperature in the home feels dangerous.",
-    [SYSTEM_SAFETY_NOTES.electricalHazard]: "Sparks, smoke, or a burning smell were reported.",
-    [SYSTEM_SAFETY_NOTES.structuralWater]: "Water is coming through the damaged area.",
-    [SYSTEM_SAFETY_NOTES.structuralCollapse]: "There may be sagging or a risk of collapse.",
-    [SYSTEM_SAFETY_NOTES.applianceLeak]: "The appliance is leaking water.",
-  }
-  return known[trimmed] ?? finishSentence(trimmed)
+  return safetyConcernSentence(trimmed, "active") ?? finishSentence(trimmed)
 }
 
 function factConfirmationSentence(key: string, value: string): string | null {
@@ -1326,10 +1331,13 @@ export function confirmationDetailLines(state: SmsIntakeState): string[] {
   if (temp != null) add(`The indoor temperature is ${temp}°F.`)
   add(statedWellnessSentence(authored))
 
-  const safety = state.safety_concerns?.trim()
-  if (safety && isCleanDiagnosticFact(safety, state)) {
-    const line = safetyConfirmationSentence(safety, authored)
+  for (const note of activeSafetyNotes(state.safety_concerns)) {
+    if (!isCleanDiagnosticFact(note, state)) continue
+    const line = safetyConfirmationSentence(note, authored)
     if (line && line !== statedWellnessSentence(authored)) add(line)
+  }
+  for (const note of resolvedSafetyNotes(state.safety_concerns)) {
+    add(safetyConcernSentence(note, "resolved"))
   }
 
   for (const key of [
@@ -1515,7 +1523,13 @@ export function buildConfirmationSummary(
     }
   } else {
     const clarification = confirmationClarification(state)
-    issueLines.push(clarification || confirmationIssueLine(state))
+    const issue = clarification || confirmationIssueLine(state)
+    const resolved = resolvedSafetyNotes(state.safety_concerns)
+    issueLines.push(
+      resolved.length > 0 && issue && !/^reported:/i.test(issue)
+        ? `Reported: ${issue}`
+        : issue,
+    )
   }
 
   const handlingTip = options?.handlingTip !== undefined
@@ -1587,8 +1601,19 @@ export function buildConfirmationSummary(
 }
 
 /** Shared tip resolver for submit / urgency SMS builders. */
+function resolvedConcernStatus(state: SmsIntakeState): string {
+  return resolvedSafetyNotes(state.safety_concerns)
+    .map((note) => safetyConcernSentence(note, "resolved"))
+    .filter((line): line is string => Boolean(line))
+    .join(" ")
+}
+
 export function intakeCategoryHandlingTip(state: SmsIntakeState): string | null {
-  return resolveCategoryHandlingTip(tipInputFromIntakeState(state))
+  const tip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
+  const status = resolvedConcernStatus(state)
+  if (!tip) return status || null
+  if (!status) return tip
+  return `${status}\n\n${tip}`
 }
 
 /** Short category word for SMS (“plumbing”, “HVAC”). */

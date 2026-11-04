@@ -57,7 +57,6 @@ import {
   SEED_LOOKBACK_MINUTES,
 } from "./clarifyMenuIntakeSeed.ts"
 import {
-  SYSTEM_SAFETY_NOTES,
   TENANT_UPDATE_PREFIX,
   tenantAuthoredText,
 } from "./intakeSystemText.ts"
@@ -65,6 +64,7 @@ import {
   applyDiagnosticAnswer,
   applyQuestionPlan,
   markQuestionAsked,
+  mergeSafetyConcernAnswer,
 } from "./determineNextMaintenanceQuestion.ts"
 import { attachPriorRelatedTicket } from "./priorRelatedTicket.ts"
 import {
@@ -979,7 +979,10 @@ function applyStepAnswer(
       next.first_noticed = answer
       return { ok: true, state: applyQuestionPlan(next) }
     case "safety_concerns":
-      next.safety_concerns = /^none$/i.test(answer) ? SYSTEM_SAFETY_NOTES.noneReported : answer
+      next.safety_concerns = mergeSafetyConcernAnswer(state.safety_concerns, answer)
+      next.description = [next.description?.trim(), `${TENANT_UPDATE_PREFIX} ${answer}`]
+        .filter(Boolean)
+        .join("\n")
       return { ok: true, state: applyQuestionPlan(next) }
     case "urgency":
       next.description = [next.description, `${TENANT_UPDATE_PREFIX} ${answer}`].filter(Boolean).join("\n")

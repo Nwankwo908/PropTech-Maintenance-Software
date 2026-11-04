@@ -4,6 +4,7 @@
  * opening when the resident updated what is wrong.
  */
 import { parseIntakeDescriptionParts } from "./intakeDescriptionParse.ts"
+import { parseSafetyNotes, safetyConcernSentence } from "./safetyNotes.ts"
 import {
   interpretConfirmedLocation,
   problemSentence,
@@ -29,19 +30,6 @@ const PERMISSION_ONLY =
 
 const PROBLEM_UPDATE =
   /\b(?:won't|wont|can't|cannot|isn't|isnt|not working|leak(?:ing)?|drip(?:ping)?|smell|spark(?:ing)?|broken|clog(?:ged)?|flood(?:ing)?|turn on|no heat|no (?:hot )?water|running)\b/i
-
-const SAFETY_FOR_VENDOR: Record<string, string> = {
-  "Water is actively overflowing or leaking": "Water is actively overflowing or leaking.",
-  "Unable to secure the home": "The home cannot be secured.",
-  "Door may be stuck, hanging loose, or at risk of falling":
-    "The door may be stuck, hanging loose, or at risk of falling.",
-  "Home is becoming dangerously hot or cold": "The temperature in the home feels dangerous.",
-  "Someone in the home may be unwell from the heat": "Someone in the home feels unwell.",
-  "Sparks, smoke, or burning smell reported": "Sparks, smoke, or a burning smell were reported.",
-  "Water coming through structural damage": "Water is coming through the damaged area.",
-  "Possible collapse or sagging": "There may be sagging or a risk of collapse.",
-  "Appliance leaking water": "The appliance is leaking water.",
-}
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim()
@@ -124,10 +112,12 @@ function factLine(key: string, value: string): string | null {
 }
 
 function safetyLine(value: string | null | undefined): string | null {
-  const trimmed = clean(value)
-  if (!trimmed) return null
-  if (/^(?:none|no|n\/a|nothing|none reported)$/i.test(trimmed)) return null
-  return SAFETY_FOR_VENDOR[trimmed] ?? null
+  const parsed = parseSafetyNotes(value)
+  const lines = [
+    ...parsed.active.map((note) => safetyConcernSentence(note, "active")),
+    ...parsed.resolved.map((note) => safetyConcernSentence(note, "resolved")),
+  ].filter((line): line is string => Boolean(line))
+  return lines.length > 0 ? lines.join(" ") : null
 }
 
 function usablePlace(value: string): string {
@@ -202,6 +192,10 @@ export function composeVendorJobOfferIssue(input: VendorJobOfferInput): string |
     }
     const line = factLine(key, value ?? "")
     if (line) details.push(line)
+  }
+  const resolvedNotes = parseSafetyNotes(input.safetyConcern).resolved
+  if (resolvedNotes.length > 0 && problem && !/^reported:/i.test(problem)) {
+    problem = `Reported: ${problem}`
   }
   const safety = safetyLine(input.safetyConcern)
   if (safety) details.push(safety)

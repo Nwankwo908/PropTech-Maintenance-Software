@@ -4,6 +4,7 @@
  * Keep copy plain-language (Ulo writing standard) — no jargon or IDs.
  */
 import { matchesWaterOutage } from './deterministicRules.ts'
+import { activeSafetyNotes } from './safetyNotes.ts'
 import { indicatesImmediateHeatDanger, isGasEmergencyText } from './urgencyPolicy.ts'
 
 export type CategoryHandlingTipInput = {
@@ -15,6 +16,10 @@ export type CategoryHandlingTipInput = {
   safetyConcerns?: string | null
 }
 
+function activeConcernText(value: string | null | undefined): string {
+  return activeSafetyNotes(value).join(" ")
+}
+
 function haystack(input: CategoryHandlingTipInput): string {
   const facts = input.diagnosticFacts
     ? Object.values(input.diagnosticFacts).join(" ")
@@ -24,7 +29,7 @@ function haystack(input: CategoryHandlingTipInput): string {
     input.issueType,
     input.vendorTrade,
     input.text,
-    input.safetyConcerns,
+    activeConcernText(input.safetyConcerns),
     facts,
   ]
     .filter(Boolean)
@@ -101,12 +106,12 @@ function residentIsUnwell(input: CategoryHandlingTipInput): boolean {
   if ((input.diagnosticFacts?.hvac_immediate_danger ?? "").trim().toLowerCase() === "yes") {
     return true
   }
-  if (/someone in the home may be unwell from the heat/i.test(input.safetyConcerns ?? "")) {
+  if (/someone in the home may be unwell from the heat/i.test(activeConcernText(input.safetyConcerns))) {
     return true
   }
   const text = [
     input.text,
-    input.safetyConcerns,
+    activeConcernText(input.safetyConcerns),
     ...Object.values(input.diagnosticFacts ?? {}),
   ].filter(Boolean).join(" ")
   return indicatesImmediateHeatDanger(text)

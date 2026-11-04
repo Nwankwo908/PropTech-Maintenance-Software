@@ -27,6 +27,9 @@ export const SYSTEM_SAFETY_NOTES = {
   dangerousTemp: "Home is becoming dangerously hot or cold",
   heatIllness: "Someone in the home may be unwell from the heat",
   electricalHazard: "Sparks, smoke, or burning smell reported",
+  sparksReported: "Sparks reported",
+  smokeReported: "Smoke reported",
+  burningSmellReported: "Burning smell reported",
   structuralWater: "Water coming through structural damage",
   structuralCollapse: "Possible collapse or sagging",
   applianceLeak: "Appliance leaking water",
@@ -39,6 +42,7 @@ export const SYSTEM_SAFETY_NOTES = {
  */
 export const INTAKE_SYSTEM_TEXT: readonly string[] = [
   TENANT_UPDATE_PREFIX,
+  "Resolved: ",
   ...Object.values(SYSTEM_SAFETY_NOTES),
 ]
 
