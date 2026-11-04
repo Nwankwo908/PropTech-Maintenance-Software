@@ -137,12 +137,15 @@ async function checkPlaybackCopies(
     if (!needsBrowserVideoConversion(ref)) return
     const sibling = playbackSiblingPath(ref)
     const playbackUrl = sibling ? signedByPath.get(sibling) : undefined
-    const playbackReady = playbackUrl ? await bytesLookLikeMp4(playbackUrl) : false
     let status: PlaybackStatusRecord['status'] | null = null
-    if (!playbackReady) {
-      const statusPath = playbackStatusPath(ref)
-      const record = await readPlaybackStatus(statusPath ? signedByPath.get(statusPath) : undefined)
-      status = record?.status ?? null
+    const statusPath = playbackStatusPath(ref)
+    const record = await readPlaybackStatus(statusPath ? signedByPath.get(statusPath) : undefined)
+    status = record?.status ?? null
+    // Prefer the saved ready status. Fall back to a byte probe only when status is unknown.
+    // A successful sign alone is not enough — createSignedUrl can mint a URL for a missing object.
+    let playbackReady = status === 'ready' && Boolean(playbackUrl)
+    if (!playbackReady && playbackUrl && status == null) {
+      playbackReady = await bytesLookLikeMp4(playbackUrl)
     }
     checked.set(ref, { playbackReady, status })
   }))
