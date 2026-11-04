@@ -145,6 +145,8 @@ export async function setAdminConversationTakeover(
     }
   } else {
     delete intake[ADMIN_TAKEOVER_KEY]
+    // Returning the thread means Ulo answers the next reply, even after a staff question.
+    delete intake[AWAITING_STAFF_REPLY_KEY]
   }
 
   const patchErr = await patchIntakeState(supabase, conversation, intake)

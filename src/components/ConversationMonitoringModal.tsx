@@ -484,6 +484,7 @@ export function ConversationMonitoringBody({
   composeDraft = '',
   onComposeDraftChange,
   onSendCompose,
+  onSendAndReturn,
   sendingCompose = false,
   composeError = null,
   onEstimateDecided,
@@ -508,6 +509,8 @@ export function ConversationMonitoringBody({
   composeDraft?: string
   onComposeDraftChange?: (value: string) => void
   onSendCompose?: () => void
+  /** Send, then hand the thread back to Ulo so it answers the reply. */
+  onSendAndReturn?: () => void
   sendingCompose?: boolean
   composeError?: string | null
   onEstimateDecided?: () => void
@@ -857,7 +860,20 @@ export function ConversationMonitoringBody({
                 )}
               </button>
             </div>
+            <p className="text-[12px] leading-4 text-[#6a7282]">
+              Ulo is paused on this thread. Replies come to you until you return it to Ulo.
+            </p>
             <div className="flex flex-wrap items-center gap-2">
+              {onSendAndReturn ? (
+                <button
+                  type="button"
+                  disabled={sendingCompose || releasingTakeover || !composeDraft.trim()}
+                  onClick={() => onSendAndReturn()}
+                  className="sa-press inline-flex items-center gap-2 rounded-full bg-[#186179] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#145066] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+                >
+                  {sendingCompose ? 'Sending…' : 'Send & return to Ulo'}
+                </button>
+              ) : null}
               <button
                 type="button"
                 disabled={releasingTakeover}
@@ -1099,6 +1115,24 @@ export function ConversationMonitoringPanel({
     }
   }
 
+  async function handleSendAndReturn() {
+    const trimmed = composeDraft.trim()
+    if (!trimmed || sendingCompose || releasingTakeover || !conversationId) return
+    setComposeError(null)
+    setSendingCompose(true)
+    try {
+      await sendConversationSms(conversationId, trimmed)
+      setComposeDraft('')
+      await releaseConversationTakeover(conversationId)
+      await loadConversation({ showLoading: false })
+    } catch (err) {
+      setComposeError(getErrorMessage(err, 'Could not send and return this conversation to Ulo.'))
+      await loadConversation({ showLoading: false })
+    } finally {
+      setSendingCompose(false)
+    }
+  }
+
   async function handleSendCompose() {
     const trimmed = composeDraft.trim()
     if (!trimmed || sendingCompose || !conversationId) return
@@ -1146,6 +1180,7 @@ export function ConversationMonitoringPanel({
         composeDraft={composeDraft}
         onComposeDraftChange={setComposeDraft}
         onSendCompose={() => void handleSendCompose()}
+        onSendAndReturn={() => void handleSendAndReturn()}
         sendingCompose={sendingCompose}
         composeError={composeError}
         onEstimateDecided={() => void loadConversation({ showLoading: false })}
