@@ -9,6 +9,11 @@ import {
   playbackSiblingPath,
   type SmsMediaItem,
 } from '@shared/sms/media.ts'
+import {
+  choosePlaybackPreview,
+  playbackStatusPath,
+  type PlaybackStatusRecord,
+} from '@shared/sms/videoPlayback.ts'
 
 export type { SmsMediaItem, SmsMediaKind } from '@shared/sms/media.ts'
 export {
@@ -61,57 +66,87 @@ async function signStoragePaths(paths: string[]): Promise<Map<string, string>> {
   return signed
 }
 
+async function bytesLookLikeMp4(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { headers: { Range: 'bytes=0-31' } })
+    if (!(res.ok || res.status === 206)) return false
+    const head = new TextDecoder().decode(new Uint8Array(await res.arrayBuffer()))
+    return head.includes('ftyp')
+  } catch {
+    return false
+  }
+}
+
+async function readPlaybackStatus(url: string | undefined): Promise<PlaybackStatusRecord | null> {
+  if (!url) return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const body = (await res.json()) as PlaybackStatusRecord
+    if (body?.status === 'processing' || body?.status === 'failed' || body?.status === 'ready') {
+      return body
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 function itemsFromRefs(
   refs: string[],
   signedByPath: Map<string, string>,
+  checked: Map<string, { playbackReady: boolean; status: PlaybackStatusRecord['status'] | null }>,
 ): SmsMediaItem[] {
   const items: SmsMediaItem[] = []
   for (const ref of refs) {
     const kind = mediaKindFromRef(ref)
     const label = attachmentNoun(kind)
     const sibling = playbackSiblingPath(ref)
-    const playbackUrl = sibling ? signedByPath.get(sibling) : undefined
+    const playbackUrl = sibling ? signedByPath.get(sibling) || '' : ''
     const storedUrl = isStorageMediaPath(ref) ? signedByPath.get(ref) : undefined
     const publicUrl = !isStorageMediaPath(ref) && isHttpUrl(ref) && !isProviderAuthMediaUrl(ref)
       ? ref
       : undefined
     const downloadUrl = storedUrl || publicUrl || ''
-
-    if (needsBrowserVideoConversion(ref)) {
-      if (playbackUrl) {
-        items.push({
-          url: playbackUrl,
-          downloadUrl: downloadUrl || playbackUrl,
-          kind,
-          label,
-          previewStatus: 'ready',
-        })
-      } else {
-        items.push({
-          url: downloadUrl,
-          downloadUrl,
-          kind,
-          label,
-          previewStatus: 'unavailable',
-        })
-      }
-      continue
-    }
-
-    if (downloadUrl) {
-      items.push({ url: downloadUrl, downloadUrl, kind, label, previewStatus: 'ready' })
-      continue
-    }
-
+    const extra = checked.get(ref)
+    const chosen = choosePlaybackPreview({
+      needsConversion: needsBrowserVideoConversion(ref),
+      playbackReady: extra?.playbackReady === true,
+      playbackUrl,
+      downloadUrl,
+      status: extra?.status ?? null,
+    })
     items.push({
-      url: '',
-      downloadUrl: '',
+      url: chosen.url,
+      downloadUrl: chosen.downloadUrl,
       kind,
       label,
-      previewStatus: 'unavailable',
+      previewStatus: chosen.previewStatus,
+      ...(isStorageMediaPath(ref) ? { storagePath: ref } : {}),
     })
   }
   return items
+}
+
+async function checkPlaybackCopies(
+  refs: string[],
+  signedByPath: Map<string, string>,
+): Promise<Map<string, { playbackReady: boolean; status: PlaybackStatusRecord['status'] | null }>> {
+  const checked = new Map<string, { playbackReady: boolean; status: PlaybackStatusRecord['status'] | null }>()
+  await Promise.all(refs.map(async (ref) => {
+    if (!needsBrowserVideoConversion(ref)) return
+    const sibling = playbackSiblingPath(ref)
+    const playbackUrl = sibling ? signedByPath.get(sibling) : undefined
+    const playbackReady = playbackUrl ? await bytesLookLikeMp4(playbackUrl) : false
+    let status: PlaybackStatusRecord['status'] | null = null
+    if (!playbackReady) {
+      const statusPath = playbackStatusPath(ref)
+      const record = await readPlaybackStatus(statusPath ? signedByPath.get(statusPath) : undefined)
+      status = record?.status ?? null
+    }
+    checked.set(ref, { playbackReady, status })
+  }))
+  return checked
 }
 
 /** Resolve stored MMS refs into browser-safe signed URLs (skips Twilio). */
@@ -122,8 +157,12 @@ export async function resolveSmsMediaItems(refs: unknown): Promise<SmsMediaItem[
   const siblings = stored
     .map((path) => playbackSiblingPath(path))
     .filter((path): path is string => Boolean(path))
-  const signedByPath = await signStoragePaths([...stored, ...siblings])
-  return itemsFromRefs(list, signedByPath)
+  const statusPaths = stored
+    .map((path) => playbackStatusPath(path))
+    .filter((path): path is string => Boolean(path))
+  const signedByPath = await signStoragePaths([...stored, ...siblings, ...statusPaths])
+  const checked = await checkPlaybackCopies(list, signedByPath)
+  return itemsFromRefs(list, signedByPath, checked)
 }
 
 export async function resolveSmsMediaForMessages(
@@ -136,6 +175,10 @@ export async function resolveSmsMediaForMessages(
   const siblings = stored
     .map((path) => playbackSiblingPath(path))
     .filter((path): path is string => Boolean(path))
-  const signedByPath = await signStoragePaths([...stored, ...siblings])
-  return refsByMessage.map((refs) => itemsFromRefs(refs, signedByPath))
+  const statusPaths = stored
+    .map((path) => playbackStatusPath(path))
+    .filter((path): path is string => Boolean(path))
+  const signedByPath = await signStoragePaths([...stored, ...siblings, ...statusPaths])
+  const checked = await checkPlaybackCopies(unique, signedByPath)
+  return refsByMessage.map((refs) => itemsFromRefs(refs, signedByPath, checked))
 }

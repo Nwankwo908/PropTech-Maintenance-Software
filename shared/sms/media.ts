@@ -2,8 +2,13 @@
 
 export type SmsMediaKind = 'image' | 'video' | 'document' | 'audio'
 
-/** ready = the browser can show or play it. unavailable = keep the message, offer download. */
-export type SmsMediaPreviewStatus = 'ready' | 'unavailable'
+/**
+ * ready = the browser can show or play it.
+ * processing = a playable copy is being made.
+ * failed = conversion did not produce a playable copy.
+ * unavailable = no playable copy yet. The message still stays visible.
+ */
+export type SmsMediaPreviewStatus = 'ready' | 'processing' | 'failed' | 'unavailable'
 
 export type SmsMediaItem = {
   url: string
@@ -11,6 +16,8 @@ export type SmsMediaItem = {
   previewStatus?: SmsMediaPreviewStatus
   downloadUrl?: string
   label?: string
+  /** Private storage path of the original. Playback copies are never stored here. */
+  storagePath?: string
 }
 
 const VIDEO_EXT = /\.(mp4|m4v|mov|webm|3gp|3gpp)(?:$|[?#])/i

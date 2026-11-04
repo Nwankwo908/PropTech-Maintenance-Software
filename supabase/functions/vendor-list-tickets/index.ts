@@ -11,6 +11,7 @@ import {
   propertyAccessMappedHasContent,
   type PropertyAccessMapped,
 } from "../_shared/propertyAccessProfile.ts"
+import { playbackSiblingPath } from "../../../shared/sms/media.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -39,23 +40,56 @@ function bearerKey(req: Request): string | null {
 
 const SIGNED_URL_TTL_SEC = 3600
 
-/** Signed GET URLs for `maintenance-uploads` paths (private bucket). */
+async function storageObjectExists(
+  supabase: SupabaseClient,
+  objectPath: string,
+): Promise<boolean> {
+  const slash = objectPath.lastIndexOf("/")
+  if (slash <= 0) return false
+  const folder = objectPath.slice(0, slash)
+  const name = objectPath.slice(slash + 1)
+  const { data, error } = await supabase.storage
+    .from("maintenance-uploads")
+    .list(folder, { search: name })
+  if (error || !Array.isArray(data)) return false
+  return data.some((row) => row.name === name)
+}
+
+async function signUpload(
+  supabase: SupabaseClient,
+  objectPath: string,
+): Promise<string | null> {
+  const { data, error } = await supabase.storage
+    .from("maintenance-uploads")
+    .createSignedUrl(objectPath, SIGNED_URL_TTL_SEC)
+  if (error || !data?.signedUrl) {
+    console.error("[vendor-list-tickets] signed url", objectPath, error)
+    return null
+  }
+  return data.signedUrl
+}
+
+/**
+ * Signed GET URLs for `maintenance-uploads` paths (private bucket).
+ * A playable sibling is used for the preview when one has been saved.
+ * The original file stays the download URL.
+ */
 async function photoSignedUrls(
   supabase: SupabaseClient,
   paths: unknown,
-): Promise<string[]> {
+): Promise<{ preview: string; original: string }[]> {
   if (!Array.isArray(paths) || paths.length === 0) return []
-  const urls: string[] = []
+  const urls: { preview: string; original: string }[] = []
   for (const p of paths) {
     if (typeof p !== "string" || !p.trim()) continue
-    const { data, error } = await supabase.storage
-      .from("maintenance-uploads")
-      .createSignedUrl(p.trim(), SIGNED_URL_TTL_SEC)
-    if (error) {
-      console.error("[vendor-list-tickets] signed url", p, error)
-      continue
-    }
-    if (data?.signedUrl) urls.push(data.signedUrl)
+    const originalPath = p.trim()
+    const original = await signUpload(supabase, originalPath)
+    if (!original) continue
+    const sibling = playbackSiblingPath(originalPath)
+    const playback = sibling && await storageObjectExists(supabase, sibling)
+      ? await signUpload(supabase, sibling)
+      : null
+    urls.push({ preview: playback || original, original })
   }
   return urls
 }
@@ -318,8 +352,9 @@ serve(async (req) => {
         building: building,
         building_address,
         property_access,
-        photo_urls,
-        completion_photo_urls,
+        photo_urls: photo_urls.map((item) => item.preview),
+        photo_original_urls: photo_urls.map((item) => item.original),
+        completion_photo_urls: completion_photo_urls.map((item) => item.preview),
         completion_photo_count: Math.max(
           completionPaths.length,
           completion_photo_urls.length,

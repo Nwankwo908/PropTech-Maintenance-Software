@@ -29,6 +29,7 @@ import {
 } from "./inboundHandlerRegistry.ts"
 import { loadAdminTakeoverActive } from "./adminConversationControl.ts"
 import { tryInboundAttachmentFollowUp } from "./inboundAttachmentFollowUp.ts"
+import { kickSmsVideoPlayback } from "./kickSmsVideoPlayback.ts"
 import { tryHandleInterpretedInbound } from "./inboundInterpretationAct.ts"
 import {
   InboundSmsError,
@@ -184,6 +185,12 @@ async function persistRehostedInboundMedia(
       return
     }
     params.inbound.mediaUrls = rehosted
+    const kick = kickSmsVideoPlayback(rehosted)
+    const runtime = (globalThis as {
+      EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void }
+    }).EdgeRuntime
+    if (runtime?.waitUntil) runtime.waitUntil(kick)
+    else void kick
   } catch (e) {
     console.error("[sms-inbound] media rehost failed", e)
   }

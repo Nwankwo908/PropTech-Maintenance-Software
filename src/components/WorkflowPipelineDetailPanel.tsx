@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConversationMonitoringBody } from '@/components/ConversationMonitoringModal'
+import { SmsAttachmentCard } from '@/components/SmsAttachmentCard'
 import { WorkflowStageMoveDialogs } from '@/components/workflowKanban/WorkflowStageMoveDialogs'
 import { useWorkflowStageMove } from '@/components/workflowKanban/useWorkflowStageMove'
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
@@ -130,17 +131,20 @@ function WorkOrderPhotosSection({
             key={`${attachment.name}-${attachment.url ?? attachment.sizeLabel}`}
             className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-[#fafafa]"
           >
-            {attachment.url && attachment.kind === 'video' && attachment.previewStatus !== 'unavailable' ? (
-              <div className="aspect-[4/3] overflow-hidden bg-[#0a0a0a]">
-                <video
-                  src={attachment.url}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="size-full object-contain"
+            {attachment.kind === 'video' || attachment.kind === 'audio' || attachment.kind === 'document' || (attachment.previewStatus && attachment.previewStatus !== 'ready') ? (
+              <div className="flex aspect-[4/3] items-center justify-center bg-[#fafafa] p-3">
+                <SmsAttachmentCard
+                  item={{
+                    url: attachment.url || '',
+                    downloadUrl: attachment.downloadUrl,
+                    kind: attachment.kind,
+                    label: attachment.kind === 'video' ? 'Video' : attachment.kind === 'audio' ? 'Audio' : attachment.kind === 'document' ? 'Document' : 'Photo',
+                    previewStatus: attachment.previewStatus ?? 'unavailable',
+                    storagePath: attachment.storagePath,
+                  }}
                 />
               </div>
-            ) : attachment.url && attachment.kind === 'image' && attachment.previewStatus !== 'unavailable' ? (
+            ) : attachment.url && attachment.kind === 'image' && (attachment.previewStatus ?? 'ready') === 'ready' ? (
               <a
                 href={attachment.url}
                 target="_blank"
@@ -170,9 +174,13 @@ function WorkOrderPhotosSection({
                 <p className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-[#364153]">{attachment.caption}</p>
               ) : null}
               <p className="mt-1 text-[11px] text-[#6a7282]">
-                {attachment.previewStatus === 'unavailable'
-                  ? 'Preview isn\'t available. The original file is still saved.'
-                  : attachment.sizeLabel}
+                {attachment.previewStatus === 'processing'
+                  ? 'Preparing a version you can play. The original file is still saved.'
+                  : attachment.previewStatus === 'failed'
+                    ? "We couldn't prepare a preview. The original file is still saved."
+                    : attachment.previewStatus === 'unavailable'
+                      ? "Preview isn't available yet. The original file is still saved."
+                      : attachment.sizeLabel}
               </p>
               {attachment.downloadUrl || attachment.url ? (
                 <a

@@ -74,6 +74,8 @@ export type VendorWorkOrder = {
   slaOverdue?: boolean
   /** Thumbnail URLs for assigned detail (demo). */
   attachmentPreviews?: string[]
+  /** Original files when a preview is a converted copy. */
+  attachmentOriginalUrls?: string[]
   /** Present when row comes from Supabase vendor API. */
   vendorDbStatus?: VendorDbWorkStatus
   /** Allowlisted `issue_category` slug when loaded from the vendor API. */
@@ -259,6 +261,13 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
     location: buildingAddress || unitStr || 'Address pending',
     attachmentCount: Math.max(photos.length, signedPreviews.length),
     ...(signedPreviews.length > 0 ? { attachmentPreviews: signedPreviews } : {}),
+    ...((t.photo_original_urls ?? []).some((url) => typeof url === 'string' && url.length > 0)
+      ? {
+          attachmentOriginalUrls: (t.photo_original_urls ?? []).filter(
+            (url): url is string => typeof url === 'string' && url.length > 0,
+          ),
+        }
+      : {}),
     priority: mapUrgencyToPriority(t.urgency || t.priority),
     column: mapVendorStatusToColumn(t.vendor_work_status),
     description: desc,
@@ -681,7 +690,7 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
   const completionUrls = (order.completionPhotoUrls ?? []).filter(
     (u): u is string => typeof u === 'string' && u.length > 0,
   )
-  const [lightbox, setLightbox] = useState<{ src: string; isVideo: boolean } | null>(null)
+  const [lightbox, setLightbox] = useState<{ src: string; original: string; isVideo: boolean } | null>(null)
 
   useEffect(() => {
     if (!lightbox) return
@@ -692,8 +701,8 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [lightbox])
 
-  function openLightbox(src: string) {
-    setLightbox({ src, isVideo: isProbablyVideoAssetUrl(src) })
+  function openLightbox(src: string, original?: string) {
+    setLightbox({ src, original: original || src, isVideo: isProbablyVideoAssetUrl(src) })
   }
 
   return (
@@ -783,11 +792,12 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
                   key={`${order.id}-att-${i}`}
                   type="button"
                   onClick={() => {
+                    const original = order.attachmentOriginalUrls?.[i]
                     if (isUnplayableVideoUrl(src)) {
-                      window.open(src, '_blank', 'noopener,noreferrer')
+                      window.open(original || src, '_blank', 'noopener,noreferrer')
                       return
                     }
-                    openLightbox(src)
+                    openLightbox(src, original)
                   }}
                   className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#0030b5]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 active:scale-[0.99]"
                   aria-label={`Expand resident photo ${i + 1}`}
@@ -869,16 +879,24 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
                 src={lightbox.src}
                 controls
                 playsInline
-                className="max-h-[min(90vh,900px)] w-full rounded-lg bg-black object-contain"
+                className="max-h-[min(80vh,900px)] w-full rounded-lg bg-black object-contain"
                 preload="metadata"
               />
             ) : (
               <img
                 src={lightbox.src}
                 alt=""
-                className="max-h-[min(90vh,900px)] w-full rounded-lg object-contain"
+                className="max-h-[min(80vh,900px)] w-full rounded-lg object-contain"
               />
             )}
+            <a
+              href={lightbox.original}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 block text-center text-[13px] font-semibold text-white underline"
+            >
+              {lightbox.original === lightbox.src ? 'Download' : 'Open original'}
+            </a>
           </div>
         </div>
       ) : null}

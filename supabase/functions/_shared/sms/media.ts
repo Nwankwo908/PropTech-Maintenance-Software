@@ -5,6 +5,7 @@ export {
   isStorageMediaPath,
   mediaKindFromContentType,
   mediaKindFromRef,
+  needsBrowserVideoConversion,
   normalizeMediaRefs,
 } from "../../../../shared/sms/media.ts"
 export type { SmsMediaKind } from "../../../../shared/sms/media.ts"

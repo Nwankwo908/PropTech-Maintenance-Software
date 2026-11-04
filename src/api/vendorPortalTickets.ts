@@ -35,6 +35,8 @@ export type VendorApiTicket = {
   photo_paths: string[] | null
   /** Time-limited signed URLs for `photo_paths` (from vendor-list-tickets). */
   photo_urls?: string[] | null
+  /** Signed original files when `photo_urls` points at a playable copy. */
+  photo_original_urls?: string[] | null
   completion_photo_paths?: string[] | null
   completion_photo_urls?: string[] | null
   completion_photo_count?: number | null

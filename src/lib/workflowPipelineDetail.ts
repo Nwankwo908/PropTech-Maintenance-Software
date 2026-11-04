@@ -90,7 +90,8 @@ export type WorkflowPipelineAttachment = {
   kind: 'image' | 'video' | 'document' | 'audio'
   url?: string
   downloadUrl?: string
-  previewStatus?: 'ready' | 'unavailable'
+  previewStatus?: 'ready' | 'processing' | 'failed' | 'unavailable'
+  storagePath?: string
   caption?: string
 }
 
@@ -917,6 +918,7 @@ async function signMaintenanceUploadPaths(
       url: media?.url || undefined,
       downloadUrl: media?.downloadUrl || media?.url || undefined,
       previewStatus: media?.previewStatus ?? 'unavailable',
+      storagePath: media?.storagePath,
       caption: `${opts.captionPrefix} · ${noun} ${mediaIndex}`,
     })
   }
@@ -1053,6 +1055,7 @@ async function loadInboundSmsPhotoAttachments(
       url: media?.url || undefined,
       downloadUrl: media?.downloadUrl || media?.url || undefined,
       previewStatus: media?.previewStatus ?? 'unavailable',
+      storagePath: media?.storagePath,
       caption: meta?.body || `${residentName} · ${noun} ${mediaIndex}`,
     })
   }
