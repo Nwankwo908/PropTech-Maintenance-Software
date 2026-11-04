@@ -39,7 +39,7 @@
     }
   ],
   "functions": {
-    "api/convert-sms-media.ts": {
+    "api/convert-sms-media.mjs": {
       "maxDuration": 60,
       "memory": 1024
     }
