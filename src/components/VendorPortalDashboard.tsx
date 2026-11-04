@@ -560,6 +560,11 @@ function isProbablyVideoAssetUrl(url: string): boolean {
   }
 }
 
+function isUnplayableVideoUrl(url: string): boolean {
+  const path = (url.split('?')[0] ?? '').toLowerCase()
+  return /\.(3gp|3gpp)(\?|$)/.test(path) || path.includes('video/3gpp')
+}
+
 function VendorWorkOrderWideHeader({
   order,
   titleId,
@@ -623,11 +628,24 @@ function VendorWorkOrderPhotoGrid({
           <button
             key={`${orderId}-photo-${title}-${i}`}
             type="button"
-            onClick={() => onOpen(src)}
+            onClick={() => {
+              if (isUnplayableVideoUrl(src)) {
+                window.open(src, '_blank', 'noopener,noreferrer')
+                return
+              }
+              onOpen(src)
+            }}
             className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#0030b5]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 active:scale-[0.99]"
             aria-label={`Expand ${title.toLowerCase()} ${i + 1}`}
           >
-            {isProbablyVideoAssetUrl(src) ? (
+            {isUnplayableVideoUrl(src) ? (
+              <span className="flex size-full flex-col items-start justify-end bg-[#fafafa] p-3 text-left">
+                <span className="text-[13px] font-semibold text-[#101828]">Video</span>
+                <span className="mt-1 text-[12px] leading-4 text-[#364153]">
+                  Preview isn't available. Open the original file.
+                </span>
+              </span>
+            ) : isProbablyVideoAssetUrl(src) ? (
               <video
                 src={src}
                 controls
@@ -764,11 +782,24 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
                 <button
                   key={`${order.id}-att-${i}`}
                   type="button"
-                  onClick={() => openLightbox(src)}
+                  onClick={() => {
+                    if (isUnplayableVideoUrl(src)) {
+                      window.open(src, '_blank', 'noopener,noreferrer')
+                      return
+                    }
+                    openLightbox(src)
+                  }}
                   className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#0030b5]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 active:scale-[0.99]"
                   aria-label={`Expand resident photo ${i + 1}`}
                 >
-                  {isProbablyVideoAssetUrl(src) ? (
+                  {isUnplayableVideoUrl(src) ? (
+                    <span className="flex size-full flex-col items-start justify-end bg-[#fafafa] p-3 text-left">
+                      <span className="text-[13px] font-semibold text-[#101828]">Video</span>
+                      <span className="mt-1 text-[12px] leading-4 text-[#364153]">
+                        Preview isn't available. Open the original file.
+                      </span>
+                    </span>
+                  ) : isProbablyVideoAssetUrl(src) ? (
                     <video
                       src={src}
                       controls

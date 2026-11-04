@@ -28,6 +28,7 @@ import {
   tryInboundSmsHandlers,
 } from "./inboundHandlerRegistry.ts"
 import { loadAdminTakeoverActive } from "./adminConversationControl.ts"
+import { tryInboundAttachmentFollowUp } from "./inboundAttachmentFollowUp.ts"
 import { tryHandleInterpretedInbound } from "./inboundInterpretationAct.ts"
 import {
   InboundSmsError,
@@ -575,6 +576,9 @@ export async function processInboundSms(
           return finishHandledInbound(handlerContext, holdResult)
         }
       }
+      if (handlerContext.inbound.mediaUrls.some((url) => url.trim())) {
+        await tryInboundAttachmentFollowUp(handlerContext, { sendReply: false })
+      }
       return finishHandledInbound(handlerContext, {
         handled: true,
         workflowRoute: "admin_takeover",
@@ -611,6 +615,11 @@ export async function processInboundSms(
   const handlerResult = await tryInboundSmsHandlers(handlerContext)
   if (handlerResult.handled) {
     return finishHandledInbound(handlerContext, handlerResult)
+  }
+
+  const attachmentFollowUp = await tryInboundAttachmentFollowUp(handlerContext)
+  if (attachmentFollowUp.handled) {
+    return finishHandledInbound(handlerContext, attachmentFollowUp)
   }
 
   // Landlord MMS: classify attachment as HQS/inspection letter after rehost.

@@ -23,6 +23,7 @@ import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
 import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { LinkifiedMessageText } from '@/components/LinkifiedMessageText'
+import { SmsAttachmentCard } from '@/components/SmsAttachmentCard'
 import {
   releaseConversationTakeover,
   sendConversationSms,
@@ -352,32 +353,9 @@ function TranscriptMedia({
   if (media.length === 0) return null
   return (
     <div className={`flex flex-col gap-2 ${align === 'right' ? 'items-end' : 'items-start'}`}>
-      {media.map((item, index) =>
-        item.kind === 'video' ? (
-          <video
-            key={`${item.url}-${index}`}
-            src={item.url}
-            controls
-            playsInline
-            preload="metadata"
-            className="max-h-64 w-full max-w-[260px] rounded-[12px] bg-[#0a0a0a] object-contain"
-          />
-        ) : (
-          <a
-            key={`${item.url}-${index}`}
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block overflow-hidden rounded-[12px]"
-          >
-            <img
-              src={item.url}
-              alt="Sent over text"
-              className="max-h-64 w-full max-w-[260px] object-cover"
-            />
-          </a>
-        ),
-      )}
+      {media.map((item, index) => (
+        <SmsAttachmentCard key={`${item.downloadUrl || item.url}-${index}`} item={item} />
+      ))}
     </div>
   )
 }

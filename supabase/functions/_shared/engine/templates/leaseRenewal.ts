@@ -453,6 +453,15 @@ async function processLeaseRenewalSmsReply(
   const parsed = parseRenewalReply(sms.inbound.body)
 
   if (!parsed) {
+    const mediaCount = Array.isArray(sms.inbound.mediaUrls) ? sms.inbound.mediaUrls.length : 0
+    if (mediaCount > 0) {
+      return {
+        templateId: "lease_renewal",
+        route: workflowRouteForTemplate("lease_renewal"),
+        runId: run.id,
+        metadata: { invalid_reply_suppressed: true, attachment: true },
+      }
+    }
     // Free-text while awaiting cron outreach — record as early-style inquiry without escalating.
     if (isLeaseRenewalInquirySms(sms.inbound.body) || onEarlyInquiryRun) {
       return processEarlyLeaseInquiry(supabase, ctx, { residentId, run })

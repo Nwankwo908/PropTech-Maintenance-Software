@@ -93,6 +93,7 @@ export async function classifyWorkflow(
         activeTemplateId: byConversation.template_id,
         body: sms.inbound.body,
         interpretation: sms.interpretation,
+        mediaCount: Array.isArray(sms.inbound.mediaUrls) ? sms.inbound.mediaUrls.length : 0,
       })
       const rentPinReleased = byConversation.template_id === "rent_collection" &&
         !await keepRent()
@@ -155,6 +156,7 @@ export async function classifyWorkflow(
           activeTemplateId: "lease_renewal",
           body: sms.inbound.body,
           interpretation: sms.interpretation,
+          mediaCount: Array.isArray(sms.inbound.mediaUrls) ? sms.inbound.mediaUrls.length : 0,
         })
       ) {
         ctx.activeRun = leaseRun

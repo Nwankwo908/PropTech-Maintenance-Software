@@ -1,15 +1,23 @@
 /** Shared MMS helpers — kind detection, storage vs provider URLs, inbox preview. */
 
-export type SmsMediaKind = 'image' | 'video' | 'document'
+export type SmsMediaKind = 'image' | 'video' | 'document' | 'audio'
+
+/** ready = the browser can show or play it. unavailable = keep the message, offer download. */
+export type SmsMediaPreviewStatus = 'ready' | 'unavailable'
 
 export type SmsMediaItem = {
   url: string
   kind: SmsMediaKind
+  previewStatus?: SmsMediaPreviewStatus
+  downloadUrl?: string
+  label?: string
 }
 
 const VIDEO_EXT = /\.(mp4|m4v|mov|webm|3gp|3gpp)(?:$|[?#])/i
+const UNPLAYABLE_VIDEO_EXT = /\.(3gp|3gpp)(?:$|[?#])/i
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(?:$|[?#])/i
 const DOCUMENT_EXT = /\.(pdf)(?:$|[?#])/i
+const AUDIO_EXT = /\.(m4a|aac|mp3|amr|wav|ogg)(?:$|[?#])/i
 
 export function normalizeMediaRefs(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -46,6 +54,7 @@ export function isProviderAuthMediaUrl(url: string): boolean {
 export function mediaKindFromRef(ref: string): SmsMediaKind {
   const lower = ref.trim().toLowerCase()
   if (lower.includes('application/pdf') || DOCUMENT_EXT.test(lower)) return 'document'
+  if (lower.includes('audio/') || AUDIO_EXT.test(lower)) return 'audio'
   if (lower.includes('video/') || VIDEO_EXT.test(lower)) return 'video'
   if (lower.includes('image/') || IMAGE_EXT.test(lower)) return 'image'
   return 'image'
@@ -54,9 +63,32 @@ export function mediaKindFromRef(ref: string): SmsMediaKind {
 export function mediaKindFromContentType(contentType: string): SmsMediaKind | null {
   const ct = contentType.trim().toLowerCase()
   if (ct === 'application/pdf' || ct.startsWith('application/pdf')) return 'document'
+  if (ct.startsWith('audio/')) return 'audio'
   if (ct.startsWith('video/')) return 'video'
   if (ct.startsWith('image/')) return 'image'
   return null
+}
+
+/** iPhone MMS video/3gpp is H.263 + AMR. A normal video tag cannot play it. */
+export function needsBrowserVideoConversion(ref: string): boolean {
+  const lower = ref.trim().toLowerCase()
+  if (lower.includes('video/3gpp') || lower.includes('video/3gp')) return true
+  return UNPLAYABLE_VIDEO_EXT.test(lower.split('?')[0] ?? lower)
+}
+
+/** Stored next to the original. The original path is never replaced. */
+export function playbackSiblingPath(original: string): string | null {
+  const ref = original.trim()
+  if (!isStorageMediaPath(ref) || !needsBrowserVideoConversion(ref)) return null
+  return ref.replace(/\.[a-z0-9]+$/i, '.playback.mp4')
+}
+
+export function attachmentNoun(kind: SmsMediaKind, count = 1): string {
+  const many = count !== 1
+  if (kind === 'video') return many ? 'videos' : 'video'
+  if (kind === 'audio') return many ? 'audio messages' : 'audio message'
+  if (kind === 'document') return many ? 'documents' : 'document'
+  return many ? 'photos' : 'photo'
 }
 
 /** Inbox / list preview when the latest SMS is media-only. */
@@ -67,7 +99,8 @@ export function inboxPreviewForSmsMessage(body: string, mediaUrls: unknown): str
   if (refs.length === 0) return 'No messages yet.'
   const docCount = refs.filter((ref) => mediaKindFromRef(ref) === 'document').length
   const videoCount = refs.filter((ref) => mediaKindFromRef(ref) === 'video').length
-  const imageCount = refs.length - videoCount - docCount
+  const audioCount = refs.filter((ref) => mediaKindFromRef(ref) === 'audio').length
+  const imageCount = refs.length - videoCount - docCount - audioCount
   if (docCount > 0 && imageCount === 0 && videoCount === 0) {
     return docCount === 1 ? 'Sent a document' : 'Sent documents'
   }
@@ -75,6 +108,7 @@ export function inboxPreviewForSmsMessage(body: string, mediaUrls: unknown): str
     return refs.length === 2 ? 'Sent a photo and a video' : 'Sent photos and video'
   }
   if (videoCount > 0) return videoCount === 1 ? 'Sent a video' : 'Sent videos'
+  if (audioCount > 0) return audioCount === 1 ? 'Sent an audio message' : 'Sent audio messages'
   if (imageCount > 0) return imageCount === 1 ? 'Sent a photo' : 'Sent photos'
   return 'Sent an attachment'
 }

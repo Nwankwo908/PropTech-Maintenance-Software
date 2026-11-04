@@ -87,8 +87,10 @@ export type WorkflowPipelineField = {
 export type WorkflowPipelineAttachment = {
   name: string
   sizeLabel: string
-  kind: 'image' | 'video' | 'document'
+  kind: 'image' | 'video' | 'document' | 'audio'
   url?: string
+  downloadUrl?: string
+  previewStatus?: 'ready' | 'unavailable'
   caption?: string
 }
 
@@ -899,20 +901,22 @@ async function signMaintenanceUploadPaths(
   for (let i = 0; i < paths.length; i += 1) {
     const path = paths[i]
     const media = resolvedByPath[i]?.[0]
-    if (!media) {
-      if (isStorageMediaPath(path)) {
-        console.warn('[workflow-pipeline] signed media url failed', path)
-      }
-      continue
-    }
     mediaIndex += 1
-    const kind = media.kind === 'video' ? 'video' : 'image'
-    const noun = kind === 'video' ? 'video' : 'photo'
+    const kind = media?.kind === 'video'
+      ? 'video'
+      : media?.kind === 'audio'
+        ? 'audio'
+        : media?.kind === 'document'
+          ? 'document'
+          : 'image'
+    const noun = media?.label || (kind === 'video' ? 'video' : kind === 'audio' ? 'audio' : kind === 'document' ? 'document' : 'photo')
     items.push({
-      name: path.split('/').pop() || `${opts.nameFallbackPrefix}-${mediaIndex}.${kind === 'video' ? 'mp4' : 'jpg'}`,
+      name: path.split('/').pop() || `${opts.nameFallbackPrefix}-${mediaIndex}`,
       sizeLabel: opts.sizeLabel,
       kind,
-      url: media.url,
+      url: media?.url || undefined,
+      downloadUrl: media?.downloadUrl || media?.url || undefined,
+      previewStatus: media?.previewStatus ?? 'unavailable',
       caption: `${opts.captionPrefix} · ${noun} ${mediaIndex}`,
     })
   }
@@ -1032,18 +1036,23 @@ async function loadInboundSmsPhotoAttachments(
   for (let i = 0; i < allowedExtraRefs.length; i += 1) {
     const ref = allowedExtraRefs[i]
     const media = resolvedByRef[i]?.[0]
-    if (!media) continue
     mediaIndex += 1
-    const kind = media.kind === 'video' ? 'video' : 'image'
-    const noun = kind === 'video' ? 'video' : 'photo'
+    const kind = media?.kind === 'video'
+      ? 'video'
+      : media?.kind === 'audio'
+        ? 'audio'
+        : media?.kind === 'document'
+          ? 'document'
+          : 'image'
+    const noun = media?.label || kind
     const meta = metaByRef.get(ref)
     extraItems.push({
-      name:
-        (isStorageMediaPath(ref) ? ref.split('/').pop() : '') ||
-        `conversation-${noun}-${mediaIndex}.${kind === 'video' ? 'mp4' : 'jpg'}`,
+      name: (isStorageMediaPath(ref) ? ref.split('/').pop() : '') || `conversation-${noun}-${mediaIndex}`,
       sizeLabel: meta?.sentAt || 'From SMS',
       kind,
-      url: media.url,
+      url: media?.url || undefined,
+      downloadUrl: media?.downloadUrl || media?.url || undefined,
+      previewStatus: media?.previewStatus ?? 'unavailable',
       caption: meta?.body || `${residentName} · ${noun} ${mediaIndex}`,
     })
   }

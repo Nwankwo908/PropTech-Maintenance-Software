@@ -149,6 +149,32 @@ Deno.test("an old rent run does not claim a repair or a photo when rent is enabl
   }), false)
 })
 
+Deno.test("a captionless video does not stay on rent or lease", () => {
+  assertEquals(activeNonMaintenanceRunShouldYield({
+    activeTemplateId: "rent_collection",
+    body: "",
+    interpretation: null,
+    mediaCount: 1,
+  }), true)
+  assertEquals(activeNonMaintenanceRunShouldYield({
+    activeTemplateId: "lease_renewal",
+    body: "",
+    interpretation: null,
+    mediaCount: 1,
+  }), true)
+  assertEquals(activeNonMaintenanceRunShouldYield({
+    activeTemplateId: "lease_renewal",
+    body: "YES",
+    interpretation: null,
+    mediaCount: 1,
+  }), false)
+  assertEquals(shouldSendRentInvalidReplyFallback({
+    body: "",
+    rentPaused: false,
+    mediaCount: 1,
+  }), false)
+})
+
 Deno.test("maintenance_intake pin is not yielded by this helper", () => {
   assertEquals(
     activeNonMaintenanceRunShouldYield({

@@ -5,6 +5,8 @@ import {
   isStorageMediaPath,
   mediaKindFromContentType,
   mediaKindFromRef,
+  needsBrowserVideoConversion,
+  playbackSiblingPath,
 } from '@shared/sms/media.ts'
 
 describe('sms media helpers', () => {
@@ -36,6 +38,11 @@ describe('sms media helpers', () => {
     expect(mediaKindFromContentType('image/jpeg')).toBe('image')
     expect(mediaKindFromContentType('application/pdf')).toBe('document')
     expect(mediaKindFromContentType('application/octet-stream')).toBeNull()
+    expect(mediaKindFromContentType('video/3gpp')).toBe('video')
+    expect(needsBrowserVideoConversion('sms/c/m/0.3gp')).toBe(true)
+    expect(needsBrowserVideoConversion('sms/c/m/0.mp4')).toBe(false)
+    expect(playbackSiblingPath('sms/c/m/0.3gp')).toBe('sms/c/m/0.playback.mp4')
+    expect(playbackSiblingPath('sms/c/m/0.mp4')).toBeNull()
   })
 
   it('uses media copy when the SMS body is empty', () => {

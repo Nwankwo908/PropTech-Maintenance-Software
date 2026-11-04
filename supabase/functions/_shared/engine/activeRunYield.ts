@@ -73,21 +73,40 @@ export function activeNonMaintenanceRunShouldYield(input: {
   activeTemplateId: string | null | undefined
   body: string
   interpretation: InboundInterpretation | null | undefined
+  mediaCount?: number
 }): boolean {
   const templateId = (input.activeTemplateId ?? "").trim() as WorkflowTemplateId | ""
   if (!templateId) return false
   if (
     templateId === "maintenance_intake" ||
     templateId === "maintenance_request" ||
-    templateId === "vendor_job_response"
+    templateId === "vendor_job_response" ||
+    templateId === "inspection" ||
+    templateId === "home_check"
   ) {
     return false
   }
 
+  const mediaCount = input.mediaCount ?? 0
+
   if (templateId === "rent_collection") {
     if (isPlausibleRentCollectionReply(input.body)) return false
+    if (mediaCount > 0) return true
     if (hasProblemSignal(input.body)) return true
     return hasClearUnrelatedMaintenanceIntent(input.interpretation)
+  }
+
+  if (templateId === "lease_renewal") {
+    if (/^(yes|y|no|n|questions)\b/i.test(input.body.trim())) return false
+    if (mediaCount > 0) return true
+  }
+
+  if (
+    (templateId === "move_in" || templateId === "move_out") &&
+    mediaCount > 0 &&
+    !input.body.trim()
+  ) {
+    return true
   }
 
   // Lease / inspection / other lifecycle pins: yield for a clear repair ask.

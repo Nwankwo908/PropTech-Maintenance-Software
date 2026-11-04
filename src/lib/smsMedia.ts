@@ -1,9 +1,12 @@
 import {
+  attachmentNoun,
   isHttpUrl,
   isProviderAuthMediaUrl,
   isStorageMediaPath,
   mediaKindFromRef,
+  needsBrowserVideoConversion,
   normalizeMediaRefs,
+  playbackSiblingPath,
   type SmsMediaItem,
 } from '@shared/sms/media.ts'
 
@@ -64,16 +67,49 @@ function itemsFromRefs(
 ): SmsMediaItem[] {
   const items: SmsMediaItem[] = []
   for (const ref of refs) {
-    if (isStorageMediaPath(ref)) {
-      const url = signedByPath.get(ref)
-      if (!url) continue
-      items.push({ url, kind: mediaKindFromRef(ref) })
+    const kind = mediaKindFromRef(ref)
+    const label = attachmentNoun(kind)
+    const sibling = playbackSiblingPath(ref)
+    const playbackUrl = sibling ? signedByPath.get(sibling) : undefined
+    const storedUrl = isStorageMediaPath(ref) ? signedByPath.get(ref) : undefined
+    const publicUrl = !isStorageMediaPath(ref) && isHttpUrl(ref) && !isProviderAuthMediaUrl(ref)
+      ? ref
+      : undefined
+    const downloadUrl = storedUrl || publicUrl || ''
+
+    if (needsBrowserVideoConversion(ref)) {
+      if (playbackUrl) {
+        items.push({
+          url: playbackUrl,
+          downloadUrl: downloadUrl || playbackUrl,
+          kind,
+          label,
+          previewStatus: 'ready',
+        })
+      } else {
+        items.push({
+          url: downloadUrl,
+          downloadUrl,
+          kind,
+          label,
+          previewStatus: 'unavailable',
+        })
+      }
       continue
     }
-    if (isProviderAuthMediaUrl(ref)) continue
-    if (isHttpUrl(ref)) {
-      items.push({ url: ref, kind: mediaKindFromRef(ref) })
+
+    if (downloadUrl) {
+      items.push({ url: downloadUrl, downloadUrl, kind, label, previewStatus: 'ready' })
+      continue
     }
+
+    items.push({
+      url: '',
+      downloadUrl: '',
+      kind,
+      label,
+      previewStatus: 'unavailable',
+    })
   }
   return items
 }
@@ -82,7 +118,11 @@ function itemsFromRefs(
 export async function resolveSmsMediaItems(refs: unknown): Promise<SmsMediaItem[]> {
   const list = normalizeMediaRefs(refs)
   if (list.length === 0) return []
-  const signedByPath = await signStoragePaths(list.filter(isStorageMediaPath))
+  const stored = list.filter(isStorageMediaPath)
+  const siblings = stored
+    .map((path) => playbackSiblingPath(path))
+    .filter((path): path is string => Boolean(path))
+  const signedByPath = await signStoragePaths([...stored, ...siblings])
   return itemsFromRefs(list, signedByPath)
 }
 
@@ -92,6 +132,10 @@ export async function resolveSmsMediaForMessages(
   const refsByMessage = mediaUrlsByMessage.map(normalizeMediaRefs)
   const unique = [...new Set(refsByMessage.flat())]
   if (unique.length === 0) return refsByMessage.map(() => [])
-  const signedByPath = await signStoragePaths(unique.filter(isStorageMediaPath))
+  const stored = unique.filter(isStorageMediaPath)
+  const siblings = stored
+    .map((path) => playbackSiblingPath(path))
+    .filter((path): path is string => Boolean(path))
+  const signedByPath = await signStoragePaths([...stored, ...siblings])
   return refsByMessage.map((refs) => itemsFromRefs(refs, signedByPath))
 }

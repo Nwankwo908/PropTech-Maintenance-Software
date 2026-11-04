@@ -130,7 +130,7 @@ function WorkOrderPhotosSection({
             key={`${attachment.name}-${attachment.url ?? attachment.sizeLabel}`}
             className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-[#fafafa]"
           >
-            {attachment.url && attachment.kind === 'video' ? (
+            {attachment.url && attachment.kind === 'video' && attachment.previewStatus !== 'unavailable' ? (
               <div className="aspect-[4/3] overflow-hidden bg-[#0a0a0a]">
                 <video
                   src={attachment.url}
@@ -140,7 +140,7 @@ function WorkOrderPhotosSection({
                   className="size-full object-contain"
                 />
               </div>
-            ) : attachment.url && attachment.kind === 'image' ? (
+            ) : attachment.url && attachment.kind === 'image' && attachment.previewStatus !== 'unavailable' ? (
               <a
                 href={attachment.url}
                 target="_blank"
@@ -169,7 +169,21 @@ function WorkOrderPhotosSection({
               {attachment.caption ? (
                 <p className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-[#364153]">{attachment.caption}</p>
               ) : null}
-              <p className="mt-1 text-[11px] text-[#6a7282]">{attachment.sizeLabel}</p>
+              <p className="mt-1 text-[11px] text-[#6a7282]">
+                {attachment.previewStatus === 'unavailable'
+                  ? 'Preview isn\'t available. The original file is still saved.'
+                  : attachment.sizeLabel}
+              </p>
+              {attachment.downloadUrl || attachment.url ? (
+                <a
+                  href={attachment.downloadUrl || attachment.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-block text-[12px] font-semibold text-[#0030b5] underline"
+                >
+                  Open original
+                </a>
+              ) : null}
             </div>
           </div>
         ))}
