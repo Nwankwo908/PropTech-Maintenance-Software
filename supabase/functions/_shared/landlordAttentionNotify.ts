@@ -22,7 +22,6 @@ import {
 } from "./landlordNotificationPrefs.ts"
 import { isRentCollectionPaused } from "./engine/rentCollectionPolicy.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
-import { landlordThreadCanSend } from "./sms/landlordAskHold.ts"
 import {
   persistLandlordChoiceSms,
   type AwaitingVendorChoice,
