@@ -22,6 +22,7 @@ import {
 } from "./landlordNotificationPrefs.ts"
 import { isRentCollectionPaused } from "./engine/rentCollectionPolicy.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
+import { landlordThreadCanSend } from "./sms/landlordAskHold.ts"
 import {
   persistLandlordChoiceSms,
   type AwaitingVendorChoice,
@@ -203,6 +204,9 @@ function tradePhraseFromCategory(issueCategory: string | null | undefined): stri
 /**
  * Short landlord-facing repair label. Empty when the description, trade,
  * headline, and street are all missing.
+ *
+ * Prefer a stored issue_headline (specific problem) over the raw first SMS
+ * line, which often starts with a greeting.
  */
 export function shortRepairLabel(
   description: string | null | undefined,
@@ -213,13 +217,6 @@ export function shortRepairLabel(
   const headline = (opts?.issueHeadline ?? "").trim().replace(/\s+/g, " ")
   const trade = tradePhraseFromCategory(issueCategory)
 
-  const rawLine = (description ?? "").trim().split("\n")[0]?.trim().replace(/\s+/g, " ") ?? ""
-  const sentence = rawLine.split(/(?<=[.!?])\s+/)[0]?.replace(/[.!?]+$/g, "").trim() ?? ""
-  if (sentence && sentence.length <= 72 && !/^wo-/i.test(sentence)) {
-    return sentence.charAt(0).toLowerCase() + sentence.slice(1)
-  }
-
-  if (trade && street) return `${trade} at ${street}`
   if (headline && headline.length <= 72 && !/^wo-/i.test(headline)) {
     const lowered =
       headline.charAt(0).toLowerCase() === headline.charAt(0)
@@ -230,6 +227,24 @@ export function shortRepairLabel(
     }
     return lowered
   }
+
+  const rawLine = (description ?? "").trim().split("\n")[0]?.trim().replace(/\s+/g, " ") ?? ""
+  // Skip greeting-only / greeting-led openers — fall through to trade+street.
+  const withoutGreeting = rawLine
+    .replace(/^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))(?:\s*[!,.]|\s+)/i, "")
+    .trim()
+  const sentence =
+    withoutGreeting.split(/(?<=[.!?])\s+/)[0]?.replace(/[.!?]+$/g, "").trim() ?? ""
+  if (
+    sentence &&
+    sentence.length <= 72 &&
+    !/^wo-/i.test(sentence) &&
+    !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(sentence)
+  ) {
+    return sentence.charAt(0).toLowerCase() + sentence.slice(1)
+  }
+
+  if (trade && street) return `${trade} at ${street}`
   if (trade) return `${trade} repair`
   if (street) return `repair at ${street}`
   return ""
@@ -347,6 +362,25 @@ function besideLocation(text: string, place: string): string {
   return stripped
 }
 
+function isPlaceholderRepair(text: string): boolean {
+  const core = text.replace(/[.!?]+$/g, "").trim().toLowerCase()
+  return core === "this repair" || core === "the repair" || core === "a repair"
+}
+
+/** "No vendor found — this repair" does not name the job. */
+function assignVendorReason(headline: string, place: string): string {
+  const action = (place ? besideLocation(headline, place) : headline).trim()
+  const bare = action.replace(/[.!?]+$/g, "").trim()
+  if (
+    !bare ||
+    isPlaceholderRepair(bare) ||
+    /^no vendor found(?:\s*[—–-]\s*this repair)?$/i.test(bare)
+  ) {
+    return "No preferred vendor matched this request"
+  }
+  return action
+}
+
 const MISSING_ISSUE_SENTENCE = "The request did not include a description."
 const MISSING_PROPERTY_SENTENCE = "The property address was not included."
 const NO_NEARBY_VENDOR_SENTENCE = "No nearby vendor matched this kind of request."
@@ -382,9 +416,11 @@ function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | 
 
   if (input.kind === "assign_vendor") {
     const place = placeFromLocation(locationLine)
-    const issueLine = place ? besideLocation(summaryLine, place) : summaryLine
-    const actionLine = place ? besideLocation(headline, place) : headline
+    const rawIssue = place ? besideLocation(summaryLine, place) : summaryLine
+    const issueLine = rawIssue && !isPlaceholderRepair(rawIssue) ? rawIssue : ""
+    const actionLine = assignVendorReason(headline, place)
     const summaryWasOnlyTheAddress = Boolean(summaryLine) && !issueLine && Boolean(place)
+    if (workOrderRef) push(`Work order ${workOrderRef}`)
     if (issueLine) push(issueLine)
     else if (!summaryWasOnlyTheAddress) push(MISSING_ISSUE_SENTENCE)
     push(locationLine || MISSING_PROPERTY_SENTENCE)
@@ -935,10 +971,9 @@ export async function notifyLandlordNeedsAttention(
     actionLabel: attentionEmailActionLabel(params.kind),
     requestRef: params.requestRef,
     invoicePaid,
-    workOrderRef:
-      params.omitWorkOrderRef === true || params.kind === "assign_vendor"
-        ? null
-        : params.maintenanceRequestId
+    workOrderRef: params.omitWorkOrderRef === true
+      ? null
+      : params.maintenanceRequestId
         ? formatWorkOrderRef(params.maintenanceRequestId)
         : null,
   }

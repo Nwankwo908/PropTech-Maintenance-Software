@@ -40,56 +40,23 @@ function bearerKey(req: Request): string | null {
 
 const SIGNED_URL_TTL_SEC = 3600
 
-async function storageObjectExists(
-  supabase: SupabaseClient,
-  objectPath: string,
-): Promise<boolean> {
-  const slash = objectPath.lastIndexOf("/")
-  if (slash <= 0) return false
-  const folder = objectPath.slice(0, slash)
-  const name = objectPath.slice(slash + 1)
-  const { data, error } = await supabase.storage
-    .from("maintenance-uploads")
-    .list(folder, { search: name })
-  if (error || !Array.isArray(data)) return false
-  return data.some((row) => row.name === name)
-}
-
-async function signUpload(
-  supabase: SupabaseClient,
-  objectPath: string,
-): Promise<string | null> {
-  const { data, error } = await supabase.storage
-    .from("maintenance-uploads")
-    .createSignedUrl(objectPath, SIGNED_URL_TTL_SEC)
-  if (error || !data?.signedUrl) {
-    console.error("[vendor-list-tickets] signed url", objectPath, error)
-    return null
-  }
-  return data.signedUrl
-}
-
-/**
- * Signed GET URLs for `maintenance-uploads` paths (private bucket).
- * A playable sibling is used for the preview when one has been saved.
- * The original file stays the download URL.
- */
+/** Signed GET URLs for `maintenance-uploads` paths (private bucket). */
 async function photoSignedUrls(
   supabase: SupabaseClient,
   paths: unknown,
-): Promise<{ preview: string; original: string }[]> {
+): Promise<string[]> {
   if (!Array.isArray(paths) || paths.length === 0) return []
-  const urls: { preview: string; original: string }[] = []
+  const urls: string[] = []
   for (const p of paths) {
     if (typeof p !== "string" || !p.trim()) continue
-    const originalPath = p.trim()
-    const original = await signUpload(supabase, originalPath)
-    if (!original) continue
-    const sibling = playbackSiblingPath(originalPath)
-    const playback = sibling && await storageObjectExists(supabase, sibling)
-      ? await signUpload(supabase, sibling)
-      : null
-    urls.push({ preview: playback || original, original })
+    const { data, error } = await supabase.storage
+      .from("maintenance-uploads")
+      .createSignedUrl(p.trim(), SIGNED_URL_TTL_SEC)
+    if (error) {
+      console.error("[vendor-list-tickets] signed url", p, error)
+      continue
+    }
+    if (data?.signedUrl) urls.push(data.signedUrl)
   }
   return urls
 }
@@ -212,7 +179,7 @@ serve(async (req) => {
   const { data: rows, error: qErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, created_at, landlord_id, priority, urgency, resident_name, unit, description, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token",
+      "id, created_at, landlord_id, priority, urgency, resident_name, unit, description, issue_headline, location_detail, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token, access_instructions, entry_ok_if_absent, resident_availability_text",
     )
     .eq("assigned_vendor_id", vendor.id)
     .order("created_at", { ascending: false })
@@ -352,9 +319,8 @@ serve(async (req) => {
         building: building,
         building_address,
         property_access,
-        photo_urls: photo_urls.map((item) => item.preview),
-        photo_original_urls: photo_urls.map((item) => item.original),
-        completion_photo_urls: completion_photo_urls.map((item) => item.preview),
+        photo_urls,
+        completion_photo_urls,
         completion_photo_count: Math.max(
           completionPaths.length,
           completion_photo_urls.length,

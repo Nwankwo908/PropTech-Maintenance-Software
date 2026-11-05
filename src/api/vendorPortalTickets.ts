@@ -32,6 +32,13 @@ export type VendorApiTicket = {
   building?: string | null
   building_address?: string | null
   description: string
+  /** Concise landlord/vendor title when present — prefer over generating from description. */
+  issue_headline?: string | null
+  /** Confirmed in-unit / building location when present. */
+  location_detail?: string | null
+  access_instructions?: string | null
+  entry_ok_if_absent?: boolean | null
+  resident_availability_text?: string | null
   photo_paths: string[] | null
   /** Time-limited signed URLs for `photo_paths` (from vendor-list-tickets). */
   photo_urls?: string[] | null

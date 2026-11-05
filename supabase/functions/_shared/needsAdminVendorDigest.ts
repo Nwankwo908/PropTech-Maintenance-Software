@@ -49,7 +49,7 @@ export async function loadStaleVendorTickets(
   const { data: rows, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, property_id, unit_id, unit, resident_name, resident_phone, description, photo_paths, created_at, auto_reassign_same_outcome_since, summary, category, room, location_detail, context_urgency",
+      "id, landlord_id, property_id, unit_id, unit, resident_name, resident_phone, description, photo_paths, created_at, auto_reassign_same_outcome_since, summary, issue_headline, issue_category, category, room, location_detail, context_urgency",
     )
     .like("auto_reassign_last_outcome", "needs_admin_vendor|%")
     .or(
@@ -263,7 +263,14 @@ export async function loadStaleVendorTickets(
       photoCount: photos.filter((p) => typeof p === "string" && p.trim())
         .length,
       summary: typeof row.summary === "string" ? row.summary : null,
-      category: typeof row.category === "string" ? row.category : null,
+      issueHeadline:
+        typeof row.issue_headline === "string" ? row.issue_headline : null,
+      category:
+        typeof row.issue_category === "string"
+          ? row.issue_category
+          : typeof row.category === "string"
+            ? row.category
+            : null,
       room: typeof row.room === "string" ? row.room : null,
       locationDetail:
         typeof row.location_detail === "string" ? row.location_detail : null,

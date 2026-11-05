@@ -136,10 +136,18 @@ Deno.test("attention email subject matches the SMS headline", () => {
   assertStringIncludes(mail.html, "https://www.ulohome.io/admin")
 })
 
-Deno.test("shortRepairLabel prefers the first description line", () => {
+Deno.test("shortRepairLabel prefers headline, then a real description line", () => {
   assertEquals(
     shortRepairLabel("Leaking kitchen faucet\nTenant said it started today.", "plumbing"),
     "leaking kitchen faucet",
+  )
+  assertEquals(
+    shortRepairLabel(
+      "Good morning. There is a leak in the baseboard heater for the first floor.",
+      "hvac",
+      { issueHeadline: "Baseboard heater leak", street: "3222 Avon" },
+    ),
+    "baseboard heater leak at 3222 Avon",
   )
   assertEquals(
     shortRepairLabel(

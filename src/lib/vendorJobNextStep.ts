@@ -237,3 +237,12 @@ export function humanizeVendorJobDescription(input: {
     availability: structured.availability,
   }
 }
+
+/** Prefer stored headline, then structured specific issue — never a bare trade label. */
+export function resolveVendorJobTitle(input: {
+  description?: string | null
+  issueHeadline?: string | null
+  fallbackTitle?: string | null
+}): string {
+  return humanizeVendorJobDescription(input).title
+}

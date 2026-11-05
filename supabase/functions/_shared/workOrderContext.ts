@@ -6,9 +6,16 @@
  *   fallback and is good enough on its own for HQS items.
  * - `summarizeWorkOrder` calls an LLM when an OpenAI / Gemini / Anthropic key
  *   is set (see pickProvider) and falls back to the heuristic on any error.
- * - `ensureWorkOrderContext` caches the result on the row (summary_source_hash)
- *   so each description is summarized once, not on every reminder.
+ * - `ensureWorkOrderContext` also runs shared `summarizeMaintenanceRequest`
+ *   (gpt-6-luna + fact validation) to persist issue_headline, physical
+ *   location, and a tenant-attributed description across surfaces.
+ * - Results are cached on the row (summary_source_hash) so each description
+ *   is summarized once, not on every reminder.
  */
+import {
+  formatPersistedDescription,
+  summarizeMaintenanceRequest,
+} from "./maintenanceRequestSummary.ts"
 
 export type Urgency = "emergency" | "safety" | "routine"
 export type Category =
@@ -400,6 +407,8 @@ export interface ContextRow {
   category?: string | null
   room?: string | null
   location_detail?: string | null
+  issue_headline?: string | null
+  issue_category?: string | null
   /** Staff digest urgency (DB column `context_urgency`). */
   context_urgency?: string | null
   /** @deprecated Prefer context_urgency — kept for callers that still pass urgency. */
@@ -441,21 +450,68 @@ export async function ensureWorkOrderContext(
     }
   }
   const ctx = await summarizeWorkOrder(row.description)
+
+  // Shared fact summary (title / physical location / attributed description).
+  // Skip HQS letter lines — those stay on the heuristic path only.
+  let displayPatch: Record<string, unknown> = {}
+  if (!parseHqsDescription(row.description)) {
+    try {
+      const polished = await summarizeMaintenanceRequest(row.description, {
+        category: row.issue_category ?? row.category ?? ctx.category,
+      })
+      const persisted = formatPersistedDescription(polished)
+      displayPatch = {
+        issue_headline: polished.title,
+        location_detail: polished.location,
+        room: polished.location ?? ctx.room,
+        description: persisted,
+        // Staff digest line stays short; prefer specific title over trade label.
+        summary: truncateWords(
+          polished.location
+            ? `${polished.title} · ${polished.location}`
+            : polished.title,
+        ),
+      }
+    } catch (err) {
+      console.warn("[workOrderContext] maintenanceRequestSummary failed", row.id, err)
+    }
+  }
+
   // Write context_urgency — not urgency (that column is resident low|normal|urgent).
+  const nextDescription =
+    typeof displayPatch.description === "string"
+      ? displayPatch.description
+      : row.description
+  const nextHash = await hashDescription(nextDescription)
   const { error } = await supabase
     .from("maintenance_requests")
     .update({
-      summary: ctx.summary,
+      summary: (displayPatch.summary as string | undefined) ?? ctx.summary,
       category: ctx.category,
-      room: ctx.room,
-      location_detail: ctx.location_detail,
+      room: (displayPatch.room as string | null | undefined) ?? ctx.room,
+      location_detail:
+        (displayPatch.location_detail as string | null | undefined) ??
+        ctx.location_detail,
       context_urgency: ctx.urgency,
-      summary_source_hash: hash,
+      summary_source_hash: nextHash,
       summarized_at: new Date().toISOString(),
+      ...("issue_headline" in displayPatch
+        ? { issue_headline: displayPatch.issue_headline }
+        : {}),
+      ...("description" in displayPatch
+        ? { description: displayPatch.description }
+        : {}),
     })
     .eq("id", row.id)
   if (error) console.warn("[workOrderContext] failed to cache context", row.id, error)
-  return ctx
+  return {
+    ...ctx,
+    summary: (displayPatch.summary as string | undefined) ?? ctx.summary,
+    room: (displayPatch.room as string | null | undefined) ?? ctx.room,
+    location_detail:
+      (displayPatch.location_detail as string | null | undefined) ??
+      ctx.location_detail,
+  }
 }
 
 /**

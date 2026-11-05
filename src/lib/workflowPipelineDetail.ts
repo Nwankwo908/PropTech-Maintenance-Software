@@ -686,13 +686,28 @@ function buildConciseWorkOrderTitle(input: {
   description: string
   issueCategory: string
   fallback: string
+  issueHeadline?: string | null
 }): string {
+  const headline = (input.issueHeadline ?? '').trim()
+  if (
+    headline &&
+    !/^maintenance issue$/i.test(headline) &&
+    !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(headline)
+  ) {
+    return headline.charAt(0).toUpperCase() + headline.slice(1)
+  }
   const summary = generateIssueSummary(input.description, {
     format: 'title',
     category: input.issueCategory,
     maxChars: 50,
   })
-  if (summary && !/^maintenance issue$/i.test(summary)) return summary
+  if (
+    summary &&
+    !/^maintenance issue$/i.test(summary) &&
+    !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(summary)
+  ) {
+    return summary
+  }
   return formatCategoryLabel(input.issueCategory) || input.fallback || 'Work order'
 }
 
@@ -1140,7 +1155,7 @@ async function loadTicketEnrichment(
     const { data } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, created_at, description, priority, urgency, issue_category, unit, due_at, scheduled_at, schedule_confirmed_at, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
+        'id, created_at, description, priority, urgency, issue_category, issue_headline, location_detail, unit, due_at, scheduled_at, schedule_confirmed_at, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
       )
       .eq('landlord_id', landlordId)
       .eq('id', ticketId)
@@ -1718,6 +1733,8 @@ export async function fetchWorkflowPipelineDetail(
           description: asString(ticket?.description),
           issueCategory: asString(ticket?.issue_category) || row.templateType || 'general',
           fallback: row.templateName || 'Workflow',
+          issueHeadline:
+            asString(ticket?.issue_headline) || row.issueHeadline || null,
         })
 
   const inspectionGroup =
@@ -1745,7 +1762,8 @@ export async function fetchWorkflowPipelineDetail(
   const structuredMaintenance = isMaintenance && rawTicketDescription && !homeCheckTitle
     ? extractStructuredIssueDetails(rawTicketDescription, {
         category: asString(ticket?.issue_category) || row.templateType || 'general',
-        format: 'summary',
+        // Title format keeps the issue line noun-phrase shaped (not "a … leak").
+        format: 'title',
       })
     : null
 
@@ -1760,10 +1778,29 @@ export async function fetchWorkflowPipelineDetail(
     if (!msg || looksLikeInternalEscalationCode(msg)) return null
     return msg
   })()
-  const issueDescription =
-    structuredMaintenance?.displayDescription?.trim() ||
-    rawTicketDescription.trim() ||
-    ''
+  const issueDescription = (() => {
+    if (!structuredMaintenance) return rawTicketDescription.trim() || ''
+    // Prefer the polished tenant-attributed paragraph; keep triage flags below it.
+    const lines: string[] = []
+    if (structuredMaintenance.reportedDetail) {
+      lines.push(structuredMaintenance.reportedDetail)
+    } else if (structuredMaintenance.displayDescription) {
+      lines.push(structuredMaintenance.displayDescription)
+    }
+    if (structuredMaintenance.servesFloor) {
+      lines.push(`Serves: ${structuredMaintenance.servesFloor}`)
+    }
+    for (const flag of structuredMaintenance.triageFlags) {
+      lines.push(`Flag: ${flag}`)
+    }
+    if (structuredMaintenance.availability) {
+      lines.push(`Resident availability: ${structuredMaintenance.availability}`)
+    }
+    if (structuredMaintenance.needsClarification) {
+      lines.push(`Clarify: ${structuredMaintenance.needsClarification}`)
+    }
+    return lines.join('\n').trim() || rawTicketDescription.trim() || ''
+  })()
 
   const description = homeCheckTitle === 'Home Check'
     ? 'Observation only. Photos of the water heater and heating system are saved here. This does not request a repair.'
@@ -1988,8 +2025,22 @@ export async function fetchWorkflowPipelineDetail(
             value: dash(formatVendorTradeLabel(asString(ticket?.issue_category), { emptyLabel: '' })),
           },
           {
+            label: 'Location',
+            value: dash(
+              structuredMaintenance?.locationDetail ||
+                asString(ticket?.location_detail) ||
+                row.issueLocationDetail ||
+                '',
+            ),
+          },
+          {
             label: 'Resident access notes',
-            value: dash(asString(ticket?.access_instructions)),
+            value: dash(
+              asString(ticket?.access_instructions) ||
+                (structuredMaintenance?.availability
+                  ? `Availability: ${structuredMaintenance.availability}`
+                  : ''),
+            ),
           },
           { label: 'Parts Ordered', value: '—' },
           {

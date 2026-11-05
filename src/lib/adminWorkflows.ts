@@ -80,6 +80,10 @@ export type AdminWorkflowRow = {
   issueCategory: string | null
   /** Linked ticket description (or intake metadata) for Active Tasks card blurbs. */
   issueDescription?: string | null
+  /** Linked ticket `issue_headline` when present — preferred Active Tasks title. */
+  issueHeadline?: string | null
+  /** Linked ticket `location_detail` when present. */
+  issueLocationDetail?: string | null
   /**
    * From linked `maintenance_requests.vendor_work_status` when the run targets a ticket.
    * Drives Operations kanban: New Intake → Assigned → In Progress → Completed.
@@ -1290,6 +1294,8 @@ export async function fetchAdminWorkflowDashboard(
       auto_reassign_last_outcome: string | null
       issue_category: string | null
       description: string | null
+      issue_headline: string | null
+      location_detail: string | null
       inspection_report_id: string | null
     }
   >()
@@ -1297,7 +1303,7 @@ export async function fetchAdminWorkflowDashboard(
     const { data: tickets, error: ticketsError } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, vendor_work_status, assigned_vendor_id, auto_reassign_last_outcome, issue_category, description, inspection_report_id',
+        'id, vendor_work_status, assigned_vendor_id, auto_reassign_last_outcome, issue_category, description, issue_headline, location_detail, inspection_report_id',
       )
       .in('id', maintenanceTicketIds)
     if (ticketsError) {
@@ -1330,6 +1336,14 @@ export async function fetchAdminWorkflowDashboard(
           description:
             typeof ticket.description === 'string' && ticket.description.trim()
               ? ticket.description.trim()
+              : null,
+          issue_headline:
+            typeof ticket.issue_headline === 'string' && ticket.issue_headline.trim()
+              ? ticket.issue_headline.trim()
+              : null,
+          location_detail:
+            typeof ticket.location_detail === 'string' && ticket.location_detail.trim()
+              ? ticket.location_detail.trim()
               : null,
           inspection_report_id:
             typeof ticket.inspection_report_id === 'string' &&
@@ -1451,6 +1465,10 @@ export async function fetchAdminWorkflowDashboard(
         readMetaString(metadata, 'description') ??
         readMetaString(metadata, 'issue_description') ??
         readMetaString(metadata, 'issue_summary'),
+      issueHeadline:
+        ticket?.issue_headline ?? readMetaString(metadata, 'issue_headline'),
+      issueLocationDetail:
+        ticket?.location_detail ?? readMetaString(metadata, 'location_detail'),
       vendorWorkStatus: ticket?.vendor_work_status ?? null,
       assignedVendorId: ticket?.assigned_vendor_id ?? null,
       autoReassignLastOutcome: ticket?.auto_reassign_last_outcome ?? null,

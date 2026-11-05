@@ -12,7 +12,10 @@ import {
 import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
-import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
+import {
+  summarizeWorkOrderCardBlurb,
+  summarizeWorkOrderCardDetail,
+} from '@/lib/workOrderCardSummary'
 import {
   isMaintenanceAdminVendorEscalationReason,
   isStalePendingAcceptNeedsAdminVendor,
@@ -735,7 +738,16 @@ export function buildWorkflowKanbanCard(
 
   const maintenanceBlurb =
     !groupItems && !isStandaloneInspectionNotice && derivedCategory === 'maintenance'
-      ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
+      ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory, {
+          issueHeadline: row.issueHeadline,
+        })
+      : null
+
+  const maintenanceDetail =
+    !groupItems && !isStandaloneInspectionNotice && derivedCategory === 'maintenance'
+      ? summarizeWorkOrderCardDetail(row.issueDescription, row.issueCategory) ||
+        row.issueLocationDetail?.trim() ||
+        null
       : null
 
   const title = groupItems
@@ -802,8 +814,8 @@ export function buildWorkflowKanbanCard(
       ? `${progress!.complete} of ${progress!.total} complete`
       : isStandaloneInspectionNotice
         ? (row.issueDescription?.split('\n')[0]?.trim() || 'Prepare for inspection')
-        : // Maintenance blurb is the title; avoid duplicating it under the chips.
-          null,
+        : // Title is the issue noun-phrase; summary carries location + reported detail.
+          maintenanceDetail,
     stage,
     critical:
       workflowEscalated ||

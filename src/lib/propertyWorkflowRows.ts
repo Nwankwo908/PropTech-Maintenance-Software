@@ -85,6 +85,15 @@ function workflowListTitle(
     return inspectionWorkflowTitle(row, lifecycle, context)
   }
 
+  // Prefer the specific Active Tasks title over a bare trade label.
+  if (
+    card.category === 'maintenance' &&
+    card.title?.trim() &&
+    !/^(plumbing|hvac|electrical|appliance) issue$/i.test(card.title.trim())
+  ) {
+    return card.title.trim()
+  }
+
   const category = (issueCategory ?? '').toLowerCase()
   const urgent =
     card.critical ||

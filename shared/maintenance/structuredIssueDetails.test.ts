@@ -81,3 +81,38 @@ describe('structuredIssueDetails — concatenated Tenant update transcript', () 
     )
   })
 })
+
+const GANAIA_BASEBOARD_TRANSCRIPT = [
+  'Good morning. There is a leak in the baseboard heater for the first floor. The entire valve is rusted out and may need to be replaced.',
+  '',
+  'The leak is in the baseboard heater for the first floor. In the basement',
+].join('\n')
+
+describe('structuredIssueDetails — baseboard heater leak (no trade-label collapse)', () => {
+  it('titles the specific issue; location is basement only; serves floor stays separate', () => {
+    const details = extractStructuredIssueDetails(GANAIA_BASEBOARD_TRANSCRIPT, {
+      category: 'hvac',
+      format: 'title',
+    })
+    expect(details.issue).toBe('Baseboard heater leak')
+    expect(details.issue.toLowerCase()).not.toMatch(/^plumbing (leak|issue)$/)
+    expect(details.locationDetail).toBe('Basement')
+    expect(details.servesFloor?.toLowerCase()).toMatch(/first floor/)
+    expect(details.equipment?.toLowerCase()).toMatch(/baseboard/)
+    expect(details.reportedDetail).toMatch(/tenant reports/i)
+    expect(details.reportedDetail).toMatch(/rusted/i)
+    expect(details.reportedDetail).toMatch(/valve/i)
+    expect(details.reportedDetail).not.toMatch(/Good morning/i)
+    expect(details.displayDescription).toMatch(/^Baseboard heater leak/m)
+    expect(details.displayDescription).toMatch(/^Location: Basement$/m)
+    expect(details.displayDescription).toMatch(/Serves: First floor/i)
+  })
+
+  it('does not pull in an unrelated bathroom sink message', () => {
+    const details = extractStructuredIssueDetails(GANAIA_BASEBOARD_TRANSCRIPT, {
+      category: 'plumbing',
+    })
+    expect(details.displayDescription).not.toMatch(/bathroom sink/i)
+    expect(details.reportedDetail).not.toMatch(/bathroom sink/i)
+  })
+})

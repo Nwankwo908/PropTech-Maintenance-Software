@@ -122,7 +122,8 @@ function safetyLine(value: string | null | undefined): string | null {
 
 function usablePlace(value: string): string {
   const trimmed = clean(value).replace(/[.]+$/g, "")
-  if (!trimmed || trimmed.length > 40) return ""
+  // Allow slightly longer labeled places (e.g. "Basement — first-floor baseboard heater").
+  if (!trimmed || trimmed.length > 64) return ""
   if (/[.!?]/.test(trimmed)) return ""
   if (/entry if|tenant update|safety concerns|first noticed|resident availability/i.test(trimmed)) {
     return ""
