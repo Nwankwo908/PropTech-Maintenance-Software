@@ -25,7 +25,6 @@ import {
   IconClose,
   IconFocusFeature,
   IconGraph,
-  LANDING_DOCUMENT_IMPORT_ICONS,
   IconMenu,
 } from '@/components/landing/LandingIcons'
 import { FeaturesMarquee } from '@/components/landing/FeaturesMarquee'
@@ -110,15 +109,11 @@ function LandingContentShell({
   )
 }
 
-function HeroInteractionVideo({ matchHeight }: { matchHeight?: number }) {
-  const defaultWidth = HERO_INTERACTION_VIDEO_WIDTH
-  const defaultHeight = Math.round(defaultWidth * HERO_INTERACTION_ASPECT)
-  const displayHeight =
-    matchHeight && matchHeight > 0 ? Math.round(matchHeight) : defaultHeight
-  const displayWidth = Math.round(displayHeight / HERO_INTERACTION_ASPECT)
-  const cornerScale = displayHeight / defaultHeight
-  const cornerH = Math.max(12, Math.round(25 * cornerScale))
-  const cornerW = Math.max(11, Math.round(23 * cornerScale))
+function HeroInteractionVideo() {
+  const displayWidth = HERO_INTERACTION_VIDEO_WIDTH
+  const displayHeight = Math.round(displayWidth * HERO_INTERACTION_ASPECT)
+  const cornerH = 25
+  const cornerW = 23
 
   return (
     <div
@@ -435,8 +430,7 @@ function HeroHeadlineAndCopy() {
         }}
       >
         Tenants text. Landlords text. Ulo coordinates maintenance, vendors, and
-        repairs so you spend less time managing and more time owning. No apps
-        required for tenants or vendors.
+        repairs so you spend less time managing and more time owning.
       </p>
     </div>
   )
@@ -537,44 +531,12 @@ export function LandingPage() {
   const [tryDemoOpen, setTryDemoOpen] = useState(false)
   const { scrollToId } = useLandingSmoothScroll()
   const landingRootRef = useRef<HTMLDivElement>(null)
-  const heroRowRef = useRef<HTMLDivElement>(null)
-  const heroCopyRef = useRef<HTMLDivElement>(null)
-  const [heroVideoMatchHeight, setHeroVideoMatchHeight] = useState<number>()
-
   useLayoutEffect(() => {
     const root = landingRootRef.current
     if (!root) return
     return bindHideOverlappingLogoColumnRules(root)
   }, [])
 
-  useLayoutEffect(() => {
-    const row = heroRowRef.current
-    const copy = heroCopyRef.current
-    if (!row || !copy) return
-
-    const syncVideoHeight = () => {
-      const style = getComputedStyle(row)
-      const sideBySide =
-        (style.display === 'flex' || style.display === 'inline-flex') &&
-        style.flexDirection.startsWith('row')
-      if (!sideBySide) {
-        setHeroVideoMatchHeight(undefined)
-        return
-      }
-      const next = Math.round(copy.getBoundingClientRect().height)
-      setHeroVideoMatchHeight((prev) => (prev === next ? prev : next > 0 ? next : undefined))
-    }
-
-    syncVideoHeight()
-    const observer = new ResizeObserver(syncVideoHeight)
-    observer.observe(copy)
-    observer.observe(row)
-    window.addEventListener('resize', syncVideoHeight)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', syncVideoHeight)
-    }
-  }, [])
   useEffect(() => {
     primeUiClickSound()
   }, [])
@@ -737,12 +699,6 @@ export function LandingPage() {
               >
                 Login
               </Link>
-              <PrimaryLink
-                to="/admin/get-started"
-                className="ml-2 inline-flex landing-3840-2160:ml-3 landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.75rem] landing-3840-2160:px-[2.625rem] landing-3840-2160:py-[0.9375rem] landing-3840-2160:text-[1.3125rem] landing-4096-2304:ml-[0.8rem] landing-5120-2880:ml-[0.8rem] landing-4096-2304:gap-[0.8rem] landing-5120-2880:gap-[0.8rem] landing-4096-2304:rounded-[0.8rem] landing-5120-2880:rounded-[0.8rem] landing-4096-2304:px-[2.8rem] landing-5120-2880:px-[2.8rem] landing-4096-2304:py-4 landing-5120-2880:py-4 landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:ml-5 landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:py-[1.5625rem] landing-7680-4320:text-[2.1875rem]"
-              >
-                Get Started
-              </PrimaryLink>
             </div>
             <button
               type="button"
@@ -775,13 +731,6 @@ export function LandingPage() {
               >
                 Login
               </Link>
-              <PrimaryLink
-                to="/admin/get-started"
-                className="mt-1 w-full justify-center"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Get Started
-              </PrimaryLink>
             </nav>
           </div>
         ) : null}
@@ -792,9 +741,13 @@ export function LandingPage() {
         <section className="relative overflow-x-clip overflow-y-visible min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center landing-3840-2160:min-h-[calc(100dvh-6rem)] landing-4096-2304:min-h-[calc(100dvh-6.4rem)] landing-5120-2880:min-h-[calc(100dvh-6.4rem)] landing-7680-4320:min-h-[calc(100dvh-10rem)]">
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.3]"
-            style={{ backgroundImage: `url(${heroBlueprint})` }}
-          />
+            className="landing-hero-bg-pan pointer-events-none absolute inset-0 overflow-hidden opacity-[0.45]"
+          >
+            <div
+              className="landing-hero-bg-pan-layer absolute inset-0 bg-cover bg-center bg-no-repeat"
+              style={{ backgroundImage: `url(${heroBlueprint})` }}
+            />
+          </div>
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[48%] bg-gradient-to-b from-transparent via-white/75 to-white"
@@ -804,8 +757,7 @@ export function LandingPage() {
             contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:!ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center "
      >
       <div
-       ref={heroRowRef}
-       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-fit [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-stretch [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-fit [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-stretch [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-0 min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-fit min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-stretch min-[1024px]:justify-center min-[1024px]:gap-0 min-[1440px]:gap-0 min-[1440px]:gap-y-0 min-[2560px]:gap-0 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
+       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-fit [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-fit [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-0 min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-fit min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-center min-[1024px]:justify-center min-[1024px]:gap-0 min-[1440px]:gap-0 min-[1440px]:gap-y-0 min-[2560px]:gap-0 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
               style={
                 {
                   '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
@@ -813,11 +765,11 @@ export function LandingPage() {
                 } as React.CSSProperties
               }
             >
-              <div ref={heroCopyRef} className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-none min-[1024px]:shrink min-[1024px]:pb-0">
-                <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
-                  <span className="landing-alpha-status-dot max-[385px]:hidden" aria-hidden />
-                  <span className="font-mono text-[10px] font-normal leading-4 text-[#059669] min-[321px]:text-[12px]">
-                    PROPERTY OPERATIONS, AUTOMATED BY TEXT
+              <div className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-none min-[1024px]:shrink min-[1024px]:pb-0">
+                <span className="landing-hero-glass-pill inline-flex max-w-full flex-wrap items-center gap-2.5 rounded-full px-4 py-2">
+                  <span className="landing-alpha-status-dot landing-hero-glass-pill-dot max-[385px]:hidden" aria-hidden />
+                  <span className="text-[11px] font-medium leading-4 tracking-[0.01em] text-[#0f5c4a] min-[321px]:text-[13px]">
+                    PROPERTY OPERATIONS AUTOMATED BY TEXT
                   </span>
                 </span>
 
@@ -832,17 +784,12 @@ export function LandingPage() {
                     >
                       Try Demo
                     </SecondaryButton>
-                    <button
-                      type="button"
-                      className="sa-press sa-link flex min-w-0 shrink-0 items-center justify-center gap-2 bg-transparent px-1 text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2 sm:justify-start"
+                    <PrimaryLink
+                      to="/admin/get-started"
+                      className="landing-waitlist-field box-border w-full justify-center !py-0 sm:w-auto sm:min-w-[10.5rem] landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.8rem] landing-3840-2160:px-10"
                     >
-                      <span className="whitespace-nowrap">Bring Your Existing Data</span>
-                      <span className="flex shrink-0 items-center gap-1" aria-hidden>
-                        {LANDING_DOCUMENT_IMPORT_ICONS.slice(0, 4).map((Icon) => (
-                          <Icon key={Icon.name} className="size-5 shrink-0" />
-                        ))}
-                      </span>
-                    </button>
+                      Get Started
+                    </PrimaryLink>
                   </div>
                 </div>
               </div>
@@ -858,8 +805,8 @@ export function LandingPage() {
                 />
               </div>
 
-              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 items-stretch justify-center self-stretch [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-0 min-[1440px]:mr-0 min-[1440px]:w-auto min-[2560px]:ml-0">
-                <HeroInteractionVideo matchHeight={heroVideoMatchHeight} />
+              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 items-center justify-center self-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-0 min-[1440px]:mr-0 min-[1440px]:w-auto min-[2560px]:ml-0">
+                <HeroInteractionVideo />
               </div>
             </div>
           </LandingContentShell>

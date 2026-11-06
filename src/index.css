@@ -486,7 +486,7 @@
       display: flex !important;
       flex-direction: row !important;
       flex-wrap: nowrap !important;
-      align-items: stretch !important;
+      align-items: center !important;
       justify-content: flex-start !important;
       gap: 0 !important;
       width: 100% !important;
@@ -511,8 +511,8 @@
       margin-left: auto !important;
       margin-right: 0 !important;
       justify-content: flex-end !important;
-      align-items: stretch !important;
-      align-self: stretch !important;
+      align-items: center !important;
+      align-self: center !important;
       flex: 0 0 auto !important;
       width: auto !important;
       height: auto !important;
@@ -522,7 +522,7 @@
       margin-left: auto !important;
       margin-right: 0 !important;
       max-width: none !important;
-      height: 100% !important;
+      height: auto !important;
     }
   }
 
@@ -532,7 +532,7 @@
       display: flex !important;
       flex-direction: row !important;
       flex-wrap: nowrap !important;
-      align-items: stretch !important;
+      align-items: center !important;
       justify-content: center !important;
       gap: 0 !important;
       width: fit-content !important;
@@ -1797,6 +1797,18 @@
   }
 }
 
+/* View all links use the Set up portfolio text color (#611879). */
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']),
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):hover,
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):focus,
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):focus-visible,
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):visited,
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):visited:hover,
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):visited:focus,
+.admin-quiet-text-action.setup-portfolio-text:not(:disabled):not([aria-disabled='true']):visited:focus-visible {
+  color: #611879;
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -2013,13 +2025,6 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
   animation: ask-ulo-caret-blink 1s step-end infinite;
 }
 
-.property-tab-indicator {
-  transition:
-    left 320ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 320ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 180ms ease;
-}
-
 @keyframes property-tab-panel-in {
   from {
     opacity: 0;
@@ -2036,16 +2041,6 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
      animation runs and can leave the property detail body permanently invisible
      if the animation is interrupted (Strict Mode remount / HMR / tab switch). */
   animation: property-tab-panel-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.property-tab-trigger {
-  transition:
-    color 200ms ease,
-    transform 120ms ease;
-}
-
-.property-tab-trigger:active {
-  transform: scale(0.98);
 }
 
 @keyframes property-conversation-row-in {
@@ -2476,6 +2471,62 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
   }
   to {
     opacity: 1;
+  }
+}
+
+/**
+ * Hero glass pill — keep mint tint light. Heavy backdrop-blur milks the white
+ * page into an opaque chip, so blur stays minimal and fill stays mostly clear
+ * so blueprint lines stay readable through the pill.
+ */
+.landing-hero-glass-pill {
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  background: #E6E9F2 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 0 0 1px rgba(126, 212, 190, 0.2),
+    0 0 20px rgba(126, 212, 190, 0.28);
+  -webkit-backdrop-filter: blur(2px) saturate(1.05);
+  backdrop-filter: blur(2px) saturate(1.05);
+}
+
+/* Only the animated circle layers — not the square host span. */
+.landing-hero-glass-pill-dot::before,
+.landing-hero-glass-pill-dot::after {
+  background: #059669 !important;
+  border-radius: 9999px !important;
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .landing-hero-glass-pill {
+    background: #E6E9F2 !important;
+  }
+}
+
+/** Slow Ken Burns-style pan on the hero blueprint. */
+@keyframes landing-hero-bg-pan {
+  0% {
+    transform: scale(1.12) translate3d(-2.5%, 1.5%, 0);
+  }
+  50% {
+    transform: scale(1.12) translate3d(2.5%, -1.5%, 0);
+  }
+  100% {
+    transform: scale(1.12) translate3d(-2.5%, 1.5%, 0);
+  }
+}
+
+.landing-hero-bg-pan-layer {
+  inset: -6%;
+  will-change: transform;
+  animation: landing-hero-bg-pan 48s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-bg-pan-layer {
+    animation: none;
+    inset: 0;
+    transform: none;
   }
 }
 
@@ -3274,16 +3325,8 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
     transition: none;
   }
 
-  .property-tab-indicator {
-    transition: none;
-  }
-
   .property-tab-panel {
     animation: none;
-  }
-
-  .property-tab-trigger:active {
-    transform: none;
   }
 
   .property-conversation-row {
