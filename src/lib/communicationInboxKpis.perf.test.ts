@@ -120,6 +120,9 @@ describe('Messages KPI wiring', () => {
     expect(kpis.failedDelta).toBe(1)
     expect(kpis.responseRate).toBe(50)
     expect(kpis.responseRateDelta).toBe(-50)
+    expect(kpis.needsYourResponseThreadIds).toEqual(['a', 'c'])
+    expect(kpis.failedDeliveryThreadIds).toEqual(['a', 'c', 'f'])
+    expect(kpis.responseRateThreadIds).toEqual(['a', 'b', 'd', 'e', 'f'])
   })
 
   it('stays fast at the Messages query caps of 2,000 threads and 5,000 texts', () => {

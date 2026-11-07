@@ -6,6 +6,7 @@ import {
   getAdminNavSearchItems,
   getAdminRouteSegmentsForAudit,
   getAdminSettingsNavCategories,
+  getAdminSidebarNavGroups,
   getAdminSidebarNavItems,
 } from '@/lib/adminNavigation'
 
@@ -101,5 +102,41 @@ describe('adminNavigation registry', () => {
       (node) => node.id,
     )
     expect(sidebarIds).toEqual(treeSidebarIds)
+    expect(sidebarIds).toEqual([
+      'overview',
+      'workflows',
+      'communication',
+      'properties',
+      'residents',
+      'vendors',
+      'analytics',
+      'settings',
+    ])
+  })
+
+  it('exposes labeled primary groups with Settings separated', () => {
+    const { groups, settings } = getAdminSidebarNavGroups()
+    expect(groups.map((group) => group.id)).toEqual([
+      'overview',
+      'work',
+      'people',
+      'insights',
+    ])
+    expect(groups.map((group) => group.label)).toEqual([
+      'Overview',
+      'Work',
+      'People & Properties',
+      'Insights',
+    ])
+    expect(groups.map((group) => group.items.map((item) => item.id))).toEqual([
+      ['overview'],
+      ['workflows', 'communication'],
+      ['properties', 'residents', 'vendors'],
+      ['analytics'],
+    ])
+    expect(settings?.id).toBe('settings')
+    expect(groups.flatMap((group) => group.items.map((item) => item.id))).not.toContain(
+      'settings',
+    )
   })
 })

@@ -16,8 +16,9 @@ import {
 } from '@/lib/tryDemoAttentionGuide'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
-  getAdminSidebarNavItems,
+  getAdminSidebarNavGroups,
   type AdminNavId,
+  type AdminSidebarNavItem,
 } from '@/lib/adminNavigation'
 import { useSetupSuccessNavHint } from '@/hooks/useSetupSuccessNavHint'
 import { useActiveTasksNavCount } from '@/hooks/useActiveTasksNavCount'
@@ -117,6 +118,7 @@ function SidebarChromeGlyph({ src }: { src: string }) {
 }
 
 function NavCountBadge({ count }: { count: number }) {
+  if (count <= 0) return null
   return (
     <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#101828] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
       {count}
@@ -124,11 +126,15 @@ function NavCountBadge({ count }: { count: number }) {
   )
 }
 
-type NavItem = {
-  id: AdminNavId
-  to: string
-  end?: boolean
-  label: string
+function SidebarGroupLabel({ label }: { label: string }) {
+  return (
+    <p className="px-4 pb-1 pt-0.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[#6a7282]">
+      {label}
+    </p>
+  )
+}
+
+type NavItem = AdminSidebarNavItem & {
   icon: ReactNode
   onClick?: () => void
 }
@@ -229,11 +235,148 @@ export function AdminSidebarContent({
       : 'px-8 py-8'
   const footerPad = forRail ? (isCollapsedRail ? 'p-2' : 'p-4') : 'px-8 py-8'
 
-  const items: NavItem[] = getAdminSidebarNavItems().map((item) => ({
+  const { groups, settings } = getAdminSidebarNavGroups()
+  const toNavItem = (item: AdminSidebarNavItem): NavItem => ({
     ...item,
     icon: ADMIN_NAV_ICONS[item.id],
     onClick: onNavigate,
+  })
+  const primaryGroups = groups.map((group) => ({
+    ...group,
+    items: group.items.map(toNavItem),
   }))
+  const settingsItem = settings ? toNavItem(settings) : null
+
+  const renderNavLink = (item: NavItem) => (
+    <NavLink
+      key={item.to}
+      to={
+        askUloOpen
+          ? withAskUloSearch(item.to, searchParams, { forceDock: true })
+          : item.to
+      }
+      end={item.end}
+      title={isCollapsedRail ? item.label : undefined}
+      aria-label={isCollapsedRail ? item.label : undefined}
+      onClick={(event) => {
+        event.preventDefault()
+        endTryDemoTourForUserNavigation()
+        item.onClick?.()
+        assignAdminPath(
+          askUloOpen
+            ? withAskUloSearch(item.to, searchParams, { forceDock: true })
+            : item.to,
+        )
+      }}
+      className={({ isActive }) =>
+        navClassName({
+          isActive,
+          collapsed: isCollapsedRail,
+        })
+      }
+    >
+      <span className="size-5 shrink-0 text-current" aria-hidden>
+        {item.icon}
+      </span>
+      {!isCollapsedRail ? (
+        <>
+          <span className="min-w-0 text-left">{item.label}</span>
+          {item.id === 'workflows' && activeTasksCount != null ? (
+            <NavCountBadge count={activeTasksCount} />
+          ) : null}
+          {item.id === 'communication' && messagesCount != null ? (
+            <NavCountBadge count={messagesCount} />
+          ) : null}
+        </>
+      ) : null}
+    </NavLink>
+  )
+
+  const renderSetupPortfolioHint = (item: NavItem) =>
+    setupNavHint.show ? (
+      <Fragment key={`${item.to}-profile-setup`}>
+        <button
+          type="button"
+          data-ulo-profile-setup-nav=""
+          title={isCollapsedRail ? `Set up portfolio · ${setupNavHint.percent}%` : undefined}
+          aria-label={`Set up portfolio, ${setupNavHint.percent}% complete`}
+          onClick={() => {
+            endTryDemoTourForUserNavigation()
+            setupNavHint.expandCard()
+            item.onClick?.()
+          }}
+          onMouseEnter={replayPortfolioShine}
+          onFocus={(event) => {
+            // Keyboard focus only — mouse click already replays via mouseenter.
+            if (event.currentTarget.matches(':focus-visible')) {
+              replayPortfolioShine()
+            }
+          }}
+          className={[
+            'ulo-profile-setup-nav',
+            isCollapsedRail
+              ? `sa-press ${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+              : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`,
+            profileSetupPointed ? 'relative z-10' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          data-pointed={profileSetupPointed ? 'true' : 'false'}
+        >
+          {isCollapsedRail ? (
+            <span
+              key={portfolioShineKey}
+              className={[
+                'ulo-profile-setup-shine-text tabular-nums',
+                portfolioShineImmediate ? 'ulo-profile-setup-shine-text--immediate' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              {setupNavHint.percent}%
+            </span>
+          ) : (
+            <>
+              <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
+                <img
+                  src={getSetupIcon}
+                  alt=""
+                  className="size-5 max-w-none object-contain object-top"
+                />
+              </span>
+              <span
+                key={portfolioShineKey}
+                className={[
+                  'ulo-profile-setup-shine-text text-left',
+                  portfolioShineImmediate ? 'ulo-profile-setup-shine-text--immediate' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                Set up portfolio
+              </span>
+              <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
+            </>
+          )}
+        </button>
+        {setupNavHint.gainDelta > 0 ? (
+          <div
+            key={`profile-setup-gain-${setupNavHint.percent}-${setupNavHint.gainDelta}`}
+            className={
+              isCollapsedRail
+                ? 'sa-enter mt-1 flex w-full justify-center'
+                : 'sa-enter mt-1 flex w-full items-center gap-3 px-4'
+            }
+            aria-live="polite"
+          >
+            {!isCollapsedRail ? <span className="size-5 shrink-0" aria-hidden /> : null}
+            <span className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] text-[#57B769]">
+              ↑ +{setupNavHint.gainDelta}%
+            </span>
+          </div>
+        ) : null}
+      </Fragment>
+    ) : null
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
@@ -282,138 +425,32 @@ export function AdminSidebarContent({
       ) : null}
 
       <nav
-        className={`flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain ${navPad}`}
+        className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain ${navPad}`}
         aria-label="Admin"
       >
-        {items.map((item) => (
-          <Fragment key={item.to}>
-            <NavLink
-              to={
-                askUloOpen
-                  ? withAskUloSearch(item.to, searchParams, { forceDock: true })
-                  : item.to
-              }
-              end={item.end}
-              title={isCollapsedRail ? item.label : undefined}
-              aria-label={isCollapsedRail ? item.label : undefined}
-              onClick={(event) => {
-                event.preventDefault()
-                endTryDemoTourForUserNavigation()
-                item.onClick?.()
-                assignAdminPath(
-                  askUloOpen
-                    ? withAskUloSearch(item.to, searchParams, { forceDock: true })
-                    : item.to,
-                )
-              }}
-              className={({ isActive }) =>
-                navClassName({
-                  isActive,
-                  collapsed: isCollapsedRail,
-                })
-              }
+        <div className={`flex flex-col ${isCollapsedRail ? 'gap-2' : 'gap-4'}`}>
+          {primaryGroups.map((group) => (
+            <div
+              key={group.id}
+              className={`flex flex-col gap-1 ${isCollapsedRail ? 'items-center' : ''}`}
             >
-              <span className="size-5 shrink-0 text-current" aria-hidden>
-                {item.icon}
-              </span>
-              {!isCollapsedRail ? (
-                <>
-                  <span className="min-w-0 text-left">{item.label}</span>
-                  {item.id === 'workflows' && activeTasksCount != null ? (
-                    <NavCountBadge count={activeTasksCount} />
-                  ) : null}
-                  {item.id === 'communication' && messagesCount != null ? (
-                    <NavCountBadge count={messagesCount} />
-                  ) : null}
-                </>
-              ) : null}
-            </NavLink>
-            {item.id === 'settings' && setupNavHint.show ? (
-              <Fragment key={`${item.to}-profile-setup`}>
-                <button
-                  type="button"
-                  data-ulo-profile-setup-nav=""
-                  title={isCollapsedRail ? `Set up portfolio · ${setupNavHint.percent}%` : undefined}
-                  aria-label={`Set up portfolio, ${setupNavHint.percent}% complete`}
-                  onClick={() => {
-                    endTryDemoTourForUserNavigation()
-                    setupNavHint.expandCard()
-                    item.onClick?.()
-                  }}
-                  onMouseEnter={replayPortfolioShine}
-                  onFocus={(event) => {
-                    // Keyboard focus only — mouse click already replays via mouseenter.
-                    if (event.currentTarget.matches(':focus-visible')) {
-                      replayPortfolioShine()
-                    }
-                  }}
-                  className={[
-                    'ulo-profile-setup-nav',
-                    isCollapsedRail
-                      ? `sa-press ${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
-                      : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`,
-                    profileSetupPointed ? 'relative z-10' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  data-pointed={profileSetupPointed ? 'true' : 'false'}
-                >
-                  {isCollapsedRail ? (
-                    <span
-                      key={portfolioShineKey}
-                      className={[
-                        'ulo-profile-setup-shine-text tabular-nums',
-                        portfolioShineImmediate ? 'ulo-profile-setup-shine-text--immediate' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                    >
-                      {setupNavHint.percent}%
-                    </span>
-                  ) : (
-                    <>
-                      <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
-                        <img
-                          src={getSetupIcon}
-                          alt=""
-                          className="size-5 max-w-none object-contain object-top"
-                        />
-                      </span>
-                      <span
-                        key={portfolioShineKey}
-                        className={[
-                          'ulo-profile-setup-shine-text text-left',
-                          portfolioShineImmediate ? 'ulo-profile-setup-shine-text--immediate' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                      >
-                        Set up portfolio
-                      </span>
-                      <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
-                    </>
-                  )}
-                </button>
-                {setupNavHint.gainDelta > 0 ? (
-                  <div
-                    key={`profile-setup-gain-${setupNavHint.percent}-${setupNavHint.gainDelta}`}
-                    className={
-                      isCollapsedRail
-                        ? 'sa-enter mt-1 flex w-full justify-center'
-                        : 'sa-enter mt-1 flex w-full items-center gap-3 px-4'
-                    }
-                    aria-live="polite"
-                  >
-                    {!isCollapsedRail ? <span className="size-5 shrink-0" aria-hidden /> : null}
-                    <span className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] text-[#57B769]">
-                      ↑ +{setupNavHint.gainDelta}%
-                    </span>
-                  </div>
-                ) : null}
-              </Fragment>
-            ) : null}
-          </Fragment>
-        ))}
+              {!isCollapsedRail ? <SidebarGroupLabel label={group.label} /> : null}
+              {group.items.map((item) => renderNavLink(item))}
+            </div>
+          ))}
+        </div>
+
+        {settingsItem ? (
+          <div
+            className={[
+              'mt-auto flex flex-col gap-1 border-t border-[#e5e7eb]',
+              isCollapsedRail ? 'items-center pt-3' : 'pt-4',
+            ].join(' ')}
+          >
+            {renderNavLink(settingsItem)}
+            {renderSetupPortfolioHint(settingsItem)}
+          </div>
+        ) : null}
 
         {askUloOpen ? (
           <>

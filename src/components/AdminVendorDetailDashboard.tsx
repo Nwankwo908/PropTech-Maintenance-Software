@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   postAdminReassignVendor,
@@ -201,6 +201,36 @@ function formatResponse(minutes: number | null): string {
   const hours = minutes / 60
   if (hours < 24) return `${hours.toFixed(hours < 10 ? 1 : 0)} hr`
   return `${Math.round(hours / 24)} d`
+}
+
+function VendorKpiCard({
+  label,
+  value,
+  title,
+}: {
+  label: string
+  value: ReactNode
+  title?: string
+}) {
+  return (
+    <div
+      className="sa-enter-scale flex min-w-0 items-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4"
+      title={title}
+    >
+      <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+        {label}
+      </p>
+      <div className="ml-auto flex min-w-0 max-w-[70%] shrink-0 justify-end">
+        {typeof value === 'string' || typeof value === 'number' ? (
+          <p className="truncate text-right text-[22px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[28px]">
+            {value}
+          </p>
+        ) : (
+          value
+        )}
+      </div>
+    </div>
+  )
 }
 
 function formatJobDate(value: string | null): string {
@@ -1520,27 +1550,6 @@ export function AdminVendorDetailDashboard() {
           </div>
           {!loading && vendor ? (
             <div className="flex shrink-0 items-center gap-2">
-              {compliance ? (
-                <span
-                  title={compliance.capacity.detail}
-                  className={[
-                    'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium',
-                    vendorCapacityChipVisualClasses(
-                      compliance.capacity.status as VendorCapacityChipStatus,
-                    ).pill,
-                  ].join(' ')}
-                >
-                  <span
-                    className={`inline-block size-2 rounded-full ${
-                      vendorCapacityChipVisualClasses(
-                        compliance.capacity.status as VendorCapacityChipStatus,
-                      ).dot
-                    }`}
-                    aria-hidden
-                  />
-                  {compliance.capacity.label}
-                </span>
-              ) : null}
               <div ref={actionsMenuRef} className="relative">
                 <button
                   type="button"
@@ -1702,6 +1711,72 @@ export function AdminVendorDetailDashboard() {
               </ul>
             )}
           </section>
+        ) : null}
+
+        {!loading && vendor ? (
+          <div className="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
+            <VendorKpiCard
+              label="Availability"
+              title={compliance?.capacity.detail || compliance?.capacity.label || 'Vendor availability'}
+              value={
+                compliance ? (
+                  <span
+                    title={compliance.capacity.detail}
+                    className={[
+                      'inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium',
+                      vendorCapacityChipVisualClasses(
+                        compliance.capacity.status as VendorCapacityChipStatus,
+                      ).pill,
+                    ].join(' ')}
+                  >
+                    <span
+                      className={`inline-block size-2 shrink-0 rounded-full ${
+                        vendorCapacityChipVisualClasses(
+                          compliance.capacity.status as VendorCapacityChipStatus,
+                        ).dot
+                      }`}
+                      aria-hidden
+                    />
+                    <span className="truncate">{compliance.capacity.label}</span>
+                  </span>
+                ) : (
+                  '—'
+                )
+              }
+            />
+            <VendorKpiCard
+              label="Completed jobs"
+              value={(
+                metrics?.completedJobs ??
+                completedJobs.filter((job) => job.status === 'completed').length
+              ).toLocaleString()}
+              title="Completed work orders for this vendor."
+            />
+            <VendorKpiCard
+              label="Average response"
+              value={formatResponse(metrics?.avgResponseMinutes ?? null)}
+              title="Average time from job dispatch SMS to the vendor’s YES or NO reply."
+            />
+            <VendorKpiCard
+              label="Reviews"
+              value={
+                metrics?.rating != null
+                  ? `${metrics.rating.toFixed(1)}${
+                      metrics.reviewCount > 0 ? ` · ${metrics.reviewCount.toLocaleString()}` : ''
+                    }`
+                  : metrics && metrics.reviewCount > 0
+                    ? metrics.reviewCount.toLocaleString()
+                    : '—'
+              }
+              title={
+                metrics?.reviewCount
+                  ? `${metrics.reviewCount.toLocaleString()} resident review${
+                      metrics.reviewCount === 1 ? '' : 's'
+                    }`
+                  : 'Resident reviews for this vendor.'
+              }
+            />
+          </div>
         ) : null}
       </div>
 

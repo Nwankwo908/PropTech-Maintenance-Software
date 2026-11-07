@@ -35,6 +35,14 @@ export type CommunicationInboxKpis = {
   unreadDelta: number | null
   failedDelta: number | null
   responseRateDelta: number | null
+  /** Open tenant/vendor threads waiting 4 hours on the latest inbound. */
+  needsYourResponseThreadIds: string[]
+  /** Threads that count as unread for the inbox badge / KPI. */
+  unreadThreadIds: string[]
+  /** Threads with at least one failed delivery in the message sample. */
+  failedDeliveryThreadIds: string[]
+  /** Threads with an inbound text in the last 4 weeks, the response-rate window. */
+  responseRateThreadIds: string[]
 }
 
 function isFailedDelivery(providerStatus: string): boolean {
@@ -132,12 +140,28 @@ export function computeCommunicationInboxKpis(input: {
   const previousStart = input.nowMs - 2 * FOUR_WEEKS_MS
 
   let failedDeliveries = 0
+  const failedDeliveryThreadIds = new Set<string>()
+  const responseRateThreadIds = new Set<string>()
+  const responseWindowStart = input.nowMs - FOUR_WEEKS_MS
   for (const message of input.messages) {
-    if (isFailedDelivery(message.providerStatus)) failedDeliveries += 1
+    if (isFailedDelivery(message.providerStatus) && message.conversationId) {
+      failedDeliveries += 1
+      failedDeliveryThreadIds.add(message.conversationId)
+    }
+    if (
+      message.conversationId &&
+      message.direction === 'inbound' &&
+      message.createdAtMs >= responseWindowStart &&
+      message.createdAtMs < input.nowMs
+    ) {
+      responseRateThreadIds.add(message.conversationId)
+    }
   }
 
   let needsYourResponse = 0
+  const needsYourResponseThreadIds: string[] = []
   let unreadMessages = 0
+  const unreadThreadIds: string[] = []
   for (const conv of input.conversations) {
     const closed = COMMUNICATION_CLOSED_STATUSES.has(conv.status)
     const latest = messagesByConv.get(conv.id)?.[0]
@@ -150,6 +174,7 @@ export function computeCommunicationInboxKpis(input: {
       })
     ) {
       needsYourResponse += 1
+      needsYourResponseThreadIds.push(conv.id)
     }
     const lastActivityMs = latest?.createdAtMs ?? 0
     const activityLooksUnread = latest?.direction === 'inbound' && !closed
@@ -161,6 +186,7 @@ export function computeCommunicationInboxKpis(input: {
       })
     ) {
       unreadMessages += 1
+      unreadThreadIds.push(conv.id)
     }
   }
 
@@ -172,6 +198,10 @@ export function computeCommunicationInboxKpis(input: {
     unreadMessages,
     failedDeliveries,
     responseRate: input.responseRate,
+    needsYourResponseThreadIds,
+    unreadThreadIds,
+    failedDeliveryThreadIds: [...failedDeliveryThreadIds].sort(),
+    responseRateThreadIds: [...responseRateThreadIds].sort(),
     needsYourResponseDelta: currentSnapshot.needsYourResponse - previousSnapshot.needsYourResponse,
     unreadDelta: currentSnapshot.unread - previousSnapshot.unread,
     failedDelta:

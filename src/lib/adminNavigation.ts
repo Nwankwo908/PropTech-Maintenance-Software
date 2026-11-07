@@ -119,6 +119,31 @@ export const ADMIN_NAV_TREE: AdminNavNode[] = [
     surfaces: { sidebar: false, search: false },
   },
   {
+    id: 'workflows',
+    label: 'Active Tasks',
+    path: `${ADMIN_BASE}/workflows`,
+    routeSegment: 'workflows',
+    surfaces: { sidebar: true, search: true },
+    search: {
+      category: 'workflow',
+      title: 'Active Tasks',
+      subtitle: 'Workflow pipeline and operational tasks',
+      keywords: ['workflows', 'tasks', 'pipeline', 'operations', 'active tasks'],
+    },
+  },
+  {
+    id: 'communication',
+    label: 'Messages',
+    path: `${ADMIN_BASE}/communication`,
+    routeSegment: 'communication',
+    surfaces: { sidebar: true, search: true },
+    search: {
+      category: 'conversation',
+      subtitle: 'SMS inbox and resident or vendor threads',
+      keywords: ['communication', 'inbox', 'messages', 'sms', 'threads', 'conversations'],
+    },
+  },
+  {
     id: 'properties',
     label: 'Properties',
     path: `${ADMIN_BASE}/properties`,
@@ -138,61 +163,15 @@ export const ADMIN_NAV_TREE: AdminNavNode[] = [
         surfaces: { sidebar: false, search: false },
         children: [
           {
-        id: 'property_resident_detail',
-        label: 'Resident',
-        path: `${ADMIN_BASE}/properties/:propertySlug/residents/:residentId`,
-        routeSegment: 'properties/:propertySlug/residents/:residentId',
+            id: 'property_resident_detail',
+            label: 'Resident',
+            path: `${ADMIN_BASE}/properties/:propertySlug/residents/:residentId`,
+            routeSegment: 'properties/:propertySlug/residents/:residentId',
             surfaces: { sidebar: false, search: false },
           },
         ],
       },
     ],
-  },
-  {
-    id: 'communication',
-    label: 'Messages',
-    path: `${ADMIN_BASE}/communication`,
-    routeSegment: 'communication',
-    surfaces: { sidebar: true, search: true },
-    search: {
-      category: 'conversation',
-      subtitle: 'SMS inbox and resident or vendor threads',
-      keywords: ['communication', 'inbox', 'messages', 'sms', 'threads', 'conversations'],
-    },
-  },
-  {
-    id: 'vendors',
-    label: 'Vendors',
-    path: `${ADMIN_BASE}/vendors`,
-    routeSegment: 'vendors',
-    surfaces: { sidebar: true, search: true },
-    search: {
-      category: 'vendor',
-      subtitle: 'Preferred vendor network and verification',
-      keywords: ['vendors', 'contractors', 'trades', 'verification'],
-    },
-    children: [
-      {
-        id: 'vendor_detail',
-        label: 'Vendor',
-        path: `${ADMIN_BASE}/vendors/:vendorId`,
-        routeSegment: 'vendors/:vendorId',
-        surfaces: { sidebar: false, search: false },
-      },
-    ],
-  },
-  {
-    id: 'workflows',
-    label: 'Active Tasks',
-    path: `${ADMIN_BASE}/workflows`,
-    routeSegment: 'workflows',
-    surfaces: { sidebar: true, search: true },
-    search: {
-      category: 'workflow',
-      title: 'Active Tasks',
-      subtitle: 'Workflow pipeline and operational tasks',
-      keywords: ['workflows', 'tasks', 'pipeline', 'operations', 'active tasks'],
-    },
   },
   {
     id: 'residents',
@@ -212,6 +191,27 @@ export const ADMIN_NAV_TREE: AdminNavNode[] = [
         label: 'Resident',
         path: `${ADMIN_BASE}/residents/:residentId`,
         routeSegment: 'residents/:residentId',
+        surfaces: { sidebar: false, search: false },
+      },
+    ],
+  },
+  {
+    id: 'vendors',
+    label: 'Vendors',
+    path: `${ADMIN_BASE}/vendors`,
+    routeSegment: 'vendors',
+    surfaces: { sidebar: true, search: true },
+    search: {
+      category: 'vendor',
+      subtitle: 'Preferred vendor network and verification',
+      keywords: ['vendors', 'contractors', 'trades', 'verification'],
+    },
+    children: [
+      {
+        id: 'vendor_detail',
+        label: 'Vendor',
+        path: `${ADMIN_BASE}/vendors/:vendorId`,
+        routeSegment: 'vendors/:vendorId',
         surfaces: { sidebar: false, search: false },
       },
     ],
@@ -317,6 +317,20 @@ export type AdminSidebarNavItem = {
   end?: boolean
 }
 
+export type AdminSidebarNavGroupId = 'overview' | 'work' | 'people' | 'insights'
+
+export type AdminSidebarNavGroup = {
+  id: AdminSidebarNavGroupId
+  label: string
+  items: AdminSidebarNavItem[]
+}
+
+export type AdminSidebarNavLayout = {
+  groups: AdminSidebarNavGroup[]
+  /** Settings sits below primary groups, visually separated — not under Insights. */
+  settings: AdminSidebarNavItem | null
+}
+
 export type AdminSettingsNavCategory = {
   id: AdminNavId
   title: string
@@ -366,14 +380,58 @@ export function adminNavLabel(id: AdminNavId): string {
   return getAdminNavNode(id).label
 }
 
-/** Primary sidebar items derived from the master list. */
-export function getAdminSidebarNavItems(): AdminSidebarNavItem[] {
-  return ADMIN_NAV_FLAT.filter((node) => node.surfaces.sidebar).map((node) => ({
+function toSidebarNavItem(node: AdminNavNode): AdminSidebarNavItem {
+  return {
     id: node.id,
     to: node.path,
     label: node.label,
     end: node.navEnd,
-  }))
+  }
+}
+
+/** Primary sidebar items derived from the master list. */
+export function getAdminSidebarNavItems(): AdminSidebarNavItem[] {
+  return ADMIN_NAV_FLAT.filter((node) => node.surfaces.sidebar).map(toSidebarNavItem)
+}
+
+const SIDEBAR_PRIMARY_GROUP_DEFS: ReadonlyArray<{
+  id: AdminSidebarNavGroupId
+  label: string
+  itemIds: readonly AdminNavId[]
+}> = [
+  { id: 'overview', label: 'Overview', itemIds: ['overview'] },
+  { id: 'work', label: 'Work', itemIds: ['workflows', 'communication'] },
+  {
+    id: 'people',
+    label: 'People & Properties',
+    itemIds: ['properties', 'residents', 'vendors'],
+  },
+  { id: 'insights', label: 'Insights', itemIds: ['analytics'] },
+]
+
+/**
+ * Labeled primary groups + Settings for the admin sidebar.
+ * Settings is returned separately so it can sit below the groups.
+ */
+export function getAdminSidebarNavGroups(): AdminSidebarNavLayout {
+  const byId = new Map(
+    getAdminSidebarNavItems()
+      .filter((item) => item.id !== 'settings')
+      .map((item) => [item.id, item]),
+  )
+  const groups: AdminSidebarNavGroup[] = SIDEBAR_PRIMARY_GROUP_DEFS.map((def) => ({
+    id: def.id,
+    label: def.label,
+    items: def.itemIds
+      .map((id) => byId.get(id))
+      .filter((item): item is AdminSidebarNavItem => Boolean(item)),
+  })).filter((group) => group.items.length > 0)
+
+  const settingsNode = ADMIN_NAV_BY_ID.get('settings')
+  const settings =
+    settingsNode?.surfaces.sidebar ? toSidebarNavItem(settingsNode) : null
+
+  return { groups, settings }
 }
 
 /** Settings hub cards derived from settings children. */
