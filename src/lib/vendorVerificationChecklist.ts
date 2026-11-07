@@ -297,3 +297,11 @@ export function computeVendorProfileVerificationChecklist(
       .map((item) => item.detail),
   }
 }
+
+/** Items the landlord should act on now (expired docs, missing required fields). */
+export function vendorComplianceActionNeededItems(
+  checklist: VerificationChecklist | null | undefined,
+): VerificationChecklistItem[] {
+  if (!checklist) return []
+  return checklist.items.filter((item) => item.status === 'action_needed')
+}
