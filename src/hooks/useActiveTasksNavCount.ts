@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { computeActiveTasksKpis } from '@/lib/activeTasksKpis'
 import {
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
@@ -11,7 +10,7 @@ import {
   isCancelledOnActiveTasks,
 } from '@/lib/adminWorkflows'
 
-/** Live Active Tasks badge — needs-attention cards only (not every active workflow). */
+/** Live Active Tasks badge — needs-attention (critical) cards only. */
 export function useActiveTasksNavCount(): number | null {
   const location = useLocation()
   const landlordId = getActiveLandlordId()
@@ -23,10 +22,11 @@ export function useActiveTasksNavCount(): number | null {
       .then((data) => {
         if (cancelled) return
         const runMetadata = data.runMetadata ?? {}
-        const cards = collectAdminWorkflowRuns(data)
+        const needsAttention = collectAdminWorkflowRuns(data)
           .filter((row) => !isCancelledOnActiveTasks(row))
           .map((row) => buildWorkflowKanbanCard(row, runMetadata[row.id]))
-        setCount(computeActiveTasksKpis(cards).needsYourAttention)
+          .filter((card) => card.stage !== 'completed' && card.critical).length
+        setCount(needsAttention)
       })
       .catch(() => {
         if (!cancelled) setCount(null)
