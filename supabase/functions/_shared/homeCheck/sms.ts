@@ -6,10 +6,25 @@ import { vendorPhotoRetake, vendorRetakeReply } from './vendorRetake.ts'
 import { homeCheckRecipientCommand } from './roleCommand.ts'
 import { withDeadline } from '../ai/deadline.ts'
 import { photoBatchFailureReply, type BatchPhotoDiagnostic } from './photoDiagnostics.ts'
-import { prepareHomeCheckReview } from './reviewSelection.ts'
+import { prepareHomeCheckReview, readHomeCheckReview } from './reviewSelection.ts'
 import { identifyVendorHomeCheckBatch } from './vendorBatch.ts'
 import { gateHomeCheckSmsMedia } from './homeCheckMedia.ts'
+import { applyHomeCheckSmsManufactureCorrection } from './manufactureCorrection.ts'
+import {
+  homeCheckManufactureCorrectionHelp,
+  isHomeCheckResultsAwaitingOk,
+  parseHomeCheckManufactureCorrection,
+  type HomeCheckManufactureCorrection,
+} from './manufactureCorrectionParse.ts'
 import { HOME_CHECK_OBSERVATION_PROMPT, homeCheckObservationAcknowledgement, homeCheckConfirmationSms } from './smsCopy.ts'
+
+/** Keep explicit estimate commands free for the estimate handler on the same thread. */
+function isExplicitEstimateDecisionReply(body: string): boolean {
+  const normalized = body.trim().toLowerCase().replace(/[.!]+$/g, '').replace(/\s+/g, ' ')
+  return /^(approve|approved|yes approve|approve estimate|decline|declined|reject|rejected|no decline|decline estimate)$/.test(
+    normalized,
+  )
+}
 import { captureContextAction, readCaptureContext } from "./captureContext.ts"
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
@@ -126,6 +141,11 @@ export type HomeCheckSmsAction =
   | { kind: 'cancel_photo'; conversationId: string }
   | { kind: 'confirm'; check: HomeCheckRow }
   | { kind: 'results'; check: HomeCheckRow }
+  | {
+    kind: 'correct_manufacture'
+    check: HomeCheckRow
+    correction: HomeCheckManufactureCorrection
+  }
   | { kind: 'answers'; check: HomeCheckRow; answers: HomeCheckAnswers }
   | { kind: 'clarify'; reply: string }
   | {
@@ -272,6 +292,50 @@ export async function homeCheckVendors(db: SupabaseClient, landlordId: string, p
 /** Called after identity validation and duplicate SID suppression, before generic
  * intake. Global consent and admin takeover still win. All mutations go through
  * the shared home_check workflow template, not a second SMS state machine. */
+/**
+ * After Results asks for OK, keep follow-up corrections on Home Check instead of
+ * falling through to an older estimate APPROVE ask on the same thread.
+ */
+async function prepareHomeCheckResultsFollowUp(
+  ctx: InboundSmsHandlerContext,
+  body: string,
+): Promise<HomeCheckSmsAction | null> {
+  if (isExplicitEstimateDecisionReply(body)) return null
+  if (!await isLandlordAccountOrOpsPhone(ctx.supabase, {
+    fromNumber: ctx.inbound.from,
+    landlordId: ctx.landlordId,
+  })) return null
+
+  const { data: prompts } = await ctx.supabase.from('sms_messages')
+    .select('id,body,raw_payload,provider_status,from_number,to_number')
+    .eq('conversation_id', ctx.conversationId).eq('landlord_id', ctx.landlordId)
+    .eq('direction', 'outbound').order('created_at', { ascending: false }).limit(1)
+  const latest = prompts?.[0] ?? null
+  if (!isHomeCheckResultsAwaitingOk(latest, ctx.inbound.from, ctx.inbound.to)) return null
+
+  const { data: thread } = await ctx.supabase.from('sms_conversations').select('intake_state')
+    .eq('id', ctx.conversationId).eq('landlord_id', ctx.landlordId)
+    .eq('external_phone_number', normalizeSmsPhone(ctx.inbound.from)).maybeSingle()
+  const review = readHomeCheckReview(thread?.intake_state)
+  if (!review?.selectedId || (review.summaryMessageId && review.summaryMessageId !== latest?.id)) {
+    return null
+  }
+
+  const { data: check } = await ctx.supabase.from('home_checks').select('*')
+    .eq('id', review.selectedId).eq('landlord_id', ctx.landlordId)
+    .eq('ulo_number', normalizeSmsPhone(ctx.inbound.to))
+    .eq('status', 'completed').is('confirmed_at', null)
+    .gt('expires_at', new Date().toISOString()).maybeSingle()
+  if (!check?.completed_at) return null
+  if (check.answers?.warningSigns == null && !check.answers?.observationsConfirmed) return null
+
+  const correction = parseHomeCheckManufactureCorrection(body)
+  if (correction) {
+    return { kind: 'correct_manufacture', check: check as HomeCheckRow, correction }
+  }
+  return { kind: 'clarify', reply: homeCheckManufactureCorrectionHelp() }
+}
+
 export async function prepareHomeCheckSms(
   ctx: InboundSmsHandlerContext,
 ): Promise<HomeCheckSmsAction | null> {
@@ -411,6 +475,10 @@ export async function prepareHomeCheckSms(
         if (landlord && addressedHomeCheckSummary(prompts?.[0] ?? null, ctx.inbound.from, ctx.inbound.to)) return { kind: 'clarify', reply: `For your Home Check at ${checkLocation(selected)}, ${HOME_CHECK_OBSERVATION_PROMPT}` }
       }
     }
+  }
+  if (!hasMedia && landlord && body.length > 0 && body.length <= 160) {
+    const followUp = await prepareHomeCheckResultsFollowUp(ctx, body)
+    if (followUp) return followUp
   }
   if (
     !hasMedia && !/^OK(?:\s+HC-[A-F0-9]{12})?$/i.test(body) &&
@@ -827,6 +895,27 @@ export async function actHomeCheckSms(
   if (action.kind === 'results') {
     const sent = await notifyHomeCheckResult(db, action.check, await rebuildHomeCheckAssets(db, action.check), true)
     return { runId: action.check.workflow_run_id, reply: sent ? undefined : 'Your results could not be sent. Please review this Home Check in Property Intelligence.' }
+  }
+  if (action.kind === 'correct_manufacture') {
+    try {
+      const assets = await applyHomeCheckSmsManufactureCorrection(db, action.check, action.correction)
+      const current = await loadHomeCheck(db, action.check.id, landlordId)
+      const sent = await notifyHomeCheckResult(db, current, assets, true)
+      return {
+        runId: action.check.workflow_run_id,
+        reply: sent
+          ? undefined
+          : 'I saved that manufacture year, but could not resend the results. Text RESULTS to review them, then reply OK.',
+      }
+    } catch (error) {
+      const message = String((error as Error)?.message ?? '')
+      return {
+        runId: action.check.workflow_run_id,
+        reply: /ended|leaks|not ready/i.test(message)
+          ? message
+          : 'I could not update that manufacture year. Reply OK to confirm as shown, or review the Home Check in Property Intelligence.',
+      }
+    }
   }
   if (action.kind === 'confirm') {
     if (action.check.confirmed_at) return { runId: action.check.workflow_run_id, reply: homeCheckConfirmationSms(checkLocation(action.check), action.check.detected_warning) }

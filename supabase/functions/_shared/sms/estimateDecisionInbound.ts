@@ -30,6 +30,7 @@ import {
   normalizeShortReply,
 } from "./shortReplyTokens.ts"
 import { loadRepeatedApprovalAcknowledgement } from "./repeatedLandlordApproval.ts"
+import { isHomeCheckResultsAwaitingOk } from "../homeCheck/manufactureCorrectionParse.ts"
 
 export type EstimateDecisionKeyword = "approve" | "reject"
 
@@ -564,6 +565,26 @@ export async function tryHandleEstimateDecisionInbound(
   const awaitingEarly = readAwaitingEstimateDecision(priorIntake)
   const parsedAction = parseEstimateDecisionKeyword(params.body)
   if (!parsedAction) {
+    // A fresher Home Check Results/OK ask on this thread owns the next free-text
+    // reply. Do not restate an older estimate APPROVE prompt over it.
+    if (awaitingEarly && params.fromPhone?.trim()) {
+      const { data: latestRows } = await supabase
+        .from("sms_messages")
+        .select("id,body,raw_payload,provider_status,from_number,to_number")
+        .eq("conversation_id", params.conversationId)
+        .eq("landlord_id", params.landlordId)
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: false })
+        .limit(1)
+      const latest = latestRows?.[0] ?? null
+      const ulo = typeof latest?.from_number === "string" ? latest.from_number : ""
+      if (
+        ulo &&
+        isHomeCheckResultsAwaitingOk(latest, params.fromPhone, ulo)
+      ) {
+        return { handled: false }
+      }
+    }
     // Pending ask + unparseable reply: restate the decision — never fall through
     // to the generic unknown-contact maintenance greeting.
     if (awaitingEarly) {

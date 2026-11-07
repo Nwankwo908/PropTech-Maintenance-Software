@@ -50,6 +50,13 @@ vi.mock('./service.ts', () => ({
     deliveryError: null,
   })),
 }))
+vi.mock('./manufactureCorrection.ts', () => ({
+  applyHomeCheckSmsManufactureCorrection: vi.fn(async () => ([
+    { system: 'water_heater', verified: false, fields: {} },
+    { system: 'heating', verified: false, manufactureDate: { year: 2014, month: null }, fields: {} },
+  ])),
+}))
+import { applyHomeCheckSmsManufactureCorrection } from './manufactureCorrection.ts'
 function query(data: unknown) {
   const filters: Array<[string, unknown[]]> = []
   const builder: Record<string, unknown> = {
@@ -575,6 +582,76 @@ describe('plain-language Home Check observations', () => {
  it('OK ignores a photo selection and offers completed results explicitly', async () => {
   expect(await prepareHomeCheckSms(context(observationsDb({ expired: true, checks: [completed, { ...completed, id: 'other' }] }), 'OK', [], true))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('Which Home Check results') })
  })
+})
+
+describe('Home Check Results follow-up corrections', () => {
+  const ready = {
+    ...pending,
+    role: 'landlord',
+    created_at: '2026-11-02T12:00:00Z',
+    expires_at: new Date(Date.now() + 86400000).toISOString(),
+    completed_at: new Date().toISOString(),
+    confirmed_at: null,
+    status: 'completed',
+    answers: { warningSigns: false, observationsConfirmed: true, warningDetails: '', lastService: '', lastFilterChange: '' },
+  }
+  const summary = {
+    id: 'summary',
+    body: 'Results: 78 Maple Ave, Irvington, NJ, Unit 2\nHeating system: Slant/Fin.\nAge unknown.\nYou noticed no leaks, unusual noises or smells.\nReply OK to confirm these records.',
+    raw_payload: { source: 'home_check' },
+    provider_status: 'delivered',
+    from_number: '+15550001111',
+    to_number: '+15551112222',
+  }
+  function followUpDb(bodyPrompt = summary) {
+    const db = query([])
+    db.from.mockImplementation((table: string) => query(
+      table === 'sms_conversations'
+        ? [{ intake_state: { home_check_results_review: { ids: ['check'], selectedId: 'check', summaryMessageId: 'summary', expiresAt: new Date(Date.now() + 600000).toISOString() } } }]
+        : table === 'sms_messages' ? [bodyPrompt]
+        : table === 'home_checks' ? [ready]
+        : [],
+    ).from(table))
+    return db
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(true)
+  })
+
+  it('keeps Age of heating system 2014 on Home Check instead of an estimate clarify', async () => {
+    expect(await prepareHomeCheckSms(context(followUpDb(), 'Age of heating system 2014', [], true))).toMatchObject({
+      kind: 'correct_manufacture',
+      check: { id: 'check' },
+      correction: { system: 'heating', year: 2014, month: null },
+    })
+  })
+
+  it('helps with free-text follow-up while Results await OK', async () => {
+    const result = await prepareHomeCheckSms(context(followUpDb(), 'the age looks wrong', [], true))
+    expect(result).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('Reply OK') })
+    expect(String(result && 'reply' in result ? result.reply : '')).not.toMatch(/estimate|APPROVE|WO-/i)
+  })
+
+  it('leaves explicit APPROVE for the estimate handler', async () => {
+    expect(await prepareHomeCheckSms(context(followUpDb(), 'APPROVE', [], true))).toBeNull()
+  })
+
+  it('applies the manufacture correction and resends Results', async () => {
+    const result = await actHomeCheckSms(actDb([]) as never, 'landlord', {
+      kind: 'correct_manufacture',
+      check: ready as never,
+      correction: { system: 'heating', year: 2014, month: null },
+    })
+    expect(applyHomeCheckSmsManufactureCorrection).toHaveBeenCalledWith(
+      expect.anything(),
+      ready,
+      { system: 'heating', year: 2014, month: null },
+    )
+    expect(notifyHomeCheckResult).toHaveBeenCalled()
+    expect(result.reply).toBeUndefined()
+  })
 })
 
 

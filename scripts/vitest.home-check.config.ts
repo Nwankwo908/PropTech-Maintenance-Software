@@ -14,6 +14,8 @@ export default defineConfig({
       'supabase/functions/_shared/homeCheck/workflowPerf.test.ts',
       'supabase/functions/_shared/homeCheck/landlordBatchPerf.test.ts',
       'supabase/functions/_shared/homeCheck/smsVideoPerf.test.ts',
+      'supabase/functions/_shared/homeCheck/resultsFollowUpPerf.test.ts',
+      'supabase/functions/_shared/homeCheck/manufactureCorrection.test.ts',
       'supabase/functions/_shared/homeCheck/homeCheckMedia.test.ts',
       'supabase/functions/_shared/homeCheck/openCopy.test.ts',
       'supabase/functions/_shared/homeCheck/photoViewReader.test.ts',
