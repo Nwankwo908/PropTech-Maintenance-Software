@@ -51,24 +51,30 @@ async function companyName(db: SupabaseClient, landlordId: string): Promise<stri
   return typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : 'your property team'
 }
 
-async function resolveTenant(db: SupabaseClient, check: HomeCheckRow): Promise<{
+export async function resolveTenant(db: SupabaseClient, check: HomeCheckRow): Promise<{
   id: string
   phone: string
 } | null> {
-  let query = db.from('occupancy').select('resident_id').eq('landlord_id', check.landlord_id).eq(
-    'property_id',
-    check.property_id,
-  ).eq('status', 'active')
-  if (check.unit_id) query = query.eq('unit_id', check.unit_id)
+  let query = db.from('occupancy').select('resident_id').eq('landlord_id', check.landlord_id).eq('status', 'active')
+  if (check.unit_id) {
+    // Occupancy may link through unit_id while its optional property_id is null.
+    // Verify the unit's scope first; never infer or broaden the property scope.
+    const unit = await db.from('units').select('id').eq('id', check.unit_id)
+      .eq('landlord_id', check.landlord_id).eq('property_id', check.property_id).maybeSingle()
+    if (unit.error || !unit.data) throw new Error('Could not verify the Home Check unit and property.')
+    query = query.eq('unit_id', check.unit_id)
+  } else query = query.eq('property_id', check.property_id)
   const { data, error } = await query
-  if (error || !Array.isArray(data) || data.length !== 1) return null
+  if (error) throw new Error('Could not load the Home Check access contact. Please retry later.')
+  if (!Array.isArray(data) || data.length !== 1) return null
   const residentId = typeof data[0]?.resident_id === 'string' ? data[0].resident_id : ''
   if (!residentId) return null
   const resident = await db.from('users').select('id, phone, sms_consent_status').eq('id', residentId).eq(
     'landlord_id',
     check.landlord_id,
   ).maybeSingle()
-  if (resident.error || resident.data?.sms_consent_status === 'opted_out') return null
+  if (resident.error) throw new Error('Could not verify the Home Check tenant contact. Please retry later.')
+  if (resident.data?.sms_consent_status === 'opted_out') return null
   const phone = typeof resident.data?.phone === 'string' ? resident.data.phone.trim() : ''
   if (!phone) return null
   return { id: residentId, phone }
@@ -82,6 +88,7 @@ async function persistVisit(
 ) {
   await checked(db.from('home_checks').update({
     visit,
+    ...(visit.accessCoordinator === 'tenant' ? { resident_id: check.resident_id } : {}),
     ...(close ? { status: 'expired' } : {}),
   }).eq('id', check.id).eq('landlord_id', check.landlord_id))
   await updateWorkflowRun(db, check.workflow_run_id, close
@@ -164,7 +171,7 @@ export function homeCheckVisitEventFromReply(input: {
       tenantReady: input.tenantReady,
     }
   }
-  if (window && (input.visit.awaiting === 'vendor_window' || input.visit.awaiting === 'vendor_confirm')) {
+  if (window && (input.visit.awaiting === 'vendor_window' || input.visit.awaiting === 'vendor_confirm' || input.visit.awaiting === 'tenant_confirm')) {
     return {
       type: 'vendor_window',
       at: input.at,
@@ -183,7 +190,7 @@ async function checksForVisit(ctx: InboundSmsHandlerContext): Promise<VisitCheck
   const { data } = await ctx.supabase.from('home_checks').select('*').eq(
     'landlord_id',
     ctx.landlordId,
-  ).eq('status', 'collecting').gt('expires_at', new Date().toISOString())
+  ).eq('ulo_number', normalizeSmsPhone(ctx.inbound.to)).eq('status', 'collecting').gt('expires_at', new Date().toISOString())
   return (Array.isArray(data) ? data : []) as VisitCheck[]
 }
 
@@ -198,16 +205,28 @@ export async function prepareHomeCheckVisitReply(
   if (ctx.inbound.mediaUrls.length || !mightBeHomeCheckVisitReply(body)) return null
   const from = normalizeSmsPhone(ctx.inbound.from)
   const rows = await checksForVisit(ctx)
-  const vendorCheck = rows.find((row) => {
+  const reference = body.match(/HC-[A-F0-9]{12}/i)?.[0].toUpperCase()
+  const eligible = rows.filter(row => !reference || row.reference === reference)
+  const vendorMatches = eligible.filter((row) => {
     const visit = readHomeCheckVisit(row.visit)
     return visit && row.recipient_phone && normalizeSmsPhone(row.recipient_phone) === from
   })
-  const tenantCheck = vendorCheck ? null : rows.find((row) => {
+  if (vendorMatches.length > 1) return { kind: 'clarify', reply: 'More than one Home Check needs a vendor reply. Include its Home Check reference so the right visit is updated.' }
+  const vendorCheck = vendorMatches[0]
+  const tenantMatches = vendorCheck ? [] : eligible.filter((row) => {
     const visit = readHomeCheckVisit(row.visit)
     return visit?.tenantPhone && normalizeSmsPhone(visit.tenantPhone) === from
   })
-  const check = vendorCheck || tenantCheck
-  const visit = check ? readHomeCheckVisit(check.visit) : null
+  if (tenantMatches.length > 1) return { kind: 'clarify', reply: 'More than one Home Check needs an access reply. Include its Home Check reference so the right visit is updated.' }
+  const tenantCheck = tenantMatches[0]
+  const ownerCandidates = vendorCheck || tenantCheck ? [] : eligible.filter(row => readHomeCheckVisit(row.visit)?.accessCoordinator === 'landlord')
+  const ownerAllowed = ownerCandidates.length > 0 && normalizeSmsPhone(await landlordPhone(ctx.supabase, ctx.landlordId) || '') === from
+  const referenced = body.match(/HC-[A-F0-9]{12}/i)?.[0].toUpperCase()
+  const ownerMatches = ownerAllowed ? ownerCandidates.filter(row => !referenced || row.reference === referenced) : []
+  if (ownerMatches.length > 1) return { kind: 'clarify', reply: 'More than one Home Check needs access confirmation. Include the Home Check reference with your reply.' }
+  const ownerCheck = ownerMatches[0]
+  const check = vendorCheck || tenantCheck || ownerCheck
+  let visit = check ? readHomeCheckVisit(check.visit) : null
   if (!check || !visit) return null
   if (visit.phase === 'scheduled') {
     return {
@@ -217,15 +236,24 @@ export async function prepareHomeCheckVisitReply(
         : 'This Home Check visit is already set. Photo instructions arrive when it’s time for the visit.',
     }
   }
-  const tenant = visit.phase === 'awaiting_acceptance' ? await resolveTenant(ctx.supabase, check) : null
+  let tenant: Awaited<ReturnType<typeof resolveTenant>> = null
+  if (vendorCheck && (visit.phase === 'awaiting_acceptance' || visit.phase === 'scheduling')) {
+    try { tenant = await resolveTenant(ctx.supabase, check) }
+    catch { return { kind: 'clarify', reply: 'I could not verify the access contact. The visit is not confirmed. Please try again later.' } }
+    visit = { ...visit, tenantPhone: tenant ? normalizeSmsPhone(tenant.phone) : null,
+      tenantReady: Boolean(tenant) || Boolean(await landlordPhone(ctx.supabase, check.landlord_id)),
+      accessCoordinator: tenant ? 'tenant' : 'landlord' }
+    check.visit = visit
+    check.resident_id = tenant?.id ?? null
+  }
   const event = homeCheckVisitEventFromReply({
     visit,
     sender: vendorCheck ? 'vendor' : 'tenant',
-    body,
+    body: body.replace(/HC-[A-F0-9]{12}/ig, '').trim(),
     replyId: ctx.messageId,
     at: new Date().toISOString(),
     now: new Date(),
-    tenantReady: Boolean(tenant) || Boolean(visit.tenantReady),
+    tenantReady: Boolean(tenant) || Boolean(visit.tenantReady) || visit.accessCoordinator === 'landlord',
   })
   if (event === 'clarify_acceptance') {
     return {
@@ -250,10 +278,10 @@ async function sendVisitMessage(
   const phone = to === 'vendor'
     ? check.recipient_phone
     : to === 'tenant'
-    ? visit?.tenantPhone || null
+    ? visit?.accessCoordinator === 'landlord' ? await landlordPhone(db, check.landlord_id) : visit?.tenantPhone || null
     : await landlordPhone(db, check.landlord_id)
   if (!phone) return
-  const residentId = to === 'tenant' ? check.resident_id : null
+  const residentId = to === 'tenant' && visit?.accessCoordinator !== 'landlord' ? check.resident_id : null
   await sendHomeCheckSms(db, check, phone, body, residentId)
 }
 
@@ -332,7 +360,16 @@ export async function sendHomeCheckVendorAcceptance(
   const location = placeOf(check)
   const destination = check.recipient_phone
   if (!destination) return { deliveryError: 'The vendor needs a phone number.', alreadySent: false }
+  await persistVisit(db, check, { phase: 'awaiting_acceptance', inviteSentAt: null }, false)
   const tenant = await resolveTenant(db, check)
+  const pendingVisit: HomeCheckVisit = {
+    phase: 'awaiting_acceptance', inviteSentAt: null,
+    tenantPhone: tenant ? normalizeSmsPhone(tenant.phone) : null,
+    tenantReady: Boolean(tenant) || Boolean(await landlordPhone(db, check.landlord_id)),
+    accessCoordinator: tenant ? 'tenant' : 'landlord',
+  }
+  // Persist the photo gate before any vendor-facing send, including failure paths.
+  await persistVisit(db, check, pendingVisit, false)
   await updateWorkflowRun(db, check.workflow_run_id, {
     currentStep: homeCheckWorkflowStep('awaiting_acceptance'),
   }).catch(() => null)
@@ -342,7 +379,7 @@ export async function sendHomeCheckVendorAcceptance(
       db,
       check,
       destination,
-      homeCheckVendorAcceptanceSms(location),
+      homeCheckVendorAcceptanceSms(location, tenant ? 'tenant' : 'landlord'),
     )
   } catch (error) {
     return {
@@ -350,12 +387,7 @@ export async function sendHomeCheckVendorAcceptance(
       alreadySent: false,
     }
   }
-  const visit: HomeCheckVisit = {
-    phase: 'awaiting_acceptance',
-    inviteSentAt: sentAt,
-    tenantPhone: tenant ? normalizeSmsPhone(tenant.phone) : null,
-    tenantReady: Boolean(tenant),
-  }
+  const visit: HomeCheckVisit = { ...pendingVisit, inviteSentAt: sentAt }
   await persistVisit(db, { ...check, resident_id: tenant?.id ?? check.resident_id }, visit, false)
   if (tenant) {
     await db.from('home_checks').update({ resident_id: tenant.id }).eq('id', check.id).eq(
@@ -383,7 +415,7 @@ export async function startDueHomeCheckPhotoPrompts(
     const { data: saved } = await db.from('home_checks').update({ visit: claimed }).eq('id', row.id).eq(
       'landlord_id',
       landlordId,
-    ).eq('status', 'collecting').select('id')
+    ).eq('status', 'collecting').eq('visit->>phase', 'scheduled').is('visit->>photoPromptSentAt', null).select('id')
     if (!saved || (Array.isArray(saved) && saved.length === 0)) continue
     try {
       if (!row.recipient_phone) throw new Error('Vendor phone missing')
@@ -392,7 +424,7 @@ export async function startDueHomeCheckPhotoPrompts(
         location: placeOf(row),
         company,
         filled: [],
-      }))
+      }), null, { company })
       await updateWorkflowRun(db, row.workflow_run_id, {
         currentStep: homeCheckWorkflowStep('in_progress'),
       }).catch(() => null)

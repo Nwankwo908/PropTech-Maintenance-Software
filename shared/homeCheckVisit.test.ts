@@ -10,6 +10,8 @@ import {
   homeCheckVisitPhotoSms,
   reduceHomeCheckVisit,
   type HomeCheckVisit,
+  type HomeCheckVisitEvent,
+  type HomeCheckVisitMessage,
 } from './homeCheckVisit.ts'
 
 const location = '14 Maple Ave, Unit 2'
@@ -23,7 +25,7 @@ describe('home check visit from the request button', () => {
   it('asks the vendor to accept and does not include photo instructions', () => {
     const text = homeCheckVendorAcceptanceSms(location)
     expect(text).toContain('Hi, this is Ulo. Can you complete a Home Check at 14 Maple Ave, Unit 2?')
-    expect(text).toContain('The visit involves taking 4 equipment photos. No repairs or hands-on equipment work are authorized.')
+    expect(text).toContain('The visit involves taking 4 appliance photos.')
     expect(text).toContain('Reply YES to accept or NO to decline.')
     expect(text).not.toContain('Next: send a clear photo')
     expect(homeCheckAcceptanceAlreadySent(invited)).toBe(true)
@@ -130,7 +132,7 @@ describe('home check visit from the request button', () => {
     })
     expect(confirmed.visit.phase).toBe('scheduled')
     expect(confirmed.visit.confirmedWindow).toBe('Wed 9am–12pm')
-    expect(confirmed.messages).toHaveLength(2)
+    expect(confirmed.messages).toHaveLength(3)
     for (const message of confirmed.messages) {
       expect(message.body).toContain('set for Wed 9am–12pm')
       expect(message.body).not.toContain('Next: send a clear photo')
@@ -159,9 +161,9 @@ describe('home check visit from the request button', () => {
       company: 'Maple Court',
       filled: [],
     })
-    expect(first).toContain('Home Check visit for 14 Maple Ave, Unit 2.')
-    expect(first).toContain('Visual check only. Do not open covers or touch equipment.')
-    expect(first).toContain('water heater label')
+    expect(first).toContain('Home Check photos for 14 Maple Ave, Unit 2.')
+    expect(first).not.toContain('No repairs are authorized')
+    expect(first).toContain('Water heater label')
     expect(first).not.toContain('furnace or boiler label')
 
     let filled: string[] = []
@@ -186,4 +188,55 @@ describe('home check visit from the request button', () => {
     expect(replies[3]).toContain('All four photos are in.')
     expect(homeCheckLandlordStatus('four_photos_received', 'completed')).toBe('Completed')
   })
+})
+
+
+describe('owner access fallback and consent gates',()=>{
+ const at='2026-11-01T17:00:00Z'
+ const location='Disposable test property'
+ const start={phase:'awaiting_acceptance',accessCoordinator:'landlord'} as const
+ const act=(visit: HomeCheckVisit, event: HomeCheckVisitEvent)=>reduceHomeCheckVisit({visit,event,location,vendorName:'Test Vendor'})
+ it('does not schedule or release photo instructions on vendor acceptance alone',()=>{
+  const result=act(start,{type:'vendor_yes',at,replyId:'accept',tenantReady:true})
+  expect(result.visit.phase).toBe('scheduling')
+  expect(homeCheckVisitAllowsPhotos(result.visit)).toBe(false)
+  expect(result.messages[0].body).toContain('property team')
+ })
+ it('requires owner access confirmation for a vendor-proposed time, without inventing a tenant',()=>{
+  const accepted=act(start,{type:'vendor_yes',at,replyId:'accept',tenantReady:true})
+  const proposed=act(accepted.visit,{type:'vendor_window',at,replyId:'window',window:'Today 2-4pm',visitAt:'2026-11-01T19:00:00Z'})
+  expect(proposed.visit.phase).toBe('scheduling')
+  expect(proposed.messages.find((m: HomeCheckVisitMessage)=>m.to==='vendor')?.body).toContain('property team')
+  const agreed=act(proposed.visit,{type:'tenant_yes',at,replyId:'owner-yes'})
+  expect(agreed.visit.phase).toBe('scheduled')
+  expect(agreed.messages.map((m: HomeCheckVisitMessage)=>m.to)).toEqual(['vendor','tenant'])
+  expect(homeCheckVisitAllowsPhotos(agreed.visit)).toBe(false)
+ })
+ it('requires vendor confirmation of an access-contact counterproposal',()=>{
+  const accepted=act({...start,phase:'scheduling',awaiting:'tenant_confirm',tenantReady:true},{type:'tenant_window',at,replyId:'counter',window:'Tomorrow 10am',visitAt:'2026-11-02T15:00:00Z'})
+  expect(accepted.visit.phase).toBe('scheduling')
+  expect(accepted.visit.awaiting).toBe('vendor_confirm')
+  expect(homeCheckVisitAllowsPhotos(accepted.visit)).toBe(false)
+  const agreed=act(accepted.visit,{type:'vendor_yes',at,replyId:'vendor-agrees',tenantReady:true})
+  expect(agreed.visit.phase).toBe('scheduled')
+ })
+})
+
+
+it.each(['tenant','landlord'] as const)('names the verified %s who coordinates access', coordinator => {
+ const text = homeCheckVendorAcceptanceSms('12 Oak St', coordinator)
+ expect(text).toContain(`If you accept, we’ll coordinate a visit time with the ${coordinator}.`)
+ expect(text).not.toContain('access contact')
+ expect(text).not.toContain(coordinator === 'tenant' ? 'with the landlord' : 'with the tenant')
+})
+
+it.each(['tenant_yes','vendor_yes'] as const)('sends photo-instruction expectations only to the vendor after %s',type=>{
+ const result=reduceHomeCheckVisit({visit:{phase:'scheduling',awaiting:type==='tenant_yes'?'tenant_confirm':'vendor_confirm',accessCoordinator:'tenant',tenantReady:true,proposedWindow:'Wed 9–10:30am',visitAt:'2026-11-04T14:00:00Z'},event:{type,at:'2026-11-04T13:38:00Z',replyId:'confirm'},location:'200 Test Lane, Unit 1',vendorName:'Test Vendor'})
+ expect(result.messages.find(m=>m.to==='vendor')?.body).toContain('Photo instructions will arrive by text when it’s time for the visit.')
+ const tenant=result.messages.find(m=>m.to==='tenant')?.body??''
+ expect(tenant).toContain('Test Vendor will take four appliance photos.')
+ expect(tenant).toContain('Ulo will send the photo instructions directly to the vendor.')
+ expect(tenant).not.toContain('Photo instructions will arrive by text')
+ expect(tenant).not.toMatch(/send.*photo here|upload|Reply 1/i)
+ expect(result.visit.phase).toBe('scheduled')
 })

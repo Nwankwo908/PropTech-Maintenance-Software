@@ -1,3 +1,4 @@
+import { homeCheckEquipment } from '../../../../shared/homeCheckEquipment.ts'
 import { homeCheckCaptureSms, type HomeCheckAsset, type HomeCheckAnswers } from "../../../../shared/homeCheck.ts";
 
 export { homeCheckCaptureSms };
@@ -13,35 +14,37 @@ export function homeCheckObservationQuestion() {
 
 export function homeCheckResultsSms(input: {
   location: string; assets: HomeCheckAsset[]; answers: HomeCheckAnswers;
-  warning: string | null; pendingSystems: string[];
+  warning: string | null; pendingSystems: string[]; observerRole?: 'landlord' | 'tenant' | 'contractor'; now?: Date;
 }) {
   const answered = input.answers.warningSigns != null || input.answers.observationsConfirmed === true;
   const place = input.location.split(' · ');
   const location = place.length > 1 ? place.slice(1).join(', ') : input.location;
   const describe = (system: 'water_heater' | 'heating', title: string) => {
     if (input.pendingSystems.includes(system)) return `${title}: analysis pending.`;
-    const fields = input.assets.find(asset => asset.system === system)?.fields;
-    const age = fields?.approximateAge.value;
-    const make = String(fields?.make.value || 'make unknown').replace('International Comfort Products', 'ICP');
-    return `${title}: ${make}, ${age == null ? 'age unknown' : `about ${age} years`}.`;
+    const asset = input.assets.find(asset => asset.system === system);
+    const fields = asset?.fields;
+    const facts = asset ? homeCheckEquipment(asset, input.now) : null;
+    const make = String(fields?.make.value || 'manufacturer unknown').replace(/^ICP$/i, 'International Comfort Products');
+    const ageText = facts?.age == null ? 'Age unknown.' : `about ${facts.age} years old.`;
+    return `\n${facts?.label ?? title}: ${make}.\n${facts?.serialEstimated ? (facts.age == null ? 'Age unknown.' : `Estimated age: about ${facts.age} years, based on the serial number.`) : facts?.made ? `Made ${facts.made}; ${ageText}` : ageText}`;
   };
   const warning = !input.warning ? '' : /TPR|relief.valve|discharge line/i.test(input.warning)
     ? 'Photo flag: possible relief-valve piping issue.'
     : /pan/i.test(input.warning) ? 'Photo flag: drain pan may be missing.'
     : 'Photo flag: possible equipment issue.';
-  const unknown = !input.pendingSystems.length && input.assets.some(asset => !asset.fields.serial.value || !asset.fields.model.value);
+  const subject = input.observerRole === 'contractor' ? 'The vendor reported' : input.observerRole === 'tenant' ? 'The tenant reported' : 'You noticed';
   return [
     `Results: ${location}`,
-    describe('water_heater', 'Water heater'), describe('heating', 'HVAC component'),
-    input.answers.warningSigns === true ? `You noticed: ${input.answers.warningDetails || 'warning signs'}.`
-      : input.answers.warningSigns === false ? 'You noticed no leaks, unusual noises or smells.'
-      : answered ? 'Leaks, noises or smells: you are unsure.' : '',
-    unknown ? 'Some label details remain unverified.' : '', warning,
-    warning ? 'Review the photo in Property Intelligence.' : unknown ? 'Review label details in Property Intelligence.' : '',
+    describe('water_heater', 'Water heater'), describe('heating', 'Heating system'),
+    input.answers.warningSigns === true ? `${subject}: ${input.answers.warningDetails || 'warning signs'}.`
+      : input.answers.warningSigns === false ? `${subject} no leaks, unusual noises or smells.`
+      : answered ? `${input.observerRole === 'contractor' ? 'The vendor is' : input.observerRole === 'tenant' ? 'The tenant is' : 'You are'} unsure about leaks, noises or smells.` : '',
+    warning,
+    warning ? 'Review the photo concern in Property Intelligence tab.' : '',
     input.answers.warningSigns ? 'If you smell gas, see smoke or feel unsafe, leave and contact emergency services or your utility.' : '',
     !answered ? HOME_CHECK_OBSERVATION_PROMPT
       : input.pendingSystems.length ? 'Not confirmed; photo analysis must finish first.'
-      : 'Reply OK to confirm these records. No repairs authorized.',
+      : 'Reply OK to confirm these records.',
   ].filter(Boolean).join('\n');
 }
 
@@ -55,7 +58,6 @@ export function homeCheckObservationAcknowledgement(answers: HomeCheckAnswers, p
     pending ? 'Photo analysis is pending; results are not confirmed.' : 'Reply OK to confirm the results above.',
     hasPhotoWarning ? 'The photo flag still needs review.' : '',
     answers.warningSigns ? 'If you smell gas, see smoke or feel unsafe, leave and contact emergency services or your utility.' : '',
-    'No repairs authorized.',
   ].filter(Boolean).join(' ');
 }
 

@@ -60,8 +60,8 @@ Deno.test("landlord tenant, self, and contractor paths", () => {
   assertStringIncludes(turn.replies[0], "12 Oak St")
   assertEquals(turn.replies[0].includes("Unit"), false)
   turn = say(turn.state, "YES")
-  assertStringIncludes(turn.replies[0], "Which unit")
-  turn = say(turn.state, "1")
+  // Home check is property-level (shared furnace / water heater) — no unit ask.
+  assertEquals(turn.replies[0]?.includes("Which unit"), false)
   assertStringIncludes(turn.replies[0], "Who should do it?")
   turn = say(turn.state, "1")
   assertEquals(turn.effects, [{ type: "start_tenant", propertyId: "oak", unitId: "u2" }])
@@ -77,7 +77,7 @@ Deno.test("landlord tenant, self, and contractor paths", () => {
 
   turn = say(null, "can someone check the equipment at 12 Oak")
   turn = say(turn.state, "YES")
-  turn = say(turn.state, "1")
+  // No unit step — go straight to who / contractor.
   turn = say(turn.state, "2")
   assertStringIncludes(turn.replies[0], "Rapid Electric")
   turn = say(turn.state, "YES")
@@ -86,7 +86,8 @@ Deno.test("landlord tenant, self, and contractor paths", () => {
   assertEquals(invite?.type, "invite_contractor")
   if (invite?.type === "invite_contractor") {
     assertEquals(invite.propertyId, "oak")
-    assertEquals(invite.unitId, "u2")
+    // Property-level home check — no unit binding when several units exist.
+    assertEquals(invite.unitId, null)
     assertEquals(invite.vendorId, "near")
     assertEquals(invite.vendorName, "Rapid Electric")
   }
@@ -142,6 +143,30 @@ Deno.test("ambiguous property or unit creates no check", () => {
   assertStringIncludes(turn.replies[0], "Which property")
   assertEquals(turn.effects, [])
   assertEquals(turn.state?.step, "pick_property")
+})
+
+Deno.test("house with several unit labels skips the unit question", () => {
+  const house: HomeCheckGuideCatalog = {
+    ...catalog,
+    properties: [
+      {
+        id: "maple-78",
+        label: "78 Maple Ave",
+        propertyType: "single_family_home",
+        units: [
+          { id: "u1", label: "1" },
+          { id: "u2", label: "2" },
+          { id: "u3", label: "3" },
+        ],
+      },
+    ],
+  }
+  let turn = say(null, "Home check for 78 maple ave", "landlord", NOW, house)
+  assertStringIncludes(turn.replies[0], "78 Maple Ave")
+  assertEquals(turn.replies[0]?.includes("Which unit"), false)
+  turn = say(turn.state, "YES", "landlord", NOW, house)
+  assertEquals(turn.replies[0]?.includes("Which unit"), false)
+  assertStringIncludes(turn.replies[0], "Who should do it?")
 })
 
 Deno.test("contractor link waits for a time, then a reminder, handoff, confirm, or cancel", () => {

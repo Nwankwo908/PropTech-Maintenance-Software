@@ -3,6 +3,7 @@ import {
   type HomeCheckRole,
   parseHomeCheckGuideStart,
 } from '../../../../shared/homeCheck.ts'
+import { isSingleFamilyPropertyType } from '../../../../shared/properties/propertyType.ts'
 import {
   formatLocationWithOptionalUnit,
   shouldOmitUnitReference,
@@ -281,7 +282,24 @@ function contractorAsk(catalog: HomeCheckGuideCatalog): string {
   if (!nearest) {
     return 'Which contractor should take the photos? Reply with their name, or CANCEL.'
   }
-  return `${nearest.name} is the nearest contractor. They will ${HOME_CHECK_VENDOR_SCOPE}. No repairs are authorized. Ulo will send them the photo instructions once the visit time is confirmed. Reply YES to use them, name another contractor, or CANCEL.`
+  return `${nearest.name} is the nearest contractor. They will ${HOME_CHECK_VENDOR_SCOPE}. Ulo will send them the photo instructions once the visit time is confirmed. Reply YES to use them, name another contractor, or CANCEL.`
+}
+
+/** Bind at most one unit without asking — home check covers shared house systems. */
+function resolveHomeCheckUnit(property: HomeCheckGuideProperty): {
+  id: string
+  label: string
+} | null {
+  // Single-family (and invented "1"/"Home" inventory): never ask; use the hidden row if any.
+  if (isSingleFamilyPropertyType(property.propertyType)) {
+    return property.units[0] ?? null
+  }
+  const units = visibleUnits(property)
+  if (units.length === 1) return units[0]
+  if (units.length === 0) return property.units[0] ?? null
+  // Multifamily with several units still shares furnace/water heater for Home Check —
+  // stay property-level (no unit ask). Tenant SMS can still use the first unit later.
+  return null
 }
 
 function afterPlace(
@@ -291,46 +309,57 @@ function afterPlace(
 ): HomeCheckGuideTurn {
   const property = catalog.properties.find((row) => row.id === state.propertyId)
   if (!property) return { state, replies: [propertyList(catalog.properties)], effects: [] }
-  const units = visibleUnits(property)
-  if (!state.unitId && units.length > 1) {
-    const next = touch(state, now, {
-      step: 'pick_unit',
-      unitChoices: units.map((unit) => unit.id),
-    })
-    const lines = units.map((unit, index) => `${index + 1}) ${unit.label}`)
-    return {
-      state: next,
-      replies: [`Which unit at ${property.label}?\n${lines.join('\n')}\nReply with a number, or CANCEL.`],
-      effects: [],
+  let nextState = state
+  if (!state.unitId) {
+    const unit = resolveHomeCheckUnit(property)
+    if (unit) {
+      nextState = touch(state, now, {
+        unitId: unit.id,
+        unitLabel: shouldOmitUnitReference({
+          unitLabel: unit.label,
+          propertyType: property.propertyType,
+        })
+          ? null
+          : unit.label,
+        placeLabel: placeLabel(property, unit.label),
+      })
     }
   }
-  if (state.role === 'tenant' || state.role === 'landlord') {
-    return finishCapture(touch(state, now, { step: 'pick_who' }), catalog)
+  if (nextState.role === 'tenant' || nextState.role === 'landlord') {
+    return finishCapture(touch(nextState, now, { step: 'pick_who' }), catalog)
   }
-  if (state.role === 'contractor') {
-    const next = touch(state, now, { step: 'pick_contractor' })
+  if (nextState.role === 'contractor') {
+    const next = touch(nextState, now, { step: 'pick_contractor' })
     return { state: next, replies: [contractorAsk(catalog)], effects: [] }
   }
-  const next = touch(state, now, { step: 'pick_who' })
+  const next = touch(nextState, now, { step: 'pick_who' })
   return { state: next, replies: [whoQuestion()], effects: [] }
 }
 
 function finishCapture(
   state: HomeCheckGuideState,
-  _catalog: HomeCheckGuideCatalog,
+  catalog: HomeCheckGuideCatalog,
 ): HomeCheckGuideTurn {
   if (state.role === 'tenant') {
-    if (!state.unitId) {
+    const property = catalog.properties.find((row) => row.id === state.propertyId)
+    const unitId =
+      state.unitId ??
+      (property ? resolveHomeCheckUnit(property)?.id : null) ??
+      property?.units[0]?.id ??
+      null
+    if (!unitId) {
       return {
         state,
-        replies: ['Choose the tenant’s unit before sending the check, or reply CANCEL.'],
+        replies: [
+          'We need a tenant on this property before sending the check. Add a resident, or reply CANCEL.',
+        ],
         effects: [],
       }
     }
     return {
       state: null,
       replies: [`The photo instructions for ${state.placeLabel} were sent to your tenant.`],
-      effects: [{ type: 'start_tenant', propertyId: state.propertyId!, unitId: state.unitId }],
+      effects: [{ type: 'start_tenant', propertyId: state.propertyId!, unitId }],
     }
   }
   return {
@@ -457,32 +486,16 @@ function startGuide(
   const property = matches[0]
   const units = visibleUnits(property)
   const namedUnit = units.filter((unit) => mentionsUnit(start.target, unit.label))
-  if (namedUnit.length > 1) {
-    const next = touch(state, now, {
-      step: 'pick_unit',
-      propertyId: property.id,
-      placeLabel: property.label,
-      unitChoices: namedUnit.map((unit) => unit.id),
-    })
-    return {
-      state: next,
-      replies: [`Which unit at ${property.label}? Reply with the unit, or CANCEL.`],
-      effects: [],
-    }
-  }
+  // Prefer an explicitly named unit; otherwise bind at most one without asking.
   const unit = namedUnit.length === 1
     ? namedUnit[0]
-    : units.length === 1
-    ? units[0]
-    : units.length === 0
-    ? property.units[0] ?? null
-    : null
+    : resolveHomeCheckUnit(property)
   const label = placeLabel(property, unit?.label)
   const next = touch(state, now, {
     step: 'confirm_place',
     propertyId: property.id,
-    unitId: namedUnit.length === 1 || units.length <= 1 ? unit?.id ?? null : null,
-    unitLabel: unit && (namedUnit.length === 1 || units.length <= 1)
+    unitId: unit?.id ?? null,
+    unitLabel: unit
       ? (shouldOmitUnitReference({ unitLabel: unit.label, propertyType: property.propertyType })
         ? null
         : unit.label)
@@ -662,8 +675,7 @@ export function reduceHomeCheckGuide(input: {
     const index = choiceIndex(body)
     const property = index ? choices[index - 1] : choices.find((row) => mentions(body, row.label))
     if (!property) return { state, replies: [propertyList(choices)], effects: [] }
-    const units = visibleUnits(property)
-    const only = units.length === 1 ? units[0] : units.length === 0 ? property.units[0] ?? null : null
+    const only = resolveHomeCheckUnit(property)
     const next = touch(state, now, {
       step: 'confirm_place',
       propertyId: property.id,

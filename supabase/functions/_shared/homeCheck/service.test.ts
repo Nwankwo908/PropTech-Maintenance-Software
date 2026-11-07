@@ -1,5 +1,7 @@
+import { bindHomeCheckResultsReview } from './reviewBinding.ts'
+vi.mock('./reviewBinding.ts',()=>({bindHomeCheckResultsReview:vi.fn(async()=>true)}))
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createHomeCheck, publicHomeCheck, pendingHomeCheckSystems, notifyHomeCheckResult, saveHomeCheckAnswers } from './service.ts'
+import { createHomeCheck, publicHomeCheck, pendingHomeCheckSystems, notifyHomeCheckResult, saveHomeCheckAnswers, sendHomeCheckSms } from './service.ts'
 import { resolveOutboundLandlordSmsLine } from '../sms/landlordSmsOnboarding.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import { sendInboundAutoReply } from '../sms/inboundReply.ts'
@@ -209,13 +211,14 @@ describe('SMS self-capture recipient', () => {
     expect(sendInboundAutoReply).toHaveBeenCalledTimes(1)
     expect(sendInboundAutoReply).toHaveBeenCalledWith(db, expect.objectContaining({
       toNumber: '+15558889999',
-      body: expect.stringContaining('No caption or code needed'),
+      body: expect.stringContaining('attach all four photos in one text'),
     }))
     const body = vi.mocked(sendInboundAutoReply).mock.calls[0][1].body
     expect(body).not.toContain('/c/')
     expect(body).not.toMatch(/HC-[A-F0-9]{12}/)
-    expect(body).toContain('Reply with the photo here')
-    expect(body).toContain('No repairs are authorized')
+    expect(body).toContain('1) Water heater label')
+    expect(body).toContain('4) Whole heating system')
+    expect(body).not.toContain('No repairs are authorized')
     expect(body).not.toContain('For text photos:')
     expect(body).not.toContain('Forward this')
     expect(body).not.toContain('filter dates')
@@ -321,3 +324,24 @@ it('persisting observations after a preview does not send the equipment summary 
  expect(await saveHomeCheckAnswers(db as never,check as never,check.answers,{notifyResults:false})).toBe(true)
  expect(sendInboundAutoReply).not.toHaveBeenCalled()
 })
+
+it('automatic Results binds the accepted message to the landlord review before returning',async()=>{
+ const db=client();vi.mocked(bindHomeCheckResultsReview).mockClear()
+ const check={id:'check',landlord_id:'landlord',role:'contractor',ulo_number:'+15550001111',recipient_phone:'+15558889999',property_label:'Birch',completed_at:new Date().toISOString(),summary_sent_at:null,expires_at:new Date(Date.now()+86400000).toISOString(),answers:{warningSigns:false,warningDetails:'',lastService:'',lastFilterChange:''}}
+ expect(await notifyHomeCheckResult(db as never,check as never,[])).toBe(true)
+ expect(bindHomeCheckResultsReview).toHaveBeenCalledWith(db,expect.objectContaining({landlordId:'landlord',conversationId:'thread',checkId:'check',phone:'+15553334444',messageId:'sent'}))
+})
+
+
+it('uses the supplied street address instead of the internal property title when binding tenant capture instructions',async()=>{
+ const check={id:'check',landlord_id:'landlord',ulo_number:'+15550001111',role:'tenant',recipient_phone:'+15551112222',vendor_id:null,unit_id:'unit',reference:'HC-TEST',property_label:'Internal test title · 200 Disposable Tenant Test Lane · Newark, NJ',unit_label:'1'};
+ const db=client('+15553334444',null,[check]);
+ vi.mocked(resolveOutboundLandlordSmsLine).mockResolvedValueOnce({id:'line',phone:'+15550001111'} as never);
+ vi.mocked(sendInboundAutoReply).mockResolvedValueOnce({ok:true,messageId:'sent'} as never);
+ await sendHomeCheckSms(db as never,check as never,'+15551112222','placeholder','resident',{
+  company:'Disposable maintenance test',location:'200 Disposable Tenant Test Lane, Newark, NJ, Unit 1',
+ });
+ expect(sendInboundAutoReply).toHaveBeenLastCalledWith(db,expect.objectContaining({body:expect.stringContaining('Ulo is requesting appliance photos for your Home Check at 200 Disposable Tenant Test Lane, Newark, NJ, Unit 1.')}));
+ const body=vi.mocked(sendInboundAutoReply).mock.calls.at(-1)![1].body;
+ expect(body).not.toMatch(/Internal test title|Ulo for|where you live|equipment photos/);
+});

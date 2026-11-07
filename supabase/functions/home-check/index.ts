@@ -1,3 +1,4 @@
+import { serialReviewInput } from '../_shared/homeCheck/serialReview.ts'
 import { serialFormatWarnings, hasLabelPlaceholder } from '../../../shared/vision/equipmentLabel.ts'
 import { equipmentSerialFormatRules } from '../_shared/vision/getProvider.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -6,6 +7,7 @@ import { recordActivityLog } from '../_shared/graph/recordActivityLog.ts'
 import {
   confirmHomeCheck,
   createHomeCheck,
+  deleteHomeCheck,
   requireData,
   reviewHomeCheckPhoto,
   uploadDashboardHomeCheckPhoto,
@@ -60,7 +62,7 @@ Deno.serve(async (req) => {
       const propertyId = str(body.propertyId)
       if (!propertyId && body.portfolio !== true) return json({ error: 'Choose a property first.' }, 400)
       let query = db.from('home_checks')
-        .select('id, property_id, property_label, detected_warning')
+        .select('id, property_id, unit_id, property_label, created_at, detected_warning')
         .eq('landlord_id', landlordId)
         .not('detected_warning', 'is', null)
         .in('status', ['completed', 'confirmed'])
@@ -171,6 +173,34 @@ Deno.serve(async (req) => {
         landlordId,
         checkId: id,
         decision,
+        actorId: access.user.id,
+      })
+      return json(result)
+    }
+    if (action === 'serial_review') {
+      let review: ReturnType<typeof serialReviewInput>
+      try { review = serialReviewInput(body) } catch (error) { return json({ error: String((error as Error).message) }, 400) }
+      const asset = requireData<{brand: string | null; metadata: Record<string, unknown>}>(await db.from('unit_assets')
+        .select('brand,metadata').eq('id',str(body.assetId)).eq('landlord_id',landlordId)
+        .eq('home_check_id',str(body.id)).eq('property_id',str(body.propertyId)).single())
+      if (review.serial) {
+        const warnings = serialFormatWarnings(review.serial, asset.brand || '', String(asset.metadata.registryAssetType || ''), equipmentSerialFormatRules())
+        if (warnings.length) return json({error:warnings.join(' ')},400)
+      }
+      const {error} = await db.rpc('save_home_check_serial_review', {
+        p_landlord_id:landlordId,p_property_id:str(body.propertyId),p_check_id:str(body.id),
+        p_asset_id:str(body.assetId),p_photo_id:str(body.photoId),p_serial:review.serial,
+        p_unknown:review.unknown,p_actor_id:access.user.id,
+      })
+      if (error) return json({error:'The serial could not be saved. Reopen the review and try again.'},409)
+      return json({ok:true})
+    }
+    if (action === 'delete') {
+      const id = str(body.id)
+      if (!id) return json({ error: 'Choose a Home Check first.' }, 400)
+      const result = await deleteHomeCheck(db, {
+        landlordId,
+        checkId: id,
         actorId: access.user.id,
       })
       return json(result)

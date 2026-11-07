@@ -47,6 +47,8 @@ export type HomeCheckField = {
   estimated?: boolean
 }
 export type HomeCheckAsset = {
+  /** Identity belongs to the data-plate subject, not the broader photo slot. */
+  identifiedType?: string
   labelReadability?: LabelReadability
   extractionTrace?: EquipmentExtractionTrace
   system: HomeCheckSystem
@@ -197,7 +199,7 @@ type VisionResult = {
   condition: { rating: string; summary: string }
   overallConfidence?: number
 }
-/** Heating slot accepts the furnace, boiler, heat pump, or indoor air handler. A cooling-only condenser does not. */
+/** Heating photos may identify an indoor component; this does not establish the furnace identity or age. A cooling-only condenser does not qualify. */
 export function isHeatingSystemResult(result: {
   category?: string
   identifiedItem?: { type?: string }
@@ -205,7 +207,7 @@ export function isHeatingSystemResult(result: {
   if (!result) return false
   if (result.category === 'boiler') return true
   if (result.category !== 'hvac') return false
-  return /furnace|boiler|heat pump|heating|air handler|indoor/i.test(result.identifiedItem?.type || '')
+  return /furnace|boiler|heat pump|heating|air handler|indoor|evaporator\s+coil/i.test(result.identifiedItem?.type || '')
 }
 
 export function homeCheckAsset(input: {
@@ -246,6 +248,7 @@ export function homeCheckAsset(input: {
   const age = label?.estimatedAge.value
   return {
     system: input.system,
+    ...(label?.identifiedItem.type ? { identifiedType: label.identifiedItem.type } : {}),
     labelReadability: label?.labelReadability || input.label?.labelReadability,
     extractionTrace: label?.extractionTrace || input.label?.extractionTrace,
     verified: false,
@@ -499,18 +502,36 @@ export function homeCheckCaptureSms(input: {
   reference: string
   nextPhoto?: HomeCheckSlot | null
 }): string {
+  const parts = input.location.split(' · ')
+  const location = (input.role === 'tenant' && parts.length > 1 ? parts.slice(1) : parts).join(', ')
   const heading = input.role === 'contractor'
-    ? `Home Check visit for ${input.location}.`
+    ? `Home Check visit for ${location}.`
     : input.role === 'tenant'
-      ? `Ulo for ${input.company}: please take the equipment photos where you live, at ${input.location}.`
-      : `Your Home Check for ${input.location}.`
+      ? `Ulo is requesting appliance photos for your Home Check at ${location}.`
+      : `Your Home Check for ${location}.`
   const next = input.nextPhoto === undefined ? 'water_heater_label' : input.nextPhoto
+  // Landlord self-capture matches the vendor option: all four in one text, or one at a time.
+  if ((input.role === 'contractor' || input.role === 'landlord') && next === 'water_heater_label') {
+    return [
+      input.role === 'contractor' ? `Home Check photos for ${location}.` : heading,
+      'You can attach all four photos in one text, or send them one at a time:',
+      '1) Water heater label\n2) Whole water heater, including the base\n3) Heating-system label\n4) Whole heating system',
+      'Visual check only; do not open covers or touch equipment.',
+    ].join('\n\n')
+  }
+  if (input.role === 'tenant' && next) {
+    return [
+      heading,
+      `Please send one clear photo of ${homeCheckSlotName(next)}.`,
+      "We'll guide you through four photos, one at a time. Do not open covers or touch equipment.",
+    ].join('\n\n')
+  }
   return [
     heading,
     'We will collect 4 photos, one at a time, in this text conversation.',
     'Visual check only. Do not open covers or touch equipment.',
     next
-      ? `Please send One clear photo of ${homeCheckSlotName(next)}`
+      ? `Please send one clear photo of ${homeCheckSlotName(next)}.`
       : 'All four photos are already saved. Your property team can review the results.',
     next
       ? null
@@ -593,7 +614,21 @@ export function parseHomeCheckPhotoChoice(body: string, count: number): number |
   return index >= 0 && index < count ? index : null
 }
 
+export type HomeCheckPhotoView = {
+  equipment: 'water_heater' | 'heating_system' | 'other' | 'unknown'
+  framing: 'label_closeup' | 'whole_appliance' | 'unknown'
+  confidence: 'high' | 'low'
+}
+export function readHomeCheckPhotoView(value: unknown): HomeCheckPhotoView | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const view = value as HomeCheckPhotoView
+  return ['water_heater','heating_system','other','unknown'].includes(view.equipment) &&
+    ['label_closeup','whole_appliance','unknown'].includes(view.framing) &&
+    ['high','low'].includes(view.confidence) ? { equipment: view.equipment, framing: view.framing, confidence: view.confidence } : null
+}
+
 type SlotReading = {
+  photoView?: HomeCheckPhotoView
   category?: string
   identifiedItem?: { type?: string; modelNumber?: string; serialNumber?: string }
   labelReadability?: { status?: string }
@@ -608,6 +643,17 @@ export function homeCheckSlotFromReading(
   reading: SlotReading | null,
   filled: readonly string[],
 ): { slot: HomeCheckSlot } | { slot: null; reason: 'unclear' | 'not_equipment' } {
+  // Framing is independent of label readability: a whole appliance can have
+  // a readable plate. Never use missing-slot elimination for explicit evidence.
+  if (reading?.photoView !== undefined) {
+    const view = readHomeCheckPhotoView(reading.photoView)
+    if (!view || view.confidence !== 'high' || view.framing === 'unknown' || view.equipment === 'unknown') return { slot: null, reason: 'unclear' }
+    if (view.equipment === 'other') return { slot: null, reason: 'not_equipment' }
+    if (reading.category && reading.category !== 'unknown' &&
+      (view.equipment === 'water_heater' ? reading.category !== 'water_heater' : !['hvac','boiler'].includes(reading.category))) return { slot: null, reason: 'not_equipment' }
+    const system = view.equipment === 'water_heater' ? 'water_heater' : 'heating'
+    return { slot: `${system}_${view.framing === 'label_closeup' ? 'label' : 'whole'}` as HomeCheckSlot }
+  }
   if (!reading || !reading.category || reading.category === 'unknown') {
     return { slot: null, reason: 'unclear' }
   }
@@ -640,7 +686,7 @@ export function homeCheckSlotName(slot: HomeCheckSlot): string {
 /** Asks what a photo shows when Ulo can't tell. Numbers match the four photos. */
 export function homeCheckPhotoKindQuestion(location: string, notEquipment = false): string {
   const lead = notEquipment
-    ? `That photo doesn't look like a water heater or furnace/boiler. If it is, what does it show?`
+    ? `I couldn’t identify the appliance in this photo. What does it show?`
     : `What does this photo show?`
   return `${lead} (${location})\n1) Water heater label\n2) Whole water heater\n3) Furnace or boiler label\n4) Whole furnace or boiler\nReply 1–4. Ulo will keep the photo until you answer.`
 }

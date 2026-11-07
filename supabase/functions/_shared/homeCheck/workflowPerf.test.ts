@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import { expect, it, vi } from 'vitest'
 import {
@@ -70,6 +71,21 @@ const catalog: HomeCheckGuideCatalog = {
   }],
 }
 
+/** House with several unit rows — Home Check stays property-level (shared furnace / WH). */
+const multiUnitHouseCatalog: HomeCheckGuideCatalog = {
+  ...catalog,
+  properties: [{
+    id: 'maple',
+    label: '78 Maple Ave',
+    propertyType: 'multi_family',
+    units: [
+      { id: 'u2', label: '2' },
+      { id: 'u3', label: '3' },
+      { id: 'u1', label: '1' },
+    ],
+  }],
+}
+
 type Sample = { name: string; ms: number }
 
 function percentile(values: number[], p: number): number {
@@ -88,11 +104,15 @@ function summarize(name: string, samples: number[]) {
   }
 }
 
-function guideTurn(body: string, state: ReturnType<typeof reduceHomeCheckGuide>['state']) {
+function guideTurn(
+  body: string,
+  state: ReturnType<typeof reduceHomeCheckGuide>['state'],
+  guideCatalog: HomeCheckGuideCatalog = catalog,
+) {
   return reduceHomeCheckGuide({
     state,
     body,
-    catalog,
+    catalog: guideCatalog,
     now: new Date(),
     sender: 'landlord',
   })
@@ -117,7 +137,7 @@ function photoSequence(role: 'tenant' | 'landlord' | 'contractor') {
 }
 
 function assertPhotoFollowThrough(texts: string[]) {
-  expect(texts[0]).toContain('Reply with the photo here')
+  expect(texts[0]).toMatch(/Please send [Oo]ne clear photo of the water heater label|attach all four photos in one text/)
   expect(texts[0]).not.toMatch(/availability|what times work|coordinate a visit/i)
   expect(texts[1]).toContain('Saved as the water heater label')
   expect(texts[1]).toContain('Next, send a photo of the whole water heater, including the base')
@@ -155,6 +175,7 @@ function memoryDb(initial: CheckRow) {
           error: null,
         }
       }
+      if (table === 'units') return { data: { id: 'unit' }, error: null }
       if (table === 'vendors') return { data: { name: 'Test Contractor' }, error: null }
       if (table === 'landlords') {
         return { data: { name: COMPANY, phone: '+15550100003' }, error: null }
@@ -175,6 +196,7 @@ function memoryDb(initial: CheckRow) {
       },
       eq() { return query },
       gt() { return query },
+      is() { return query },
       maybeSingle: async () => {
         const result = exec()
         const data = Array.isArray(result.data) ? result.data[0] ?? null : result.data
@@ -224,7 +246,7 @@ async function vendorVisit(steps: Sample[]) {
   })
   const acceptance = sent[sent.length - 1]
   expect(acceptance.phone).toBe(VENDOR)
-  expect(acceptance.body).toBe(homeCheckVendorAcceptanceSms(LOCATION))
+  expect(acceptance.body).toBe(homeCheckVendorAcceptanceSms(LOCATION, 'tenant'))
   expect(acceptance.body).toContain('Reply YES to accept or NO to decline')
   expect(acceptance.body).toContain('coordinate a visit time with the tenant')
   expect(acceptance.body).not.toContain('Next: send a clear photo')
@@ -240,7 +262,7 @@ async function vendorVisit(steps: Sample[]) {
       supabase: db as never,
       landlordId: LANDLORD,
       messageId: id,
-      inbound: { body, from, mediaUrls: [] },
+      inbound: { body, from, to: '+15550100002', mediaUrls: [] },
     } as never)
     expect(prepared?.kind).toBe('visit_reply')
     if (!prepared || prepared.kind !== 'visit_reply') return
@@ -262,7 +284,7 @@ async function vendorVisit(steps: Sample[]) {
     expect(body).toContain('asking the tenant if Wed 9am–12pm works')
     const tenantText = sent.find((row) => row.phone === TENANT && row.body.includes('Wed 9am–12pm'))
     expect(tenantText?.body).toContain('Reply YES if that time works, or NO if it does not')
-    expect(tenantText?.body).toContain('No repairs are authorized')
+    expect(tenantText?.body).not.toContain('No repairs are authorized')
   })
   await time('tenant rejects time', async () => {
     const body = await reply(TENANT, 'NO', 'no-1')
@@ -284,7 +306,9 @@ async function vendorVisit(steps: Sample[]) {
     expect(body).not.toContain('Next: send a clear photo')
     const tenantDetails = sent.filter((row) => row.phone === TENANT && row.body.includes('is set for Thu 1pm–4pm'))
     expect(tenantDetails).toHaveLength(1)
-    expect(tenantDetails[0].body).toBe(body)
+    expect(tenantDetails[0].body).toContain('Test Contractor will take four appliance photos')
+    expect(tenantDetails[0].body).toContain('Ulo will send the photo instructions directly to the vendor')
+    expect(tenantDetails[0].body).not.toContain('Photo instructions will arrive by text when it’s time for the visit')
     expect(db.read().visit).toMatchObject({ phase: 'scheduled', confirmedWindow: 'Thu 1pm–4pm' })
     expect(homeCheckLandlordStatus('visit_scheduled')).toBe('Visit scheduled')
   })
@@ -302,8 +326,8 @@ async function vendorVisit(steps: Sample[]) {
     )
     expect(started).toBe(1)
     const prompt = sent.filter((row) => row.phone === VENDOR).at(-1)
-    expect(prompt?.body).toContain('Home Check visit for 12 Oak St, Unit 2B')
-    expect(prompt?.body).toContain('Next: send a clear photo of the water heater label')
+    expect(prompt?.body).toContain('Home Check photos for 12 Oak St, Unit 2B')
+    expect(prompt?.body).toContain('1) Water heater label')
     expect(db.read().visit).toMatchObject({ phase: 'in_progress' })
     expect(homeCheckLandlordStatus('home_check_in_progress')).toBe('Home Check in progress')
   })
@@ -321,6 +345,7 @@ it('runs the full desktop and SMS home check workflows', async () => {
   const smsVendorSteps: Sample[] = []
   const tenantSamples: number[] = []
   const landlordSamples: number[] = []
+  const multiUnitHouseSamples: number[] = []
   const desktopSamples: number[] = []
   const smsVendorSamples: number[] = []
 
@@ -330,14 +355,14 @@ it('runs the full desktop and SMS home check workflows', async () => {
     expect(state.replies[0]).toContain('Home check for')
     state = guideTurn('YES', state.state)
     expect(state.replies[0]).toContain('Who should do it?')
-    expect(state.replies[0]).toContain('takes the photos where they live')
+    expect(state.replies[0]).toContain('Your tenant takes the photos')
     state = guideTurn('1', state.state)
     expect(state.state).toBeNull()
     expect(state.effects).toEqual([{ type: 'start_tenant', propertyId: 'prop', unitId: 'unit' }])
     expect(state.replies[0]).toContain('photo instructions')
     expect(state.replies.join('\n')).not.toMatch(/availability|what times work|visit time/i)
     const texts = photoSequence('tenant')
-    expect(texts[0]).toContain('please take the equipment photos where you live, at 12 Oak St, Unit 2B')
+    expect(texts[0]).toContain('Ulo is requesting appliance photos for your Home Check at 12 Oak St, Unit 2B')
     assertPhotoFollowThrough(texts)
     tenantSamples.push(performance.now() - start)
   }
@@ -352,9 +377,26 @@ it('runs the full desktop and SMS home check workflows', async () => {
     expect(state.replies).toEqual([])
     const texts = photoSequence('landlord')
     expect(texts[0]).toContain('Your Home Check for 12 Oak St, Unit 2B.')
+    expect(texts[0]).toContain('attach all four photos in one text')
     expect(texts[0]).not.toContain('where you live')
     assertPhotoFollowThrough(texts)
     landlordSamples.push(performance.now() - start)
+  }
+
+  /** Multi-unit house: confirm property → who (no Which unit?). */
+  const multiUnitHouseOnce = () => {
+    const start = performance.now()
+    let state = guideTurn('home check 78 Maple Ave', null, multiUnitHouseCatalog)
+    expect(state.replies[0]).toContain('Home check for 78 Maple Ave')
+    expect(state.replies.join('\n')).not.toMatch(/Which unit/i)
+    state = guideTurn('YES', state.state, multiUnitHouseCatalog)
+    expect(state.replies[0]).toContain('Who should do it?')
+    expect(state.replies.join('\n')).not.toMatch(/Which unit/i)
+    state = guideTurn('1', state.state, multiUnitHouseCatalog)
+    expect(state.state).toBeNull()
+    // No unit ask; tenant start may still bind the first inventory row for delivery.
+    expect(state.effects).toEqual([{ type: 'start_tenant', propertyId: 'maple', unitId: 'u2' }])
+    multiUnitHouseSamples.push(performance.now() - start)
   }
 
   const smsVendorGuide = () => {
@@ -362,8 +404,9 @@ it('runs the full desktop and SMS home check workflows', async () => {
     state = guideTurn('YES', state.state)
     state = guideTurn('2', state.state)
     expect(state.state?.step).toBe('pick_contractor')
-    expect(state.replies[0]).toContain('ask them to accept')
-    expect(state.replies[0]).toContain('Photo instructions go out when it is time for the visit')
+    expect(state.replies[0]).toContain('Reply YES to use them')
+    expect(state.replies[0]).not.toMatch(/No repairs/i)
+    expect(state.replies[0]).toContain('photo instructions once the visit time is confirmed')
     state = guideTurn('YES', state.state)
     expect(state.state).toBeNull()
     expect(state.effects[0]).toMatchObject({
@@ -378,6 +421,7 @@ it('runs the full desktop and SMS home check workflows', async () => {
 
   tenantOnce()
   landlordOnce()
+  multiUnitHouseOnce()
   smsVendorGuide()
   await vendorVisit(desktopSteps)
   sent.length = 0
@@ -386,6 +430,7 @@ it('runs the full desktop and SMS home check workflows', async () => {
   for (let i = 0; i < 40; i += 1) {
     tenantOnce()
     landlordOnce()
+    multiUnitHouseOnce()
     const desktopStart = performance.now()
     sent.length = 0
     await vendorVisit([])
@@ -400,8 +445,10 @@ it('runs the full desktop and SMS home check workflows', async () => {
   const report = [
     summarize('SMS tenant, photos only', tenantSamples),
     summarize('SMS landlord, photos only', landlordSamples),
+    summarize('SMS multi-unit house (no unit ask)', multiUnitHouseSamples),
     summarize('Desktop vendor request through 4 photos', desktopSamples),
     summarize('SMS vendor choice through 4 photos', smsVendorSamples),
   ]
+  if (process.env.HOME_CHECK_PERF_REPORT) writeFileSync(process.env.HOME_CHECK_PERF_REPORT, JSON.stringify({evidence:'In-process workflows with mocked DB, SMS and provider dependencies; excludes carrier, live AI and human wait',flows:report},null,2))
   for (const row of report) expect(row.p95).toBeLessThan(50)
 })

@@ -1,3 +1,7 @@
+vi.mock('../vendor_availability_parse.ts',()=>({parseAvailabilityResolved:vi.fn()}))
+import { reduceHomeCheckGuide } from './guide.ts'
+import { identifyVendorHomeCheckBatch } from './vendorBatch.ts'
+vi.mock('./vendorBatch.ts', () => ({ identifyVendorHomeCheckBatch: vi.fn(async () => null) }))
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   actHomeCheckSms,
@@ -5,7 +9,7 @@ import {
   resolveHomeCheckLandlord,
   runHomeCheckReminder,
 } from './sms.ts'
-import { createHomeCheck, sendHomeCheckSms, uploadHomeCheckPhoto, saveHomeCheckAnswers, pendingHomeCheckSystems, notifyHomeCheckResult, confirmHomeCheck, loadHomeCheck } from './service.ts'
+import { homeCheckEvent, createHomeCheck, sendHomeCheckSms, uploadHomeCheckPhoto, analyzeHomeCheckBatch, saveHomeCheckAnswers, pendingHomeCheckSystems, notifyHomeCheckResult, confirmHomeCheck, loadHomeCheck } from './service.ts'
 import { readHomeCheckPhoto } from './photoSlot.ts'
 import { isLandlordAccountOrOpsPhone } from '../sms/landlordAccountPhone.ts'
 import type { InboundSmsHandlerContext } from '../sms/inboundHandlerTypes.ts'
@@ -23,6 +27,7 @@ vi.mock(
   () => ({ isLandlordAccountOrOpsPhone: vi.fn(async () => true) }),
 )
 vi.mock('./service.ts', () => ({
+  homeCheckEvent: vi.fn(async () => {}),
   requireData: ({ data, error }: { data: unknown; error: unknown }) => {
     if (error) throw error
     return data
@@ -38,6 +43,7 @@ vi.mock('./service.ts', () => ({
   notifyHomeCheckResult: vi.fn(async () => true),
   rebuildHomeCheckAssets: vi.fn(async () => []),
   uploadHomeCheckPhoto: vi.fn(async () => ({ feedback: [] })),
+  analyzeHomeCheckBatch: vi.fn(async () => ({ feedback: [] })),
   createHomeCheck: vi.fn(async () => ({
     check: { ...pending, role: 'landlord', workflow_run_id: 'run' },
     link: 'https://app.ulohome.io/c/check#fixture',
@@ -126,6 +132,26 @@ describe('Home Check SMS dispatch', () => {
       fromNumber: '+15551112222',
       landlordId: 'landlord',
     })
+  })
+  it('handles vendor HOME CHECK before generic work-order clarification, without starting a check', async () => {
+    const db = query([{ ...pending, confirmed_at: null, expires_at: new Date(Date.now() + 86400000).toISOString(), visit: { phase: 'awaiting_acceptance' } }])
+    expect(await prepareHomeCheckSms(context(db, 'HOME CHECK'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('Only your property team can request a Home Check') })
+    expect(db.from).not.toHaveBeenCalled()
+    expect(db.filters.some(([method]) => method === 'update')).toBe(false)
+    expect(db.rpc).not.toHaveBeenCalled()
+    expect(createHomeCheck).not.toHaveBeenCalled()
+  })
+  it('keeps an unassigned vendor HOME CHECK in Home Check guidance rather than generic jobs', async () => {
+    expect(await prepareHomeCheckSms(context(query([]), 'home check'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('Only your property team can request a Home Check') })
+  })
+  it('denies resident HOME CHECK before generic intake without reading or writing records', async () => {
+    const db = query([])
+    const ctx = context(db, 'HOME CHECK')
+    ctx.identity.identity_type = 'resident'
+    expect(await prepareHomeCheckSms(ctx)).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('Only your property team can request a Home Check') })
+    expect(db.from).not.toHaveBeenCalled()
+    expect(db.rpc).not.toHaveBeenCalled()
+    expect(createHomeCheck).not.toHaveBeenCalled()
   })
   it('rejects stale landlord identities whose phone is no longer authorized', async () => {
     vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(false)
@@ -332,7 +358,7 @@ describe('Home Check SMS dispatch', () => {
       intake_state: { home_check_photo_pending: expect.objectContaining({ step: 'kind', checkId: 'check', path: 'sms/a.jpg' }) },
     })
   })
-  it('bare OK confirms only one stored, completed landlord result; multiple results ask for a reference', async () => {
+  it('bare OK never confirms through a photo capture without a results review', async () => {
     expect(
       await prepareHomeCheckSms(
         context(
@@ -344,11 +370,7 @@ describe('Home Check SMS dispatch', () => {
       ),
     ).toMatchObject({ kind: 'clarify' })
     const db = query([pending])
-    expect(await prepareHomeCheckSms(context(db, 'OK', [], true))).toMatchObject({
-      kind: 'confirm',
-    })
-    expect(db.filters).toContainEqual(['eq', ['status', 'completed']])
-    expect(db.filters).toContainEqual(['not', ['summary_sent_at', 'is', null]])
+    expect(await prepareHomeCheckSms(context(db, 'OK', [], true))).toMatchObject({kind:'clarify'})
     expect(await prepareHomeCheckSms(context(query([]), 'OK', [], true))).toBeNull()
   })
   it('accepts explicit observations without converting unknown service dates to facts', async () => {
@@ -470,7 +492,7 @@ it('CANCEL clears held-photo context instead of interpreting the next number as 
 
 
 describe('plain-language Home Check observations', () => {
- const completed = { ...pending, expires_at: new Date(Date.now()+86400000).toISOString(), completed_at: new Date().toISOString(), answers: { warningSigns: null, warningDetails: '', lastService: '', lastFilterChange: '' } }
+ const completed = { ...pending, created_at: '2026-11-02T12:00:00Z', expires_at: new Date(Date.now()+86400000).toISOString(), completed_at: new Date().toISOString(), answers: { warningSigns: null, warningDetails: '', lastService: '', lastFilterChange: '' } }
  function observationsDb(options: { expired?: boolean; expectedSlot?: string | null; prompt?: string; selectedId?: string; checks?: unknown[] } = {}) {
   const db = query([])
   db.from.mockImplementation((table: string) => query(
@@ -522,12 +544,21 @@ describe('plain-language Home Check observations', () => {
  it('RESULTS can preview an unanswered check without claiming no leaks',async()=>{
   expect(await prepareHomeCheckSms(context(observationsDb(),'RESULTS',[],true))).toMatchObject({kind:'results',check:{answers:{warningSigns:null}}})
  })
- it('RESULTS uses only the selected completed check after capture expiry', async () => {
+ it('RESULTS does not use a photo-capture selection as a landlord review selection', async () => {
   const ready={...completed,answers:{...completed.answers,warningSigns:false}}
-  expect(await prepareHomeCheckSms(context(observationsDb({ expired:true,checks:[ready,{...ready,id:'other'}] }), 'RESULTS', [], true))).toMatchObject({kind:'results',check:{id:'check'}})
+  expect(await prepareHomeCheckSms(context(observationsDb({ expired:true,checks:[ready,{...ready,id:'other'}] }), 'RESULTS', [], true))).toMatchObject({kind:'clarify',reply:expect.stringContaining('Which Home Check results')})
  })
- it('OK chooses the selected result among several pending results', async () => {
-  expect(await prepareHomeCheckSms(context(observationsDb({ expired: true, checks: [completed, { ...completed, id: 'other' }] }), 'OK', [], true))).toMatchObject({ kind: 'confirm', check: { id: 'check' } })
+ it('RESULTS finds a vendor result when the landlord has no matching capture selection', async () => {
+  const db=observationsDb({selectedId:'old-check',checks:[{...completed,role:'contractor',recipient_phone:'+14708880274'}]})
+  expect(await prepareHomeCheckSms(context(db,'RESULTS',[],true))).toMatchObject({kind:'results',check:{id:'check'}})
+  expect(db.filters).not.toContainEqual(['eq',['recipient_phone','+15550000001']])
+ })
+ it('RESULTS does not guess among multiple unselected results',async()=>{
+  const db=observationsDb({selectedId:'old-check',checks:[completed,{...completed,id:'other'}]})
+  expect(await prepareHomeCheckSms(context(db,'RESULTS',[],true))).toMatchObject({kind:'clarify',reply:expect.stringContaining('Which Home Check results')})
+ })
+ it('OK ignores a photo selection and offers completed results explicitly', async () => {
+  expect(await prepareHomeCheckSms(context(observationsDb({ expired: true, checks: [completed, { ...completed, id: 'other' }] }), 'OK', [], true))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('Which Home Check results') })
  })
 })
 
@@ -619,3 +650,308 @@ it('an unrelated later prompt prevents an old confirmation receipt from consumin
  db.from.mockImplementation((table:string)=>query(table==='home_check_sms_capture_sessions'?[{check_id:'check',expected_slot:null,version:'v',expires_at:'2020-01-01T00:00:00Z'}]:table==='home_checks'?(reads++===0?[]:[{...pending,confirmed_at:'2026-10-30T01:08:28Z',status:'confirmed'}]):table==='sms_messages'?[{body:'Please confirm a different request.'}]:[]).from(table))
  expect(await prepareHomeCheckSms(context(db,'OK',[],true))).toBeNull()
 })
+
+
+describe('remembered photo clarification', () => {
+  beforeEach(() => { vi.clearAllMocks(); vi.mocked(readHomeCheckPhoto).mockResolvedValue(null) })
+  it('asks a short confirmation for an unreadable photo at the explicitly requested step', async () => {
+    const db = actDb([])
+    const result = await actHomeCheckSms(db as never, 'landlord', { kind: 'photo',
+      check: pending as never, slot: 'heating_whole', expectedVersion: 'version', path: 'sms/a.jpg', conversationId: 'conv' })
+    expect(result.reply).toContain('Is this the whole furnace or boiler')
+    expect(result.reply).toContain('Reply YES or NO')
+    expect(result.reply).not.toContain('1) Water heater')
+    expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+    expect(db.updates).toContainEqual({ intake_state: { home_check_photo_pending: expect.objectContaining({ expectedSlot: 'heating_whole', path: 'sms/a.jpg' }) } })
+  })
+  function heldDb(open = [pending]) {
+    const held = { step: 'kind', checkId: 'check', path: 'sms/held.jpg', at: new Date().toISOString(), expectedSlot: 'heating_whole' }
+    const db = query([])
+    db.from.mockImplementation((table: string) => query(table === 'sms_conversations' ? [{ intake_state: { home_check_photo_pending: held } }] : open).from(table))
+    return db
+  }
+  it('YES resumes only the held photo and remembered check/slot', async () => {
+    expect(await prepareHomeCheckSms(context(heldDb(), 'YES'))).toMatchObject({ kind: 'photo', check: { id: 'check' }, slot: 'heating_whole', path: 'sms/held.jpg' })
+  })
+  it('NO switches to the full menu without assigning the photo', async () => {
+    expect(await prepareHomeCheckSms(context(heldDb(), 'NO'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('What does this photo show?') })
+  })
+  it('does not accept YES for an ended or inaccessible check', async () => {
+    expect(await prepareHomeCheckSms(context(heldDb([]), 'YES'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('has ended') })
+  })
+  it('keeps the full menu for a recognised conflicting photo', async () => {
+    vi.mocked(readHomeCheckPhoto).mockResolvedValue({ category: 'water_heater', identifiedItem: { type: 'water heater' }, labelReadability: { status: 'not_visible' } } as never)
+    const result = await actHomeCheckSms(actDb([]) as never, 'landlord', { kind: 'photo', check: pending as never, slot: 'heating_whole', expectedVersion: 'version', path: 'sms/a.jpg', conversationId: 'conv' })
+    expect(result.reply).toContain('What does this photo show?')
+    expect(result.reply).not.toContain('Reply YES or NO')
+  })
+})
+
+
+describe('vendor and landlord batch admission', () => {
+ const paths = ['sms/a.jpg','sms/b.jpg','sms/c.jpg','sms/d.jpg']
+ function selected(role = 'contractor', checkId = 'check') {
+   const db = query([])
+   db.from.mockImplementation((table: string) => query(table === 'sms_conversations' ? [{ intake_state: {} }] : table === 'home_check_sms_capture_sessions' ? [{ check_id: checkId, expected_slot: 'water_heater_label', version: 'version', expires_at: new Date(Date.now()+600000).toISOString() }] : [{ ...pending, role }]).from(table))
+   return db
+ }
+ it.each(['contractor', 'landlord'] as const)('accepts four photos for the explicitly selected %s check', async (role) => {
+   expect(await prepareHomeCheckSms(context(selected(role), '', paths))).toMatchObject({kind:'vendor_batch',check:{id:'check', role},paths})
+ })
+ it('keeps tenant on the guided one-photo flow', async () => {
+   expect(await prepareHomeCheckSms(context(selected('tenant'), '', paths))).toMatchObject({kind:'clarify',reply:expect.stringContaining('one photo per text')})
+ })
+ it('does not guess a check when the selection belongs to another check/account', async () => {
+   expect(await prepareHomeCheckSms(context(selected('contractor','foreign'), '', paths))).toMatchObject({kind:'clarify'})
+ })
+ it('rejects duplicate paths and incomplete batches', async () => {
+   expect(await prepareHomeCheckSms(context(selected(), '', paths.slice(0,2)))).toMatchObject({kind:'clarify',reply:expect.stringContaining('four different photos')})
+   expect(await prepareHomeCheckSms(context(selected(), '', ['sms/a.jpg','sms/a.jpg','sms/c.jpg','sms/d.jpg']))).toMatchObject({kind:'clarify'})
+ })
+ it('does not upload any photos if batch identification is uncertain', async () => {
+   vi.mocked(identifyVendorHomeCheckBatch).mockResolvedValueOnce(null)
+   vi.mocked(uploadHomeCheckPhoto).mockClear()
+   const result = await actHomeCheckSms(actDb([]) as never,'landlord',{kind:'vendor_batch',check:pending as never,paths,conversationId:'conv'})
+   expect(result.reply).toContain('No equipment records were saved')
+   expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+ })
+ it('never replaces a partly completed check with a batch', async () => {
+   vi.mocked(uploadHomeCheckPhoto).mockClear()
+   const result = await actHomeCheckSms(actDb(['water_heater_label']) as never,'landlord',{kind:'vendor_batch',check:pending as never,paths,conversationId:'conv'})
+   expect(result.reply).toContain('already has photos')
+   expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+ })
+ it.each([false,true])('uses sequential capture claims and reports interruption truthfully (%s)', async fail => {
+   vi.mocked(analyzeHomeCheckBatch).mockClear()
+   const saved: string[] = []
+   const slots = ['water_heater_label','water_heater_whole','heating_label','heating_whole']
+   const db = query([])
+   db.from.mockImplementation((table: string) => query(table === 'home_check_photos' ? saved.map(slot=>({slot})) : table === 'home_check_sms_capture_sessions' ? [{check_id:'check',expected_slot:slots[saved.length],version:'version'+saved.length,expires_at:new Date(Date.now()+600000).toISOString()}] : []).from(table))
+   db.rpc.mockResolvedValue({data:{ok:true,claim:'claim'},error:null})
+   vi.mocked(identifyVendorHomeCheckBatch).mockResolvedValueOnce(paths.map((path,i)=>({path,slot:slots[i],bytes:new Uint8Array([1]),contentType:'image/jpeg'})) as never)
+   vi.mocked(uploadHomeCheckPhoto).mockImplementation(async (_db,_check,input) => {
+     if (fail && saved.length===1) throw Error('storage failed')
+     saved.push(input.slot)
+     return {feedback:[]} as never
+   })
+   try {
+     const result = await actHomeCheckSms(db as never,'landlord',{kind:'vendor_batch',check:pending as never,paths,conversationId:'conv'})
+     expect(result.reply).toContain(fail ? '1 of four have been attached' : 'All four photos are saved')
+     expect(saved).toEqual(fail ? slots.slice(0,1) : slots)
+     expect(analyzeHomeCheckBatch).toHaveBeenCalledTimes(fail ? 0 : 1)
+     for (const call of vi.mocked(uploadHomeCheckPhoto).mock.calls.slice(-saved.length)) {
+       expect(call[2]).toMatchObject({ deferEquipmentAnalysis: true, skipOutreach: true })
+     }
+     expect(db.rpc).toHaveBeenCalledWith('home_check_sms_capture_context',expect.objectContaining({p_action:'claim',p_landlord_id:'landlord',p_conversation_id:'conv',p_check_id:'check',p_version:'version0'}))
+   } finally { vi.mocked(uploadHomeCheckPhoto).mockResolvedValue({feedback:[]} as never) }
+ })
+})
+
+describe('vendor name SMS routing regression', () => {
+ beforeEach(()=>{vi.clearAllMocks();vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(true)})
+ function guideDb(step='pick_contractor') {
+  const db=query([])
+  db.from.mockImplementation((table:string)=>query(table==='sms_conversations'?[{intake_state:{home_check_guide:{step,role:'contractor',updatedAt:new Date().toISOString()}}}]:[]).from(table))
+  return db
+ }
+ it.each(['Vendor test disposble','vendor test disposable','Disposable test vendor','Can you use disposble vendor'])('routes %s to the active contractor guide before generic landlord handling',async body=>{
+  expect(await prepareHomeCheckSms(context(guideDb(),body,[],true))).toMatchObject({kind:'guide',body,sender:'landlord',conversationId:'conv'})
+ })
+ it('does not route arbitrary text to another Home Check step',async()=>{
+  expect(await prepareHomeCheckSms(context(guideDb('pick_who'),'Tell me about rents',[],true))).toBeNull()
+ })
+ it('does not route names into an absent guide',async()=>{
+  expect(await prepareHomeCheckSms(context(query([]),'Vendor test disposble',[],true))).toBeNull()
+ })
+ it('does not bypass current landlord-phone authorization',async()=>{
+  vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(false)
+  expect(await prepareHomeCheckSms(context(guideDb(),'Vendor test disposble',[],true))).toBeNull()
+ })
+})
+
+it('carries a misspelled SMS through dispatch into a confirmation-only guide turn', async()=>{
+ vi.mocked(isLandlordAccountOrOpsPhone).mockResolvedValue(true)
+ const state={step:'pick_contractor',role:'contractor',updatedAt:new Date().toISOString(),propertyId:'test-property'}
+ const db=query([])
+ db.from.mockImplementation((table:string)=>query(table==='sms_conversations'?[{intake_state:{home_check_guide:state}}]:[]).from(table))
+ const action=await prepareHomeCheckSms(context(db,'Vendor test disposble',[],true))
+ expect(action?.kind).toBe('guide')
+ if(action?.kind!=='guide') throw Error('Expected Home Check routing')
+ const turn=reduceHomeCheckGuide({state:state as never,body:action.body,sender:action.sender,now:new Date(),catalog:{properties:[],vendors:[{id:'test-vendor',name:'Disposable test vendor',distanceKm:null}],tenant:null}})
+ expect(turn.state?.vendorConfirmId).toBe('test-vendor')
+ expect(turn.replies[0]).toContain('Did you mean Disposable test vendor?')
+ expect(turn.effects).toEqual([])
+})
+
+describe('carrier-split vendor upload collection', () => {
+ const paths=['sms/a.jpg','sms/b.jpg','sms/c.jpg','sms/d.jpg']
+ function collectingDb(expired = false, selectedId = 'check') {
+  const db=query([])
+  db.from.mockImplementation((table:string)=>query(
+   table==='home_check_sms_capture_sessions' ? [{check_id:selectedId,expected_slot:'water_heater_label',version:'v',expires_at:new Date(Date.now()+(expired ? -600000 : 600000)).toISOString()}] :
+   table==='home_checks' ? [{...pending,visit:{phase:'in_progress'}}] : []
+  ).from(table))
+  return db
+ }
+ it.each([1,2,4])('collects %s carrier attachments for the explicitly selected active vendor visit',async count=>{
+  const result=await prepareHomeCheckSms(context(collectingDb(),'',paths.slice(0,count)))
+  expect(result).toMatchObject({kind:'vendor_collect',paths:paths.slice(0,count),check:{id:'check'}})
+ })
+ it.each([1,2,4])('keeps %s delayed carrier attachments in batch routing after session expiry',async count=>{
+  const result=await prepareHomeCheckSms(context(collectingDb(true),'',paths.slice(0,count)))
+  expect(result).toMatchObject({kind:'vendor_collect',expectedVersion:'v',check:{id:'check'}})
+ })
+ it('keeps the explicit expired selection when another vendor check is also open',async()=>{
+  const db=collectingDb(true),original=db.from.getMockImplementation()!
+  db.from.mockImplementation((table:string)=>table==='home_checks'?query([{...pending,visit:{phase:'in_progress'}},{...pending,id:'other',visit:{phase:'in_progress'}}]).from(table):original(table))
+  expect(await prepareHomeCheckSms(context(db,'',paths))).toMatchObject({kind:'vendor_collect',check:{id:'check'},expectedVersion:'v'})
+ })
+ it('does not infer the selected vendor check from a different expired selection',async()=>{
+  const result=await prepareHomeCheckSms(context(collectingDb(true,'other-check'),'',paths.slice(0,1)))
+  expect(result?.kind).not.toBe('vendor_collect')
+ })
+ it('a changed selection never continues into classification or attachment',async()=>{
+  const db=collectingDb(true);db.rpc.mockResolvedValue({data:{status:'stale'},error:null})
+  vi.mocked(identifyVendorHomeCheckBatch).mockClear()
+  const result=await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',expectedVersion:'v',check:pending as never,paths,conversationId:'conv'})
+  expect(db.rpc).toHaveBeenCalledWith('collect_selected_home_check_vendor_photos',{p_landlord_id:'landlord',p_conversation_id:'conv',p_check_id:'check',p_capture_version:'v',p_paths:paths})
+  expect(result.reply).toContain('selected Home Check changed')
+  expect(identifyVendorHomeCheckBatch).not.toHaveBeenCalled()
+ })
+ it('sends one receiving acknowledgement and keeps later partial receipts quiet',async()=>{
+  for(const count of [1,2,3]) {
+   const db=collectingDb();db.rpc.mockResolvedValue({data:{status:'collecting',count},error:null})
+   const result=await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',expectedVersion:'v',check:pending as never,paths:[paths[count-1]],conversationId:'conv'})
+   expect(result.reply).toEqual(count===1?expect.stringContaining('If you’ve sent all four photos, please wait'):undefined)
+  }
+ })
+ it.each(['duplicate','processing'])('does not send repeated messages for %s delivery',async status=>{
+  const db=collectingDb();db.rpc.mockResolvedValue({data:{status},error:null})
+  expect(await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',expectedVersion:'v',check:pending as never,paths,conversationId:'conv'})).toEqual({})
+ })
+ it('does not claim success when provenance or queue storage fails',async()=>{
+  const db=collectingDb();db.rpc.mockResolvedValue({data:null,error:{message:'scope mismatch'}})
+  expect((await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',expectedVersion:'v',check:pending as never,paths,conversationId:'conv'})).reply).toContain('could not safely group')
+ })
+ it('retains the group for audit and enables guided recovery after uncertain classification',async()=>{
+  const db=collectingDb()
+  db.rpc.mockImplementation(async(name:string)=>name==='collect_selected_home_check_vendor_photos'?{data:{status:'ready',paths,claim:'token'},error:null}:{data:true,error:null})
+  vi.mocked(identifyVendorHomeCheckBatch).mockResolvedValueOnce(null)
+  const result=await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',expectedVersion:'v',check:pending as never,paths,conversationId:'conv'})
+  expect(result.reply).toContain('No equipment records were saved')
+  expect(db.rpc).toHaveBeenCalledWith('finish_home_check_vendor_photos',{p_landlord_id:'landlord',p_conversation_id:'conv',p_check_id:'check',p_claim:'token'})
+ })
+})
+
+it.each([2,3])('acknowledges an initial carrier delivery containing %s photos',async count=>{
+ const db=query([])
+ db.rpc.mockResolvedValue({data:{status:'collecting',count,first:true},error:null})
+ const result=await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',expectedVersion:'v',check:pending as never,paths:['a','b','c'].slice(0,count),conversationId:'conv'})
+ expect(result.reply).toContain('If you’ve sent all four photos, please wait')
+ expect(result.reply).not.toMatch(/remaining|Received \d of/)
+})
+
+it('stores safe batch diagnostics even when photo identification fails',async()=>{
+ vi.mocked(identifyVendorHomeCheckBatch).mockImplementationOnce(async(_paths,_read,_identify,observe)=>{observe?.({stage:'reader',photoIndex:2,outcome:'timeout',durationMs:10000,provider:null});return null})
+ const result=await actHomeCheckSms(actDb([]) as never,'landlord',{kind:'vendor_batch',check:pending as never,paths:['private/a','private/b','private/c','private/d'],conversationId:'conv'})
+ expect(result.reply).toContain('Please do not resend')
+ const metadata=vi.mocked(homeCheckEvent).mock.calls.filter(call=>call[2]==='photo_batch_identification_diagnostics').at(-1)?.[3]
+ expect(metadata).toMatchObject({schemaVersion:1,traceId:expect.any(String),diagnostics:[{stage:'reader',photoIndex:2,outcome:'timeout',durationMs:10000,provider:null}]})
+ expect(JSON.stringify(metadata)).not.toContain('private/')
+})
+it('slow diagnostic persistence cannot indefinitely block photo handling',async()=>{
+ vi.useFakeTimers();const log=vi.spyOn(console,'info').mockImplementation(()=>{})
+ try {
+  vi.mocked(homeCheckEvent).mockImplementation(()=>new Promise(()=>{}))
+  vi.mocked(identifyVendorHomeCheckBatch).mockResolvedValueOnce(null)
+  const task=actHomeCheckSms(actDb([]) as never,'landlord',{kind:'vendor_batch',check:pending as never,paths:['a','b','c','d'],conversationId:'conv'})
+  await vi.advanceTimersByTimeAsync(2000)
+  expect((await task).reply).toContain('No equipment records were saved')
+  expect(log).toHaveBeenCalled()
+ } finally {vi.useRealTimers();log.mockRestore();vi.mocked(homeCheckEvent).mockResolvedValue(undefined)}
+})
+
+describe('guided photo burst serialization',()=>{
+ beforeEach(()=>{vi.clearAllMocks();vi.mocked(readHomeCheckPhoto).mockResolvedValue(null)})
+ it('claims the step before any AI call and lets just one burst worker ask a question',async()=>{
+  const db=actDb([]),original=db.rpc.getMockImplementation()!;let busy=false,version='version'
+  db.rpc.mockImplementation(async(name:string,args:any)=>{
+   if(name==='home_check_sms_capture_context'){
+    if(args.p_action==='claim'){
+     if(busy||args.p_version!==version)return {data:{ok:false,reason:'busy'},error:null}
+     busy=true;return {data:{ok:true,claim:'owner',version},error:null}
+    }
+    if(args.p_action==='release'){busy=false;version='changed';return {data:{ok:true,version},error:null}}
+   }
+   return original(name,args)
+  })
+  vi.mocked(readHomeCheckPhoto).mockImplementationOnce(async()=>{
+   expect(busy).toBe(true);await Promise.resolve();return {category:'hvac',photoView:{equipment:'heating_system',framing:'whole_appliance',confidence:'high'}} as never
+  })
+  const actions=['a','b','c','d'].map(p=>({kind:'photo' as const,check:{...pending,role:'landlord'} as never,slot:'water_heater_label' as const,expectedVersion:'version',path:`sms/${p}.jpg`,conversationId:'conv'}))
+  const results=await Promise.all(actions.map(a=>actHomeCheckSms(db as never,'landlord',a)))
+  expect(results.filter(r=>r.reply)).toHaveLength(1)
+  expect(results.find(r=>r.reply)?.reply).toContain('What does this photo show?')
+  expect(readHomeCheckPhoto).toHaveBeenCalledTimes(1);expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+  expect(busy).toBe(false)
+ })
+ it('does not run AI for an old step version and does not emit a competing retry prompt',async()=>{
+  const db=actDb([]);db.rpc.mockResolvedValue({data:{ok:false,reason:'stale'},error:null})
+  expect(await actHomeCheckSms(db as never,'landlord',{kind:'photo',check:pending as never,slot:'water_heater_label',expectedVersion:'old',path:'sms/a.jpg',conversationId:'conv'})).toEqual({})
+  expect(readHomeCheckPhoto).not.toHaveBeenCalled();expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+ })
+})
+
+it('mutes sibling MMS that arrived before the held-photo prompt instead of sending duplicate reminders',async()=>{
+ const db=query([]);const now=Date.now()
+ db.from.mockImplementation((table:string)=>query(table==='home_checks'?[{...pending,role:'landlord'}]:table==='home_check_sms_capture_sessions'?[{check_id:'check',expected_slot:'water_heater_label',version:'v',expires_at:new Date(now+600000).toISOString()}]:table==='sms_conversations'?[{intake_state:{home_check_photo_pending:{step:'kind',path:'first',checkId:'check',at:new Date(now).toISOString()}}}]:table==='sms_messages'?[{created_at:new Date(now-1000).toISOString()}]:[]).from(table))
+ expect(await prepareHomeCheckSms(context(db,'',['sibling'],true))).toEqual({kind:'quiet'})
+ expect(await actHomeCheckSms(db as never,'landlord',{kind:'quiet'})).toEqual({})
+})
+
+it.each([true,false])('retains three matched vendor views only after atomic retake preparation (%s)',async allowed=>{
+ const db=actDb([]);const paths=['a','b','c','d']
+ const diagnostic:any[]=[
+  {stage:'placement',photoIndex:0,outcome:'success',slot:'water_heater_label',view:{equipment:'water_heater',framing:'label_closeup',confidence:'high'},durationMs:0},
+  {stage:'placement',photoIndex:1,outcome:'success',slot:'water_heater_whole',view:{equipment:'water_heater',framing:'whole_appliance',confidence:'high'},durationMs:0},
+  {stage:'placement',photoIndex:2,outcome:'not_equipment',slot:null,view:{equipment:'other',framing:'label_closeup',confidence:'high'},durationMs:0},
+  {stage:'placement',photoIndex:3,outcome:'success',slot:'heating_whole',view:{equipment:'heating_system',framing:'whole_appliance',confidence:'high'},durationMs:0},
+ ]
+ db.rpc.mockImplementation(async(name:string)=>({data:name==='collect_selected_home_check_vendor_photos'?{status:'ready',paths,claim:'token'}:name==='prepare_home_check_vendor_photo_retake'?allowed:true,error:null}))
+ vi.mocked(identifyVendorHomeCheckBatch).mockImplementationOnce(async(_paths,_read,_identify,observe)=>{diagnostic.forEach(e=>observe?.(e));return null})
+ const result=await actHomeCheckSms(db as never,'landlord',{kind:'vendor_collect',check:pending as never,conversationId:'conv',expectedVersion:'v',paths})
+ expect(db.rpc).toHaveBeenCalledWith('prepare_home_check_vendor_photo_retake',expect.objectContaining({p_claim:'token',p_capture_version:'v',p_keep_paths:['a','b','d'],p_missing_slot:'heating_label'}))
+ expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+ if(allowed){expect(result.reply).toContain('kept the other three');expect(result.reply).toContain('heating-system label');expect(db.rpc.mock.calls.some(c=>c[0]==='finish_home_check_vendor_photos')).toBe(false)}
+ else {expect(result.reply).not.toContain('kept the other three');expect(db.rpc).toHaveBeenCalledWith('finish_home_check_vendor_photos',expect.anything())}
+})
+it.each(['processing','rate_limited','awaiting_photo','unavailable'])('handles saved-photo retry status without re-running AI (%s)',async status=>{
+ vi.mocked(identifyVendorHomeCheckBatch).mockClear();vi.mocked(uploadHomeCheckPhoto).mockClear()
+ const db=actDb([]);db.rpc.mockResolvedValue({data:{status},error:null})
+ await actHomeCheckSms(db as never,'landlord',{kind:'vendor_retry',check:pending as never,conversationId:'conv',expectedVersion:'v'})
+ expect(identifyVendorHomeCheckBatch).not.toHaveBeenCalled();expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
+ expect(db.rpc).toHaveBeenCalledWith('retry_home_check_vendor_photos',{p_landlord_id:'landlord',p_conversation_id:'conv',p_check_id:'check',p_capture_version:'v'})
+})
+
+it.each([true,false])('normalizes a recovered heating-label selection only under its batch lease (%s)', async allowed => {
+ const db=actDb([]); const paths=['a','b','c','d'];
+ vi.mocked(uploadHomeCheckPhoto).mockClear();
+ vi.mocked(identifyVendorHomeCheckBatch).mockResolvedValueOnce(paths.map((path,i)=>({path,slot:['water_heater_label','water_heater_whole','heating_label','heating_whole'][i],bytes:new Uint8Array([1]),contentType:'image/jpeg'})) as never);
+ db.rpc.mockImplementation(async(name:string)=>({data:name==='prepare_home_check_vendor_batch_attachment'?allowed:{ok:true,claim:'claim'},error:null}));
+ const result=await actHomeCheckSms(db as never,'landlord',{kind:'vendor_batch',check:pending as never,paths,conversationId:'conv',batchClaim:'lease',captureVersion:'selected'});
+ expect(db.rpc).toHaveBeenCalledWith('prepare_home_check_vendor_batch_attachment',{p_landlord_id:'landlord',p_conversation_id:'conv',p_check_id:'check',p_claim:'lease',p_capture_version:'selected'});
+ expect(result.reply).toContain(allowed?'four uploaded photos are retained':'could not safely save');
+ expect(result.reply).toContain('RETRY PHOTOS');
+ expect(result.reply).not.toContain('Please send a photo');
+ expect(uploadHomeCheckPhoto).not.toHaveBeenCalled();
+});
+
+it.each([true,false])('resumes only the original scoped held-photo question without uploading (%s)',async allowed=>{
+ const db=actDb([]);db.rpc.mockResolvedValue({data:allowed?{checkId:'check',expectedSlot:null}:null,error:null});
+ db.from.mockImplementation((table:string)=>query(table==='home_checks'?[pending]:[]).from(table));
+ vi.mocked(uploadHomeCheckPhoto).mockClear();
+ const result=await prepareHomeCheckSms(context(db,'RESUME PHOTOS',[],true));
+ expect(result).toMatchObject({kind:'clarify',reply:expect.stringContaining(allowed?'What does this photo show?':'No photo was changed')});
+ expect(db.rpc).toHaveBeenCalledWith('resume_home_check_sms_photo',expect.objectContaining({p_landlord_id:'landlord',p_conversation_id:'conv',p_to:'+15550001111'}));
+ expect(uploadHomeCheckPhoto).not.toHaveBeenCalled();
+});

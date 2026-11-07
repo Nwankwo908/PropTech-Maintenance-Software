@@ -1,7 +1,10 @@
+import { homeCheckSystemEvidence, applyHomeCheckSystemEvidence } from './systemEvidence.ts'
+import { readHomeCheckPhoto } from './photoSlot.ts'
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
-import { isHeatingSystemResult, type HomeCheckSlot } from '../../../../shared/homeCheck.ts'
+import { type HomeCheckSlot } from '../../../../shared/homeCheck.ts'
 import type { ApplianceVisionResult } from '../vision/types.ts'
 import { analyzeInspectionPhotoRow } from '../vision/analyzeInspectionPhoto.ts'
+import { withDeadline } from '../ai/deadline.ts'
 import { inspectionBytesToBase64 } from '../vision/ingestInspectionUpload.ts'
 
 /** Never promote disagreement between the main reading and serial OCR to a fact. */
@@ -31,6 +34,7 @@ export async function analyzeHomeCheckEquipmentPair(
   checkId: string,
   slot: HomeCheckSlot,
   analyze = analyzeInspectionPhotoRow,
+  recovery?: { token: string; labelId: string; wholeId: string },
 ): Promise<ApplianceVisionResult | null> {
   const water = slot.startsWith('water_heater')
   const labelSlot = water ? 'water_heater_label' : 'heating_label'
@@ -43,6 +47,11 @@ export async function analyzeHomeCheckEquipmentPair(
   const whole = pair?.find((photo) => photo.slot === wholeSlot)
   if (!label || !whole) return null
   const ids = [label.inspection_photo_id, whole.inspection_photo_id]
+  if (recovery && (recovery.labelId!==ids[0] || recovery.wholeId!==ids[1])) return null
+  const started = recovery ? {data:{ok:true,token:recovery.token},error:null} : await db.rpc('home_check_pair_work',{p_action:'begin',p_check:checkId,p_label:ids[0],p_whole:ids[1]})
+  if (started.error) throw new Error('Could not reserve photo processing')
+  if (!started.data?.ok) return null
+  const token=started.data.token
   try {
     const [labelDownload, wholeDownload] = await Promise.all([
       db.storage.from('inspection-uploads').download(label.storage_path),
@@ -51,7 +60,7 @@ export async function analyzeHomeCheckEquipmentPair(
     if (labelDownload.error || wholeDownload.error || !labelDownload.data || !wholeDownload.data) {
       throw new Error('Could not read the equipment photo pair.')
     }
-    const result = await analyze(
+    const result = await withDeadline(120000, async () => analyze(
       db,
       label.inspection_photo_id,
       inspectionBytesToBase64(new Uint8Array(await labelDownload.data.arrayBuffer())),
@@ -70,45 +79,21 @@ export async function analyzeHomeCheckEquipmentPair(
           mediaType: wholeDownload.data.type,
         }],
       },
-    )
+      { persist: false },
+    ))
+    if (result.status==='error' || !result.ai_result) throw new Error('Temporary analysis failure')
     const rawReading = result.ai_result as ApplianceVisionResult | null
-    const reading = rawReading ? reconcileHomeCheckSerialReading(rawReading) : null
-    result.ai_result = reading
-    if (
-      reading && reading.category !== 'unknown' &&
-      !(water
-        ? reading.category === 'water_heater'
-        : isHeatingSystemResult(reading))
-    ) {
-      result.ai_result = {
-        ...reading,
-        identifiedItem: {
-          ...reading.identifiedItem,
-          modelNumber: undefined,
-          serialNumber: undefined,
-        },
-        estimatedAge: {
-          value: null,
-          confidence: 'low',
-          basis: 'Photos do not match the selected equipment.',
-        },
-        labelReadability: {
-          ...reading.labelReadability,
-          status: 'uncertain',
-          modelConfidence: 0,
-          serialConfidence: 0,
-          uncertainCharacters: [],
-          formatWarnings: [],
-          retakeRequested: true,
-          retakeMessage:
-            'These photos do not match the selected system. Send its whole-equipment photo and data plate.',
-        },
+    let reading = rawReading ? reconcileHomeCheckSerialReading(rawReading) : null
+    if (reading) {
+      let evidence=homeCheckSystemEvidence(reading,water)
+      if(evidence==='read_overview'){
+        const view=await readHomeCheckPhoto(new Uint8Array(await wholeDownload.data.arrayBuffer()),wholeDownload.data.type)
+        if(!view)throw new Error('Overview reader temporarily unavailable')
+        evidence=homeCheckSystemEvidence(reading,water,view.photoView)
       }
-      await db.from('property_inspection_photos').update({ ai_result: result.ai_result }).eq(
-        'id',
-        label.inspection_photo_id,
-      )
+      reading=applyHomeCheckSystemEvidence(reading,evidence)
     }
+    result.ai_result=reading
     const { data: current, error: scopeError } = await db.from('home_check_photos').select(
       'inspection_photo_id',
     ).eq('check_id', checkId).in('slot', [labelSlot, wholeSlot])
@@ -117,25 +102,14 @@ export async function analyzeHomeCheckEquipmentPair(
       !current || current.length !== 2 ||
       current.some((row) => !ids.includes(row.inspection_photo_id))
     ) return null
-    const { error: updateError } = await db.from('property_inspection_photos').update({
-      status: result.status,
-      ai_result: result.ai_result || null,
-      provider: result.provider || null,
-      ...(rawReading?.identifiedItem?.serialNumber && !reading?.identifiedItem?.serialNumber ? {
-        serial_review: { ...((result.serial_review ?? {}) as Record<string, unknown>), serial: null,
-          readable: false, formatOk: false, formatReason: 'Serial readings disagree', retake: true,
-          retakePrompt: 'Review the serial label; independent readings disagree.' },
-      } : {}),
-      error_message: result.error_message || null,
-      updated_at: new Date().toISOString(),
-    }).in('id', ids)
-    if (updateError) throw new Error(updateError.message)
+    if (rawReading?.identifiedItem?.serialNumber && !reading?.identifiedItem?.serialNumber) result.serial_review={...((result.serial_review??{}) as Record<string,unknown>),serial:null,readable:false,formatOk:false,retake:true,retakePrompt:'Review the serial label; independent readings disagree.'}
+    const committed=await db.rpc('home_check_pair_work',{p_action:'finish',p_check:checkId,p_label:ids[0],p_whole:ids[1],p_token:token,p_result:result})
+    if(committed.error)throw new Error('Could not commit photo processing')
+    if(!committed.data?.ok)return null
     return result.ai_result as ApplianceVisionResult || null
   } catch {
-    await db.from('property_inspection_photos').update({
-      status: 'error',
-      error_message: 'Equipment photo reading is unavailable. Please retry later.',
-    }).in('id', ids)
+    const failed=await db.rpc('home_check_pair_work',{p_action:'finish',p_check:checkId,p_label:ids[0],p_whole:ids[1],p_token:token,p_result:{status:'error'}})
+    if(failed.error)throw new Error('Could not schedule automatic photo retry')
     return null
   }
 }

@@ -12,6 +12,7 @@ export default defineConfig({
       'supabase/functions/_shared/homeCheck/service.test.ts',
       'supabase/functions/_shared/homeCheck/guideAct.test.ts',
       'supabase/functions/_shared/homeCheck/workflowPerf.test.ts',
+      'supabase/functions/_shared/homeCheck/landlordBatchPerf.test.ts',
     ],
   },
 })

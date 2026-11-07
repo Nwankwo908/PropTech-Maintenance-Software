@@ -57,6 +57,9 @@ export const homeCheckTemplate: WorkflowTemplate = {
           new Date(Date.now() - 48 * 3600000).toISOString(),
         ).is('reminder_claimed_at', null),
       ) as HomeCheckRow[]
+      let photoPrompts = 0
+      try { photoPrompts = await startDueHomeCheckPhotoPrompts(db, ctx.landlordId) }
+      catch (error) { console.error('[home-check] photo prompt sweep failed', error instanceof Error ? error.message : 'failed') }
       let reminders = 0
       let guideReminders = 0
       let guideHandoffs = 0
@@ -85,7 +88,7 @@ export const homeCheckTemplate: WorkflowTemplate = {
       return {
         templateId: 'home_check',
         route: 'home_check',
-        metadata: { reminders, expired: expired.length, guideReminders, guideHandoffs },
+        metadata: { reminders, expired: expired.length, guideReminders, guideHandoffs, photoPrompts },
       }
     }
     return {

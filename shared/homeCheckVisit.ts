@@ -40,6 +40,7 @@ export type HomeCheckVisit = {
   visitAt?: string | null
   detailsSentAt?: string | null
   photoPromptSentAt?: string | null
+  accessCoordinator?: 'tenant' | 'landlord'
   tenantPhone?: string | null
   tenantReady?: boolean | null
   lastReplyId?: string | null
@@ -60,12 +61,12 @@ export type HomeCheckVisitEvent =
   | { type: 'tenant_window'; at: string; replyId: string; window: string; visitAt: string }
   | { type: 'visit_due'; at: string }
 
-export function homeCheckVendorAcceptanceSms(location: string): string {
+export function homeCheckVendorAcceptanceSms(location: string, accessCoordinator: 'tenant' | 'landlord' = 'landlord'): string {
   const place = location.trim() || 'this property'
   return [
     `Hi, this is Ulo. Can you complete a Home Check at ${place}?`,
-    'The visit involves taking 4 equipment photos. No repairs or hands-on equipment work are authorized.',
-    'Reply YES to accept or NO to decline. If you accept, we’ll coordinate a visit time with the tenant and confirm it with you. You’ll receive photo instructions by text when it’s time for the visit.',
+    'The visit involves taking 4 appliance photos.',
+    `Reply YES to accept or NO to decline. If you accept, we’ll coordinate a visit time with the ${accessCoordinator}. You’ll receive photo instructions by text when it’s time for the visit.`,
   ].join('\n\n')
 }
 
@@ -158,7 +159,9 @@ export function homeCheckVisitPhotoSms(input: {
       nextPhoto: next,
     })
   }
-  const saved = `Saved as ${homeCheckSlotName(input.savedSlot)} for ${input.location}.`
+  const saved = input.filled.includes(input.savedSlot)
+    ? `You already sent a photo of ${homeCheckSlotName(input.savedSlot)}. I replaced the saved photo for ${input.location} with this one.`
+    : `Saved as ${homeCheckSlotName(input.savedSlot)} for ${input.location}.`
   const next = nextHomeCheckSlot([...input.filled, input.savedSlot])
   return next
     ? `${saved} Next, send a photo of ${homeCheckSlotName(next)}.`
@@ -169,25 +172,25 @@ function unchanged(visit: HomeCheckVisit): { visit: HomeCheckVisit; messages: Ho
   return { visit, messages: [], close: false }
 }
 
-function availabilityAsk(): string {
+function availabilityAsk(coordinator = 'tenant'): string {
   return [
     'Thank you. What’s your earliest availability?',
     'Reply with a day and arrival window (e.g. Wed 9am–12pm) or an exact time (e.g. Wed at 10am).',
-    'We’ll confirm that time with the tenant before you go.',
+    `We’ll confirm that time with the ${coordinator} before you go.`,
   ].join('\n\n')
 }
 
 function visitDetails(location: string, window: string): string {
   return [
     `The Home Check at ${location} is set for ${window}.`,
-    'Photos only. No repairs or hands-on equipment work are authorized.',
+    'This visit is for appliance photos.',
     'Photo instructions will arrive by text when it’s time for the visit.',
   ].join('\n\n')
 }
 
 function confirmBoth(
   visit: HomeCheckVisit,
-  input: { at: string; replyId: string; location: string; window: string; visitAt: string },
+  input: { at: string; replyId: string; location: string; window: string; visitAt: string; vendorName: string },
 ): { visit: HomeCheckVisit; messages: HomeCheckVisitMessage[]; close: boolean } {
   const next: HomeCheckVisit = {
     ...visit,
@@ -201,12 +204,18 @@ function confirmBoth(
     lastReplyId: input.replyId,
   }
   const details = visitDetails(input.location, input.window)
+  const accessDetails = [
+    `The Home Check at ${input.location} is set for ${input.window}.`,
+    `${input.vendorName} will take four appliance photos.`,
+    'Ulo will send the photo instructions directly to the vendor.',
+  ].join('\n\n')
   return {
     visit: next,
     close: false,
     messages: [
       { to: 'vendor', body: details },
-      { to: 'tenant', body: details },
+      { to: 'tenant', body: accessDetails },
+      ...(visit.accessCoordinator === 'landlord' ? [] : [{ to: 'landlord' as const, body: `${input.location} is set for ${input.window}, confirmed by the vendor and tenant.` }]),
     ],
   }
 }
@@ -218,6 +227,7 @@ export function reduceHomeCheckVisit(input: {
   vendorName: string
 }): { visit: HomeCheckVisit; messages: HomeCheckVisitMessage[]; close: boolean } {
   const { visit, event, location } = input
+  const coordinator = visit.accessCoordinator === 'landlord' ? 'property team' : 'tenant'
   const vendorName = input.vendorName.trim() || 'The vendor'
   if ('replyId' in event && event.replyId && event.replyId === visit.lastReplyId) {
     return unchanged(visit)
@@ -233,7 +243,7 @@ export function reduceHomeCheckVisit(input: {
         tenantReady: event.tenantReady,
         lastReplyId: event.replyId,
       }
-      const messages: HomeCheckVisitMessage[] = [{ to: 'vendor', body: availabilityAsk() }]
+      const messages: HomeCheckVisitMessage[] = [{ to: 'vendor', body: availabilityAsk(coordinator) }]
       if (!event.tenantReady) {
         messages.push({
           to: 'landlord',
@@ -269,7 +279,7 @@ export function reduceHomeCheckVisit(input: {
 
   if (visit.phase !== 'scheduling') return unchanged(visit)
 
-  if (event.type === 'vendor_window' && visit.awaiting === 'vendor_window') {
+  if (event.type === 'vendor_window' && (visit.awaiting === 'vendor_window' || visit.awaiting === 'tenant_confirm')) {
     if (!visit.tenantReady) {
       return {
         visit: { ...visit, proposedWindow: event.window, proposedBy: 'vendor', lastReplyId: event.replyId },
@@ -299,13 +309,13 @@ export function reduceHomeCheckVisit(input: {
       messages: [
         {
           to: 'vendor',
-          body: `Thanks. We’re asking the tenant if ${event.window} works.`,
+          body: `Thanks. We’re asking the ${coordinator} if ${event.window} works.`,
         },
         {
           to: 'tenant',
           body: [
             `Hi, this is Ulo.`,
-            `${vendorName} can complete a Home Check at ${location} on ${event.window}. The visit is four equipment photos. No repairs are authorized.`,
+            `${vendorName} can complete a Home Check at ${location} on ${event.window}. The vendor will take four appliance photos during the visit.`,
             'Reply YES if that time works, or NO if it does not.',
           ].join('\n\n'),
         },
@@ -326,6 +336,7 @@ export function reduceHomeCheckVisit(input: {
 
   if (event.type === 'tenant_yes' && visit.awaiting === 'tenant_confirm' && visit.proposedWindow && visit.visitAt) {
     return confirmBoth(visit, {
+      vendorName,
       at: event.at,
       replyId: event.replyId,
       location,
@@ -355,7 +366,7 @@ export function reduceHomeCheckVisit(input: {
         },
         {
           to: 'vendor',
-          body: `The tenant can’t do ${visit.proposedWindow || 'that time'}. We’ll ask for another time and confirm it with you.`,
+          body: `The ${coordinator} can’t do ${visit.proposedWindow || 'that time'}. We’ll ask for another time and confirm it with you.`,
         },
       ],
     }
@@ -375,7 +386,7 @@ export function reduceHomeCheckVisit(input: {
       messages: [{
         to: 'vendor',
         body: [
-          `The tenant can do ${event.window} for the Home Check at ${location}.`,
+          `The ${coordinator} can do ${event.window} for the Home Check at ${location}.`,
           'Reply YES if that time works, or send another day and arrival window.',
         ].join('\n\n'),
       }],
@@ -384,6 +395,7 @@ export function reduceHomeCheckVisit(input: {
 
   if (event.type === 'vendor_yes' && visit.awaiting === 'vendor_confirm' && visit.proposedWindow && visit.visitAt) {
     return confirmBoth(visit, {
+      vendorName,
       at: event.at,
       replyId: event.replyId,
       location,
@@ -406,13 +418,13 @@ export function reduceHomeCheckVisit(input: {
       messages: [
         {
           to: 'vendor',
-          body: `Thanks. We’re asking the tenant if ${event.window} works.`,
+          body: `Thanks. We’re asking the ${coordinator} if ${event.window} works.`,
         },
         {
           to: 'tenant',
           body: [
             `Hi, this is Ulo.`,
-            `${vendorName} can complete a Home Check at ${location} on ${event.window}. The visit is four equipment photos. No repairs are authorized.`,
+            `${vendorName} can complete a Home Check at ${location} on ${event.window}. The vendor will take four appliance photos during the visit.`,
             'Reply YES if that time works, or NO if it does not.',
           ].join('\n\n'),
         },

@@ -1,3 +1,4 @@
+import { sendHomeCheckVendorAcceptance } from './visitAct.ts'
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import { homeCheckDashboardJobWindowEnd, nearestHomeCheckVendors } from '../../../../shared/homeCheck.ts'
 import { recordActivityLog } from '../graph/recordActivityLog.ts'
@@ -265,47 +266,16 @@ async function applyEffects(
       })
       requireCaptureDelivery(result, 'your phone')
     }
-    if (effect.type === 'send_contractor') {
+    if (effect.type === 'invite_contractor' || effect.type === 'send_contractor') {
       const result = await createHomeCheck(db, {
-        landlordId,
-        propertyId: effect.propertyId,
-        unitId: effect.unitId,
-        role: 'contractor',
-        vendorId: effect.vendorId,
-        jobWindowEnd: effect.windowEnd,
-        authorizedBy: 'sms_guide',
-        sendSms: true,
+        landlordId, propertyId: effect.propertyId, unitId: effect.unitId,
+        role: 'contractor', vendorId: effect.vendorId,
+        jobWindowEnd: new Date(Date.now() + 6 * 86400000).toISOString(),
+        authorizedBy: 'sms_guide', sendSms: false,
       })
-      requireCaptureDelivery(result, 'the contractor')
-      if (effect.tenantBody && effect.tenantPhone) {
-        await textPhone(db, {
-          landlordId,
-          to: effect.tenantPhone,
-          body: effect.tenantBody,
-          unitId: effect.unitId,
-          identityType: 'resident',
-        })
-      }
-      if (effect.landlordBody && landlordPhone) {
-        await textPhone(db, {
-          landlordId,
-          to: landlordPhone,
-          body: effect.landlordBody,
-          identityType: 'landlord',
-        })
-      }
-      await recordActivityLog(db, {
-        landlordId,
-        eventType: 'home_check.contractor_link_sent',
-        source: 'sms',
-        actorType: 'system',
-        propertyId: effect.propertyId,
-        unitId: effect.unitId,
-        vendorId: effect.vendorId,
-        metadata: {
-          message: 'Sent the contractor the equipment photo instructions after a visit time was set.',
-        },
-      }).catch(() => undefined)
+      const invited = await sendHomeCheckVendorAcceptance(db, result.check)
+      if (invited.deliveryError) throw new HomeCheckDeliveryError(
+        'The Home Check was created, but the vendor invitation could not be sent. The visit is not confirmed. Please contact your property team before starting another check.', true)
     }
     if (effect.type === 'cancel' && effect.checkId) {
       await db.from('home_checks').update({ status: 'expired' }).eq('id', effect.checkId).eq(

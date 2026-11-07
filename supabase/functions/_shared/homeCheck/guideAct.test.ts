@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vitest";
 import { actHomeCheckGuide } from "./guideAct.ts";
 import { type HomeCheckGuideState, reduceHomeCheckGuide } from "./guide.ts";
+import { createHomeCheck } from "./service.ts";
+import { sendHomeCheckVendorAcceptance } from "./visitAct.ts";
 import { sendInboundAutoReply } from "../sms/inboundReply.ts";
 // Transport-failure probe only: fixed scheduling result, not a parser test.
 vi.mock(
@@ -158,41 +160,27 @@ function db(state: HomeCheckGuideState | null) {
     },
   };
 }
-it("reports tenant invitation failure instead of claiming it will ask the tenant", async () => {
-  const state = stateAfter(["CHECK CONTRACTOR 12 Oak St / 2B", "YES", "YES"]);
-  expect(state?.step).toBe("pick_window");
+it("reports failed tenant photo-instruction delivery without claiming success", async () => {
+  const state = stateAfter(["HOME CHECK 12 Oak St / 2B", "YES"]);
+  expect(state?.step).toBe("pick_who");
+  vi.mocked(createHomeCheck).mockResolvedValueOnce({ check: { id: "check" }, deliveryError: "Injected provider outage" } as never);
   const result = await actHomeCheckGuide(db(state) as any, "disposable", {
-    body: "Thu 2-4pm",
-    conversationId: "thread",
-    sender: "landlord",
-    initiatorPhone: "+15550100003",
-    now,
+    body: "1", conversationId: "thread", sender: "landlord",
+    initiatorPhone: "+15550100003", now,
   });
-  expect(result.reply).toMatch(/failed|unable|could not|try again/i);
-  expect(result.reply).toContain('No contractor photo instructions were sent');
+  expect(result.reply).toMatch(/could not.*photo instructions/i);
+  expect(result.reply).not.toContain("We'll text the photo steps");
 });
-it("does not claim the contractor has the link when delivery failed", async () => {
+it("does not claim a scheduled visit or sent photo instructions when vendor invitation fails", async () => {
   vi.mocked(sendInboundAutoReply).mockClear();
-  const state = stateAfter([
-    "CHECK CONTRACTOR 12 Oak St / 2B",
-    "YES",
-    "YES",
-    "Thu 2-4pm",
-  ]);
-  expect(state?.step).toBe("awaiting_tenant");
+  vi.mocked(sendHomeCheckVendorAcceptance).mockResolvedValueOnce({deliveryError:"Injected provider outage",alreadySent:false});
+  const state: HomeCheckGuideState = {step:"pick_contractor",role:"contractor",updatedAt:now.toISOString(),propertyId:"oak",unitId:"u2",placeLabel:"12 Oak St / 2B",vendorConfirmId:"near"};
   const result = await actHomeCheckGuide(db(state) as any, "disposable", {
-    body: "Thu 2-4pm and I'll be home",
-    conversationId: "thread",
-    sender: "tenant",
-    initiatorPhone: "+15550100003",
-    now,
+    body: "YES", conversationId: "thread", sender: "landlord",
+    initiatorPhone: "+15550100003", now,
   });
-  expect(result.reply).toContain('could not send the photo instructions to the contractor');
+  expect(result.reply).toContain("vendor invitation could not be sent");
+  expect(result.reply).toContain("visit is not confirmed");
+  expect(createHomeCheck).toHaveBeenLastCalledWith(expect.anything(),expect.objectContaining({sendSms:false,role:"contractor",vendorId:"near"}));
   expect(sendInboundAutoReply).not.toHaveBeenCalled();
-  expect(
-    [
-      result.reply,
-      ...vi.mocked(sendInboundAutoReply).mock.calls.map((c: any) => c[1].body),
-    ].join(" "),
-  ).not.toContain("contractor has the photo link");
 });
