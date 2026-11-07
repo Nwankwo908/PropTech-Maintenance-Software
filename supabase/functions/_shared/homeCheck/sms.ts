@@ -8,6 +8,7 @@ import { withDeadline } from '../ai/deadline.ts'
 import { photoBatchFailureReply, type BatchPhotoDiagnostic } from './photoDiagnostics.ts'
 import { prepareHomeCheckReview } from './reviewSelection.ts'
 import { identifyVendorHomeCheckBatch } from './vendorBatch.ts'
+import { gateHomeCheckSmsMedia } from './homeCheckMedia.ts'
 import { HOME_CHECK_OBSERVATION_PROMPT, homeCheckObservationAcknowledgement, homeCheckConfirmationSms } from './smsCopy.ts'
 import { captureContextAction, readCaptureContext } from "./captureContext.ts"
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -488,7 +489,7 @@ export async function prepareHomeCheckSms(
       // Sibling MMS already in flight before the held-photo prompt must not
       // generate duplicate reminders or a competing question.
       if (current.data?.created_at && Date.parse(current.data.created_at) <= Date.parse(pendingPhoto.at)) return { kind: 'quiet' }
-      return { kind: 'clarify', reply: 'I’m holding a photo for your Home Check. Please answer its question before sending another photo.' }
+      return { kind: 'clarify', reply: 'I’m holding a photo or video for your Home Check. Please answer its question before sending another.' }
     }
     const path = ctx.inbound.mediaUrls[0]
     const pool = ref ? checks.filter((check) => check.reference === ref) : checks
@@ -714,8 +715,9 @@ export async function actHomeCheckSms(
           .contains('media_urls', [path]).limit(1)
         if (proof.error || !proof.data?.length) throw new Error('Unverified batch')
         const blob = requireData(await db.storage.from('maintenance-uploads').download(path))
-        if (blob.size > 10 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)) throw new Error('Unsupported photo')
-        return { bytes: new Uint8Array(await blob.arrayBuffer()), contentType: blob.type }
+        const gate = gateHomeCheckSmsMedia({ contentType: blob.type, sizeBytes: blob.size })
+        if (!gate.ok) throw new Error('Unsupported photo')
+        return { bytes: new Uint8Array(await blob.arrayBuffer()), contentType: gate.mime || blob.type }
       }, undefined, event => diagnostics.push(event))
     } catch { return { reply: photoBatchFailureReply(diagnostics) } }
     finally { await recordDiagnostic('photo_batch_identification_diagnostics', { diagnostics }) }
@@ -869,10 +871,10 @@ export async function actHomeCheckSms(
   // Media was already fetched through the authenticated provider and rehosted
   // by inbound_processor. Never fetch a user-provided URL here.
   const blob = requireData(await db.storage.from('maintenance-uploads').download(action.path))
-  if (
-    blob.size > 10 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)
-  ) return { reply: 'Please send a JPEG, PNG or WebP photo under 10 MB.' }
+  const gate = gateHomeCheckSmsMedia({ contentType: blob.type, sizeBytes: blob.size })
+  if (!gate.ok) return { reply: gate.reply }
   const bytes = new Uint8Array(await blob.arrayBuffer())
+  const mediaType = gate.mime
   const location = checkLocation(action.check)
   const { data: photoRows } = await db.from('home_check_photos').select('slot').eq(
     'check_id',
@@ -882,7 +884,7 @@ export async function actHomeCheckSms(
   let slot = action.slot
   if (!slot || action.expectedVersion) {
     const diagnostics: PhotoReadDiagnostic[] = []
-    const reading = await readHomeCheckPhoto(bytes, blob.type, event => diagnostics.push(event))
+    const reading = await readHomeCheckPhoto(bytes, mediaType, event => diagnostics.push(event))
     const placed = homeCheckSlotFromReading(reading, filled)
     await homeCheckEvent(db, action.check, 'photo_routing_read', {
       expectedSlot: slot ?? null, placedSlot: placed.slot,
@@ -903,10 +905,10 @@ export async function actHomeCheckSms(
           checkId: action.check.id,
           ...(expectedSlot ? { expectedSlot } : {}),
         })
-        if (!held) return { reply: 'I am still holding your previous photo. Please answer its question before sending another.' }
+        if (!held) return { reply: 'I am still holding your previous photo or video. Please answer its question before sending another.' }
       }
       return { reply: expectedSlot
-        ? `Is this ${homeCheckSlotName(expectedSlot)} you’re checking? Reply YES or NO. I’ll keep the photo until you answer.`
+        ? `Is this ${homeCheckSlotName(expectedSlot)} you’re checking? Reply YES or NO. I’ll keep the photo or video until you answer.`
         : homeCheckPhotoKindQuestion(location, 'reason' in placed && placed.reason === 'not_equipment') }
     }
     slot = placed.slot
@@ -923,7 +925,7 @@ export async function actHomeCheckSms(
   try { progress = await uploadHomeCheckPhoto(db, action.check, {
     slot,
     bytes,
-    contentType: blob.type,
+    contentType: mediaType,
     source: 'photo_text',
     capture: { conversationId: action.conversationId, claim: claimed.claim },
   }) } catch {

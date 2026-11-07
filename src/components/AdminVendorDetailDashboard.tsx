@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  postAdminReassignVendor,
+  resolveAdminReassignUrl,
+} from '@/api/adminReassignVendor'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { adminNavPath } from '@/lib/adminNavigation'
@@ -32,6 +36,14 @@ import {
   type VerificationItemStatus,
   type VerificationRecord,
 } from '@/lib/vendorVerificationChecklist'
+import {
+  buildVendorProfileAttention,
+  type VendorAttentionEstimate,
+  type VendorAttentionNoShow,
+  type VendorAttentionReopen,
+  type VendorAttentionTicket,
+} from '@/lib/vendorProfileAttention'
+import { ADMIN_ATTENTION_ACTION_CLASS } from '@/lib/adminRightRail'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { recordActivityLog } from '@/lib/recordActivityLog'
 import { fetchVendorScoresForLandlord } from '@/lib/vendorScores'
@@ -99,11 +111,20 @@ type VendorMetrics = {
   completionRate: number | null
 }
 
-function formatVendorTenure(createdAt: string | null): string | null {
+function formatVendorSinceYear(createdAt: string | null): number | null {
   if (!createdAt) return null
   const year = new Date(createdAt).getFullYear()
-  if (!Number.isFinite(year)) return null
-  return `${year} – present`
+  return Number.isFinite(year) ? year : null
+}
+
+function formatVendorSourceSinceLabel(
+  onboardedFromExternal: boolean,
+  createdAt: string | null,
+): string {
+  const source = vendorSourceLabel(onboardedFromExternal)
+  const year = formatVendorSinceYear(createdAt)
+  if (year != null) return `${source} vendor since ${year}`
+  return `${source} vendor`
 }
 
 function asString(value: unknown): string {
@@ -338,6 +359,197 @@ async function loadVendorJobHistory(input: {
   return { rows, error: null }
 }
 
+async function loadVendorAttentionInputs(input: {
+  landlordId: string
+  vendorId: string
+}): Promise<{
+  tickets: VendorAttentionTicket[]
+  estimates: VendorAttentionEstimate[]
+  noShows: VendorAttentionNoShow[]
+  reopens: VendorAttentionReopen[]
+}> {
+  const empty = {
+    tickets: [] as VendorAttentionTicket[],
+    estimates: [] as VendorAttentionEstimate[],
+    noShows: [] as VendorAttentionNoShow[],
+    reopens: [] as VendorAttentionReopen[],
+  }
+  if (!supabase) return empty
+
+  const sinceIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+
+  const ticketsResult = await supabase
+    .from('maintenance_requests')
+    .select(
+      'id, vendor_work_status, auto_reassign_last_outcome, scheduled_at, stall_follow_up_sent_at, stall_follow_up_kind',
+    )
+    .eq('landlord_id', input.landlordId)
+    .eq('assigned_vendor_id', input.vendorId)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (ticketsResult.error) {
+    console.warn('[AdminVendorDetailDashboard] attention tickets', ticketsResult.error.message)
+  }
+
+  const tickets: VendorAttentionTicket[] = ((ticketsResult.data ?? []) as Record<string, unknown>[])
+    .map((row) => {
+      const id = asString(row.id)
+      if (!id) return null
+      return {
+        id,
+        vendorWorkStatus: asString(row.vendor_work_status) || null,
+        autoReassignLastOutcome: asString(row.auto_reassign_last_outcome) || null,
+        scheduledAt: asString(row.scheduled_at) || null,
+        stallFollowUpSentAt: asString(row.stall_follow_up_sent_at) || null,
+        stallFollowUpKind: asString(row.stall_follow_up_kind) || null,
+      }
+    })
+    .filter((row): row is VendorAttentionTicket => row != null)
+
+  const ticketIds = tickets.map((row) => row.id)
+  let estimates: VendorAttentionEstimate[] = []
+  if (ticketIds.length > 0) {
+    const estimatesResult = await supabase
+      .from('maintenance_estimates')
+      .select('id, maintenance_request_id, status, total_cost')
+      .eq('landlord_id', input.landlordId)
+      .in('maintenance_request_id', ticketIds.slice(0, 100))
+      .eq('status', 'pending_approval')
+      .limit(100)
+    if (estimatesResult.error) {
+      console.warn('[AdminVendorDetailDashboard] attention estimates', estimatesResult.error.message)
+    } else {
+      estimates = ((estimatesResult.data ?? []) as Record<string, unknown>[])
+        .map((row) => {
+          const id = asString(row.id)
+          const maintenanceRequestId = asString(row.maintenance_request_id)
+          if (!id || !maintenanceRequestId) return null
+          return {
+            id,
+            maintenanceRequestId,
+            status: asString(row.status) || null,
+            totalAmount: asFiniteNumber(row.total_cost),
+          }
+        })
+        .filter((row): row is VendorAttentionEstimate => row != null)
+    }
+  }
+
+  const noShowsResult = await supabase
+    .from('vendor_job_no_shows')
+    .select('id, maintenance_request_id, recorded_at')
+    .eq('landlord_id', input.landlordId)
+    .eq('vendor_id', input.vendorId)
+    .gte('recorded_at', sinceIso)
+    .order('recorded_at', { ascending: false })
+    .limit(50)
+  if (noShowsResult.error) {
+    console.warn('[AdminVendorDetailDashboard] attention no-shows', noShowsResult.error.message)
+  }
+  const noShows: VendorAttentionNoShow[] = ((noShowsResult.data ?? []) as Record<string, unknown>[])
+    .map((row) => {
+      const id = asString(row.id)
+      const maintenanceRequestId = asString(row.maintenance_request_id)
+      const recordedAt = asString(row.recorded_at)
+      if (!id || !maintenanceRequestId || !recordedAt) return null
+      return { id, maintenanceRequestId, recordedAt }
+    })
+    .filter((row): row is VendorAttentionNoShow => row != null)
+
+  const reopensResult = await supabase
+    .from('maintenance_work_order_reopens')
+    .select('id, maintenance_request_id, reopened_at, previous_status, new_status')
+    .eq('landlord_id', input.landlordId)
+    .eq('vendor_id', input.vendorId)
+    .eq('previous_status', 'completed')
+    .gte('reopened_at', sinceIso)
+    .order('reopened_at', { ascending: false })
+    .limit(50)
+  if (reopensResult.error) {
+    console.warn('[AdminVendorDetailDashboard] attention reopens', reopensResult.error.message)
+  }
+  const reopens: VendorAttentionReopen[] = ((reopensResult.data ?? []) as Record<string, unknown>[])
+    .map((row) => {
+      const id = asString(row.id)
+      const maintenanceRequestId = asString(row.maintenance_request_id)
+      const reopenedAt = asString(row.reopened_at)
+      const previousStatus = asString(row.previous_status)
+      const newStatus = asString(row.new_status)
+      if (!id || !maintenanceRequestId || !reopenedAt || !previousStatus || !newStatus) return null
+      return { id, maintenanceRequestId, reopenedAt, previousStatus, newStatus }
+    })
+    .filter((row): row is VendorAttentionReopen => row != null)
+
+  return { tickets, estimates, noShows, reopens }
+}
+
+async function loadVendorThreadId(input: {
+  landlordId: string
+  vendorId: string
+}): Promise<string | null> {
+  if (!supabase) return null
+  const { data, error } = await supabase
+    .from('sms_conversations')
+    .select('id, conversation_type, updated_at')
+    .eq('landlord_id', input.landlordId)
+    .eq('vendor_id', input.vendorId)
+    .order('updated_at', { ascending: false })
+    .limit(10)
+  if (error) {
+    console.warn('[AdminVendorDetailDashboard] vendor thread', error.message)
+    return null
+  }
+  const rows = (data ?? []) as Array<{ id?: unknown; conversation_type?: unknown }>
+  const preferred =
+    rows.find((row) => asString(row.conversation_type).toLowerCase() === 'vendor_alert') ??
+    rows[0]
+  const id = asString(preferred?.id)
+  return id || null
+}
+
+type AssignableJobOption = {
+  id: string
+  title: string
+  detail: string
+}
+
+async function loadAssignableJobs(landlordId: string): Promise<AssignableJobOption[]> {
+  if (!supabase) return []
+  const { data, error } = await supabase
+    .from('maintenance_requests')
+    .select(
+      'id, description, issue_category, unit, building, vendor_work_status, assigned_vendor_id, created_at',
+    )
+    .eq('landlord_id', landlordId)
+    .is('assigned_vendor_id', null)
+    .order('created_at', { ascending: false })
+    .limit(40)
+  if (error) {
+    console.warn('[AdminVendorDetailDashboard] assignable jobs', error.message)
+    return []
+  }
+  return ((data ?? []) as Record<string, unknown>[])
+    .filter((row) => isLandlordFacingMaintenanceRequest(row))
+    .filter((row) => {
+      const status = asString(row.vendor_work_status).toLowerCase()
+      return status !== 'completed' && status !== 'cancelled'
+    })
+    .map((row) => {
+      const id = asString(row.id)
+      const place = [asString(row.building), asString(row.unit)].filter(Boolean).join(' · ')
+      return {
+        id,
+        title: jobIssueTitle(
+          asString(row.description),
+          asString(row.issue_category) || null,
+        ),
+        detail: [formatWorkOrderRefFromTicketId(id), place].filter(Boolean).join(' · '),
+      }
+    })
+    .filter((row) => Boolean(row.id))
+}
+
 function vendorOutcomeForTicket(
   ticketId: string,
   assignedVendorId: string | null,
@@ -537,6 +749,7 @@ function ChecklistRow({ item }: { item: VerificationChecklistItem }) {
 export function AdminVendorDetailDashboard() {
   const { vendorId: vendorSlug } = useParams<{ vendorId: string }>()
   const vendorId = parseVendorId(vendorSlug)
+  const navigate = useNavigate()
 
   const [vendor, setVendor] = useState<VendorRecord | null>(null)
   const [metrics, setMetrics] = useState<VendorMetrics | null>(null)
@@ -555,8 +768,18 @@ export function AdminVendorDetailDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [completedJobs, setCompletedJobs] = useState<VendorJobRow[]>([])
+  const [attentionTickets, setAttentionTickets] = useState<VendorAttentionTicket[]>([])
+  const [attentionEstimates, setAttentionEstimates] = useState<VendorAttentionEstimate[]>([])
+  const [attentionNoShows, setAttentionNoShows] = useState<VendorAttentionNoShow[]>([])
+  const [attentionReopens, setAttentionReopens] = useState<VendorAttentionReopen[]>([])
   const [jobsError, setJobsError] = useState<string | null>(null)
   const [marketplacePreference, setMarketplacePreference] = useState<string | null>(null)
+  const [threadId, setThreadId] = useState<string | null>(null)
+  const [assignJobOpen, setAssignJobOpen] = useState(false)
+  const [assignableJobs, setAssignableJobs] = useState<AssignableJobOption[]>([])
+  const [assignJobsLoading, setAssignJobsLoading] = useState(false)
+  const [assignJobsError, setAssignJobsError] = useState<string | null>(null)
+  const [assignSavingTicketId, setAssignSavingTicketId] = useState<string | null>(null)
 
   const loadVendor = useCallback(async () => {
     if (!supabase || !vendorId) {
@@ -582,7 +805,7 @@ export function AdminVendorDetailDashboard() {
       supabase
         .from('vendor_verifications')
         .select(
-          'license_status, license_number, license_state, coi_general_liability, coi_expiration, coi_additional_insured, coi_status, background_check_status, w9_received, tax_entity_type, tin_type, tin_last4, tin_fingerprint, w9_variant, tax_1099_treatment, trade_categories, service_area, availability, status',
+          'license_status, license_number, license_state, license_expiration, coi_general_liability, coi_expiration, coi_additional_insured, coi_status, background_check_status, w9_received, tax_entity_type, tin_type, tin_last4, tin_fingerprint, w9_variant, tax_1099_treatment, trade_categories, service_area, availability, status',
         )
         .eq('landlord_id', landlordId)
         .eq('vendor_id', vendorId)
@@ -609,6 +832,10 @@ export function AdminVendorDetailDashboard() {
       setVendor(null)
       setOverrideActivationSmsSent(false)
       setCompletedJobs([])
+      setAttentionTickets([])
+      setAttentionEstimates([])
+      setAttentionNoShows([])
+      setAttentionReopens([])
       setJobsError(null)
       setLoading(false)
       return
@@ -619,6 +846,10 @@ export function AdminVendorDetailDashboard() {
       setVendor(null)
       setOverrideActivationSmsSent(false)
       setCompletedJobs([])
+      setAttentionTickets([])
+      setAttentionEstimates([])
+      setAttentionNoShows([])
+      setAttentionReopens([])
       setJobsError(null)
       setLoading(false)
       return
@@ -701,20 +932,34 @@ export function AdminVendorDetailDashboard() {
             ? 'We assigned 1 open work order.'
             : `We assigned ${result.assignedCount} open work orders.`
         setInviteNoticeError(false)
-        setInviteNotice(`${name} is Active. ${jobs}`)
+        setInviteNotice(`${name} is accepting new work. ${jobs}`)
       })
     }
 
     try {
-      const jobHistory = await loadVendorJobHistory({
-        landlordId,
-        vendorId,
-      })
+      const [jobHistory, threadResult, attention] = await Promise.all([
+        loadVendorJobHistory({
+          landlordId,
+          vendorId,
+        }),
+        loadVendorThreadId({ landlordId, vendorId }),
+        loadVendorAttentionInputs({ landlordId, vendorId }),
+      ])
       setCompletedJobs(jobHistory.rows)
+      setAttentionTickets(attention.tickets)
+      setAttentionEstimates(attention.estimates)
+      setAttentionNoShows(attention.noShows)
+      setAttentionReopens(attention.reopens)
       setJobsError(jobHistory.error)
+      setThreadId(threadResult)
     } catch (jobLoadError) {
       console.warn('[AdminVendorDetailDashboard] vendor jobs', jobLoadError)
       setCompletedJobs([])
+      setAttentionTickets([])
+      setAttentionEstimates([])
+      setAttentionNoShows([])
+      setAttentionReopens([])
+      setThreadId(null)
       const detail =
         jobLoadError instanceof Error
           ? jobLoadError.message
@@ -752,6 +997,73 @@ export function AdminVendorDetailDashboard() {
     }
   }, [actionsOpen])
 
+  const assignJobTitleId = useId()
+
+  const openAssignJobModal = useCallback(async () => {
+    setAssignJobOpen(true)
+    setAssignJobsError(null)
+    setAssignableJobs([])
+    setAssignJobsLoading(true)
+    try {
+      const jobs = await loadAssignableJobs(getActiveLandlordId())
+      setAssignableJobs(jobs)
+      if (jobs.length === 0) {
+        setAssignJobsError('No unassigned open work orders right now.')
+      }
+    } catch (assignLoadError) {
+      setAssignJobsError(
+        getErrorMessage(assignLoadError, 'Could not load open work orders. Please try again.'),
+      )
+    } finally {
+      setAssignJobsLoading(false)
+    }
+  }, [])
+
+  const handleAssignToJob = useCallback(
+    async (ticketId: string) => {
+      if (!vendor) return
+      const url = resolveAdminReassignUrl()
+      if (!url) {
+        setAssignJobsError('Assign to job is not configured.')
+        return
+      }
+      setAssignSavingTicketId(ticketId)
+      setAssignJobsError(null)
+      try {
+        await postAdminReassignVendor({
+          url,
+          ticketId,
+          vendorId: vendor.id,
+          vendorName: vendor.name,
+        })
+        void recordActivityLog({
+          landlordId: getActiveLandlordId(),
+          eventType: 'vendor.assigned_to_job',
+          source: 'dashboard',
+          actorType: 'landlord',
+          vendorId: vendor.id,
+          maintenanceRequestId: ticketId,
+          metadata: {
+            message: `${vendor.name} was assigned to ${formatWorkOrderRefFromTicketId(ticketId)}.`,
+          },
+        }).catch(() => {})
+        setAssignJobOpen(false)
+        setInviteNoticeError(false)
+        setInviteNotice(
+          `${vendor.name} was assigned to ${formatWorkOrderRefFromTicketId(ticketId)}.`,
+        )
+        void loadVendor()
+      } catch (assignError) {
+        setAssignJobsError(
+          getErrorMessage(assignError, 'Could not assign this vendor. Please try again.'),
+        )
+      } finally {
+        setAssignSavingTicketId(null)
+      }
+    },
+    [vendor, loadVendor],
+  )
+
   const compliance: VendorComplianceProfile | null = useMemo(() => {
     if (!vendor) return null
     return buildVendorComplianceProfile(
@@ -772,6 +1084,28 @@ export function AdminVendorDetailDashboard() {
     if (!verification) return null
     return computeVendorProfileVerificationChecklist(verification)
   }, [verification])
+
+  const attentionItems = useMemo(
+    () =>
+      buildVendorProfileAttention({
+        checklist,
+        verification,
+        onboardingOverriddenAt: vendor?.onboardingOverriddenAt,
+        tickets: attentionTickets,
+        estimates: attentionEstimates,
+        noShows: attentionNoShows,
+        reopens: attentionReopens,
+      }),
+    [
+      checklist,
+      verification,
+      vendor?.onboardingOverriddenAt,
+      attentionTickets,
+      attentionEstimates,
+      attentionNoShows,
+      attentionReopens,
+    ],
+  )
 
   const editVendorRow = useMemo((): VendorManagementRow | null => {
     if (!vendor) return null
@@ -1042,32 +1376,25 @@ export function AdminVendorDetailDashboard() {
   }
 
   const tradeLabel = vendor ? formatVendorTradeLabel(vendor.category) : ''
-  const tenureLabel = vendor ? formatVendorTenure(vendor.createdAt) : null
-  const categoryLine = [tradeLabel, tenureLabel].filter(Boolean).join(' · ')
+  const sourceSinceLabel = vendor
+    ? formatVendorSourceSinceLabel(vendor.onboardedFromExternal, vendor.createdAt)
+    : null
   const locationLabel = vendor ? formatVendorLocationLabel(vendor) : null
 
   return (
     <main className="px-8 pb-12">
       <div className="py-6">
-        <Link
-          to="/admin/vendors"
-          className="sa-link inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] hover:text-[#101828]"
-        >
-          <span aria-hidden>←</span> All vendors
-        </Link>
-
-        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
               {loading ? 'Loading vendor…' : vendor?.name}
             </h1>
-            <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-              {loading ? ' ' : categoryLine}
-            </p>
-            {!loading && vendor ? (
-              <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                Source: {vendorSourceLabel(vendor.onboardedFromExternal)}
-                {vendorBlockedFromAutoAssignBySettings({
+            {loading || sourceSinceLabel ? (
+              <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                {loading ? ' ' : sourceSinceLabel}
+                {!loading &&
+                vendor &&
+                vendorBlockedFromAutoAssignBySettings({
                   onboardedFromExternal: vendor.onboardedFromExternal,
                   marketplacePreference,
                 }) ? (
@@ -1085,8 +1412,10 @@ export function AdminVendorDetailDashboard() {
                 ) : null}
               </p>
             ) : null}
-            {!loading && (vendor?.phone || vendor?.email || vendor?.contactName || locationLabel) ? (
+            {!loading &&
+            (tradeLabel || vendor?.phone || vendor?.email || vendor?.contactName || locationLabel) ? (
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                {tradeLabel ? <span className={CONTACT_CHIP_CLASS}>{tradeLabel}</span> : null}
                 {vendor?.contactName ? (
                   <span className={CONTACT_CHIP_CLASS}>
                     {vendor.contactName}
@@ -1230,7 +1559,7 @@ export function AdminVendorDetailDashboard() {
                 {actionsOpen ? (
                   <div
                     role="menu"
-                    className="sa-enter absolute right-0 z-20 mt-1.5 min-w-[160px] overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]"
+                    className="sa-enter absolute right-0 z-20 mt-1.5 min-w-[180px] overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]"
                   >
                     <button
                       type="button"
@@ -1243,6 +1572,42 @@ export function AdminVendorDetailDashboard() {
                     >
                       Edit profile
                     </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#0a0a0a] hover:bg-[#f3f4f6]"
+                      onClick={() => {
+                        setActionsOpen(false)
+                        void openAssignJobModal()
+                      }}
+                    >
+                      Assign to job
+                    </button>
+                    {threadId ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#0a0a0a] hover:bg-[#f3f4f6]"
+                        onClick={() => {
+                          setActionsOpen(false)
+                          navigate(
+                            `/admin/communication?thread=${encodeURIComponent(threadId)}`,
+                          )
+                        }}
+                      >
+                        See thread
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled
+                        title="No message thread for this vendor yet"
+                        className="block w-full cursor-not-allowed px-3 py-2 text-left text-[13px] font-medium text-[#9ca3af]"
+                      >
+                        See thread
+                      </button>
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -1267,6 +1632,76 @@ export function AdminVendorDetailDashboard() {
               ? 'Immediate hold after a Class A/B misconduct report. Review within 1–2 hours; contact safety@ulohome.com as needed.'
               : 'Open suspension review from performance standards (ratings or no-shows). Decide whether to restore or keep the hold.'}
           </p>
+        ) : null}
+
+        {!loading && vendor ? (
+          <section className="mt-4 min-w-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="m-0 text-[15px] font-semibold leading-none text-[#0a0a0a]">
+                Needs your attention
+              </h2>
+              {attentionItems.length > 0 ? (
+                <span className="inline-flex items-center rounded-[4px] bg-[#fee2e2] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-[#b91c1c] tabular-nums">
+                  {attentionItems.length}{' '}
+                  {attentionItems.length === 1 ? 'action needed' : 'actions needed'}
+                </span>
+              ) : null}
+            </div>
+            {attentionItems.length === 0 ? (
+              <p className="mt-4 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                Nothing needs your attention
+              </p>
+            ) : (
+              <ul className="mt-4 flex flex-col gap-3">
+                {attentionItems.map((item) => (
+                  <li
+                    key={item.id}
+                    className="rounded-[8px] border border-[#f3f4f6] bg-[#fafafa] px-3 py-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <span
+                        className={
+                          item.badgeLabel === 'HIGH'
+                            ? 'inline-flex shrink-0 rounded-[4px] bg-[#7f1d1d] px-2 py-0.5 text-[10px] font-semibold tracking-[0.06em] text-white'
+                            : 'inline-flex shrink-0 rounded-[4px] bg-[#fee2e2] px-2 py-0.5 text-[10px] font-semibold tracking-[0.06em] text-[#b91c1c]'
+                        }
+                      >
+                        {item.badgeLabel}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                          {item.title}
+                        </p>
+                        <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">{item.detail}</p>
+                      </div>
+                      {item.href ? (
+                        <Link
+                          to={item.href}
+                          className={`${ADMIN_ATTENTION_ACTION_CLASS} ml-auto bg-transparent px-0`}
+                        >
+                          {item.actionLabel}
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          className={`${ADMIN_ATTENTION_ACTION_CLASS} ml-auto bg-transparent px-0`}
+                          onClick={() => {
+                            if (item.scrollToCompliance) {
+                              document
+                                .getElementById('vendor-compliance')
+                                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                            }
+                          }}
+                        >
+                          {item.actionLabel}
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         ) : null}
       </div>
 
@@ -1361,7 +1796,10 @@ export function AdminVendorDetailDashboard() {
           </div>
 
           <aside>
-            <section className="flex flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+            <section
+              id="vendor-compliance"
+              className="flex flex-col scroll-mt-6 rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+            >
               <div className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
                 <div className="min-w-0">
                   <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -1463,6 +1901,81 @@ export function AdminVendorDetailDashboard() {
           void loadVendor()
         }}
       />
+
+      {assignJobOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="presentation"
+            className="absolute inset-0"
+            aria-hidden
+            onClick={() => {
+              if (!assignSavingTicketId) setAssignJobOpen(false)
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={assignJobTitleId}
+            className="relative flex max-h-[min(32rem,calc(100vh-2rem))] w-full max-w-lg flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1)]"
+          >
+            <div className="border-b border-[#f3f4f6] px-5 py-4">
+              <h2
+                id={assignJobTitleId}
+                className="text-[18px] font-semibold leading-7 text-[#0a0a0a]"
+              >
+                Assign to job
+              </h2>
+              <p className="mt-1 text-[14px] leading-5 text-[#6a7282]">
+                Choose an unassigned work order for {vendor?.name ?? 'this vendor'}.
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              {assignJobsLoading ? (
+                <p className="px-3 py-6 text-center text-[13px] text-[#6a7282]">
+                  Loading open work orders…
+                </p>
+              ) : assignableJobs.length === 0 ? (
+                <p className="px-3 py-6 text-center text-[13px] text-[#6a7282]">
+                  {assignJobsError || 'No unassigned open work orders right now.'}
+                </p>
+              ) : (
+                <ul className="flex flex-col">
+                  {assignableJobs.map((job) => (
+                    <li key={job.id}>
+                      <button
+                        type="button"
+                        disabled={Boolean(assignSavingTicketId)}
+                        onClick={() => void handleAssignToJob(job.id)}
+                        className="sa-press flex w-full flex-col gap-0.5 rounded-[8px] px-3 py-2.5 text-left hover:bg-[#f9fafb] disabled:opacity-60"
+                      >
+                        <span className="text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                          {assignSavingTicketId === job.id ? 'Assigning…' : job.title}
+                        </span>
+                        <span className="text-[12px] leading-4 text-[#6a7282]">{job.detail}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {assignJobsError && assignableJobs.length > 0 ? (
+              <p className="border-t border-[#fecaca] bg-[#fef2f2] px-5 py-2 text-[13px] text-[#b91c1c]">
+                {assignJobsError}
+              </p>
+            ) : null}
+            <div className="flex justify-end border-t border-[#f3f4f6] px-5 py-3">
+              <button
+                type="button"
+                disabled={Boolean(assignSavingTicketId)}
+                onClick={() => setAssignJobOpen(false)}
+                className="sa-press rounded-[8px] px-3 py-1.5 text-[13px] font-medium text-[#364153] hover:bg-[#f3f4f6] disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

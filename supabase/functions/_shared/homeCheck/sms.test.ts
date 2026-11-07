@@ -258,7 +258,7 @@ describe('Home Check SMS dispatch', () => {
       pending: { step: 'check', path: 'sms/a.jpg', checkIds: ['oak', 'birch'] },
     })
     const reply = (action as { reply: string }).reply
-    expect(reply).toMatch(/Which home check is this photo for\?/)
+    expect(reply).toMatch(/Which home check is this photo or video for\?/)
     expect(reply).toMatch(/1\) Oak/)
     expect(reply).toMatch(/Reply 1 or 2/)
     expect(reply).not.toMatch(/HC-|caption/i)
@@ -352,7 +352,7 @@ describe('Home Check SMS dispatch', () => {
       conversationId: 'conv',
     })
     expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
-    expect(result.reply).toMatch(/What does this photo show\?/)
+    expect(result.reply).toMatch(/What does this photo or video show\?/)
     expect(result.reply).toMatch(/1\) Water heater label/)
     expect(db.updates).toContainEqual({
       intake_state: { home_check_photo_pending: expect.objectContaining({ step: 'kind', checkId: 'check', path: 'sms/a.jpg' }) },
@@ -462,7 +462,22 @@ describe('selected Home Check context',()=>{
   vi.mocked(readHomeCheckPhoto).mockResolvedValueOnce({category:'hvac',identifiedItem:{type:'Furnace'},labelReadability:{status:'readable'}} as never)
   const result=await actHomeCheckSms(db as never,'landlord',{kind:'photo',check:pending as never,slot:'water_heater_label',expectedVersion:'version',path:'sms/a.jpg',conversationId:'conv'})
   expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
-  expect(result.reply).toContain('What does this photo show?')
+  expect(result.reply).toContain('What does this photo or video show?')
+ })
+ it('accepts a phone-camera video instead of the old JPEG-only reject',async()=>{
+  const db=actDb([])
+  const video=new Blob([new Uint8Array([1,2,3,4])],{type:'video/mp4'})
+  db.storage={from:()=>({download:async()=>({data:video,error:null})})} as never
+  vi.mocked(readHomeCheckPhoto).mockResolvedValueOnce({
+    category:'water_heater',
+    photoView:{equipment:'water_heater',framing:'label_closeup',confidence:'high'},
+  } as never)
+  const result=await actHomeCheckSms(db as never,'landlord',{
+    kind:'photo',check:pending as never,path:'sms/clip.mp4',conversationId:'conv',
+  })
+  expect(result.reply).not.toMatch(/JPEG, PNG or WebP/i)
+  expect(readHomeCheckPhoto).toHaveBeenCalled()
+  expect(vi.mocked(readHomeCheckPhoto).mock.calls[0]?.[1]).toBe('video/mp4')
  })
  it('a stale or busy claim cannot upload the photo',async()=>{
   const db=actDb([])
@@ -674,7 +689,7 @@ describe('remembered photo clarification', () => {
     expect(await prepareHomeCheckSms(context(heldDb(), 'YES'))).toMatchObject({ kind: 'photo', check: { id: 'check' }, slot: 'heating_whole', path: 'sms/held.jpg' })
   })
   it('NO switches to the full menu without assigning the photo', async () => {
-    expect(await prepareHomeCheckSms(context(heldDb(), 'NO'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('What does this photo show?') })
+    expect(await prepareHomeCheckSms(context(heldDb(), 'NO'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('What does this photo or video show?') })
   })
   it('does not accept YES for an ended or inaccessible check', async () => {
     expect(await prepareHomeCheckSms(context(heldDb([]), 'YES'))).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('has ended') })
@@ -682,7 +697,7 @@ describe('remembered photo clarification', () => {
   it('keeps the full menu for a recognised conflicting photo', async () => {
     vi.mocked(readHomeCheckPhoto).mockResolvedValue({ category: 'water_heater', identifiedItem: { type: 'water heater' }, labelReadability: { status: 'not_visible' } } as never)
     const result = await actHomeCheckSms(actDb([]) as never, 'landlord', { kind: 'photo', check: pending as never, slot: 'heating_whole', expectedVersion: 'version', path: 'sms/a.jpg', conversationId: 'conv' })
-    expect(result.reply).toContain('What does this photo show?')
+    expect(result.reply).toContain('What does this photo or video show?')
     expect(result.reply).not.toContain('Reply YES or NO')
   })
 })
@@ -891,7 +906,7 @@ describe('guided photo burst serialization',()=>{
   const actions=['a','b','c','d'].map(p=>({kind:'photo' as const,check:{...pending,role:'landlord'} as never,slot:'water_heater_label' as const,expectedVersion:'version',path:`sms/${p}.jpg`,conversationId:'conv'}))
   const results=await Promise.all(actions.map(a=>actHomeCheckSms(db as never,'landlord',a)))
   expect(results.filter(r=>r.reply)).toHaveLength(1)
-  expect(results.find(r=>r.reply)?.reply).toContain('What does this photo show?')
+  expect(results.find(r=>r.reply)?.reply).toContain('What does this photo or video show?')
   expect(readHomeCheckPhoto).toHaveBeenCalledTimes(1);expect(uploadHomeCheckPhoto).not.toHaveBeenCalled()
   expect(busy).toBe(false)
  })
@@ -951,7 +966,7 @@ it.each([true,false])('resumes only the original scoped held-photo question with
  db.from.mockImplementation((table:string)=>query(table==='home_checks'?[pending]:[]).from(table));
  vi.mocked(uploadHomeCheckPhoto).mockClear();
  const result=await prepareHomeCheckSms(context(db,'RESUME PHOTOS',[],true));
- expect(result).toMatchObject({kind:'clarify',reply:expect.stringContaining(allowed?'What does this photo show?':'No photo was changed')});
+ expect(result).toMatchObject({kind:'clarify',reply:expect.stringContaining(allowed?'What does this photo or video show?':'No photo was changed')});
  expect(db.rpc).toHaveBeenCalledWith('resume_home_check_sms_photo',expect.objectContaining({p_landlord_id:'landlord',p_conversation_id:'conv',p_to:'+15550001111'}));
  expect(uploadHomeCheckPhoto).not.toHaveBeenCalled();
 });

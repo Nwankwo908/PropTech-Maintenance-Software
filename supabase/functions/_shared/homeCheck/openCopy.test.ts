@@ -16,5 +16,5 @@ it('a non-appliance result asks neutrally without asserting the user sent the wr
  const text=homeCheckPhotoKindQuestion('200 Test Lane',true)
  expect(text).toContain('I couldn’t identify the appliance')
  expect(text).not.toContain("doesn't look like")
- expect(text).toContain('Ulo will keep the photo')
+ expect(text).toContain('Ulo will keep the photo or video')
 })

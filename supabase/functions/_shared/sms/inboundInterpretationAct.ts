@@ -21,6 +21,7 @@ import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 import { resolveUnitByIdOrLabel } from "../unitVacancy.ts"
 import { residentRequestRef } from "./residentRequestRef.ts"
 import { queueWorkOrderContext } from "../workOrderContext.ts"
+import { recordWorkOrderReopen } from "../maintenanceWorkOrderReopen.ts"
 import { sendVendorJobAlert } from "./vendorSmsRouting.ts"
 import { findResidentLeaseDocumentUrl } from "./residentLeaseDocument.ts"
 import type {
@@ -1300,10 +1301,12 @@ async function handleMaintenanceUpdate(
           patch.priority = "urgent"
         }
       }
+      const reopenFromStatus = (ticket.vendor_work_status ?? "").toLowerCase()
+      let reopenToStatus: string | null = null
       if (applyKind === "reopen") {
-        const status = (ticket.vendor_work_status ?? "").toLowerCase()
-        if (status === "completed" || status === "cancelled") {
-          patch.vendor_work_status = ticket.assigned_vendor_id ? "accepted" : "unassigned"
+        if (reopenFromStatus === "completed" || reopenFromStatus === "cancelled") {
+          reopenToStatus = ticket.assigned_vendor_id ? "accepted" : "unassigned"
+          patch.vendor_work_status = reopenToStatus
           patch.priority = "urgent"
         }
       }
@@ -1335,6 +1338,18 @@ async function handleMaintenanceUpdate(
         .from("maintenance_requests")
         .update(patch)
         .eq("id", ticket.id)
+      // Trigger may insert first with triggered_by=system; this upgrades actor (one row).
+      if (reopenToStatus) {
+        await recordWorkOrderReopen(ctx.supabase, {
+          landlordId: ctx.landlordId,
+          maintenanceRequestId: ticket.id,
+          vendorId: ticket.assigned_vendor_id,
+          previousStatus: reopenFromStatus,
+          newStatus: reopenToStatus,
+          triggeredBy: "tenant_sms",
+          triggerRef: `sms:${ctx.messageId}`,
+        })
+      }
       if (typeof patch.description === "string") {
         queueWorkOrderContext(
           ctx.supabase,

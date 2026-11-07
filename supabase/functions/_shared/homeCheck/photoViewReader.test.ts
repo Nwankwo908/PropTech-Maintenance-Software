@@ -56,6 +56,11 @@ it('uses the backup for uncertain framing instead of inventing a view',async()=>
  const fetchImpl=vi.fn().mockResolvedValueOnce(response('gemini',{equipment:'unknown',framing:'unknown',confidence:'low'})).mockResolvedValueOnce(response('openai'))
  expect(await createPhotoViewReader({...configured,fetchImpl})('AQ==','image/jpeg')).toMatchObject({provider:'openai',view})
 })
+it('skips OpenAI backup for phone-camera video MIME',async()=>{
+ const fetchImpl=vi.fn().mockResolvedValueOnce(response('gemini',{equipment:'unknown',framing:'unknown',confidence:'low'}))
+ expect(await createPhotoViewReader({...configured,fetchImpl})('AQ==','video/mp4')).toMatchObject({provider:'gemini',outcome:'uncertain_view'})
+ expect(fetchImpl).toHaveBeenCalledTimes(1)
+})
 it('preserves low-confidence primary evidence if backup fails, never promoting it',async()=>{
  const low={equipment:'water_heater',framing:'unknown',confidence:'low'}
  const fetchImpl=vi.fn().mockResolvedValueOnce(response('gemini',low)).mockRejectedValueOnce(Error('private'))

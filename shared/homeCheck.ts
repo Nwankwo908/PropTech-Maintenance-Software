@@ -601,9 +601,9 @@ export function homeCheckPhotoChoiceQuestion(
   const lines = choices.map((choice, index) =>
     `${index + 1}) ${choice.location} (started ${started(choice.created_at)})`
   )
-  return `Which home check is this photo for?\n${lines.join('\n')}\nReply ${
+  return `Which home check is this photo or video for?\n${lines.join('\n')}\nReply ${
     choices.map((_, index) => index + 1).join(' or ')
-  }. Ulo will keep the photo until you answer.`
+  }. Ulo will keep the photo or video until you answer.`
 }
 
 /** A bare number that picks one of the listed checks. */
@@ -683,10 +683,10 @@ export function homeCheckSlotName(slot: HomeCheckSlot): string {
   return `the ${HOME_CHECK_PHOTOS.find((photo) => photo.slot === slot)!.title.toLowerCase()}`
 }
 
-/** Asks what a photo shows when Ulo can't tell. Numbers match the four photos. */
+/** Asks what a photo or video shows when Ulo can't tell. Numbers match the four views. */
 export function homeCheckPhotoKindQuestion(location: string, notEquipment = false): string {
   const lead = notEquipment
-    ? `I couldn’t identify the appliance in this photo. What does it show?`
-    : `What does this photo show?`
-  return `${lead} (${location})\n1) Water heater label\n2) Whole water heater\n3) Furnace or boiler label\n4) Whole furnace or boiler\nReply 1–4. Ulo will keep the photo until you answer.`
+    ? `I couldn’t identify the appliance in this photo or video. What does it show?`
+    : `What does this photo or video show?`
+  return `${lead} (${location})\n1) Water heater label\n2) Whole water heater\n3) Furnace or boiler label\n4) Whole furnace or boiler\nReply 1–4. Ulo will keep the photo or video until you answer.`
 }
