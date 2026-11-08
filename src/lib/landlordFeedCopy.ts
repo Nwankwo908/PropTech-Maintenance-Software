@@ -82,6 +82,75 @@ function workOrderRef(source: LandlordFeedCopySource): string | null {
   return null
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Property / street for any feed line — same compacting rules as attention alerts. */
+export function feedPlaceFromSource(source: LandlordFeedCopySource): string | null {
+  return compactAttentionPlace(
+    source.building ??
+      metaString(source.metadata, 'location_line') ??
+      metaString(source.metadata, 'building') ??
+      metaString(source.metadata, 'street'),
+  )
+}
+
+export function feedScopeFromSource(source: LandlordFeedCopySource): {
+  workOrderRef: string | null
+  place: string | null
+} {
+  return {
+    workOrderRef: workOrderRef(source),
+    place: feedPlaceFromSource(source),
+  }
+}
+
+/**
+ * Ensure every activity-feed line names the work order and property when known.
+ * Never collapses away those tokens when the line has to be shortened.
+ */
+export function withFeedScope(
+  line: FeedLine,
+  input: { workOrderRef?: string | null; place?: string | null },
+): FeedLine {
+  const wo = (input.workOrderRef ?? '').trim() || null
+  const place = compactAttentionPlace(input.place)
+  if (!wo && !place) return line
+
+  const hasWo = Boolean(wo) && new RegExp(`\\b${escapeRegExp(wo!)}\\b`, 'i').test(line.full)
+  const hasPlace = Boolean(place) && line.full.toLowerCase().includes(place!.toLowerCase())
+  if (hasWo && hasPlace) return line
+
+  const scope = [
+    !hasWo && wo ? `for ${wo}` : null,
+    !hasPlace && place ? `at ${place}` : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  if (!scope) return line
+
+  const inject = (text: string): string => {
+    const trimmed = text.trim()
+    if (!trimmed) return scope
+    const split = trimmed.match(/^(.+?)([;:] .+)$/)
+    if (split) return `${split[1]!.trim()} ${scope}${split[2]}`
+    return `${trimmed} ${scope}`
+  }
+
+  const full = inject(line.full)
+  const placeWords = place ? place.split(/\s+/).filter(Boolean) : []
+  const protectedTokens = [wo ?? '', ...placeWords, ...protectedTokensIn(full)]
+  const shorter = [
+    inject(line.line),
+    inject(line.full.replace(/[;:] .+$/, '').trim()),
+    // Keep action stem + scope when the issue/detail has to drop.
+    `${line.full.split(/\s+/).slice(0, 5).join(' ')} ${scope}`.replace(/\s+/g, ' ').trim(),
+    scope,
+  ]
+  return fitFeedLine(full, shorter, protectedTokens)
+}
+
 function bareWord(word: string): string {
   return word.replace(/^["“”'([{]+|[)\]}"“”',.;:]+$/g, '')
 }
@@ -108,13 +177,47 @@ function uniqueLines(lines: string[]): string[] {
   return result
 }
 
-/** Drop whole words until the line fits. Never splits a word, amount, or work-order ref. */
+/**
+ * Drop low-priority parts until the line fits. Never appends "…".
+ * Priority to drop first: parenthetical vendor, dollar amounts, then "at/for Place".
+ * Never drops protected actor/action/issue/outcome tokens.
+ */
+export function priorityShortenFeedLine(source: string, protectedTokens: string[]): string {
+  let text = source.replace(/\s+/g, ' ').trim()
+  if (!text || feedLineFits(text)) return text
+
+  // 1) Full vendor in parentheses — "(Ecosafe Pest Management LLC…)"
+  text = text.replace(/\s*\([^)]{3,}\)/g, '').replace(/\s+/g, ' ').trim()
+  if (feedLineFits(text)) return text
+
+  // 2) Amount detail — keep action words, drop $… tokens unless protected as the subject.
+  const withoutAmounts = text
+    .replace(/\$[\d,]+(?:\.\d+)?/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,;:])/g, '$1')
+    .trim()
+  if (withoutAmounts && feedLineFits(withoutAmounts)) return withoutAmounts
+
+  // 3) Place clause — "at 14 Maple Ave" / "for 14 Maple Ave" when place words are known.
+  const placeWords = protectedTokens
+    .map((token) => bareWord(token))
+    .filter((token) => token && !/^\$/.test(token) && !/^WO-/i.test(token) && !/^\d+$/.test(token))
+  if (placeWords.length) {
+    const placePattern = placeWords.map(escapeRegExp).join('\\s+')
+    const withoutPlace = text
+      .replace(new RegExp(`\\s+(?:at|for)\\s+${placePattern}\\b`, 'i'), '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (withoutPlace && feedLineFits(withoutPlace)) return withoutPlace
+  }
+
+  return text
+}
+
+/** Drop unprotected trailing words until the line fits. Never appends "…". */
 export function emergencyCutFeedLine(source: string, protectedTokens: string[]): string {
-  const original = source.trim()
-  const kept = original.split(/\s+/).filter(Boolean)
-  const render = (mark: boolean) => (mark ? `${kept.join(' ')}…` : kept.join(' '))
-  let mark = false
-  while (kept.length > 0 && !feedLineFits(render(mark))) {
+  const kept = source.trim().split(/\s+/).filter(Boolean)
+  while (kept.length > 0 && !feedLineFits(kept.join(' '))) {
     let dropAt = -1
     for (let index = kept.length - 1; index >= 0; index -= 1) {
       if (!isProtectedWord(kept[index]!, protectedTokens)) {
@@ -124,9 +227,8 @@ export function emergencyCutFeedLine(source: string, protectedTokens: string[]):
     }
     if (dropAt === -1) break
     kept.splice(dropAt, 1)
-    mark = true
   }
-  return render(mark).trim()
+  return kept.join(' ').trim()
 }
 
 export function fitFeedLine(full: string, shorter: string[], protectedTokens: string[]): FeedLine {
@@ -135,8 +237,20 @@ export function fitFeedLine(full: string, shorter: string[], protectedTokens: st
   for (const option of options) {
     if (feedLineFits(option)) return { line: option, full: canonical }
   }
-  const base = options[options.length - 1] || canonical
-  return { line: emergencyCutFeedLine(base, protectedTokens), full: canonical }
+  for (const option of options) {
+    const shortened = priorityShortenFeedLine(option, protectedTokens)
+    if (shortened && feedLineFits(shortened)) return { line: shortened, full: canonical }
+  }
+  // Shortest template first — never invent an ellipsis cut of the long form.
+  const ranked = [...options].sort((a, b) => a.length - b.length || feedLineWordCount(a) - feedLineWordCount(b))
+  for (const option of ranked) {
+    if (feedLineFits(option)) return { line: option, full: canonical }
+    const cut = emergencyCutFeedLine(option, protectedTokens)
+    if (cut && feedLineFits(cut)) return { line: cut, full: canonical }
+    if (cut) return { line: cut, full: canonical }
+  }
+  const base = ranked[0] || canonical
+  return { line: emergencyCutFeedLine(base, protectedTokens) || base, full: canonical }
 }
 
 function vendorLevels(name: string | null | undefined): string[] {
@@ -241,7 +355,7 @@ export function estimateApprovedFeedLine(input: {
   const amount = moneyLabel(input.amount)
   if (!amount) return null
   const wo = input.workOrderRef?.trim() || null
-  const base = wo ? `${amount} estimate approved for ${wo}` : `${amount} estimate approved`
+  const base = wo ? `Approved ${amount} estimate for ${wo}` : `Approved ${amount} estimate`
   return fitFeedLine(`${base}; confirming visit time with tenant`, [base], [amount, wo ?? '', 'approved'])
 }
 
@@ -318,19 +432,21 @@ export function tenantConfirmedFeedLine(input: {
   const window = compactWindow(input.window)
   const withWindow = window
     ? wo
-      ? `Tenant confirmed ${window} visit for ${wo}`
-      : `Tenant confirmed ${window} visit`
+      ? `Confirmed ${window} visit with the tenant for ${wo}`
+      : `Confirmed ${window} visit with the tenant`
     : null
-  const fallback = wo ? `Tenant confirmed the visit for ${wo}` : 'Tenant confirmed the visit'
+  const fallback = wo
+    ? `Confirmed the visit with the tenant for ${wo}`
+    : 'Confirmed the visit with the tenant'
   return fitFeedLine(withWindow ?? fallback, withWindow ? [fallback] : [], [wo ?? '', 'confirmed'])
 }
 
 export function windowPassedFeedLine(input: { workOrderRef?: string | null }): FeedLine {
   const wo = input.workOrderRef?.trim() || null
   const base = wo
-    ? `${wo} visit window passed without tenant confirmation`
-    : 'Visit window passed without tenant confirmation'
-  return fitFeedLine(`${base}; no texts sent`, [base], [wo ?? '', 'passed'])
+    ? `Stopped texts on ${wo} after the visit window passed`
+    : 'Stopped texts after the visit window passed'
+  return fitFeedLine(`${base}; no tenant confirmation`, [base], [wo ?? '', 'passed'])
 }
 
 export function closedFeedLine(input: {
@@ -351,8 +467,8 @@ export function closedFeedLine(input: {
     const mapped = CLOSE_CLAUSES[reason.toLowerCase()]
     if (mapped) clause = mapped
   }
-  const line = `${wo} closed: ${clause}`
-  const plain = `${wo} closed: not a repair`
+  const line = `Closed ${wo}: ${clause}`
+  const plain = `Closed ${wo}: not a repair`
   return fitFeedLine(line, clause === 'not a repair' ? [] : [plain], [wo === 'Work order' ? '' : wo, 'closed'])
 }
 
@@ -363,9 +479,186 @@ export function equipmentFeedLine(input: {
   const serial = (input.serial ?? '').trim()
   if (!serial || /\s/.test(serial)) return null
   const appliance = tradeLabel(input.appliance)
-  const withAppliance = appliance ? `${appliance} serial ${serial} recorded` : null
-  const fallback = `Serial ${serial} recorded`
-  return fitFeedLine(withAppliance ?? fallback, withAppliance ? [fallback] : [], [serial, 'recorded'])
+  const withAppliance = appliance ? `Saved ${appliance} serial ${serial}` : null
+  const fallback = `Saved serial ${serial}`
+  return fitFeedLine(withAppliance ?? fallback, withAppliance ? [fallback] : [], [serial, 'saved'])
+}
+
+/** What Ulo did when it sent a Needs Your Attention alert (kind → verb phrase). */
+export function attentionAlertActionVerb(kind?: string | null): string {
+  switch ((kind ?? '').trim().toLowerCase()) {
+    case 'assign_vendor':
+      return 'Asked you to pick a vendor'
+    case 'invoice_ready':
+      return 'Sent you an invoice to review'
+    case 'late_rent':
+      return 'Texted you that rent is late'
+    case 'lease_renewal':
+      return 'Asked you about a lease renewal'
+    case 'lease_info_missing':
+      return 'Asked you for missing lease details'
+    case 'unknown_occupant':
+      return 'Texted you about an unknown sender'
+    case 'external_vendor_replied':
+      return 'Forwarded a vendor reply'
+    case 'pm_service':
+      return 'Asked you about a preventive HVAC visit'
+    case 'weather_alert':
+      return 'Sent you a weather alert'
+    case 'workflow_escalated':
+      return 'Asked you to step in'
+    default:
+      return 'Texted you'
+  }
+}
+
+/** Street / building for feed lines — drop unit/ago tails, keep it short. */
+export function compactAttentionPlace(raw: string | null | undefined): string | null {
+  let text = (raw ?? '').trim().replace(/\s+/g, ' ')
+  if (!text) return null
+  text = text.split(',')[0]?.trim() ?? text
+  text = text.replace(/\breported\b.*$/i, '').trim()
+  if (!text || /^this property$/i.test(text)) return null
+  if (text.length > 28) {
+    text = text.slice(0, 28).replace(/\s+\S*$/, '').trim()
+  }
+  return text || null
+}
+
+/**
+ * Soften robotic openers on any leftover stored message so template updates
+ * still show up for older graph rows (Luna polish only runs at write time).
+ */
+export function softRewriteFeedLine(text: string): string {
+  let line = text.replace(/\s+/g, ' ').trim()
+  if (!line) return line
+  line = line.replace(/\bLandlord attention alert sent\b/gi, 'Texted you for a decision')
+  line = line.replace(/^Noted\s+/i, '')
+  line = line.replace(/^Logged\s+/i, '')
+  line = line.replace(/^Recorded\s+/i, 'Saved ')
+  line = line.replace(/^Flagged\s+/i, 'Marked ')
+  line = line.replace(/^Escalated this to you\b/i, 'Asked you to step in')
+  line = line.replace(/^Told you\s+/i, '')
+  line = line.replace(/^Asked you to (?:choose|pick) a vendor:\s*/i, 'Asked you to pick a vendor for ')
+  line = line.replace(/\s+·\s+/g, ' — ')
+  line = line.replace(
+    /^Phone photo capture started for this inspection\.?$/i,
+    'Started phone photo capture for an equipment scan',
+  )
+  line = line.replace(
+    /^Phone photo capture ended\.?$/i,
+    'Finished phone photo capture for an equipment scan',
+  )
+  return line.replace(/\s+/g, ' ').trim()
+}
+
+export function inspectionCaptureFeedLine(input: {
+  phase: 'started' | 'ended'
+  place?: string | null
+  photoCount?: number | null
+}): FeedLine {
+  const place = compactAttentionPlace(input.place)
+  const photos =
+    typeof input.photoCount === 'number' && Number.isFinite(input.photoCount)
+      ? Math.max(0, Math.round(input.photoCount))
+      : null
+  const countBit =
+    input.phase === 'ended' && photos != null && photos > 0
+      ? ` (${photos} photo${photos === 1 ? '' : 's'})`
+      : ''
+  const full =
+    input.phase === 'started'
+      ? place
+        ? `Started phone photo capture for equipment scan at ${place}`
+        : 'Started phone photo capture for an equipment scan'
+      : place
+        ? `Finished phone photo capture for equipment scan at ${place}${countBit}`
+        : `Finished phone photo capture for an equipment scan${countBit}`
+  const shorter = [
+    full,
+    place
+      ? input.phase === 'started'
+        ? `Started phone capture at ${place}`
+        : `Finished phone capture at ${place}${countBit}`
+      : null,
+    input.phase === 'started'
+      ? 'Started phone photo capture for an equipment scan'
+      : `Finished phone photo capture for an equipment scan${countBit}`,
+  ].filter(Boolean) as string[]
+  return fitFeedLine(full, shorter, [place ?? '', 'photo', 'capture'])
+}
+
+/**
+ * Needs-your-attention — plain landlord wording with work order + property.
+ * Rebuilds from kind/headline/detail so template updates apply to old rows.
+ * Stored `message` is only a fallback when structured fields are missing.
+ */
+export function attentionAlertFeedLine(input: {
+  kind?: string | null
+  headline?: string | null
+  detail?: string | null
+  message?: string | null
+  workOrderRef?: string | null
+  place?: string | null
+}): FeedLine | null {
+  const action = attentionAlertActionVerb(input.kind)
+  const wo = (input.workOrderRef ?? '').trim() || null
+  const place = compactAttentionPlace(input.place)
+  const headline = (input.headline ?? '').trim().replace(/\s+/g, ' ')
+  const detail = (input.detail ?? '').trim().replace(/\s+/g, ' ')
+  const message = softRewriteFeedLine((input.message ?? '').trim())
+  const kind = (input.kind ?? '').trim().toLowerCase()
+
+  const noPreferred = kind === 'assign_vendor' && /\bno preferred vendor\b/i.test(headline)
+  const vendorUnavailable =
+    kind === 'assign_vendor' &&
+    /\b(can't take|cannot take|declined|did not respond)\b/i.test(headline)
+
+  const softenIssue = (raw: string) =>
+    raw.replace(/^(the|a|an)\b/i, (m) => m.toLowerCase())
+
+  const appendScope = (line: string) => {
+    if (place && !line.toLowerCase().includes(place.toLowerCase()) && wo) {
+      return `${line} at ${place} (${wo})`
+    }
+    if (place && !line.toLowerCase().includes(place.toLowerCase())) return `${line} at ${place}`
+    if (wo && !line.includes(wo)) return `${line} (${wo})`
+    return line
+  }
+
+  let full: string
+  if (noPreferred) {
+    const issue = softenIssue(detail || 'this request')
+    // Place/WO before the reason so it reads as one natural sentence.
+    full = `${appendScope(`Asked you to pick a vendor for ${issue}`)} — no preferred match`
+  } else if (vendorUnavailable) {
+    const who = headline.replace(/\s+at this property\s*$/i, '').trim() || headline
+    full = appendScope(`Asked you to pick another vendor — ${who}`)
+  } else if (kind === 'assign_vendor') {
+    const issue = softenIssue(detail || headline)
+    full = issue ? appendScope(`Asked you to pick a vendor for ${issue}`) : appendScope(action)
+  } else if (headline || detail) {
+    const substance = [headline, detail].filter(Boolean).join(' — ')
+    full = appendScope(`${action}: ${substance}`)
+  } else if (message) {
+    // Legacy rows with only a stored message — soft-rewrite, then scope.
+    full = appendScope(message)
+  } else {
+    full = appendScope(action)
+  }
+
+  const shorter = [
+    full,
+    wo && place ? `${action} at ${place} (${wo})` : null,
+    wo ? `${action} (${wo})` : null,
+    place ? `${action} at ${place}` : null,
+    action,
+  ].filter(Boolean) as string[]
+  return fitFeedLine(full, shorter, [
+    wo ?? '',
+    ...(place ? place.split(/\s+/) : []),
+    ...protectedTokensIn(full),
+  ])
 }
 
 function windowFrom(source: LandlordFeedCopySource): string | null {
@@ -481,6 +774,38 @@ export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | nul
       appliance: metaString(meta, 'appliance') ?? metaString(meta, 'asset_type'),
     })
   }
+  if (type === 'inspection.capture_session_started' || type === 'inspection.capture_session_ended') {
+    const photoRaw = meta?.photo_count ?? meta?.photoCount
+    const photoCount =
+      typeof photoRaw === 'number'
+        ? photoRaw
+        : typeof photoRaw === 'string' && photoRaw.trim()
+          ? Number(photoRaw)
+          : null
+    return inspectionCaptureFeedLine({
+      phase: type === 'inspection.capture_session_started' ? 'started' : 'ended',
+      place:
+        source.building ??
+        metaString(meta, 'building') ??
+        metaString(meta, 'property_name') ??
+        metaString(meta, 'property_address'),
+      photoCount: Number.isFinite(photoCount) ? photoCount : null,
+    })
+  }
+  if (type === 'landlord.attention_alert_sent') {
+    return attentionAlertFeedLine({
+      kind: metaString(meta, 'kind'),
+      headline: metaString(meta, 'headline'),
+      detail: metaString(meta, 'detail'),
+      message: source.message,
+      workOrderRef: wo,
+      place:
+        source.building ??
+        metaString(meta, 'location_line') ??
+        metaString(meta, 'building') ??
+        metaString(meta, 'street'),
+    })
+  }
   return null
 }
 
@@ -502,8 +827,10 @@ function stripFiller(text: string): string {
 
 /** Fallback when no template matches. Still keeps the line inside the window. */
 export function fallbackFeedLine(text: string, building?: string | null): FeedLine {
-  let full = stripFiller(text)
+  let full = softRewriteFeedLine(stripFiller(text))
   const place = building?.trim()
-  if (place && full.includes(place)) full = full.replace(place, '').replace(/\s+/g, ' ').trim()
+  if (place && full.toLowerCase().includes(place.toLowerCase())) {
+    full = full.replace(new RegExp(escapeRegExp(place), 'ig'), '').replace(/\s+/g, ' ').trim()
+  }
   return fitFeedLine(full, [], protectedTokensIn(full))
 }
