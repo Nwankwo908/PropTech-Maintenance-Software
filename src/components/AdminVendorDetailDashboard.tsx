@@ -11,6 +11,8 @@ import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { supabase } from '@/lib/supabase'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatVendorLocationLabel } from '@/lib/vendorLocation'
+import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
+import { formatLocationWithOptionalUnit } from '@shared/properties/unitLabelDisplay'
 import {
   VENDOR_SOURCE_SETTINGS_HINT,
   vendorBlockedFromAutoAssignBySettings,
@@ -32,10 +34,13 @@ import {
 import {
   computeVendorProfileVerificationChecklist,
   type VerificationChecklist,
-  type VerificationChecklistItem,
   type VerificationItemStatus,
   type VerificationRecord,
 } from '@/lib/vendorVerificationChecklist'
+import {
+  buildVendorReadinessView,
+  type VendorReadinessDisplayItem,
+} from '@/lib/vendorReadiness'
 import {
   buildVendorProfileAttention,
   type VendorAttentionEstimate,
@@ -47,13 +52,26 @@ import { ADMIN_ATTENTION_ACTION_CLASS } from '@/lib/adminRightRail'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { recordActivityLog } from '@/lib/recordActivityLog'
 import { fetchVendorScoresForLandlord } from '@/lib/vendorScores'
+import { loadVendorAverageResponseDetail } from '@/lib/vendorAvgResponse'
+import { VendorAvgResponseInfoTip } from '@/components/VendorAvgResponseInfoTip'
+import scheduledVisitsIcon from '@/assets/calendar.png'
+import openRepairsIcon from '@/assets/repair-tool.png'
+import responseRateIcon from '@/assets/try-demo/Response rate.svg'
+import reviewsIcon from '@/assets/Reviews.svg'
 import {
   dispatchUnassignedJobsAfterVendorOverride,
   notifyVendorOnboardingOverrideActivated,
+  requestVendorVerificationUpdate,
   sendVendorInvite,
   type VendorInviteChannel,
 } from '@/api/vendorVerification'
+import {
+  isVendorVerificationRequestItemId,
+  vendorVerificationRequestTitle,
+  type VendorVerificationRequestItemId,
+} from '@shared/sms/vendorInsuranceRequestSms'
 import { OverrideOnboardingModal } from '@/components/OverrideOnboardingModal'
+import { RequestVendorInsuranceModal } from '@/components/RequestVendorInsuranceModal'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import { inviteChannelFromContact } from '@/lib/inviteMessagePreview'
 import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
@@ -203,23 +221,43 @@ function formatResponse(minutes: number | null): string {
   return `${Math.round(hours / 24)} d`
 }
 
+function formatResponseRatePercent(percent: number | null): string {
+  if (percent == null) return '—'
+  return `${Math.round(percent)}%`
+}
+
 function VendorKpiCard({
   label,
+  labelIcon,
   value,
   title,
+  info,
 }: {
   label: string
+  labelIcon?: string
   value: ReactNode
   title?: string
+  info?: ReactNode
 }) {
   return (
     <div
       className="sa-enter-scale flex min-w-0 items-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4"
-      title={title}
+      title={info ? undefined : title}
     >
-      <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-        {label}
-      </p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {labelIcon ? (
+          <span
+            className="flex size-[2.1rem] shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+            aria-hidden
+          >
+            <img src={labelIcon} alt="" className="size-[1.2rem] object-contain" />
+          </span>
+        ) : null}
+        <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+          {label}
+        </p>
+        {info}
+      </div>
       <div className="ml-auto flex min-w-0 max-w-[70%] shrink-0 justify-end">
         {typeof value === 'string' || typeof value === 'number' ? (
           <p className="truncate text-right text-[22px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[28px]">
@@ -261,15 +299,105 @@ function invoiceTotalFromRow(raw: Record<string, unknown>): number | null {
   return (labor ?? 0) + (material ?? 0) + (tax ?? 0)
 }
 
-function jobIssueTitle(description: string, category: string | null): string {
-  const firstLine = description.split('\n')[0]?.trim() ?? ''
-  if (firstLine) return firstLine
-  return formatVendorTradeLabel(category) || 'Work order'
+function jobIssueTitle(
+  description: string,
+  category: string | null,
+  issueHeadline?: string | null,
+): string {
+  return summarizeWorkOrderCardBlurb(description, category, {
+    issueHeadline,
+  })
 }
 
-function jobLocationLabel(unit: string, building: string | null): string {
-  const parts = [asString(building), asString(unit)].filter(Boolean)
-  return parts.join(' · ') || '—'
+type JobPropertyLocation = {
+  streetAddress: string | null
+  name: string | null
+  propertyType: string | null
+}
+
+type JobUnitLocation = {
+  propertyId: string | null
+  unitLabel: string | null
+}
+
+function jobLocationLabel(input: {
+  unitLabel: string | null
+  property: JobPropertyLocation | null
+}): string {
+  const propertyLabel =
+    (input.property?.streetAddress ?? '').trim() || (input.property?.name ?? '').trim()
+  const formatted = formatLocationWithOptionalUnit({
+    propertyLabel,
+    unitLabel: input.unitLabel,
+    propertyType: input.property?.propertyType,
+  })
+  return formatted || '—'
+}
+
+async function loadJobLocationLookups(input: {
+  landlordId: string
+  tickets: Record<string, unknown>[]
+}): Promise<{
+  propertiesById: Map<string, JobPropertyLocation>
+  unitsById: Map<string, JobUnitLocation>
+}> {
+  const propertiesById = new Map<string, JobPropertyLocation>()
+  const unitsById = new Map<string, JobUnitLocation>()
+  if (!supabase) return { propertiesById, unitsById }
+
+  const propertyIds = new Set<string>()
+  const unitIds = new Set<string>()
+  for (const ticket of input.tickets) {
+    const propertyId = asString(ticket.property_id)
+    const unitId = asString(ticket.unit_id)
+    if (propertyId) propertyIds.add(propertyId)
+    if (unitId) unitIds.add(unitId)
+  }
+
+  if (unitIds.size > 0) {
+    const { data, error } = await supabase
+      .from('units')
+      .select('id, property_id, unit_label')
+      .eq('landlord_id', input.landlordId)
+      .in('id', [...unitIds].slice(0, 200))
+    if (error) {
+      console.warn('[AdminVendorDetailDashboard] job units', error.message)
+    } else {
+      for (const raw of (data ?? []) as Record<string, unknown>[]) {
+        const id = asString(raw.id)
+        if (!id) continue
+        const propertyId = asString(raw.property_id) || null
+        unitsById.set(id, {
+          propertyId,
+          unitLabel: asString(raw.unit_label) || null,
+        })
+        if (propertyId) propertyIds.add(propertyId)
+      }
+    }
+  }
+
+  if (propertyIds.size > 0) {
+    const { data, error } = await supabase
+      .from('properties')
+      .select('id, name, street_address, property_type')
+      .eq('landlord_id', input.landlordId)
+      .in('id', [...propertyIds].slice(0, 200))
+    if (error) {
+      console.warn('[AdminVendorDetailDashboard] job properties', error.message)
+    } else {
+      for (const raw of (data ?? []) as Record<string, unknown>[]) {
+        const id = asString(raw.id)
+        if (!id) continue
+        propertiesById.set(id, {
+          streetAddress: asString(raw.street_address) || null,
+          name: asString(raw.name) || null,
+          propertyType: asString(raw.property_type) || null,
+        })
+      }
+    }
+  }
+
+  return { propertiesById, unitsById }
 }
 
 async function loadTicketsByIds(ids: string[]): Promise<Record<string, unknown>[]> {
@@ -378,8 +506,14 @@ async function loadVendorJobHistory(input: {
     }
   }
 
-  const rows = [...ticketsById.values()]
-    .map((row) => mapVendorJobRow(row, input.vendorId, jobEvents))
+  const ticketRows = [...ticketsById.values()]
+  const { propertiesById, unitsById } = await loadJobLocationLookups({
+    landlordId: input.landlordId,
+    tickets: ticketRows,
+  })
+
+  const rows = ticketRows
+    .map((row) => mapVendorJobRow(row, input.vendorId, jobEvents, propertiesById, unitsById))
     .sort((left, right) => {
       const leftAt = left.completedAt || left.createdAt || ''
       const rightAt = right.completedAt || right.createdAt || ''
@@ -423,7 +557,7 @@ async function loadVendorAttentionInputs(input: {
   }
 
   const tickets: VendorAttentionTicket[] = ((ticketsResult.data ?? []) as Record<string, unknown>[])
-    .map((row) => {
+    .map((row): VendorAttentionTicket | null => {
       const id = asString(row.id)
       if (!id) return null
       return {
@@ -451,7 +585,7 @@ async function loadVendorAttentionInputs(input: {
       console.warn('[AdminVendorDetailDashboard] attention estimates', estimatesResult.error.message)
     } else {
       estimates = ((estimatesResult.data ?? []) as Record<string, unknown>[])
-        .map((row) => {
+        .map((row): VendorAttentionEstimate | null => {
           const id = asString(row.id)
           const maintenanceRequestId = asString(row.maintenance_request_id)
           if (!id || !maintenanceRequestId) return null
@@ -549,7 +683,7 @@ async function loadAssignableJobs(landlordId: string): Promise<AssignableJobOpti
   const { data, error } = await supabase
     .from('maintenance_requests')
     .select(
-      'id, description, issue_category, unit, building, vendor_work_status, assigned_vendor_id, created_at',
+      'id, description, issue_headline, issue_category, unit, unit_id, property_id, vendor_work_status, assigned_vendor_id, created_at',
     )
     .eq('landlord_id', landlordId)
     .is('assigned_vendor_id', null)
@@ -559,22 +693,37 @@ async function loadAssignableJobs(landlordId: string): Promise<AssignableJobOpti
     console.warn('[AdminVendorDetailDashboard] assignable jobs', error.message)
     return []
   }
-  return ((data ?? []) as Record<string, unknown>[])
+  const tickets = ((data ?? []) as Record<string, unknown>[])
     .filter((row) => isLandlordFacingMaintenanceRequest(row))
     .filter((row) => {
       const status = asString(row.vendor_work_status).toLowerCase()
       return status !== 'completed' && status !== 'cancelled'
     })
+  const { propertiesById, unitsById } = await loadJobLocationLookups({
+    landlordId,
+    tickets,
+  })
+  return tickets
     .map((row) => {
       const id = asString(row.id)
-      const place = [asString(row.building), asString(row.unit)].filter(Boolean).join(' · ')
+      const unitId = asString(row.unit_id)
+      const unit = unitId ? unitsById.get(unitId) : undefined
+      const propertyId = asString(row.property_id) || unit?.propertyId || ''
+      const property = propertyId ? propertiesById.get(propertyId) ?? null : null
+      const place = jobLocationLabel({
+        unitLabel: unit?.unitLabel || asString(row.unit) || null,
+        property,
+      })
       return {
         id,
         title: jobIssueTitle(
           asString(row.description),
           asString(row.issue_category) || null,
+          asString(row.issue_headline) || null,
         ),
-        detail: [formatWorkOrderRefFromTicketId(id), place].filter(Boolean).join(' · '),
+        detail: [formatWorkOrderRefFromTicketId(id), place === '—' ? '' : place]
+          .filter(Boolean)
+          .join(' · '),
       }
     })
     .filter((row) => Boolean(row.id))
@@ -598,6 +747,8 @@ function mapVendorJobRow(
   row: Record<string, unknown>,
   vendorId: string,
   events: { ticketId: string; toStatus: string }[],
+  propertiesById: Map<string, JobPropertyLocation>,
+  unitsById: Map<string, JobUnitLocation>,
 ): VendorJobRow {
   const id = asString(row.id)
   const createdAt = asString(row.created_at)
@@ -623,11 +774,20 @@ function mapVendorJobRow(
     endMs >= startMs
       ? Math.round((endMs - startMs) / 60000)
       : null
+  const unitId = asString(row.unit_id)
+  const unit = unitId ? unitsById.get(unitId) : undefined
+  const propertyId = asString(row.property_id) || unit?.propertyId || ''
+  const property = propertyId ? propertiesById.get(propertyId) ?? null : null
+  const unitLabel = unit?.unitLabel || asString(row.unit) || null
   return {
     id,
     workOrderRef: formatWorkOrderRefFromTicketId(id),
-    issue: jobIssueTitle(asString(row.description), asString(row.issue_category) || null),
-    location: jobLocationLabel(asString(row.unit), asString(row.building) || null),
+    issue: jobIssueTitle(
+      asString(row.description),
+      asString(row.issue_category) || null,
+      asString(row.issue_headline) || null,
+    ),
+    location: jobLocationLabel({ unitLabel, property }),
     status,
     createdAt: createdAt || null,
     completedAt: status === 'completed' ? completedAt : null,
@@ -636,25 +796,94 @@ function mapVendorJobRow(
   }
 }
 
-function vendorJobStatusLabel(status: string | null): string {
+function vendorJobStatusChip(status: string | null): {
+  label: string
+  pill: string
+  dot: string
+} {
   switch ((status ?? '').trim().toLowerCase()) {
     case 'pending_accept':
-      return 'Waiting to accept'
+      return {
+        label: 'Waiting to accept',
+        pill: 'bg-[#fef9c3] text-[#92400e]',
+        dot: 'bg-[#d97706]',
+      }
     case 'accepted':
-      return 'Accepted'
+      return {
+        label: 'Accepted',
+        pill: 'bg-[#e0e7ff] text-[#3730a3]',
+        dot: 'bg-[#4338ca]',
+      }
     case 'in_progress':
-      return 'In progress'
+      return {
+        label: 'In progress',
+        pill: 'bg-[#dbeafe] text-[#1e40af]',
+        dot: 'bg-[#2563eb]',
+      }
     case 'completed':
-      return 'Completed'
+      return {
+        label: 'Completed',
+        pill: 'bg-[#dbfce7] text-[#008236]',
+        dot: 'bg-[#00a63e]',
+      }
     case 'declined':
-      return 'Declined'
+      return {
+        label: 'Declined',
+        pill: 'bg-[#fee2e2] text-[#991b1b]',
+        dot: 'bg-[#dc2626]',
+      }
     case 'cancelled':
-      return 'Cancelled'
+      return {
+        label: 'Cancelled',
+        pill: 'bg-[#f3f4f6] text-[#6a7282]',
+        dot: 'bg-[#9ca3af]',
+      }
     case 'unassigned':
-      return 'Unassigned'
-    default:
-      return status?.replace(/_/g, ' ') || '—'
+      return {
+        label: 'Unassigned',
+        pill: 'bg-[#f3f4f6] text-[#6a7282]',
+        dot: 'bg-[#9ca3af]',
+      }
+    default: {
+      const label = status?.replace(/_/g, ' ') || '—'
+      return {
+        label,
+        pill: 'bg-[#f3f4f6] text-[#6a7282]',
+        dot: 'bg-[#9ca3af]',
+      }
+    }
   }
+}
+
+function VendorJobStatusChip({ status }: { status: string | null }) {
+  const chip = vendorJobStatusChip(status)
+  const isCompleted = (status ?? '').trim().toLowerCase() === 'completed'
+  return (
+    <span
+      className={`inline-flex w-fit max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium ${chip.pill}`}
+      title={chip.label}
+    >
+      {isCompleted ? (
+        <svg
+          className="size-3 shrink-0 text-[#00a63e]"
+          viewBox="0 0 16 16"
+          fill="none"
+          aria-hidden
+        >
+          <path
+            d="M3.5 8.5 6.5 11.5 12.5 4.5"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : (
+        <span className={`inline-block size-2 shrink-0 rounded-full ${chip.dot}`} aria-hidden />
+      )}
+      <span className="whitespace-nowrap">{chip.label}</span>
+    </span>
+  )
 }
 
 type VendorJobRow = {
@@ -672,19 +901,28 @@ type VendorJobRow = {
 const STAR_PATH =
   'M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z'
 
-function RatingStars({ rating }: { rating: number }) {
+function RatingStars({
+  rating,
+  starClassName = 'size-5',
+}: {
+  rating: number
+  starClassName?: string
+}) {
   return (
-    <span className="flex h-6 shrink-0 items-center gap-0.5" aria-label={`${rating.toFixed(1)} out of 5 stars`}>
+    <span
+      className="flex shrink-0 items-center gap-0.5"
+      aria-label={`${rating.toFixed(1)} out of 5 stars`}
+    >
       {Array.from({ length: 5 }, (_, i) => {
         const fill = Math.min(1, Math.max(0, rating - i))
         return (
-          <span key={i} className="relative block size-5 shrink-0">
+          <span key={i} className={`relative block shrink-0 ${starClassName}`}>
             <svg className="absolute inset-0 block size-full text-[#e5e7eb]" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d={STAR_PATH} />
             </svg>
             {fill > 0 ? (
               <span className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: `${fill * 100}%` }}>
-                <svg className="block size-5 text-[#f0b100]" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <svg className={`block text-[#f0b100] ${starClassName}`} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                   <path d={STAR_PATH} />
                 </svg>
               </span>
@@ -702,9 +940,6 @@ function ComplianceCard({ item }: { item: VendorComplianceItem }) {
       <div className="flex items-start justify-between gap-3">
         <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#6a7282]">
           {item.label}
-          {item.optional ? (
-            <span className="ml-1.5 font-medium normal-case tracking-normal">Optional</span>
-          ) : null}
         </p>
         <span
           className={[
@@ -740,7 +975,13 @@ function ComplianceCard({ item }: { item: VendorComplianceItem }) {
   )
 }
 
-function checklistStatusStyle(status: VerificationItemStatus): { dot: string; pill: string; label: string } {
+function checklistStatusStyle(
+  status: VerificationItemStatus,
+  statusLabel?: string,
+): { dot: string; pill: string; label: string } {
+  if (statusLabel === 'Expired') {
+    return { dot: 'bg-[#dc2626]', pill: 'bg-[#fee2e2] text-[#b91c1c]', label: 'Expired' }
+  }
   switch (status) {
     case 'complete':
       return { dot: 'bg-[#00a63e]', pill: 'bg-[#dbfce7] text-[#008236]', label: 'Verified' }
@@ -753,23 +994,50 @@ function checklistStatusStyle(status: VerificationItemStatus): { dot: string; pi
   }
 }
 
-function ChecklistRow({ item }: { item: VerificationChecklistItem }) {
-  const style = checklistStatusStyle(item.status)
+function ChecklistRow({
+  item,
+  onRequest,
+}: {
+  item: VendorReadinessDisplayItem
+  onRequest?: (itemId: VendorVerificationRequestItemId) => void
+}) {
+  const style = checklistStatusStyle(item.status, item.statusLabel)
+  const requestItemId = item.requestItemId
+  const canRequest =
+    (item.status === 'missing' || item.status === 'action_needed') &&
+    requestItemId != null &&
+    Boolean(onRequest)
+  const requestLabel = requestItemId
+    ? vendorVerificationRequestTitle(requestItemId)
+    : 'Request'
   return (
     <li className="flex items-start justify-between gap-3 px-5 py-3.5">
       <div className="flex min-w-0 items-start gap-2.5">
         <span className={`mt-1.5 inline-block size-2 shrink-0 rounded-full ${style.dot}`} aria-hidden />
         <div className="min-w-0">
-        <p className="text-[14px] font-medium text-[#0a0a0a]">
-          {item.label}
-          {!item.required ? (
-            <span className="ml-1.5 text-[12px] font-medium text-[#6a7282]">Optional</span>
+          <p className="text-[14px] font-medium text-[#0a0a0a]">
+            {item.label}
+            {item.showOptional ? (
+              <span className="ml-1.5 text-[12px] font-medium text-[#6a7282]">Optional</span>
+            ) : null}
+          </p>
+          {item.detail ? (
+            <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{item.detail}</p>
           ) : null}
-        </p>
-          <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{item.detail}</p>
+          {canRequest && requestItemId ? (
+            <button
+              type="button"
+              onClick={() => onRequest?.(requestItemId)}
+              className="sa-press mt-1.5 text-[12px] font-medium text-[#186179] hover:underline"
+            >
+              {requestLabel}
+            </button>
+          ) : null}
         </div>
       </div>
-      <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${style.pill}`}>
+      <span
+        className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${style.pill}`}
+      >
         {style.label}
       </span>
     </li>
@@ -783,6 +1051,8 @@ export function AdminVendorDetailDashboard() {
 
   const [vendor, setVendor] = useState<VendorRecord | null>(null)
   const [metrics, setMetrics] = useState<VendorMetrics | null>(null)
+  /** Share of job-offer SMS asks that got a YES/NO reply (0–100). */
+  const [avgResponseRatePercent, setAvgResponseRatePercent] = useState<number | null>(null)
   const [verification, setVerification] = useState<VerificationRecord | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [actionsOpen, setActionsOpen] = useState(false)
@@ -794,6 +1064,10 @@ export function AdminVendorDetailDashboard() {
   const [overrideError, setOverrideError] = useState<string | null>(null)
   const [overrideModalOpen, setOverrideModalOpen] = useState(false)
   const [setupOutreachAckOpen, setSetupOutreachAckOpen] = useState(false)
+  const [insuranceRequestOpen, setInsuranceRequestOpen] = useState(false)
+  const [insuranceRequestItemId, setInsuranceRequestItemId] =
+    useState<VendorVerificationRequestItemId>('coi_coverage')
+  const [insuranceRequestSaving, setInsuranceRequestSaving] = useState(false)
   const [overrideActivationSmsSent, setOverrideActivationSmsSent] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -819,9 +1093,10 @@ export function AdminVendorDetailDashboard() {
 
     setLoading(true)
     setError(null)
+    setAvgResponseRatePercent(null)
 
     const landlordId = getActiveLandlordId()
-    const [vendorResult, scores, verificationResult, overrideSmsResult, accountProfile] =
+    const [vendorResult, scores, verificationResult, overrideSmsResult, accountProfile, avgResult] =
       await Promise.allSettled([
       supabase
         .from('vendors')
@@ -851,6 +1126,7 @@ export function AdminVendorDetailDashboard() {
         .limit(1)
         .maybeSingle(),
       fetchLandlordAccountProfile(landlordId),
+      loadVendorAverageResponseDetail({ landlordId, vendorId }),
     ])
 
     if (vendorResult.status !== 'fulfilled' || vendorResult.value.error) {
@@ -921,14 +1197,18 @@ export function AdminVendorDetailDashboard() {
         Boolean(overrideSmsResult.value.data),
     )
 
+    const avgDetail = avgResult.status === 'fulfilled' ? avgResult.value : null
+    setAvgResponseRatePercent(avgDetail?.responseRatePercent ?? null)
+
     if (scores.status === 'fulfilled' && !scores.value.errorMessage) {
       const match = scores.value.data.find((row) => asString(row.vendor_id) === vendorId)
       if (match) {
         setMetrics({
-          rating: asFiniteNumber(match.vendor_score),
+          // Reviews KPI uses resident star ratings only (not the composite vendor_score).
+          rating: asFiniteNumber(match.resident_satisfaction),
           reviewCount: asFiniteNumber(match.review_count) ?? 0,
           completedJobs: asFiniteNumber(match.completed_jobs) ?? 0,
-          avgResponseMinutes: asFiniteNumber(match.avg_response_time),
+          avgResponseMinutes: avgDetail?.minutes ?? asFiniteNumber(match.avg_response_time),
           residentSatisfaction: asFiniteNumber(match.resident_satisfaction),
           completionRate: asFiniteNumber(match.completion_rate),
         })
@@ -1115,6 +1395,32 @@ export function AdminVendorDetailDashboard() {
     return computeVendorProfileVerificationChecklist(verification)
   }, [verification])
 
+  const readinessView = useMemo(() => {
+    if (!checklist) return null
+    return buildVendorReadinessView(checklist, {
+      verification,
+      tradeLabels: compliance?.tradeCategories.labels ?? [],
+      serviceAreaSummary: compliance?.serviceArea.primaryMetro ?? null,
+    })
+  }, [checklist, verification, compliance])
+
+  const verificationProgress = useMemo(() => {
+    if (readinessView) {
+      return {
+        complete: readinessView.completeCount,
+        total: readinessView.totalCount,
+        pct: readinessView.pct,
+      }
+    }
+    if (!compliance) return { complete: 0, total: 0, pct: 0 }
+    // Fallback cards: count all documents, including optional not-collected ones.
+    const docs = compliance.documents
+    const complete = docs.filter((item) => item.collected).length
+    const total = docs.length
+    const pct = total > 0 ? Math.min(100, Math.round((complete / total) * 100)) : 0
+    return { complete, total, pct }
+  }, [readinessView, compliance])
+
   const attentionItems = useMemo(
     () =>
       buildVendorProfileAttention({
@@ -1199,6 +1505,59 @@ export function AdminVendorDetailDashboard() {
       vendor.phone?.trim() &&
       !overrideActivationSmsSent,
   )
+
+  function openVerificationRequest(itemId: VendorVerificationRequestItemId) {
+    setInsuranceRequestItemId(itemId)
+    setInsuranceRequestOpen(true)
+  }
+
+  async function handleRequestVerificationUpdate(): Promise<boolean> {
+    if (!vendor || insuranceRequestSaving) return false
+
+    const landlordId = getActiveLandlordId()
+    if (!landlordId) {
+      setInviteNoticeError(true)
+      setInviteNotice('No active landlord. Sign in again and try once more.')
+      return false
+    }
+    if (!vendor.phone?.trim()) {
+      setInviteNoticeError(true)
+      setInviteNotice('Add a phone number for this vendor before sending a request.')
+      return false
+    }
+
+    setInsuranceRequestSaving(true)
+    setInviteNotice(null)
+    setInviteNoticeError(false)
+    try {
+      const result = await requestVendorVerificationUpdate({
+        landlordId,
+        vendorId: vendor.id,
+        itemId: insuranceRequestItemId,
+      })
+      if (result.sms === 'sent') {
+        setInviteNoticeError(false)
+        setInviteNotice(null)
+        return true
+      }
+      setInviteNoticeError(true)
+      setInviteNotice(
+        result.error ||
+          (result.sms === 'skipped'
+            ? 'Could not send the request. Check the vendor’s phone number and try again.'
+            : 'Could not send the request. Please try again.'),
+      )
+      return false
+    } catch (err) {
+      setInviteNoticeError(true)
+      setInviteNotice(
+        getErrorMessage(err, 'Could not send the request. Please try again.'),
+      )
+      return false
+    } finally {
+      setInsuranceRequestSaving(false)
+    }
+  }
 
   async function handleStartOnboarding() {
     if (!vendor || inviteSaving) return
@@ -1471,21 +1830,6 @@ export function AdminVendorDetailDashboard() {
                 ) : null}
               </div>
             ) : null}
-            {!loading && metrics && (metrics.rating != null || metrics.reviewCount > 0) ? (
-              <div className="mt-3 flex h-6 items-center gap-2">
-                {metrics.rating != null ? (
-                  <>
-                    <span className="flex h-6 items-center text-[24px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums">
-                      {metrics.rating.toFixed(1)}
-                    </span>
-                    <RatingStars rating={metrics.rating} />
-                  </>
-                ) : null}
-                <span className="flex h-6 items-center text-[12px] leading-none text-[#6a7282]">
-                  {metrics.reviewCount.toLocaleString()} reviews
-                </span>
-              </div>
-            ) : null}
             {!loading &&
             (performanceReviewLabel(vendor?.performanceReview ?? null) ||
               canSendVerificationInvite ||
@@ -1645,17 +1989,9 @@ export function AdminVendorDetailDashboard() {
 
         {!loading && vendor ? (
           <section className="mt-4 min-w-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="m-0 text-[15px] font-semibold leading-none text-[#0a0a0a]">
-                Needs your attention
-              </h2>
-              {attentionItems.length > 0 ? (
-                <span className="inline-flex items-center rounded-[4px] bg-[#fee2e2] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-[#b91c1c] tabular-nums">
-                  {attentionItems.length}{' '}
-                  {attentionItems.length === 1 ? 'action needed' : 'actions needed'}
-                </span>
-              ) : null}
-            </div>
+            <h2 className="m-0 text-[15px] font-semibold leading-none text-[#0a0a0a]">
+              Needs your attention
+            </h2>
             {attentionItems.length === 0 ? (
               <p className="mt-4 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
                 Nothing needs your attention
@@ -1686,15 +2022,24 @@ export function AdminVendorDetailDashboard() {
                       {item.href ? (
                         <Link
                           to={item.href}
-                          className={`${ADMIN_ATTENTION_ACTION_CLASS} ml-auto bg-transparent px-0`}
+                          className={`${ADMIN_ATTENTION_ACTION_CLASS} ml-auto bg-[#186179] text-white hover:bg-[#145066] hover:opacity-100`}
                         >
                           {item.actionLabel}
                         </Link>
                       ) : (
                         <button
                           type="button"
-                          className={`${ADMIN_ATTENTION_ACTION_CLASS} ml-auto bg-transparent px-0`}
+                          className={`${ADMIN_ATTENTION_ACTION_CLASS} ml-auto bg-[#186179] text-white hover:bg-[#145066] hover:opacity-100`}
                           onClick={() => {
+                            if (item.opensInsuranceRequest) {
+                              openVerificationRequest(
+                                item.requestItemId &&
+                                  isVendorVerificationRequestItemId(item.requestItemId)
+                                  ? item.requestItemId
+                                  : 'coi_coverage',
+                              )
+                              return
+                            }
                             if (item.scrollToCompliance) {
                               document
                                 .getElementById('vendor-compliance')
@@ -1717,6 +2062,7 @@ export function AdminVendorDetailDashboard() {
           <div className="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
             <VendorKpiCard
               label="Availability"
+              labelIcon={scheduledVisitsIcon}
               title={compliance?.capacity.detail || compliance?.capacity.label || 'Vendor availability'}
               value={
                 compliance ? (
@@ -1746,6 +2092,7 @@ export function AdminVendorDetailDashboard() {
             />
             <VendorKpiCard
               label="Completed jobs"
+              labelIcon={openRepairsIcon}
               value={(
                 metrics?.completedJobs ??
                 completedJobs.filter((job) => job.status === 'completed').length
@@ -1754,26 +2101,37 @@ export function AdminVendorDetailDashboard() {
             />
             <VendorKpiCard
               label="Average response"
-              value={formatResponse(metrics?.avgResponseMinutes ?? null)}
-              title="Average time from job dispatch SMS to the vendor’s YES or NO reply."
+              labelIcon={responseRateIcon}
+              value={formatResponseRatePercent(avgResponseRatePercent)}
+              info={<VendorAvgResponseInfoTip />}
             />
             <VendorKpiCard
               label="Reviews"
+              labelIcon={reviewsIcon}
               value={
-                metrics?.rating != null
-                  ? `${metrics.rating.toFixed(1)}${
-                      metrics.reviewCount > 0 ? ` · ${metrics.reviewCount.toLocaleString()}` : ''
-                    }`
-                  : metrics && metrics.reviewCount > 0
-                    ? metrics.reviewCount.toLocaleString()
-                    : '—'
+                metrics && metrics.reviewCount > 0 && metrics.residentSatisfaction != null ? (
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="text-[18px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[22px]">
+                      {metrics.residentSatisfaction.toFixed(1)}
+                    </span>
+                    <RatingStars
+                      rating={metrics.residentSatisfaction}
+                      starClassName="size-3.5 sm:size-4"
+                    />
+                    <span className="truncate text-[12px] leading-none text-[#6a7282]">
+                      ({metrics.reviewCount.toLocaleString()})
+                    </span>
+                  </span>
+                ) : (
+                  '—'
+                )
               }
               title={
-                metrics?.reviewCount
+                metrics && metrics.reviewCount > 0
                   ? `${metrics.reviewCount.toLocaleString()} resident review${
                       metrics.reviewCount === 1 ? '' : 's'
                     }`
-                  : 'Resident reviews for this vendor.'
+                  : 'Average of resident review ratings for this vendor. Shows — until someone leaves a review.'
               }
             />
           </div>
@@ -1789,23 +2147,9 @@ export function AdminVendorDetailDashboard() {
           <div className="min-w-0">
           <section className="flex flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             <div className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
-              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">Jobs</h2>
+              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">Job history</h2>
             </div>
             <div className="flex min-h-[16rem] flex-col">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-[#f3f4f6] px-5 py-3 text-[13px] leading-5 text-[#6a7282]">
-                <span>
-                  <span className="font-medium tabular-nums text-[#0a0a0a]">
-                    {completedJobs.length}
-                  </span>{' '}
-                  {completedJobs.length === 1 ? 'work order' : 'work orders'}
-                </span>
-                <span>
-                  Avg. response{' '}
-                  <span className="font-medium tabular-nums text-[#0a0a0a]">
-                    {formatResponse(metrics?.avgResponseMinutes ?? null)}
-                  </span>
-                </span>
-              </div>
               {jobsError ? (
                 <p className="px-5 py-3 text-[13px] leading-5 text-[#991b1b]">{jobsError}</p>
               ) : null}
@@ -1840,8 +2184,8 @@ export function AdminVendorDetailDashboard() {
                               {job.workOrderRef}
                             </Link>
                           </td>
-                          <td className="whitespace-nowrap px-5 py-3 text-[13px] text-[#364153]">
-                            {vendorJobStatusLabel(job.status)}
+                          <td className="whitespace-nowrap px-5 py-3">
+                            <VendorJobStatusChip status={job.status} />
                           </td>
                           <td className="max-w-[16rem] px-5 py-3">
                             <p className="truncate text-[13px] font-medium text-[#0a0a0a]" title={job.issue}>
@@ -1875,49 +2219,63 @@ export function AdminVendorDetailDashboard() {
               id="vendor-compliance"
               className="flex flex-col scroll-mt-6 rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
             >
-              <div className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
-                <div className="min-w-0">
+              <div className="border-b border-[#f3f4f6] px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
                   <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
                     Compliance & verification
                   </h2>
-                  {checklist && !vendor?.onboardingOverriddenAt ? (
-                    <span
-                      className={[
-                        'mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium',
-                        checklist.overall === 'verified'
-                          ? 'bg-[#dbfce7] text-[#008236]'
-                          : 'bg-[#fef9c3] text-[#92400e]',
-                      ].join(' ')}
-                    >
-                      {checklist.overall === 'verified' ? 'Verified' : 'Needs review'}
-                    </span>
-                  ) : null}
-                  {vendor?.onboardingOverriddenAt ? (
-                    <>
-                      <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-[#dbfce7] px-3 py-1 text-[12px] font-medium text-[#008236]">
-                        Activated by your team
-                      </span>
-                      <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">
-                        Remaining documents are optional. This vendor can receive work orders.
-                      </p>
-                    </>
-                  ) : null}
+                  <p
+                    className="shrink-0 text-[16px] font-semibold leading-6 tabular-nums text-[#0a0a0a]"
+                    aria-label={`${verificationProgress.complete} of ${verificationProgress.total} documents uploaded`}
+                  >
+                    {verificationProgress.complete}/{verificationProgress.total}
+                  </p>
                 </div>
-                <p
-                  className="shrink-0 text-[16px] font-semibold leading-6 tabular-nums text-[#0a0a0a]"
-                  aria-label={`${compliance.collectedCount} of ${compliance.totalRequirements} documents uploaded`}
+                <div
+                  className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#e5e7eb]"
+                  role="progressbar"
+                  aria-valuenow={verificationProgress.pct}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Verification progress"
                 >
-                  {compliance.collectedCount}/{compliance.totalRequirements}
-                </p>
+                  <div
+                    className="h-full rounded-full bg-[#611879] transition-[width] duration-300 ease-out"
+                    style={{ width: `${verificationProgress.pct}%` }}
+                  />
+                </div>
+                {vendor?.onboardingOverriddenAt ? (
+                  <>
+                    <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#dbfce7] px-3 py-1 text-[12px] font-medium text-[#008236]">
+                      Activated by your team
+                    </span>
+                    <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">
+                      Remaining documents are optional. This vendor can receive work orders.
+                    </p>
+                  </>
+                ) : null}
               </div>
-              {checklist ? (
-                <>
-                  <ul className="divide-y divide-[#f3f4f6]">
-                    {checklist.items.map((item) => (
-                      <ChecklistRow key={item.id} item={item} />
-                    ))}
-                  </ul>
-                </>
+              {readinessView ? (
+                <div className="divide-y divide-[#f3f4f6]">
+                  {readinessView.groups.map((group) => (
+                    <div key={group.id}>
+                      <div className="px-5 pb-1 pt-4">
+                        <h3 className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                          {group.title}
+                        </h3>
+                      </div>
+                      <ul className="divide-y divide-[#f3f4f6]">
+                        {group.items.map((item) => (
+                          <ChecklistRow
+                            key={item.id}
+                            item={item}
+                            onRequest={openVerificationRequest}
+                          />
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="flex flex-col gap-0 divide-y divide-[#f3f4f6]">
                   <div className="p-5">
@@ -1965,6 +2323,18 @@ export function AdminVendorDetailDashboard() {
             setSetupOutreachAckOpen(false)
           })()
         }}
+      />
+      <RequestVendorInsuranceModal
+        key={insuranceRequestItemId}
+        open={insuranceRequestOpen}
+        vendorName={vendor?.contactName || vendor?.name || ''}
+        itemId={insuranceRequestItemId}
+        saving={insuranceRequestSaving}
+        onClose={() => {
+          if (insuranceRequestSaving) return
+          setInsuranceRequestOpen(false)
+        }}
+        onApprove={() => handleRequestVerificationUpdate()}
       />
       <VendorFormModal
         open={editOpen}

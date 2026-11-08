@@ -1,3 +1,4 @@
+import { homeCheckEquipment } from '@shared/homeCheckEquipment'
 import type { ApplianceVisionResult, ConditionRating } from '@/lib/vision/types'
 import {
   homeCheckAssetStatusLabel,
@@ -136,7 +137,7 @@ function conditionDisplay(asset: HomeCheckAsset): {
   if (match?.[2]?.trim()) summaryParts.push(sentence(match[2].trim()))
   else if (raw && !match) summaryParts.push(sentence(raw))
   else summaryParts.push('Visible condition unknown.')
-  const age = asset.fields.approximateAge.value
+  const age = homeCheckEquipment(asset).age
   summaryParts.push(
     typeof age === 'number' && Number.isFinite(age)
       ? `About ${age} years (estimate).`
@@ -174,18 +175,25 @@ export function homeCheckReviewResult(
   const model = draft ? draft.modelNumber : fieldText(asset.fields.model)
   const serial = draft ? draft.serialNumber : fieldText(asset.fields.serial)
   const brand = fieldText(asset.fields.make)
+  const manufactureYear = draft
+    ? (/^\d{4}$/.test(draft.manufactureYear.trim()) ? Number(draft.manufactureYear) : null)
+    : (asset.manufactureDate?.year ?? null)
+  const manufactureMonth = draft
+    ? (/^(?:[1-9]|1[0-2])$/.test(draft.manufactureMonth.trim())
+      ? Number(draft.manufactureMonth)
+      : null)
+    : (asset.manufactureDate?.month ?? null)
   return {
     category: asset.system === 'water_heater' ? 'water_heater' : 'hvac',
     identifiedItem: {
-      type: asset.system === 'water_heater' ? 'Water heater' : 'Heating system',
+      type: homeCheckEquipment(asset).label,
       ...(brand ? { brand } : {}),
       ...(model ? { modelNumber: model } : {}),
       ...(serial ? { serialNumber: serial } : {}),
     },
+    manufactureDate: { year: manufactureYear, month: manufactureMonth },
     estimatedAge: {
-      value: typeof asset.fields.approximateAge.value === 'number'
-        ? asset.fields.approximateAge.value
-        : null,
+      value: homeCheckEquipment(asset).age,
       confidence,
       basis: homeCheckFieldBasis(asset.fields.approximateAge)
         || 'Label unreadable or manufacture date unknown',
@@ -203,7 +211,7 @@ export function homeCheckReviewResult(
 export function homeCheckReviewLabels(asset: HomeCheckAsset) {
   const condition = conditionDisplay(asset)
   return {
-    categoryLabel: asset.system === 'water_heater' ? 'Water heater' : 'Heating system',
+    categoryLabel: homeCheckEquipment(asset).label,
     conditionLabel: condition.label,
     actionLabel: homeCheckAssetStatusLabel(asset),
     manufactureLabel: homeCheckManufactureLabel(asset.manufactureDate),

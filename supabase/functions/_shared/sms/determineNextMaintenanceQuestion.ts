@@ -2203,7 +2203,7 @@ function resolveNextMaintenanceQuestion(
     const q = tryAsk(
       "room_or_area",
       locationFollowUp(state) ??
-        "Which room is that door in? Kitchen, bathroom, bedroom, front entrance, or somewhere else?",
+      "Which room is that door in? Kitchen, bathroom, bedroom, front entrance, or somewhere else?",
       "room_or_area",
     )
     if (q) return q
@@ -2218,7 +2218,7 @@ function resolveNextMaintenanceQuestion(
     const place = locationFollowUp(state)
     if (place) {
       const q = tryAsk("room_or_area", place, "room_or_area")
-      if (q) return q
+    if (q) return q
     }
   }
 
@@ -2445,11 +2445,9 @@ export function applyDiagnosticAnswer(
     }
   }
 
-  const customReply = interpretCustomSafetyReply(
-    state.safety_concerns,
-    answer,
-    tenantAuthoredText(state),
-  )
+  const customReply = type === "unit_entry" && isUnitEntryNotSure(answer)
+    ? {kind: "unchanged" as const}
+    : interpretCustomSafetyReply(state.safety_concerns, answer, tenantAuthoredText(state))
   if (customReply.kind !== "unchanged") {
     const index = askedTypes.indexOf(type)
     if (index >= 0) askedTypes.splice(index, 1)
@@ -2572,8 +2570,8 @@ export function applyDiagnosticAnswer(
         if (index >= 0) askedTypes.splice(index, 1)
       }
     } else {
-      const extracted = extractRoomFromText(answer)
-      if (extracted) room = extracted
+    const extracted = extractRoomFromText(answer)
+    if (extracted) room = extracted
     }
   }
   if (type === "duration_material") {

@@ -22,6 +22,7 @@ export type VendorOutreachChannel = 'sms' | 'email'
 export type MonitoringTranscriptItem =
   | {
       type: 'message'
+      messageId?: string
       sender: 'tenant' | 'vendor' | 'ulo'
       senderName: string
       body: string
@@ -189,6 +190,7 @@ export type WorkflowUloThreadInput =
 export type WorkOrderUloThreadInput = MaintenanceUloThreadInput
 
 type DbMessage = {
+  id?: string
   direction: string
   body: string
   createdAtMs: number
@@ -799,6 +801,7 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
 
     items.push({
       type: 'message',
+      messageId: message.id,
       sender,
       senderName,
       body: displayBody,
@@ -1088,7 +1091,7 @@ async function loadConversationContext(
     await Promise.allSettled([
       supabase
         .from('sms_messages')
-        .select('direction, body, media_urls, created_at')
+        .select('id, direction, body, media_urls, created_at')
         .eq('landlord_id', landlordId)
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true }),
@@ -1142,6 +1145,7 @@ async function loadConversationContext(
   if (messagesResult.status === 'fulfilled' && !messagesResult.value.error) {
     for (const message of (messagesResult.value.data ?? []) as Record<string, unknown>[]) {
       messages.push({
+        id: asString(message.id) || undefined,
         direction: asString(message.direction),
         body: asString(message.body),
         createdAtMs: new Date(asString(message.created_at)).getTime(),

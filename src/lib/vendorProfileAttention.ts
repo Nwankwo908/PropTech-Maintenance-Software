@@ -43,6 +43,16 @@ export type VendorAttentionItem = {
   ticketId?: string
   href?: string
   scrollToCompliance?: boolean
+  /** Opens the insurance-request message preview modal. */
+  opensInsuranceRequest?: boolean
+  /** Checklist item to request when opensInsuranceRequest is true. */
+  requestItemId?:
+    | 'license'
+    | 'coi_coverage'
+    | 'w9'
+    | 'stripe_connect'
+    | 'trade_categories'
+    | 'service_area'
 }
 
 export type VendorAttentionTicket = {
@@ -215,8 +225,52 @@ export function buildVendorProfileAttention(input: {
       title: attentionTitle({ kind: 'compliance', checklistId: row.id }),
       detail: row.detail,
       badgeLabel: high ? 'HIGH' : 'Action needed',
-      actionLabel: 'Review',
-      scrollToCompliance: true,
+      actionLabel:
+        row.id === 'coi_coverage'
+          ? 'Request updated insurance'
+          : row.id === 'license'
+            ? 'Request updated license'
+            : row.id === 'w9'
+              ? 'Request W-9 details'
+              : row.id === 'stripe_connect'
+                ? 'Request payout setup'
+                : row.id === 'trade_categories'
+                  ? 'Request trade categories'
+                  : row.id === 'service_area'
+                    ? 'Request service area'
+                    : 'Review',
+      scrollToCompliance: ![
+        'coi_coverage',
+        'license',
+        'w9',
+        'stripe_connect',
+        'trade_categories',
+        'service_area',
+      ].includes(row.id),
+      opensInsuranceRequest: [
+        'coi_coverage',
+        'license',
+        'w9',
+        'stripe_connect',
+        'trade_categories',
+        'service_area',
+      ].includes(row.id),
+      requestItemId: [
+        'coi_coverage',
+        'license',
+        'w9',
+        'stripe_connect',
+        'trade_categories',
+        'service_area',
+      ].includes(row.id)
+        ? (row.id as
+            | 'license'
+            | 'coi_coverage'
+            | 'w9'
+            | 'stripe_connect'
+            | 'trade_categories'
+            | 'service_area')
+        : undefined,
     })
   }
 
@@ -269,8 +323,9 @@ export function buildVendorProfileAttention(input: {
         title: attentionTitle({ kind: 'compliance_soon', which: 'coi', when }),
         detail: 'Ask the vendor to upload a renewed certificate of insurance.',
         badgeLabel: 'Action needed',
-        actionLabel: 'Review',
-        scrollToCompliance: true,
+        actionLabel: 'Request updated insurance',
+        opensInsuranceRequest: true,
+        requestItemId: 'coi_coverage',
       })
     }
   }

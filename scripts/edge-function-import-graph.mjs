@@ -12,7 +12,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const FUNCTIONS_DIR = join(ROOT, "supabase", "functions")
 
 const IMPORT_RE =
-  /(?:from|import)\s+["'](\.[^"']+)["']|export\s+\*\s+from\s+["'](\.[^"']+)["']/g
+  /(?:from|import)\s+["'](\.[^"']+)["']|export\s+\*\s+from\s+["'](\.[^"']+)["']|\bimport\s*\(\s*["'](\.[^"']+)["']/g
 
 function listFunctionSlugs() {
   return readdirSync(FUNCTIONS_DIR)
@@ -64,7 +64,7 @@ export function collectImportGraph(functionName) {
     IMPORT_RE.lastIndex = 0
     let m
     while ((m = IMPORT_RE.exec(src))) {
-      const spec = m[1] || m[2]
+      const spec = m[1] || m[2] || m[3]
       if (!spec) continue
       const resolved = resolveImport(file, spec)
       if (!resolved) continue

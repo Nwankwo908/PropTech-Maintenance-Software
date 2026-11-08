@@ -84,8 +84,9 @@ describe('home check review mapping', () => {
       modelNumber: 'XE40',
       serialNumber: 'AB01234',
     })
+    expect(result.manufactureDate).toEqual({ year: 2013, month: 7 })
     expect(result.condition.summary).toMatch(/Rust at the base/)
-    expect(result.condition.summary).toMatch(/About 12 years/)
+    expect(result.condition.summary).toContain(`About ${new Date().getUTCFullYear()-2013} years`)
     expect(homeCheckReviewLabels(row).conditionLabel).toBe('Fair')
     expect(homeCheckReviewLabels(row).actionLabel).toBe('Details verified')
     expect(homeCheckManufactureLabel(row.manufactureDate)).toBe('Made July 2013')
@@ -113,3 +114,26 @@ describe('home check review mapping', () => {
     })).toMatchObject({ manufactureMonth: 7, manufactureYear: 2013 })
   })
 })
+
+it('uses the same identified coil and date in the table and SMS, not the furnace age', async()=>{
+ const {homeCheckResultsSms}=await import('../../supabase/functions/_shared/homeCheck/smsCopy')
+ const coil=asset({system:'heating',manufactureDate:{year:2013,month:7}})
+ coil.fields.make=field('International Comfort Products')
+ coil.fields.model=field('END4X42L17A1')
+ coil.fields.approximateAge=field(13)
+ const label=homeCheckReviewLabels(coil)
+ const result=homeCheckReviewResult(coil)
+ const sms=homeCheckResultsSms({location:'Test Lane',assets:[coil],answers:{warningSigns:false,warningDetails:'',lastService:'',lastFilterChange:''},observerRole:'contractor',warning:null,pendingSystems:[],now:new Date('2026-11-02')})
+ expect(label.categoryLabel).toBe('Heating system')
+ expect(result.identifiedItem.type).toBe(label.categoryLabel)
+ expect(label.manufactureLabel).toBe('Made July 2013')
+ expect(sms).toContain(label.categoryLabel)
+ expect(sms).toContain('Made July 2013; about 13 years old.')
+ expect(sms).not.toMatch(/Photographed component|Furnace age/)
+})
+
+it('keeps a confirmed Home Check manufacture date in the appliance table result',()=>{
+ const confirmed=asset({verified:true,system:'heating',manufactureDate:{year:2013,month:7}});
+ expect(homeCheckReviewResult(confirmed).manufactureDate).toEqual({year:2013,month:7});
+ expect(homeCheckReviewResult(asset({verified:true})).manufactureDate).toEqual({year:null,month:null});
+});

@@ -11,7 +11,7 @@
  * `maintenance_requests.description`. That lossy merge is the same pattern that
  * caused sink-overflow parsing artifacts; extraction can only partially recover.
  */
-import { generateIssueSummary } from './generateIssueSummary.ts'
+import { summarizeMaintenanceRequestDeterministic } from './maintenanceRequestFacts.ts'
 import {
   parseIntakeDescriptionParts,
   sanitizeAvailabilityFromDescription,
@@ -28,15 +28,17 @@ const PEST_OPENING =
 const TUNNEL_OR_BURROW =
   /\b(?:tunnel(?:ing|s)?|mud\s*tubes?|termite(?:s)?|burrow(?:ing|s)?|wood\s+damage|damaged\s+(?:floor|wood|beam|joist))\b/i
 
-const LOCATION_IN_UPDATE =
-  /\b(?:(?:in|near|by|under|behind|around|at)\s+(?:the\s+)?(?:foundation|back\s+porch|front\s+porch|basement|crawl\s*space|kitchen|bathroom|bedroom|attic|garage|yard|garden|wall|walls))\b/i
-
 export type StructuredIssueDetails = {
   parts: IntakeDescriptionParts
   /** Short noun-phrase issue (title format by default). */
   issue: string
   recurring: boolean
+  /** Physical location only (not floor served). */
   locationDetail: string | null
+  /** Equipment / fixture when known. */
+  equipment: string | null
+  /** Floor/area served when distinct from physical location. */
+  servesFloor: string | null
   /**
    * Distinct triage items for whoever assigns the vendor — never folded into
    * the issue noun-phrase prose.
@@ -44,16 +46,14 @@ export type StructuredIssueDetails = {
   triageFlags: string[]
   /** Real visit window only; null when missing or duplicated opening text. */
   availability: string | null
+  /**
+   * Resident-facing polished description (tenant-reports attribution).
+   */
+  reportedDetail: string | null
+  /** Clarification Ulo should ask when facts conflict or location is missing. */
+  needsClarification: string | null
   /** Landlord/vendor-facing body built from structured fields. */
   displayDescription: string
-}
-
-function locationFromUpdates(updates: string[]): string | null {
-  for (const u of updates) {
-    const m = u.match(LOCATION_IN_UPDATE)
-    if (m) return m[0]!.replace(/\s+/g, ' ').trim()
-  }
-  return null
 }
 
 function buildTriageFlags(input: {
@@ -87,7 +87,7 @@ function buildTriageFlags(input: {
 
 /**
  * Structured extraction for concatenated intake descriptions.
- * Issue noun-phrase uses the same generateIssueSummary path as titles/confirms.
+ * Prefer shared maintenanceRequestFacts for title / location / description.
  */
 export function extractStructuredIssueDetails(
   rawDescription: string,
@@ -98,28 +98,32 @@ export function extractStructuredIssueDetails(
 ): StructuredIssueDetails {
   const parts = parseIntakeDescriptionParts(rawDescription)
   const category = options?.category ?? null
-  const format = options?.format ?? 'title'
 
-  const issueSource =
-    parts.openingMessage ||
-    parts.tenantUpdates.join(' ') ||
-    rawDescription
-
-  const issue = generateIssueSummary(issueSource, {
-    format,
+  const summary = summarizeMaintenanceRequestDeterministic(rawDescription, {
     category,
-    maxChars: format === 'title' ? 50 : undefined,
-    maxWords: format === 'summary' ? 18 : undefined,
   })
+
+  // Prefer explicitly labeled equipment / serves-floor when present.
+  const labeledEquipment = parts.labeledFields['Equipment']?.trim() || null
+  const labeledServes = parts.labeledFields['Serves floor']?.trim() || null
+  const labeledArea = parts.labeledFields['Affected area']?.trim() || null
+  const physicalFromLabel = labeledArea
+    ? labeledArea.split(/\s*[—\-–]\s*/)[0]!.trim()
+    : null
+
+  const issue = summary.title
+  const locationDetail =
+    summary.location ||
+    physicalFromLabel ||
+    summary.facts.physicalLocation ||
+    null
+  const equipment = labeledEquipment || summary.facts.equipment
+  const servesFloor = labeledServes || summary.facts.servesFloor
 
   const authoredForRecurring = [parts.openingMessage, ...parts.tenantUpdates].join(
     ' ',
   )
   const recurring = detectRecurringIssueSignal(authoredForRecurring)
-
-  const locationDetail =
-    parts.labeledFields['Affected area']?.trim() ||
-    locationFromUpdates(parts.tenantUpdates)
 
   const triageFlags = buildTriageFlags({
     opening: parts.openingMessage,
@@ -133,6 +137,8 @@ export function extractStructuredIssueDetails(
     parts.tenantUpdates,
   )
 
+  const reportedDetail = summary.description
+
   const displayLines: string[] = []
   if (issue) displayLines.push(issue)
   if (recurring) {
@@ -140,6 +146,15 @@ export function extractStructuredIssueDetails(
   }
   if (locationDetail) {
     displayLines.push(`Location: ${locationDetail}`)
+  }
+  if (equipment && !issue.toLowerCase().includes(equipment.toLowerCase().split(/\s+/)[0]!)) {
+    displayLines.push(`Equipment: ${equipment}`)
+  }
+  if (servesFloor) {
+    displayLines.push(`Serves: ${servesFloor}`)
+  }
+  if (reportedDetail) {
+    displayLines.push(reportedDetail)
   }
   for (const flag of triageFlags) {
     displayLines.push(`Flag: ${flag}`)
@@ -151,14 +166,24 @@ export function extractStructuredIssueDetails(
   if (availability) {
     displayLines.push(`Resident availability: ${availability}`)
   }
+  if (summary.facts.needsClarification) {
+    displayLines.push(`Clarify: ${summary.facts.needsClarification}`)
+  }
+
+  // format option kept for call-site compatibility (title vs summary noun-phrase).
+  void options?.format
 
   return {
     parts,
     issue,
     recurring,
     locationDetail: locationDetail || null,
+    equipment,
+    servesFloor,
     triageFlags,
     availability,
+    reportedDetail,
+    needsClarification: summary.facts.needsClarification,
     displayDescription: displayLines.join('\n') || issue || 'Maintenance issue',
   }
 }

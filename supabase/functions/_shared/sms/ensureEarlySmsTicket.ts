@@ -15,6 +15,7 @@ import {
   buildIntakeDescription,
   entryOkIfAbsentFromIntake,
   resolveIntakeIssueCategory,
+  resolveRoomLabel,
   severityToDb,
   ticketIssueHeadline,
   type SmsIntakeState,
@@ -129,6 +130,7 @@ export async function ensureEarlySmsMaintenanceTicket(
   const priority = params.intake.urgency?.trim() || "normal"
   const dbSeverity = severityToDb(params.intake.severity)
   const description = buildIntakeDescription(params.intake)
+  const location = resolveRoomLabel(params.intake)
   const issueHeadline = ticketIssueHeadline(params.intake)
   const entryOkIfAbsent = entryOkIfAbsentFromIntake(params.intake)
   const residentAvailability = sanitizeResidentAvailabilityForVendor(
@@ -147,6 +149,7 @@ export async function ensureEarlySmsMaintenanceTicket(
       .from("maintenance_requests")
       .update({
         description,
+        ...(location ? {room: location, location_detail: location} : {}),
         issue_headline: issueHeadline,
         entry_ok_if_absent: entryOkIfAbsent,
         issue_category: issueCategory,
@@ -192,6 +195,7 @@ export async function ensureEarlySmsMaintenanceTicket(
       resident_phone: row.phone,
       unit,
       description,
+      ...(location ? {room: location, location_detail: location} : {}),
       resident_user_id: null,
       photo_paths: storagePhotoPaths(params.intake.photo_urls),
       issue_category: issueCategory,

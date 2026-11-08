@@ -6,6 +6,23 @@ export type InspectionCaptureSessionStatus =
   | 'expired'
   | 'revoked'
 
+/**
+ * On phones / coarse-pointer devices the user is already mobile — skip the
+ * desktop “scan QR / use your phone” handoff and open the camera directly.
+ */
+export function prefersDirectEquipmentCameraCapture(
+  userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '',
+  maxTouchPoints = typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0,
+  coarsePointer =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches,
+): boolean {
+  if (/iPhone|iPad|iPod|Android|Mobile|webOS|Silk/i.test(userAgent)) return true
+  if (maxTouchPoints > 1 && /Mac/i.test(userAgent)) return true
+  return Boolean(coarsePointer)
+}
+
 export function inspectionCaptureDesktopStatusLabel(
   status: InspectionCaptureSessionStatus | string,
   photoCount: number,

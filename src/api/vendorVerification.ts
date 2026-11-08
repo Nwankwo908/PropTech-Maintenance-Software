@@ -119,6 +119,65 @@ function inviteFailureMessageFromResponse(parsed: unknown): string {
   return "We couldn't send the verification invite. Check the vendor's contact info and try again."
 }
 
+export async function requestVendorVerificationUpdate(input: {
+  landlordId: string
+  vendorId: string
+  itemId: string
+}): Promise<{ sms: 'sent' | 'skipped' | 'failed'; error?: string }> {
+  const secret = getAdminEdgeSecret()
+  if (!secret) {
+    return { sms: 'failed', error: "This feature isn't available right now. Please try again later." }
+  }
+  const url = resolveEdgeUrl('send-vendor-invite')
+  try {
+    const res = await fetchAdminEdgeFunction(url, {
+      method: 'POST',
+      headers: adminEdgeInvokeHeaders(secret),
+      body: JSON.stringify({
+        action: 'request_verification_update',
+        landlordId: input.landlordId,
+        vendorId: input.vendorId,
+        itemId: input.itemId,
+      }),
+    })
+    const parsed = (await res.json().catch(() => ({}))) as {
+      sms?: string
+      error?: string | null
+    }
+    if (parsed.sms === 'sent' || parsed.sms === 'skipped' || parsed.sms === 'failed') {
+      return {
+        sms: parsed.sms,
+        error:
+          typeof parsed.error === 'string' && parsed.error.trim()
+            ? parsed.error.trim()
+            : undefined,
+      }
+    }
+    return {
+      sms: res.ok ? 'skipped' : 'failed',
+      error:
+        typeof parsed.error === 'string' && parsed.error.trim()
+          ? parsed.error.trim()
+          : undefined,
+    }
+  } catch (err) {
+    return {
+      sms: 'failed',
+      error: getErrorMessage(err, 'Could not send the request. Please try again.'),
+    }
+  }
+}
+
+export async function requestVendorUpdatedInsurance(input: {
+  landlordId: string
+  vendorId: string
+}): Promise<{ sms: 'sent' | 'skipped' | 'failed'; error?: string }> {
+  return requestVendorVerificationUpdate({
+    ...input,
+    itemId: 'coi_coverage',
+  })
+}
+
 export async function notifyVendorOnboardingOverrideActivated(input: {
   landlordId: string
   vendorId: string

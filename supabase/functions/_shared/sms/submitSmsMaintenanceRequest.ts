@@ -28,6 +28,7 @@ import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
 import { rehostInboundSmsMedia } from "./rehostInboundMedia.ts"
 import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
 import { queueWorkOrderContext } from "../workOrderContext.ts"
+import { maybeAskSummaryClarification } from "./summaryClarificationSms.ts"
 
 type ResidentRow = {
   id: string
@@ -246,7 +247,39 @@ export async function submitSmsMaintenanceRequest(
     created = true
   }
 
-  queueWorkOrderContext(supabase, { id: ticketId, description }, "[sms-intake]")
+  queueWorkOrderContext(
+    supabase,
+    { id: ticketId, description, issue_category: issueCategory },
+    "[sms-intake]",
+  )
+
+  // One short clarification ask when a fact is missing/conflicting — never for
+  // emergencies, opt-outs, or staff takeover (gated inside helper).
+  try {
+    if (params.closeAs !== "tenant_self_fix") {
+      const { data: residentRow } = await supabase
+        .from("users")
+        .select("activation_status, phone")
+        .eq("id", params.residentId)
+        .maybeSingle()
+      await maybeAskSummaryClarification(supabase, {
+        ticketId,
+        conversationId: params.conversationId,
+        landlordId: params.landlordId,
+        toPhone: residentRow?.phone ?? row.phone ?? null,
+        description,
+        issueCategory,
+        urgency: priority,
+        residentActivationStatus:
+          typeof residentRow?.activation_status === "string"
+            ? residentRow.activation_status
+            : null,
+        suppressSms: false,
+      })
+    }
+  } catch (e) {
+    console.warn("[sms-intake] summary clarification ask failed", e)
+  }
 
   let photoPaths: string[] = []
   try {

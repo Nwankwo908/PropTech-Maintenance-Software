@@ -1,11 +1,22 @@
 import type { LabelReadability } from '@shared/vision/equipmentLabel'
 
-export function EquipmentLabelNotice({ quality }: { quality?: LabelReadability }) {
+export function EquipmentLabelNotice({ quality, compact = false }: { quality?: LabelReadability; compact?: boolean }) {
   if (
     !quality ||
     (!quality.retakeRequested && !quality.uncertainCharacters.length &&
       !quality.formatWarnings.length)
   ) return null
+  if (compact) {
+    const mismatch = /do not match|different equipment/i.test(quality.retakeMessage || '')
+    const serial = quality.uncertainCharacters.some(c => c.field === 'serialNumber') ||
+      quality.formatWarnings.some(w => /serial/i.test(w)) ||
+      (quality.retakeRequested && quality.serialConfidence < 85)
+    const model = quality.uncertainCharacters.some(c => c.field === 'modelNumber') ||
+      (quality.retakeRequested && quality.modelConfidence < 85)
+    const message = mismatch ? 'Photos need review' : serial && !model
+      ? 'Serial number needs review' : model && !serial ? 'Model number needs review' : 'Label details need review'
+    return <p role='status' className='text-right text-[12px] font-normal leading-4 text-[#92400e]' title='Check the label photo before confirming.'>{message}</p>
+  }
   return (
     <div
       className='mt-2 space-y-1 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900'

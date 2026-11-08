@@ -36,6 +36,7 @@ serve(async (req) => {
     conversation_id?: string
     landlord_id?: string
     body?: string
+    reply_to_message_id?: string
   }
   try {
     body = await req.json()
@@ -87,10 +88,13 @@ serve(async (req) => {
     })
   }
 
+  const replyToMessageId =
+    typeof body.reply_to_message_id === "string" ? body.reply_to_message_id.trim() : ""
   const result = await sendAdminConversationSms(supabase, {
     conversationId,
     landlordId,
     body: messageBody,
+    ...(replyToMessageId ? { replyToMessageId } : {}),
   })
   if (!result.ok) {
     return jsonResponse({ error: result.error }, result.status)

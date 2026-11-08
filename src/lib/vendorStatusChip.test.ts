@@ -7,10 +7,10 @@ import {
 } from './vendorStatusChip'
 
 describe('resolveVendorCapacityChip', () => {
-  it('shows Not activated when the vendor has no verification row yet', () => {
+  it('shows Not accepting new work when the vendor has no verification row yet', () => {
     const chip = resolveVendorCapacityChip({ verificationStatus: null })
     expect(chip.status).toBe('not_started')
-    expect(chip.label).toBe('Not activated')
+    expect(chip.label).toBe('Not accepting new work')
     expect(chip.matchable).toBe(false)
   })
 

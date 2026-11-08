@@ -577,3 +577,29 @@ Deno.test("an unclear message on a new thread still skips the extra model call",
   const interp = heuristicInterpretInbound("Thank you!")
   assertEquals(shouldWidenWithLlm(interp, { activeIntake: false }), false)
 })
+
+Deno.test("explicit new repair retains precedence over access instructions", () => {
+  for (const body of [
+    "New separate QA repair: the bedroom closet door is off its track. Nobody is hurt. Do not enter unless someone is home.",
+    "New separate repair QA repair: the bedroom closet door is off its track. Nobody is hurt. Do not enter unless someone is home",
+    "I have another repair: the bedroom closet door is off its track. You can enter when I'm out.",
+    "Please open a new repair: bedroom closet door is off track. Do not enter.",
+  ]) {
+    for (const pending of [{activeIntake:false}, {activeIntake:true, intakeStep:"awaiting_confirm" as const}]) {
+      const result=heuristicInterpretInbound(body,pending)
+      assertEquals(result.intent,"maintenance_new",body)
+      assertEquals(result.addressesPending,false)
+      assertEquals(result.extractedSlots.contextual_action,"new_issue")
+      assertEquals(shouldHandleInterpretedIntent(result,body,pending),false)
+      assertEquals(shouldUnpinMaintenanceForInterpretation(result,body),true)
+      assertEquals(shouldRejectMaintenanceTemplateForInterpretation(result,body),false)
+    }
+  }
+})
+Deno.test("access-only instructions stay updates", () => {
+  for (const body of ["Do not enter unless someone is home.","The new access code is 1234.","New repair access note: don't enter."]) {
+    const result=heuristicInterpretInbound(body)
+    assertEquals(result.extractedSlots.contextual_action,undefined)
+    assertEquals(result.intent === "maintenance_new",false)
+  }
+})

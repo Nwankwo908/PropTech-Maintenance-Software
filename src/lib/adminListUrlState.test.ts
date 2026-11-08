@@ -44,7 +44,7 @@ describe('adminListUrlState', () => {
     expect(listScrollKey('/admin/workflows', '?filters=critical&run=abc')).toBe(
       '/admin/workflows?filters=critical',
     )
-    expect(listScrollKey('/admin/communication', '?thread=t1&who=tenant')).toBe(
+    expect(listScrollKey('/admin/communication', '?thread=t1&msg=m1&who=tenant')).toBe(
       '/admin/communication?who=tenant',
     )
   })

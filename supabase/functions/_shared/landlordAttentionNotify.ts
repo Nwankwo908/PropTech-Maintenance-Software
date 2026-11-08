@@ -1,3 +1,4 @@
+import { restrictHandoffPhones } from './sms/handoffContacts.ts'
 /**
  * Alert landlords when something lands in Needs Your Attention.
  * Best-effort SMS and/or email — never blocks the originating workflow.
@@ -34,6 +35,7 @@ import {
 } from "./sms/invoicePaidConfirmation.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { landlordAskRefLine } from "./sms/landlordAskSms.ts"
+import { polishActivityFeedLine } from "./activityFeed/polishFeedLine.ts"
 
 export type LandlordAttentionKind =
   | "invoice_ready"
@@ -49,6 +51,8 @@ export type LandlordAttentionKind =
 
 export type NotifyLandlordAttentionParams = {
   landlordId: string
+  /** Trusted saved contact, resolved within the resident account/property. Never message-derived destinations. */
+  handoffContact?: {phone:string|null;email:string|null}
   kind: LandlordAttentionKind
   /** Plain-language event line, e.g. "No vendor found — leaking kitchen faucet". */
   headline: string
@@ -172,6 +176,118 @@ export function defaultAttentionWhyLine(kind: LandlordAttentionKind): string | n
   }
 }
 
+/** Activity-feed verb for what Ulo did when sending this alert. */
+export function attentionFeedActionVerb(kind: LandlordAttentionKind): string {
+  switch (kind) {
+    case "assign_vendor":
+      return "Asked you to pick a vendor"
+    case "invoice_ready":
+      return "Sent you an invoice to review"
+    case "late_rent":
+      return "Texted you that rent is late"
+    case "lease_renewal":
+      return "Asked you about a lease renewal"
+    case "lease_info_missing":
+      return "Asked you for missing lease details"
+    case "unknown_occupant":
+      return "Texted you about an unknown sender"
+    case "external_vendor_replied":
+      return "Forwarded a vendor reply"
+    case "pm_service":
+      return "Asked you about a preventive HVAC visit"
+    case "weather_alert":
+      return "Sent you a weather alert"
+    case "workflow_escalated":
+      return "Asked you to step in"
+    default:
+      return "Texted you"
+  }
+}
+
+function withAttentionScope(body: string, place: string, wo: string): string {
+  if (place && !body.toLowerCase().includes(place.toLowerCase()) && wo) {
+    return `${body} at ${place} (${wo})`
+  }
+  if (place && !body.toLowerCase().includes(place.toLowerCase())) return `${body} at ${place}`
+  if (wo && !body.includes(wo)) return `${body} (${wo})`
+  return body
+}
+
+/** Deterministic landlord-facing activity feed message (pre–Luna polish). */
+export function buildAttentionFeedMessage(params: {
+  kind: LandlordAttentionKind
+  headline: string
+  detail: string
+  locationLine?: string | null
+  maintenanceRequestId?: string | null
+}): string {
+  const headline = params.headline.trim().replace(/\s+/g, " ")
+  const detail = params.detail.trim().replace(/\s+/g, " ")
+  const wo = params.maintenanceRequestId?.trim()
+    ? formatWorkOrderRef(params.maintenanceRequestId.trim())
+    : ""
+  const place =
+    (params.locationLine ?? "").trim().split(",")[0]?.replace(/\breported\b.*$/i, "").trim() ||
+    ""
+
+  const noPreferred =
+    params.kind === "assign_vendor" && /\bno preferred vendor\b/i.test(headline)
+  const vendorUnavailable =
+    params.kind === "assign_vendor" &&
+    /\b(can't take|cannot take|declined|did not respond)\b/i.test(headline)
+
+  const softenIssue = (raw: string) =>
+    raw.replace(/^(the|a|an)\b/i, (m) => m.toLowerCase())
+
+  let body: string
+  if (noPreferred) {
+    const issue = softenIssue(detail || "this request")
+    // Place/WO before the reason so it reads as one natural sentence.
+    body = `${withAttentionScope(`Asked you to pick a vendor for ${issue}`, place, wo)} — no preferred match`
+  } else if (vendorUnavailable) {
+    const who = headline.replace(/\s+at this property\s*$/i, "").trim() || headline
+    body = withAttentionScope(`Asked you to pick another vendor — ${who}`, place, wo)
+  } else if (params.kind === "assign_vendor") {
+    const issue = softenIssue(detail || headline)
+    body = issue
+      ? withAttentionScope(`Asked you to pick a vendor for ${issue}`, place, wo)
+      : withAttentionScope("Asked you to pick a vendor", place, wo)
+  } else {
+    const action = attentionFeedActionVerb(params.kind)
+    const substance = [headline, detail].filter(Boolean).join(" — ")
+    body = substance
+      ? withAttentionScope(`${action}: ${substance}`, place, wo)
+      : withAttentionScope(action, place, wo)
+  }
+
+  return body
+}
+
+/** Deterministic draft, then optional gpt-6-luna recovery for plain wording. */
+export async function buildPolishedAttentionFeedMessage(params: {
+  kind: LandlordAttentionKind
+  headline: string
+  detail: string
+  locationLine?: string | null
+  maintenanceRequestId?: string | null
+  skipLlm?: boolean
+}): Promise<string> {
+  const draft = buildAttentionFeedMessage(params)
+  const wo = params.maintenanceRequestId?.trim()
+    ? formatWorkOrderRef(params.maintenanceRequestId.trim())
+    : ""
+  const place =
+    (params.locationLine ?? "").trim().split(",")[0]?.replace(/\breported\b.*$/i, "").trim() ||
+    ""
+  // Only protect facts Luna must keep — not the full headline (that blocked friendly rewrites).
+  const polished = await polishActivityFeedLine({
+    draft,
+    mustKeep: [wo, place].filter(Boolean),
+    skipLlm: params.skipLlm,
+  })
+  return polished.line
+}
+
 export function formatReportedAgo(
   iso: string | null | undefined,
   now = new Date(),
@@ -203,6 +319,9 @@ function tradePhraseFromCategory(issueCategory: string | null | undefined): stri
 /**
  * Short landlord-facing repair label. Empty when the description, trade,
  * headline, and street are all missing.
+ *
+ * Prefer a stored issue_headline (specific problem) over the raw first SMS
+ * line, which often starts with a greeting.
  */
 export function shortRepairLabel(
   description: string | null | undefined,
@@ -213,13 +332,6 @@ export function shortRepairLabel(
   const headline = (opts?.issueHeadline ?? "").trim().replace(/\s+/g, " ")
   const trade = tradePhraseFromCategory(issueCategory)
 
-  const rawLine = (description ?? "").trim().split("\n")[0]?.trim().replace(/\s+/g, " ") ?? ""
-  const sentence = rawLine.split(/(?<=[.!?])\s+/)[0]?.replace(/[.!?]+$/g, "").trim() ?? ""
-  if (sentence && sentence.length <= 72 && !/^wo-/i.test(sentence)) {
-    return sentence.charAt(0).toLowerCase() + sentence.slice(1)
-  }
-
-  if (trade && street) return `${trade} at ${street}`
   if (headline && headline.length <= 72 && !/^wo-/i.test(headline)) {
     const lowered =
       headline.charAt(0).toLowerCase() === headline.charAt(0)
@@ -230,6 +342,24 @@ export function shortRepairLabel(
     }
     return lowered
   }
+
+  const rawLine = (description ?? "").trim().split("\n")[0]?.trim().replace(/\s+/g, " ") ?? ""
+  // Skip greeting-only / greeting-led openers — fall through to trade+street.
+  const withoutGreeting = rawLine
+    .replace(/^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))(?:\s*[!,.]|\s+)/i, "")
+    .trim()
+  const sentence =
+    withoutGreeting.split(/(?<=[.!?])\s+/)[0]?.replace(/[.!?]+$/g, "").trim() ?? ""
+  if (
+    sentence &&
+    sentence.length <= 72 &&
+    !/^wo-/i.test(sentence) &&
+    !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(sentence)
+  ) {
+    return sentence.charAt(0).toLowerCase() + sentence.slice(1)
+  }
+
+  if (trade && street) return `${trade} at ${street}`
   if (trade) return `${trade} repair`
   if (street) return `repair at ${street}`
   return ""
@@ -347,6 +477,25 @@ function besideLocation(text: string, place: string): string {
   return stripped
 }
 
+function isPlaceholderRepair(text: string): boolean {
+  const core = text.replace(/[.!?]+$/g, "").trim().toLowerCase()
+  return core === "this repair" || core === "the repair" || core === "a repair"
+}
+
+/** "No vendor found — this repair" does not name the job. */
+function assignVendorReason(headline: string, place: string): string {
+  const action = (place ? besideLocation(headline, place) : headline).trim()
+  const bare = action.replace(/[.!?]+$/g, "").trim()
+  if (
+    !bare ||
+    isPlaceholderRepair(bare) ||
+    /^no vendor found(?:\s*[—–-]\s*this repair)?$/i.test(bare)
+  ) {
+    return "No preferred vendor matched this request"
+  }
+  return action
+}
+
 const MISSING_ISSUE_SENTENCE = "The request did not include a description."
 const MISSING_PROPERTY_SENTENCE = "The property address was not included."
 const NO_NEARBY_VENDOR_SENTENCE = "No nearby vendor matched this kind of request."
@@ -382,9 +531,11 @@ function composeAttentionText(input: AttentionCopyInput, workOrderRef: string | 
 
   if (input.kind === "assign_vendor") {
     const place = placeFromLocation(locationLine)
-    const issueLine = place ? besideLocation(summaryLine, place) : summaryLine
-    const actionLine = place ? besideLocation(headline, place) : headline
+    const rawIssue = place ? besideLocation(summaryLine, place) : summaryLine
+    const issueLine = rawIssue && !isPlaceholderRepair(rawIssue) ? rawIssue : ""
+    const actionLine = assignVendorReason(headline, place)
     const summaryWasOnlyTheAddress = Boolean(summaryLine) && !issueLine && Boolean(place)
+    if (workOrderRef) push(`Work order ${workOrderRef}`)
     if (issueLine) push(issueLine)
     else if (!summaryWasOnlyTheAddress) push(MISSING_ISSUE_SENTENCE)
     push(locationLine || MISSING_PROPERTY_SENTENCE)
@@ -935,10 +1086,9 @@ export async function notifyLandlordNeedsAttention(
     actionLabel: attentionEmailActionLabel(params.kind),
     requestRef: params.requestRef,
     invoicePaid,
-    workOrderRef:
-      params.omitWorkOrderRef === true || params.kind === "assign_vendor"
-        ? null
-        : params.maintenanceRequestId
+    workOrderRef: params.omitWorkOrderRef === true
+      ? null
+      : params.maintenanceRequestId
         ? formatWorkOrderRef(params.maintenanceRequestId)
         : null,
   }
@@ -950,7 +1100,7 @@ export async function notifyLandlordNeedsAttention(
   const emailSent: string[] = []
 
   const phones = allowSms
-    ? (await resolveLandlordOpsPhones(supabase, landlordId)).phones
+    ? restrictHandoffPhones((await resolveLandlordOpsPhones(supabase, landlordId)).phones, params.handoffContact)
     : []
   if (allowSms && phones.length === 0) {
     const { recordSmsNoRecipients } = await import("./smsRecipients.ts")
@@ -1041,7 +1191,9 @@ export async function notifyLandlordNeedsAttention(
       subject: email.subject,
       text: email.text,
       html: email.html,
-      accountHolderOnly: true,
+      accountHolderOnly: !params.handoffContact,
+      extraEmails: params.handoffContact?.email ? [params.handoffContact.email] : undefined,
+      onlyEmails: params.handoffContact ? (params.handoffContact.email ? [params.handoffContact.email] : []) : undefined,
       logLabel: `attention:${params.kind}:${key}`,
     })
     emailSent.push(...mail.sent)
@@ -1058,6 +1210,13 @@ export async function notifyLandlordNeedsAttention(
   }
 
   try {
+    const feedMessage = await buildPolishedAttentionFeedMessage({
+      kind: params.kind,
+      headline: params.headline,
+      detail: params.detail,
+      locationLine: params.locationLine,
+      maintenanceRequestId: params.maintenanceRequestId,
+    })
     await logGraphEvent(supabase, {
       landlord_id: landlordId,
       event_type: "landlord.attention_alert_sent",
@@ -1073,6 +1232,14 @@ export async function notifyLandlordNeedsAttention(
         kind: params.kind,
         headline: params.headline,
         detail: params.detail,
+        location_line: (params.locationLine ?? "").trim() || null,
+        // Keep ticket id in payload so property_operations_graph dual-write can deep-link.
+        maintenance_request_id: params.maintenanceRequestId?.trim() || null,
+        work_order_ref: params.maintenanceRequestId
+          ? formatWorkOrderRef(params.maintenanceRequestId)
+          : null,
+        // Landlord-facing feed line (deterministic draft + optional Luna polish).
+        message: feedMessage,
         idempotency_key: key,
         invoice_paid_ask: Boolean(params.invoicePaidConfirmation),
         sms_sent: smsSent,

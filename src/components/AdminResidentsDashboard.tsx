@@ -55,6 +55,10 @@ import {
   normalizeBuildingKey,
 } from '@/lib/propertyHealth'
 import {
+  correctedPropertyTypeForPlace,
+  propertyTypeCorrectionsFromInventory,
+} from '@/lib/propertyInventoryType'
+import {
   initialUnitOptionKeyForResident,
   residentPlacementUpdateForSave,
   resolveInventoryUnitForResidentSave,
@@ -333,6 +337,15 @@ export function AdminResidentsDashboard() {
   )
   const [addResidentOpen, setAddResidentOpen] = useState(false)
   const [addResidentError, setAddResidentError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return
+    setAddResidentError(null)
+    setAddResidentOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('add')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
   const [addPropertyOpen, setAddPropertyOpen] = useState(false)
   const [addPropertyError, setAddPropertyError] = useState<string | null>(null)
   const [pendingPropertyLink, setPendingPropertyLink] = useState<{
@@ -519,6 +532,25 @@ export function AdminResidentsDashboard() {
       )
     }
 
+    const inventoryCorrections = propertyTypeCorrectionsFromInventory({
+      properties: listedProperties.map((property) => ({
+        id: property.id,
+        name: property.name,
+        streetAddress: property.streetAddress,
+        propertyType: property.propertyType,
+      })),
+      units: unitRows.map((row) => ({
+        propertyId: row.propertyId,
+        building: row.building,
+        unitLabel: row.unitLabel,
+      })),
+      residents: ((data ?? []) as Record<string, unknown>[]).map((raw) => ({
+        building: asString(raw.building) || null,
+        unit: asString(raw.unit) || null,
+        status: asString(raw.status) || null,
+      })),
+    })
+
     const rows: ResidentRow[] = ((data ?? []) as Record<string, unknown>[])
       .map((raw) => {
         const status = asString(raw.status) || 'active'
@@ -535,9 +567,14 @@ export function AdminResidentsDashboard() {
         const propertyLinkId =
           matchedProperty?.id ??
           (building ? propertyIdByBuilding.get(normalizeBuildingKey(building)) ?? null : null)
-        const propertyType =
+        const storedPropertyType =
           matchedProperty?.propertyType ??
           (propertyLinkId ? propertyTypeById.get(propertyLinkId) : null)
+        const propertyType = correctedPropertyTypeForPlace(inventoryCorrections, {
+          propertyId: propertyLinkId,
+          building,
+          storedType: storedPropertyType,
+        })
         return {
           id: asString(raw.id),
           residentId: asString(raw.resident_id),
@@ -1804,7 +1841,7 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Payment status</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Contact</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Occupancy</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">SMS Activation</th>
               </tr>
             </thead>
             {/*

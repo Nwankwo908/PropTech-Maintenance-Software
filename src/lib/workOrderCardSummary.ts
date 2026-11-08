@@ -1,5 +1,11 @@
 import { looksLikeStatusInquiry } from '@/lib/smartIntelligence/helpers'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
+import { generateIssueSummary } from '@shared/maintenance/generateIssueSummary.ts'
+import { extractStructuredIssueDetails } from '@shared/maintenance/structuredIssueDetails.ts'
+import {
+  containsGreetingOrPleasantry,
+  stripTenantMessageFiller,
+} from '@shared/maintenance/issueNounPhrase.ts'
 import { homeCheckWorkOrderTitle } from '@shared/homeCheck'
 
 const FILLER = new Set([
@@ -11,6 +17,7 @@ const FILLER = new Set([
   'come',
   'could',
   'fix',
+  'good',
   'got',
   'have',
   'hello',
@@ -20,6 +27,9 @@ const FILLER = new Set([
   'it',
   'just',
   'like',
+  'morning',
+  'afternoon',
+  'evening',
   'my',
   'of',
   'our',
@@ -50,6 +60,8 @@ type PhraseRule = {
 const PHRASE_RULES: PhraseRule[] = [
   { test: /\bno hot water\b/i, phrase: 'No hot water' },
   { test: /\b(ac|a\/c|air conditioner).{0,28}(not cool|won'?t cool|isn'?t cool|blowing warm|warm air)/i, phrase: 'AC not cooling' },
+  { test: /\bbaseboard\s+heat(?:er|ing)?.{0,40}(leak|leaking|drip|rust)/i, phrase: 'Baseboard heater leak' },
+  { test: /\b(leak|leaking|drip|rust).{0,40}baseboard\s+heat(?:er|ing)?/i, phrase: 'Baseboard heater leak' },
   { test: /\b(heat|heater|furnace|radiator).{0,24}(not work|no heat|won'?t|broken|cold)/i, phrase: 'Heat not working' },
   { test: /\boutlet.{0,24}spark/i, phrase: 'Outlet is sparking' },
   { test: /\b(power|electricity).{0,16}(out|off|down)/i, phrase: 'Power is out' },
@@ -122,28 +134,101 @@ function phraseWordCount(phrase: string): number {
   return phrase.trim().split(/\s+/).filter(Boolean).length
 }
 
+function usableHeadline(headline: string | null | undefined): string | null {
+  const raw = (headline ?? '').trim()
+  if (!raw) return null
+  if (containsGreetingOrPleasantry(raw)) return null
+  if (looksLikeStatusInquiry(raw)) return null
+  const words = phraseWordCount(raw)
+  if (words < 2 || words > 8) return null
+  // Prefer sentence/title case already on the ticket; light normalize.
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+export type WorkOrderCardBlurbOptions = {
+  issueHeadline?: string | null
+}
+
 /**
  * 3–5 word landlord-facing blurb for an Active Tasks work-order card.
+ * Prefers a stored issue_headline, then shared generateIssueSummary, then
+ * phrase rules — never a greeting-led first line or bare trade label when
+ * the resident described a specific problem.
  */
 export function summarizeWorkOrderCardBlurb(
   description: string | null | undefined,
   issueCategory: string | null | undefined,
+  options?: WorkOrderCardBlurbOptions,
 ): string {
   const homeCheckTitle = homeCheckWorkOrderTitle(description, issueCategory)
   if (homeCheckTitle) return homeCheckTitle
-  const trade = formatVendorTradeLabel(issueCategory, { emptyLabel: '' }).trim() || null
-  const line = firstLine(description)
-  const usable = line && !looksLikeStatusInquiry(line) ? line : ''
 
-  if (usable) {
+  const fromHeadline = usableHeadline(options?.issueHeadline)
+  if (fromHeadline) return fromHeadline
+
+  const trade = formatVendorTradeLabel(issueCategory, { emptyLabel: '' }).trim() || null
+  const full = (description ?? '').trim()
+  const line = firstLine(description)
+  const cleanedLine = stripTenantMessageFiller(line)
+  const usable = cleanedLine && !looksLikeStatusInquiry(cleanedLine) ? cleanedLine : ''
+  const phraseHay = full || usable
+
+  if (phraseHay) {
     for (const rule of PHRASE_RULES) {
-      if (rule.test.test(usable) && phraseWordCount(rule.phrase) >= 3 && phraseWordCount(rule.phrase) <= 5) {
+      if (rule.test.test(phraseHay) && phraseWordCount(rule.phrase) >= 3 && phraseWordCount(rule.phrase) <= 5) {
         return rule.phrase
       }
     }
-    const words = padToThreeWords(contentWords(usable), trade)
-    return titleCasePhrase(words)
+
+    const shared = generateIssueSummary(phraseHay, {
+      format: 'title',
+      category: issueCategory,
+      maxChars: 50,
+    }).trim()
+    if (
+      shared &&
+      !/^maintenance issue$/i.test(shared) &&
+      !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(shared)
+    ) {
+      return shared
+    }
+
+    if (usable) {
+      const words = padToThreeWords(contentWords(usable), trade)
+      return titleCasePhrase(words)
+    }
   }
 
   return titleCasePhrase(padToThreeWords([], trade))
+}
+
+/**
+ * Short secondary line for Active Tasks: location + a compact reported detail.
+ */
+export function summarizeWorkOrderCardDetail(
+  description: string | null | undefined,
+  issueCategory: string | null | undefined,
+): string | null {
+  const homeCheckTitle = homeCheckWorkOrderTitle(description, issueCategory)
+  if (homeCheckTitle) return null
+
+  const structured = extractStructuredIssueDetails(description ?? '', {
+    category: issueCategory,
+    format: 'title',
+  })
+  const bits: string[] = []
+  if (structured.locationDetail) bits.push(structured.locationDetail)
+  if (structured.servesFloor) bits.push(`Serves ${structured.servesFloor}`)
+  const reported = structured.reportedDetail
+  if (reported) {
+    // Keep the card secondary line short — first sentence.
+    const compact = reported
+      .split(/(?<=\.)\s+/)[0]!
+      .replace(/\s+/g, ' ')
+      .trim()
+    const words = compact.split(/\s+/).filter(Boolean)
+    bits.push(words.length > 16 ? `${words.slice(0, 16).join(' ')}…` : compact)
+  }
+  if (bits.length === 0) return null
+  return bits.join(' · ')
 }

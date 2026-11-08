@@ -17,7 +17,7 @@ describe('resolveTenantActivationChip — SMS consent stays in sync with activat
       smsConsentStatus: 'opted_in',
     })
     expect(chip.status).toBe('activated')
-    expect(chip.label).toBe('Activated')
+    expect(chip.label).toBe('SMS Activated')
   })
 
   it('cannot show Waiting or Action Required when SMS is opted in after START', () => {
@@ -28,7 +28,7 @@ describe('resolveTenantActivationChip — SMS consent stays in sync with activat
       activationAttemptCount: 3,
     })
     expect(chip.status).toBe('activated')
-    expect(chip.label).toBe('Activated')
+    expect(chip.label).toBe('SMS Activated')
     expect(chip.status).not.toBe('waiting')
     expect(chip.status).not.toBe('action_required')
   })
@@ -51,7 +51,7 @@ describe('resolveTenantActivationChip — SMS consent stays in sync with activat
       activationSmsSentAt: '2026-08-01T00:00:00.000Z',
     })
     expect(chip.status).toBe('not_started')
-    expect(chip.label).toBe('Not activated')
+    expect(chip.label).toBe('SMS Not Activated')
   })
 
   it('shows Declined updates after NO', () => {

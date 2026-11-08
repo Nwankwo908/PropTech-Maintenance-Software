@@ -57,6 +57,11 @@ export type ApplianceVisionResult = {
     /** Populated when category === 'boiler' */
     btuOutput?: number | null
   }
+  /** Month and year printed on the data plate, when readable. */
+  manufactureDate?: {
+    year: number | null
+    month: number | null
+  }
   estimatedAge: {
     value: number | null
     confidence: AgeConfidence

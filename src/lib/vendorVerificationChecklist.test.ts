@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseOptionalUsdAmount } from './parseOptionalUsdAmount'
 import {
   computeVerificationChecklist,
+  computeVendorProfileVerificationChecklist,
   vendorComplianceActionNeededItems,
 } from './vendorVerificationChecklist'
 
@@ -24,15 +25,26 @@ describe('computeVerificationChecklist', () => {
 })
 
 describe('vendorComplianceActionNeededItems', () => {
-  it('returns only action_needed rows', () => {
-    const checklist = computeVerificationChecklist({
+  it('returns only Action needed compliance rows', () => {
+    const checklist = computeVendorProfileVerificationChecklist({
       trade_categories: ['plumbing'],
-      license_number: 'LIC-1',
+      license_number: 'PL-1',
       license_expiration: '2020-01-01',
+      coi_general_liability: 500_000,
+      coi_expiration: '2020-01-01',
+      w9_received: true,
     })
     const items = vendorComplianceActionNeededItems(checklist)
-    expect(items.length).toBeGreaterThan(0)
+    expect(items.map((item) => item.id).sort()).toEqual(['coi_coverage', 'license', 'w9'])
     expect(items.every((item) => item.status === 'action_needed')).toBe(true)
+  })
+
+  it('is empty when nothing needs action', () => {
+    expect(
+      vendorComplianceActionNeededItems(
+        computeVendorProfileVerificationChecklist({ trade_categories: ['plumbing'] }),
+      ),
+    ).toEqual([])
     expect(vendorComplianceActionNeededItems(null)).toEqual([])
   })
 })

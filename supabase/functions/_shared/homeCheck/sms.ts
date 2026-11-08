@@ -664,8 +664,8 @@ async function answerPendingPhoto(
     const index = parseHomeCheckPhotoChoice(body, pending.checkIds.length)
     const check = index == null ? null : open.find((row) => row.id === pending.checkIds[index])
     if (index == null) {
-      return {
-        kind: 'clarify',
+    return {
+      kind: 'clarify',
         reply: `Please reply with a number from 1 to ${pending.checkIds.length}.`,
       }
     }
@@ -887,7 +887,7 @@ export async function actHomeCheckSms(
     return { reply: guided.reply }
   }
   if (action.kind === 'start') {
-    return {
+        return {
       reply:
         'Upload equipment photos from Property Intelligence. Home Check links are no longer sent by text.',
     }

@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { AdminBottomSheet } from '@/components/AdminBottomSheet'
 import {
@@ -107,21 +108,34 @@ type AdminUloNotificationsBellProps = {
   onNavigate?: () => void
   compact?: boolean
   /**
-   * Desktop header only. Owns the Try Demo step-11 spotlight host id so the tip
-   * never measures the hidden mobile duplicate.
+   * Desktop sidebar host only. Owns the Try Demo step-11 spotlight host id so the
+   * tip never measures a mobile duplicate.
    */
   tryDemoSpotlightHost?: boolean
+  /** Dropdown alignment for icon mode. Nav row uses a fixed flyout to the right of the rail. */
+  menuAlign?: 'start' | 'end'
+  /** Sidebar row: icon + “Notifications” label (matches Settings nav link). */
+  navRow?: boolean
 }
 
-/** Header bell — Ulo Activity Feed with a live activity count. */
+const navRowBase =
+  'flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] text-[#364153] opacity-60 outline-none transition-colors duration-150 hover:bg-[#f3f4f6] hover:opacity-100 active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
+
+const navRowCollapsed =
+  'flex size-11 cursor-pointer items-center justify-center rounded-[10px] text-[#364153] opacity-60 outline-none transition-colors duration-150 hover:bg-[#f3f4f6] hover:opacity-100 active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
+
+/** Nav bell — Ulo Activity Feed with a live activity count. */
 export function AdminUloNotificationsBell({
   onNavigate,
   compact = false,
   tryDemoSpotlightHost = false,
+  menuAlign = 'end',
+  navRow = false,
 }: AdminUloNotificationsBellProps) {
   const navigate = useNavigate()
   const panelId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const landlordId = getActiveLandlordId()
   const [open, setOpen] = useState(false)
   const [useSideSheet, setUseSideSheet] = useState(
@@ -138,6 +152,7 @@ export function AdminUloNotificationsBell({
     tryDemoSpotlightHost &&
     isTryDemoUloActivityGuideStep(readTryDemoAttentionGuideActiveStep() ?? -1),
   )
+  const [railFlyoutBox, setRailFlyoutBox] = useState<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
     if (!tryDemoSpotlightHost) return
@@ -156,15 +171,18 @@ export function AdminUloNotificationsBell({
   }, [tryDemoSpotlightHost])
 
   useEffect(() => {
+    // Nav row on desktop uses a flyout to the right of the rail (like Set up portfolio).
+    // Compact only forces a sheet for the legacy icon control, not the sidebar row.
     const mq = window.matchMedia('(max-width: 1279px)')
-    const sync = () => setUseSideSheet(compact || mq.matches)
+    const sync = () => setUseSideSheet(navRow ? mq.matches : compact || mq.matches)
     sync()
     mq.addEventListener('change', sync)
     return () => mq.removeEventListener('change', sync)
-  }, [compact])
+  }, [compact, navRow])
 
-  // Tip step 11 needs the desktop dropdown under the spotlight host (not the side sheet portal).
+  // Tip step 11 needs the desktop flyout under the spotlight host (not the side sheet portal).
   const effectiveUseSideSheet = tipForcesActivityOpen ? false : useSideSheet
+  const useRailFlyout = navRow && !effectiveUseSideSheet
 
   useEffect(() => {
     let cancelled = false
@@ -205,6 +223,37 @@ export function AdminUloNotificationsBell({
     }
   }, [feedOpen, landlordId])
 
+  useLayoutEffect(() => {
+    if (!feedOpen || !useRailFlyout) {
+      setRailFlyoutBox(null)
+      return
+    }
+
+    const PANEL_MAX_H = Math.min(window.innerHeight * 0.7, 520)
+    const GAP = 12
+
+    function placeFlyout() {
+      const root = rootRef.current
+      if (!root) return
+      const rect = root.getBoundingClientRect()
+      const left = Math.min(rect.right + GAP, window.innerWidth - 420 - 16)
+      // Prefer aligning to the nav row; flip up if it would spill past the viewport.
+      let top = rect.top
+      if (top + PANEL_MAX_H > window.innerHeight - 16) {
+        top = Math.max(16, window.innerHeight - PANEL_MAX_H - 16)
+      }
+      setRailFlyoutBox({ top, left: Math.max(16, left) })
+    }
+
+    placeFlyout()
+    window.addEventListener('resize', placeFlyout)
+    window.addEventListener('scroll', placeFlyout, true)
+    return () => {
+      window.removeEventListener('resize', placeFlyout)
+      window.removeEventListener('scroll', placeFlyout, true)
+    }
+  }, [feedOpen, useRailFlyout])
+
   useEffect(() => {
     if (!feedOpen || effectiveUseSideSheet) return
 
@@ -215,9 +264,9 @@ export function AdminUloNotificationsBell({
     function onPointerDown(event: MouseEvent) {
       // Keep the open feed visible while the Try Demo tip owns this step.
       if (tipForcesActivityOpen) return
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
+      const target = event.target as Node
+      if (rootRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setOpen(false)
     }
 
     window.addEventListener('keydown', onKey)
@@ -257,6 +306,17 @@ export function AdminUloNotificationsBell({
 
   const panelMounted = feedOpen && !effectiveUseSideSheet
 
+  const openFeed = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (tipForcesActivityOpen) return
+    setOpen((value) => {
+      const next = !value
+      if (next) onNavigate?.()
+      return next
+    })
+  }
+
   return (
     <>
       <div
@@ -266,54 +326,99 @@ export function AdminUloNotificationsBell({
         data-try-demo-ulo-activity-ready={
           tryDemoSpotlightHost ? (panelMounted ? '1' : '0') : undefined
         }
-        className="relative"
+        className={navRow ? 'relative w-full' : 'relative'}
+        title={navRow && compact ? 'Notifications' : undefined}
       >
-        <button
-          type="button"
-          aria-label="Ulo Activity Feed"
-          aria-expanded={feedOpen}
-          aria-controls={panelId}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            if (tipForcesActivityOpen) return
-            setOpen((value) => {
-              const next = !value
-              if (next) onNavigate?.()
-              return next
-            })
-          }}
-          className={[
-            'sa-press relative flex shrink-0 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
-            compact ? 'size-[1.8rem]' : 'size-9',
-          ].join(' ')}
-        >
-          <BellIcon compact={compact} />
-          {activityCount > 0 ? (
-            <span
-              className={[
-                'sa-enter-scale absolute flex items-center justify-center rounded-full bg-[#c10007] font-semibold leading-none text-white',
-                compact
-                  ? 'right-0.5 top-0.5 size-3.5 text-[9px]'
-                  : 'right-1 top-1 size-4 text-[10px]',
-              ].join(' ')}
-            >
-              {activityCount > 9 ? '9+' : activityCount}
+        {navRow ? (
+          <button
+            type="button"
+            aria-label="Notifications"
+            aria-expanded={feedOpen}
+            aria-controls={panelId}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={openFeed}
+            className={['sa-press relative', compact ? navRowCollapsed : navRowBase].join(' ')}
+          >
+            <span className="relative size-5 shrink-0 text-current" aria-hidden>
+              <BellIcon compact={false} />
+              {compact && activityCount > 0 ? (
+                <span className="sa-enter-scale absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full bg-[#DA4951] text-[9px] font-semibold leading-none text-white">
+                  {activityCount > 9 ? '9+' : activityCount}
+                </span>
+              ) : null}
             </span>
-          ) : null}
-        </button>
+            {!compact ? (
+              <>
+                <span className="min-w-0 text-left">Notifications</span>
+                {activityCount > 0 ? (
+                  <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#DA4951] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
+                    {activityCount > 9 ? '9+' : activityCount}
+                  </span>
+                ) : null}
+              </>
+            ) : null}
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-label="Ulo Activity Feed"
+            aria-expanded={feedOpen}
+            aria-controls={panelId}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={openFeed}
+            className={[
+              'sa-press relative flex shrink-0 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
+              compact ? 'size-[1.8rem]' : 'size-9',
+            ].join(' ')}
+          >
+            <BellIcon compact={compact} />
+            {activityCount > 0 ? (
+              <span
+                className={[
+                  'sa-enter-scale absolute flex items-center justify-center rounded-full bg-[#c10007] font-semibold leading-none text-white',
+                  compact
+                    ? 'right-0.5 top-0.5 size-3.5 text-[9px]'
+                    : 'right-1 top-1 size-4 text-[10px]',
+                ].join(' ')}
+              >
+                {activityCount > 9 ? '9+' : activityCount}
+              </span>
+            ) : null}
+          </button>
+        )}
 
-        {panelMounted ? (
+        {panelMounted && !useRailFlyout ? (
           <div
+            ref={panelRef}
             role="dialog"
             aria-labelledby={panelId}
-            className="sa-enter absolute right-0 top-[calc(100%+8px)] z-50 flex max-h-[min(70dvh,520px)] w-[min(calc(100vw-2rem),420px)] flex-col overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+            className={[
+              'sa-enter absolute top-[calc(100%+8px)] z-50 flex max-h-[min(70dvh,520px)] w-[min(calc(100vw-2rem),420px)] flex-col overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]',
+              menuAlign === 'start' ? 'left-0' : 'right-0',
+            ].join(' ')}
           >
             {panel}
           </div>
         ) : null}
       </div>
+
+      {panelMounted && useRailFlyout && railFlyoutBox
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="dialog"
+              aria-labelledby={panelId}
+              data-try-demo-spotlight-link={
+                tryDemoSpotlightHost ? TRY_DEMO_SPOTLIGHT_ULO_ACTIVITY_ID : undefined
+              }
+              style={{ top: railFlyoutBox.top, left: railFlyoutBox.left }}
+              className="sa-enter fixed z-50 flex max-h-[min(70dvh,520px)] w-[min(calc(100vw-2rem),420px)] flex-col overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+            >
+              {panel}
+            </div>,
+            document.body,
+          )
+        : null}
 
       <AdminBottomSheet
         open={feedOpen && effectiveUseSideSheet}

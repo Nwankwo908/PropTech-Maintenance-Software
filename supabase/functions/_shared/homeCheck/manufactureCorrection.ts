@@ -97,7 +97,7 @@ export async function applyHomeCheckSmsManufactureCorrection(
     }).eq('id', target.id).eq('home_check_id', check.id).eq('landlord_id', check.landlord_id),
   )
 
-  await db.from('home_check_events').insert({
+  await Promise.resolve(db.from('home_check_events').insert({
     check_id: check.id,
     event_type: 'landlord_label_corrected',
     role: check.role,
@@ -109,7 +109,7 @@ export async function applyHomeCheckSmsManufactureCorrection(
       manufacture_year: correction.year,
       manufacture_month: correction.month,
     },
-  }).then(() => undefined).catch(() => undefined)
+  })).then(() => undefined).catch(() => undefined)
 
   await recordActivityLog(db, {
     landlordId: check.landlord_id,

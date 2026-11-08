@@ -1,3 +1,4 @@
+import { maintenanceEvidence } from './messageEvidence.ts'
 /**
  * Resident-facing urgency: emergency (same-day) / medium (48h) / low (7 days).
  * Vendor matching still uses trade; this only sets response window + severity.
@@ -35,13 +36,13 @@ export type UrgencyPolicyResult = {
 }
 
 function haystack(text: string): string {
-  return text.toLowerCase().replace(/['’]/g, "'")
+  return maintenanceEvidence(text).toLowerCase().replace(/['’]/g, "'")
 }
 
 const NO_HEAT_RE =
   /\b(no\s*heat|no\s*heating|heat(?:ing)?\s+(?:is\s+)?(?:n'?t|not|isn'?t)\s+working|won'?t\s+heat|heating\s+failure|frozen\s+pipe)\b/
 const NO_COOLING_RE =
-  /\b(no\s+cool(?:ing)?|ac\s+(?:not|isn'?t|n'?t)\s+working|air\s*condition(?:er|ing)?\s+(?:not|isn'?t)|won'?t\s+cool|blowing\s+warm)\b/
+  /\b(no\s+cool(?:ing)?|ac\s+(?:is\s+)?(?:not|isn'?t|n'?t)\s+working|air\s*condition(?:er|ing)?\s+(?:is\s+)?(?:not|isn'?t)|won'?t\s+cool|blowing\s+warm)\b/
 
 /**
  * Heat illness or distress. A plain AC failure in hot weather is habitability,
@@ -133,7 +134,7 @@ const GAS_EMERGENCY_TEXT =
 
 /** Gas smell, gas leak, or carbon monoxide. Life-safety, not a repair tip. */
 export function isGasEmergencyText(text: string | null | undefined): boolean {
-  return GAS_EMERGENCY_TEXT.test((text ?? "").toLowerCase())
+  return GAS_EMERGENCY_TEXT.test(maintenanceEvidence(text ?? "").toLowerCase())
 }
 
 /**

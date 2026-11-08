@@ -183,6 +183,7 @@ export async function sendAdminConversationSms(
     conversationId: string
     landlordId: string
     body: string
+    replyToMessageId?: string
   },
 ): Promise<
   | {
@@ -312,6 +313,9 @@ ${body}`
       raw_payload: {
         source: "admin_conversation_sms",
         admin_takeover: true,
+        ...(params.replyToMessageId?.trim()
+          ? { reply_to_message_id: params.replyToMessageId.trim() }
+          : {}),
       },
     })
     .select("id")
@@ -375,11 +379,13 @@ export async function loadAdminTakeoverActive(
   conversationId: string,
 ): Promise<boolean> {
   try {
-    const { data } = await supabase
+    let query = supabase
       .from("sms_conversations")
       .select("intake_state")
       .eq("id", conversationId)
-      .maybeSingle()
+    // A safety check bypasses and invalidates request-local snapshots.
+    if (typeof query.abortSignal === "function") query = query.abortSignal(new AbortController().signal)
+    const { data } = await query.maybeSingle()
     const intake = (data as { intake_state?: Record<string, unknown> | null } | null)
       ?.intake_state
     return isAdminTakeoverActive(intake)

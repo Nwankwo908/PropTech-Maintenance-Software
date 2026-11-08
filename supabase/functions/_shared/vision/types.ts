@@ -1,3 +1,4 @@
+import type { HomeCheckPhotoView } from '../../../../shared/homeCheck.ts'
 import type { LabelReadability, EquipmentExtractionTrace, EquipmentPhotoContext } from '../../../../shared/vision/equipmentLabel.ts'
 export type VisionCategory =
   | "appliance"
@@ -31,6 +32,7 @@ export type RecommendationUrgency = "routine" | "near_term" | "immediate"
 export type VisionProviderName = "gemini" | "gpt4o" | "claude"
 
 export type ApplianceVisionResult = {
+  photoView?: HomeCheckPhotoView
   labelReadability?: LabelReadability
   extractionTrace?: EquipmentExtractionTrace
   category: VisionCategory
@@ -98,6 +100,14 @@ export const APPLIANCE_VISION_JSON_SCHEMA = {
     "labelReadability",
   ],
   properties: {
+    photoView: {
+      type: 'object', additionalProperties: false, required: ['equipment','framing','confidence'],
+      properties: {
+        equipment: { type: 'string', enum: ['water_heater','heating_system','other','unknown'] },
+        framing: { type: 'string', enum: ['label_closeup','whole_appliance','unknown'] },
+        confidence: { type: 'string', enum: ['high','low'] },
+      },
+    },
     labelReadability: {
       type: 'object', additionalProperties: false,
       required: ['status', 'modelConfidence', 'serialConfidence', 'uncertainCharacters', 'retakeRequested', 'formatWarnings'],

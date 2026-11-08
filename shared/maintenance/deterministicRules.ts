@@ -1,3 +1,4 @@
+import { maintenanceEvidence } from './messageEvidence.ts'
 /**
  * Deterministic trade / issue / safety rules — shared source of truth for keyword signals.
  */
@@ -114,7 +115,7 @@ const NO_HEAT_RE = /\bno\s*heat(?:ing)?\b|\bheat\s+(?:is\s+)?(?:out|off)\b/i
 export function matchEmergencyNet(
   text: string,
 ): { type: EmergencyType; keyword: string } | null {
-  const hay = text.toLowerCase()
+  const hay = maintenanceEvidence(text).toLowerCase()
   if (GAS_RE.test(hay)) return { type: 'gas', keyword: 'gas / carbon monoxide' }
   if (FIRE_RE.test(hay) && /\b(smoke|fire|flame)\b/i.test(hay)) {
     return { type: 'fire', keyword: 'fire / smoke' }
@@ -128,7 +129,7 @@ export function matchEmergencyNet(
 }
 
 export function matchDeterministicRules(text: string): RuleHit[] {
-  const hay = text.toLowerCase()
+  const hay = maintenanceEvidence(text).toLowerCase()
   const hits: RuleHit[] = []
 
   const push = (

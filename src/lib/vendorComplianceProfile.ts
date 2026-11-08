@@ -370,7 +370,7 @@ export function buildVendorComplianceProfile(
   const emptyW9 = emptyDocument(
     'w9',
     'W-9 on file',
-    'Optional — add a W-9 when you need it for 1099 reporting.',
+    'Add a W-9 when you need it for 1099 reporting.',
     true,
   )
 

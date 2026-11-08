@@ -88,6 +88,9 @@ function mockEscalationSupabase(state: {
       if (table === "sms_conversations") {
         return { data: state.convos ?? [], error: null }
       }
+      if (table === "landlords") {
+        return { data: { phone: null, email: null }, error: null }
+      }
       if (table === "properties" || table === "units") {
         return { data: null, error: null }
       }
@@ -105,13 +108,13 @@ function mockEscalationSupabase(state: {
   return { from } as unknown as SupabaseClient
 }
 
-Deno.test("shortRepairLabel uses pest + street instead of this repair", () => {
+Deno.test("shortRepairLabel prefers specific headline over bare trade label", () => {
   assertEquals(
     shortRepairLabel("", "pest_control", {
       issueHeadline: "Pest control — exterminator requested",
       street: "109 S Grove St",
     }),
-    "Pest control at 109 S Grove St",
+    "pest control — exterminator requested at 109 S Grove St",
   )
   assertEquals(
     shortRepairLabel("", "pest", { street: "109 S Grove St" }),
@@ -120,17 +123,23 @@ Deno.test("shortRepairLabel uses pest + street instead of this repair", () => {
   assertEquals(shortRepairLabel("", null), "")
 })
 
-Deno.test("assign-vendor attention SMS omits Ref: WO line", () => {
+Deno.test("assign-vendor attention SMS names the work order, issue, and property", () => {
   const body = buildLandlordAttentionSms({
     kind: "assign_vendor",
-    headline: "No vendor found — Pest control at 109 S Grove St",
-    locationLine: "109 S Grove St · reported 2h ago",
+    headline: "No vendor found — this repair",
+    detail: "The dishwasher will not drain.",
+    locationLine: "78 Maple Ave, Unit 3, reported 2h ago",
     whyLine: "",
-    dashboardUrl: "https://www.ulohome.io/admin?findVendor=1&ticket=fd7b189c",
-    workOrderRef: "WO-FD7B",
+    nextSteps: ["All-Star Appliance Repair, 4.7/5 (1164 reviews)"],
+    choiceReplyHint: "Reply 1 and we'll contact that vendor.",
+    dashboardUrl: "https://www.ulohome.io/admin?findVendor=1&ticket=c2c73df7",
+    workOrderRef: "WO-C2C7",
   })
-  assertEquals(body.includes("Ref: WO-"), false)
-  assertStringIncludes(body, "Pest control at 109 S Grove St")
+  assertStringIncludes(body, "Work order WO-C2C7.")
+  assertStringIncludes(body, "The dishwasher will not drain.")
+  assertStringIncludes(body, "78 Maple Ave, Unit 3, reported 2h ago.")
+  assertEquals(body.includes("this repair"), false)
+  assertEquals(body.includes("No vendor found"), false)
 })
 
 Deno.test("batch never proposes a vendor trade dispatch would reject", () => {

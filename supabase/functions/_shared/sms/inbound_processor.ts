@@ -1,3 +1,4 @@
+import type { SmsRequestTiming } from "./requestReadCache.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { InboundSMSMessage } from "./types.ts"
 import {
@@ -29,7 +30,6 @@ import {
 } from "./inboundHandlerRegistry.ts"
 import { loadAdminTakeoverActive } from "./adminConversationControl.ts"
 import { tryInboundAttachmentFollowUp } from "./inboundAttachmentFollowUp.ts"
-import { kickSmsVideoPlayback } from "./kickSmsVideoPlayback.ts"
 import { tryHandleInterpretedInbound } from "./inboundInterpretationAct.ts"
 import {
   InboundSmsError,
@@ -185,12 +185,6 @@ async function persistRehostedInboundMedia(
       return
     }
     params.inbound.mediaUrls = rehosted
-    const kick = kickSmsVideoPlayback(rehosted)
-    const runtime = (globalThis as {
-      EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void }
-    }).EdgeRuntime
-    if (runtime?.waitUntil) runtime.waitUntil(kick)
-    else void kick
   } catch (e) {
     console.error("[sms-inbound] media rehost failed", e)
   }
@@ -221,8 +215,10 @@ async function loadActiveMaintenanceIntake(
 export async function processInboundSms(
   supabase: SupabaseClient,
   inbound: InboundSMSMessage,
+  timing?: SmsRequestTiming,
 ): Promise<ProcessInboundSmsResult> {
   const smsNumber = await resolveInboundSmsNumber(supabase, inbound.to)
+  timing?.checkpoint("line_lookup")
   if (!smsNumber) {
     const pending = await lookupReleasedPendingSmsNumber(supabase, inbound.to)
     if (pending) {
@@ -275,6 +271,7 @@ export async function processInboundSms(
         }
       }
 
+      timing?.checkpoint("released_pending")
       const outboundMessageId = await trySendAutoReply(supabase, {
         conversationId,
         landlordId,
@@ -411,12 +408,14 @@ export async function processInboundSms(
     }
   }
 
+  timing?.checkpoint("account_lookup")
   const existingConversation = await findOpenConversation(supabase, {
     landlordId,
     smsNumberId: smsNumber.id,
     externalPhone: inbound.from,
   })
 
+  timing?.checkpoint("conversation_lookup")
   const resolution = await resolvePhoneIdentity(supabase, {
     fromNumber: inbound.from,
     landlordId,
@@ -468,6 +467,7 @@ export async function processInboundSms(
     },
   )
 
+  timing?.checkpoint("identity_and_conversation")
   console.info("[sms-inbound] conversation routing", {
     identity_type: identity.identity_type,
     vendor_id: identity.vendor_id,
@@ -533,8 +533,10 @@ export async function processInboundSms(
     }
   }
 
+  timing?.checkpoint("save_and_debounce")
   const handlerContext: InboundSmsHandlerContext = {
     supabase,
+    timing,
     inbound,
     landlordId,
     conversationId,
@@ -583,16 +585,19 @@ export async function processInboundSms(
           return finishHandledInbound(handlerContext, holdResult)
         }
       }
-      if (handlerContext.inbound.mediaUrls.some((url) => url.trim())) {
-        await tryInboundAttachmentFollowUp(handlerContext, { sendReply: false })
-      }
+      // Staff takeover: still save/associate media, but do not auto-reply.
+      const silentAttachment = await tryInboundAttachmentFollowUp(handlerContext, {
+        sendReply: false,
+      })
       return finishHandledInbound(handlerContext, {
         handled: true,
         workflowRoute: "admin_takeover",
+        maintenanceRequestId: silentAttachment.handled ? silentAttachment.maintenanceRequestId : undefined,
       })
     }
   }
 
+  timing?.checkpoint("takeover_and_intake_context")
   const homeCheck = await prepareHomeCheckSms(handlerContext)
   if (homeCheck) {
     // Consent stays global; Home Check photos must not become HQS documents,
@@ -619,11 +624,16 @@ export async function processInboundSms(
     })
   }
 
+  timing?.checkpoint("home_check_gate")
   const handlerResult = await tryInboundSmsHandlers(handlerContext)
+  timing?.checkpoint("specialist_handlers")
   if (handlerResult.handled) {
     return finishHandledInbound(handlerContext, handlerResult)
   }
 
+  // Captionless / follow-up resident media after specialists. Pending rent/lease
+  // keyword replies already returned above. Active intake still owns photos
+  // (decideFollowUpAttachment skips when intakeActive).
   const attachmentFollowUp = await tryInboundAttachmentFollowUp(handlerContext)
   if (attachmentFollowUp.handled) {
     return finishHandledInbound(handlerContext, attachmentFollowUp)
@@ -650,6 +660,7 @@ export async function processInboundSms(
     }
   }
 
+  timing?.checkpoint("attachments_and_interpretation")
   let workflow
   try {
     workflow = await routeInboundSmsWorkflow(supabase, {
@@ -682,6 +693,7 @@ export async function processInboundSms(
     }
   }
 
+  timing?.checkpoint("workflow")
   const outboundMessageId = await trySendAutoReply(supabase, {
     conversationId,
     landlordId,
@@ -692,6 +704,7 @@ export async function processInboundSms(
     workflowHint: workflow.replyHint,
     source: `workflow_${workflow.route}`,
     workflowRoute: workflow.route,
+    inboundMessageId: messageId,
     inboundBody: inbound.body,
     skipGenericFallback: workflow.metadata?.skipGenericAutoReply === true ||
       workflow.route === "vendor_response",

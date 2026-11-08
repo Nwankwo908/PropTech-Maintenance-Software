@@ -197,7 +197,7 @@ function KpiCard({
         <p className="shrink-0 whitespace-nowrap text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
           {value}
         </p>
-        {delta != null ? (
+        {delta != null && delta !== 0 ? (
           <span
             className={[
               'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] leading-5 tracking-[-0.1504px]',

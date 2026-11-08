@@ -9,6 +9,7 @@ export const ADMIN_DEMO_ALLOWED_EMAILS = [
   'demo@ulohome.io',
   'limitedalpha1@ulohome.io',
   'limitedalpha2@ulohome.io',
+  'limitedalpha3@ulohome.io',
 ] as const
 
 /** Production landlord portal accounts (client admin login only). */

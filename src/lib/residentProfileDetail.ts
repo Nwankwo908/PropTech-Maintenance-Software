@@ -44,6 +44,24 @@ export type ResidentCommunicationItem = {
   preview: string
   channel: string
   dateLabel: string
+  /** Raw sms_conversations.conversation_type when known. */
+  conversationType?: string | null
+}
+
+/** Prefer resident intake for profile “See thread”; fall back to newest. */
+export function pickResidentProfileThreadId(
+  communications: readonly ResidentCommunicationItem[],
+): string | null {
+  const intake = communications.find(
+    (item) => (item.conversationType ?? '').trim().toLowerCase() === 'resident_intake',
+  )
+  if (intake?.id?.trim()) return intake.id.trim()
+  const nonVendor = communications.find((item) => {
+    const type = (item.conversationType ?? '').trim().toLowerCase()
+    return type !== 'vendor_alert' && Boolean(item.id?.trim())
+  })
+  if (nonVendor?.id?.trim()) return nonVendor.id.trim()
+  return communications[0]?.id?.trim() || null
 }
 
 export type ResidentProfileDetail = {

@@ -56,7 +56,7 @@ export function mutateSearchParams(
 }
 
 /** Params that identify an open panel/modal — excluded from scroll restore keys when desired. */
-export const ADMIN_PANEL_PARAM_KEYS = ['run', 'thread'] as const
+export const ADMIN_PANEL_PARAM_KEYS = ['run', 'thread', 'msg'] as const
 
 export function listScrollKey(pathname: string, search: string): string {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)

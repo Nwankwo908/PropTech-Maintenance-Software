@@ -38,7 +38,7 @@ const SMALL_TALK =
   /\b(how are you|how'?s it going|what'?s up|just saying hi|checking in|good to (?:meet|hear from) you)\b/i
 
 const HUMAN_REQUEST =
-  /\b((speak|talk|chat)\s+(to|with)\s+(a\s+)?(person|human|someone|manager|landlord|owner|agent|representative)|real\s+person|human\s+please|call\s+me|have\s+(someone|a\s+manager)\s+call|connect\s+me\s+(to|with)|transfer\s+me)\b/i
+  /\b((speak|talk|chat)\s+(to|with)\s+(a\s+)?(person|human|someone|manager|landlord|owner|agent|representative)|(?:want|need)\s+(?:a\s+)?(?:human|real\s+person)|real\s+person|human\s+please|call\s+me|have\s+(someone|(?:my|the)\s+landlord|a\s+manager)\s+call|connect\s+me\s+(to|with)|transfer\s+me)\b/i
 
 const COMPLAINT_OR_LEGAL =
   /\b(complaint|complain|lawyer|attorney|legal\s+(notice|action|matter)|sue|lawsuit|court|harass(?:ment|ing)?|discriminat(?:e|ion)|fair\s+housing|habitability\s+claim|consumer\s+protection)\b/i
@@ -46,9 +46,9 @@ const COMPLAINT_OR_LEGAL =
 export function classifyAssistantOtherMessage(body: string): AssistantOtherKind {
   const text = body.trim()
   if (!text) return "unclear"
-  if (GREETING_OR_THANKS.test(text) || SMALL_TALK.test(text)) return "small_talk"
   if (HUMAN_REQUEST.test(text)) return "human_request"
   if (COMPLAINT_OR_LEGAL.test(text)) return "complaint_or_legal"
+  if (GREETING_OR_THANKS.test(text) || SMALL_TALK.test(text)) return "small_talk"
   // Short non-repair notes without a clear ask → clarify once.
   if (text.split(/\s+/).length <= 6 && !/[?]/.test(text)) return "unclear"
   return "unclear"
@@ -128,18 +128,16 @@ export function buildUnclearClarifySms(firstName: string): string {
   ].join("\n")
 }
 
-export function buildEscalatedOtherSms(firstName: string, kind: AssistantOtherKind): string {
-  const who = firstName.trim() || "there"
-  const why = kind === "human_request"
-    ? "I've passed your message to the property team so someone can follow up with you here."
+export function buildEscalatedOtherSms(firstName: string, kind: AssistantOtherKind, residentMessage = ""): string {
+  if (namesLandlord(residentMessage)) {
+    const outcome = /\bcall\b/i.test(residentMessage)
+      ? "I've asked your landlord to call you."
+      : "I've passed your message to your landlord so they can help."
+    return `Hi ${firstName.trim() || "there"},\n\n${outcome}`
+  }
+  return kind === "human_request"
+    ? "I've passed your message to the property team."
     : "I've passed your message to the property team so they can help with this."
-  return [
-    `Hi ${who},`,
-    "",
-    "This is the property management team.",
-    "",
-    why,
-  ].join("\n")
 }
 
 /** True only when this attempt handed a text to the property-team phone. */
@@ -228,4 +226,29 @@ export function buildSameDayUrgencySms(input: {
     lines.push(input.handlingTip.trim())
   }
   return lines.join("\n")
+}
+
+/** Explicit confusion gets a focused recovery, never the same generic menu. */
+export function needsConversationRecovery(body: string): boolean {
+  return /\b(not understanding|don'?t understand|already told you|same question|going in circles|not what i (?:said|meant))\b/i.test(body)
+}
+export function buildConversationRecoverySms(firstName: string, pendingQuestion?: string): string {
+  return `Hi ${firstName.trim() || "there"},\n\nI may have misunderstood. ${pendingQuestion?.trim() || "What did I get wrong about your request?"}`
+}
+
+export function isSimpleCourtesy(body: string): boolean {
+  return GREETING_OR_THANKS.test(body.trim())
+}
+
+/** Mirror the requested role without changing routing or contact selection. */
+function namesLandlord(message: string): boolean {
+  return /\blandlord\b/i.test(message) && !/\bnot\s+(?:my\s+|the\s+)?landlord\b/i.test(message)
+}
+
+export function buildHandoffUnavailableSms(firstName: string, residentMessage = ""): string {
+  const named = namesLandlord(residentMessage)
+  const recipient = named ? "your landlord" : "the property team"
+  const contact = named ? "your landlord" : "your property manager"
+  const help = named ? "they can help" : "a person can help"
+  return `Hi ${firstName.trim() || "there"},\n\nI couldn't notify ${recipient} automatically. Please contact ${contact} directly so ${help}.`
 }

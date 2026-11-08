@@ -31,7 +31,7 @@ Deno.test("routine jobs wait for approval when AI dispatch is off", () => {
   )
 })
 
-Deno.test("emergencies and AI-dispatch accounts are not held", () => {
+Deno.test("emergencies keep outreach but routine AI-dispatch accounts require approval", () => {
   assertEqual(
     shouldHoldRoutineVendorOutreach({
       allowAiDispatch: false,
@@ -47,8 +47,8 @@ Deno.test("emergencies and AI-dispatch accounts are not held", () => {
       emergency: false,
       landlordAcknowledged: false,
     }),
-    false,
-    "dispatch-on accounts keep the current path",
+    true,
+    "dispatch-on routine jobs still require approval",
   )
 })
 

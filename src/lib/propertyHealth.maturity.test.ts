@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPropertyHealthReport,
+  computePropertyHealthScope,
   hasPropertyHealthOperationalSignal,
   PROPERTY_HEALTH_OPS_MATURITY_DAYS,
   resolvePropertyHealthKpiValue,
@@ -119,7 +120,7 @@ describe('property activation vs health insights', () => {
     expect(report.portfolio?.status).toBe('at_risk')
     expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
     expect(resolvePropertyHealthKpiValue(report.portfolio?.status, report.portfolio?.score, 'over100')).toBe(
-      '50 / 100',
+      '50%',
     )
     expect(report.buildings[0]?.gaps?.[0]).toEqual({
       dimension: 'vendor_coverage',
@@ -272,3 +273,41 @@ describe('property activation vs health insights', () => {
     expect(report.buildings[0]?.status).not.toBe('pending_setup')
   })
 })
+
+it('uses asset property IDs before matching building names in Home Check health scoring', () => {
+  const inputs = { units: [activeUnit], tickets: [], pmTasks: [], feedback: [], vendorMetrics: [], now }
+  const property = { id: 'prop-sunset', name: 'Sunset' }
+  const score = (assets: PropertyHealthAsset[]) => computePropertyHealthScope({ ...inputs, assets }, { building: 'Sunset', property })?.components.find(c => c.key === 'documentation')?.score
+  const heater = { ...youngRoof, applianceType: 'water_heater' }
+  const heating = { ...youngRoof, applianceType: 'furnace' }
+  const empty = score([])
+  expect(score([{ ...heater, propertyId: 'different-property' }, { ...heating, propertyId: 'different-property' }])).toBe(empty)
+  expect(score([heater, heating])).toBeGreaterThan(empty!)
+  expect(score([{ ...heater, propertyId: null }, { ...heating, propertyId: null }])).toBeGreaterThan(empty!)
+})
+
+const standaloneAssets:PropertyHealthAsset[]=['water_heater','hvac'].map(applianceType=>({applianceType,propertyId:'home',building:'Standalone',estimatedAgeYears:13,usefulLifeYears:15,replacementUrgency:null,condition:'fair',deficiencies:[]}));
+it('scores a standalone single-family Home Check without inventing occupancy or database units',()=>{
+ const input={units:[],tickets:[],pmTasks:[],feedback:[],vendorMetrics:[],residents:[],
+  assets:standaloneAssets.map(a=>({...a,propertyId:'home',building:'Standalone'})),
+  canonicalProperties:[{id:'home',name:'Standalone',propertyType:'single_family'}],now};
+ const report=buildPropertyHealthReport(input);
+ expect(report.buildings[0].score).not.toBeNull();
+ expect(report.buildings[0].status).not.toBe('pending_setup');
+ expect(report.buildings[0].trackedUnitCount).toBe(1);
+ const direct=computePropertyHealthScope(input,{building:'Standalone',property:input.canonicalProperties[0]});
+ expect(direct?.components.find(c=>c.key==='occupancy')?.score).toBe(0);
+ expect(input.units).toEqual([]);
+});
+it.each(['foreign',''])('never uses %s appliance evidence to activate a standalone home',propertyId=>{
+ const result=computePropertyHealthScope({units:[],tickets:[],pmTasks:[],feedback:[],vendorMetrics:[],assets:standaloneAssets.map(a=>({...a,propertyId,building:'Standalone'})),now},
+ {building:'Standalone',property:{id:'home',name:'Standalone',propertyType:'single_family'}});
+ expect(result?.status).toBe('pending_setup');
+});
+
+it('formats scored, zero and unavailable health KPIs without fractions',()=>{
+ expect(resolvePropertyHealthKpiValue('critical',31,'over100')).toBe('31%');
+ expect(resolvePropertyHealthKpiValue('critical',0)).toBe('0%');
+ expect(resolvePropertyHealthKpiValue('unknown',null,'over100')).toBe('—');
+ expect(resolvePropertyHealthKpiValue('pending_setup',null)).toBe('Pending');
+});

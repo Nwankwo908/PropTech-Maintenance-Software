@@ -3,7 +3,7 @@ export type AiAttemptEvent = {
   event: "ai.attempt";
   schemaVersion: 1;
   traceId: string;
-  operation: "maintenance.classify" | "ask_ulo.synthesize";
+  operation: "maintenance.classify" | "ask_ulo.synthesize" | "sms.recovery" | "sms.priorities_copy" | "sms.intake_opening_copy";
   provider: "openai";
   model: string;
   attempt: number;

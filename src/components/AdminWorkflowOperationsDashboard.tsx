@@ -9,6 +9,11 @@ import {
   type ReactNode,
 } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import needsYourAttentionIcon from '@/assets/landing/Needs your attention.svg'
+import waitingOnOthersIcon from '@/assets/landing/Waiting on others.svg'
+import scheduledTodayIcon from '@/assets/calendar.png'
+import overdueIcon from '@/assets/landing/Overdue.svg'
+import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import {
   startLifecycleWorkflow,
   loadResidentsForUnit,
@@ -25,62 +30,272 @@ import {
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
 import {
+  WORKFLOW_CATEGORY_BADGE,
   WORKFLOW_PIPELINE_PAGE_SUBTITLE,
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
   type WorkflowKanbanCard,
+  type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
+import {
+  computeActiveTasksKpis,
+  type ActiveTasksKpiBucket,
+} from '@/lib/activeTasksKpis'
 import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/workflowPipelineDetail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { WorkflowKanbanBoard } from '@/components/workflowKanban/WorkflowKanbanBoard'
-import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
 import {
   insightWorkOrderHref,
   lookupWorkflowRunIdForTicket,
   pickWorkflowRunIdForTicket,
 } from '@/lib/insightWorkOrderDestination'
-import { mutateSearchParams, readCsvSet, writeCsvSet } from '@/lib/adminListUrlState'
+import {
+  mutateSearchParams,
+  writeStringParam,
+} from '@/lib/adminListUrlState'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
 type KanbanCard = WorkflowKanbanCard
 
-type WorkflowFilterKey = 'maintenance' | 'lease' | 'critical'
+type ActiveTasksMetricFilter = ActiveTasksKpiBucket
 
-const WORKFLOW_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease', 'critical'])
+const UNASSIGNED_ASSIGNEE = '__unassigned__'
 
-const WORKFLOW_FILTER_OPTIONS: { id: WorkflowFilterKey; label: string }[] = [
-  { id: 'maintenance', label: 'Maintenance' },
-  { id: 'lease', label: 'Lease' },
-  { id: 'critical', label: 'Critical' },
-]
+const ACTIVE_TASKS_METRIC_KEYS = new Set<ActiveTasksMetricFilter>([
+  'needs_attention',
+  'waiting_on_others',
+  'scheduled_today',
+  'overdue',
+])
 
-function readWorkflowFilters(params: URLSearchParams): Set<WorkflowFilterKey> {
-  const next = new Set<WorkflowFilterKey>()
-  for (const key of readCsvSet(params, 'filters')) {
-    if (WORKFLOW_FILTER_KEYS.has(key as WorkflowFilterKey)) {
-      next.add(key as WorkflowFilterKey)
-    }
-  }
-  return next
+const ACTIVE_TASKS_METRIC_LABELS: Record<ActiveTasksMetricFilter, string> = {
+  needs_attention: 'Needs your attention',
+  waiting_on_others: 'Waiting on others',
+  scheduled_today: 'Scheduled today',
+  overdue: 'Overdue',
 }
 
-const CATEGORY_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease'])
+const TASK_TYPE_OPTIONS: { value: WorkflowKanbanCategory; label: string }[] = (
+  Object.keys(WORKFLOW_CATEGORY_BADGE) as WorkflowKanbanCategory[]
+).map((id) => ({
+  value: id,
+  label: WORKFLOW_CATEGORY_BADGE[id].label,
+}))
 
-function cardMatchesWorkflowFilters(card: KanbanCard, filters: Set<WorkflowFilterKey>): boolean {
-  if (filters.size === 0) return true
+const URGENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'emergency', label: 'Emergency' },
+  { value: 'urgent', label: 'Urgent' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'low', label: 'Low' },
+]
 
-  const categoryFilters = WORKFLOW_FILTER_OPTIONS.filter(
-    (option) => CATEGORY_FILTER_KEYS.has(option.id) && filters.has(option.id),
-  ).map((option) => option.id as 'maintenance' | 'lease')
+function parseActiveTasksMetricFilter(raw: string | null | undefined): ActiveTasksMetricFilter | null {
+  const value = raw?.trim()
+  if (value && ACTIVE_TASKS_METRIC_KEYS.has(value as ActiveTasksMetricFilter)) {
+    return value as ActiveTasksMetricFilter
+  }
+  return null
+}
 
-  const wantsCritical = filters.has('critical')
-  const categoryOk =
-    categoryFilters.length === 0 ||
-    categoryFilters.includes(card.category as 'maintenance' | 'lease')
-  const criticalOk = !wantsCritical || card.critical
+function FilterSelect({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: readonly { value: string; label: string }[]
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className="relative shrink-0">
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="sa-surface peer h-9 min-w-[140px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none hover:border-black/10 hover:bg-[#e8eaee] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
+      >
+        <option value="">{label}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+    </div>
+  )
+}
 
-  return categoryOk && criticalOk
+function KpiCard({
+  label,
+  value,
+  title,
+  icon,
+  selected = false,
+  onSelect,
+}: {
+  label: string
+  value: string
+  title?: string
+  icon?: string
+  selected?: boolean
+  onSelect?: () => void
+}) {
+  const className = [
+    'sa-enter-scale flex min-w-0 items-center gap-2 rounded-[10px] border px-3 py-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4',
+    onSelect
+      ? 'cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#101828]/20'
+      : '',
+    selected ? 'border-[#186179] bg-[#f9fafb]' : 'border-[#e5e7eb] bg-white',
+    onSelect && !selected ? 'hover:bg-[#f9fafb]' : '',
+  ].join(' ')
+  const body = (
+    <>
+      {icon ? (
+        <span
+          className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+          aria-hidden
+        >
+          <img src={icon} alt="" className="size-[1.15rem] object-contain" />
+        </span>
+      ) : null}
+      <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+        {label}
+      </p>
+      <p className="shrink-0 whitespace-nowrap text-[22px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[28px]">
+        {value}
+      </p>
+      {onSelect ? (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          className="ml-auto size-4 shrink-0 text-[#6a7282]"
+          aria-hidden
+        >
+          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </>
+  )
+  if (!onSelect) {
+    return (
+      <div className={className} title={title}>
+        {body}
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={className}
+      title={title}
+    >
+      {body}
+    </button>
+  )
+}
+
+function KpiCardSkeleton() {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4">
+      <div className="size-8 shrink-0 animate-pulse rounded-[8px] bg-[#f3f4f6]" />
+      <div className="h-4 w-28 animate-pulse rounded bg-[#f3f4f6]" />
+      <div className="h-7 w-10 animate-pulse rounded bg-[#f3f4f6]" />
+      <div className="ml-auto size-4 shrink-0 animate-pulse rounded bg-[#f3f4f6]" />
+    </div>
+  )
+}
+
+function ActiveTasksMetricFilterChip({
+  filter,
+  onClear,
+}: {
+  filter: ActiveTasksMetricFilter
+  onClear: () => void
+}) {
+  const label = ACTIVE_TASKS_METRIC_LABELS[filter]
+  return (
+    <span className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f3f4f6] pl-3 pr-1 text-[12px] font-medium text-[#364153]">
+      {label}
+      <button
+        type="button"
+        aria-label={`Remove ${label} filter`}
+        onClick={onClear}
+        className="inline-flex size-6 cursor-pointer items-center justify-center rounded-full text-[#6a7282] outline-none hover:bg-[#e5e7eb] hover:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#186179]"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-3.5" aria-hidden>
+          <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+        </svg>
+      </button>
+    </span>
+  )
+}
+
+function cardMatchesSearch(card: KanbanCard, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const haystack = [
+    card.title,
+    card.context,
+    card.workOrderRef,
+    card.workOrderSummary,
+    card.issueCategoryLabel,
+    card.assignedVendorName,
+    card.propertyLabel,
+    card.category,
+    card.urgency,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(q)
+}
+
+function cardPropertyKey(card: KanbanCard): string {
+  return card.propertyId?.trim() || card.propertyLabel?.trim() || ''
+}
+
+function cardMatchesDimensionFilters(
+  card: KanbanCard,
+  filters: {
+    property: string
+    taskType: string
+    urgency: string
+    assignee: string
+  },
+): boolean {
+  if (filters.property) {
+    const key = cardPropertyKey(card)
+    if (!key || key !== filters.property) return false
+  }
+  if (filters.taskType && card.category !== filters.taskType) return false
+  if (filters.urgency) {
+    const urgency = card.urgency?.trim().toLowerCase() || ''
+    if (urgency !== filters.urgency) return false
+  }
+  if (filters.assignee) {
+    const vendorId = card.assignedVendorId?.trim() || ''
+    if (filters.assignee === UNASSIGNED_ASSIGNEE) {
+      if (vendorId) return false
+    } else if (vendorId !== filters.assignee) {
+      return false
+    }
+  }
+  return true
 }
 
 function StartLifecycleWorkflowModal({
@@ -433,8 +648,39 @@ export function AdminWorkflowOperationsDashboard() {
 
   const selectedRunId = searchParams.get('run')?.trim() || null
   const ticketDeepLink = searchParams.get('ticket')?.trim() || null
-  const activeFilters = useMemo(() => readWorkflowFilters(searchParams), [searchParams])
+  const metricFilter = useMemo(
+    () => parseActiveTasksMetricFilter(searchParams.get('metric')),
+    [searchParams],
+  )
+  const searchQuery = searchParams.get('q') ?? ''
+  const propertyFilter = searchParams.get('property')?.trim() || ''
+  const taskTypeFilter = searchParams.get('type')?.trim() || ''
+  const urgencyFilter = searchParams.get('urgency')?.trim().toLowerCase() || ''
+  const assigneeFilter = searchParams.get('assignee')?.trim() || ''
+  const setSearchQuery = useCallback(
+    (value: string) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'q', value)
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
+  const writeDimensionFilter = useCallback(
+    (key: 'property' | 'type' | 'urgency' | 'assignee', value: string) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, key, value)
+        }),
+        { replace: true },
+      )
+    },
+    [searchParams, setSearchParams],
+  )
   const [data, setData] = useState<AdminWorkflowDashboardData | null>(null)
+  const [vendorNameById, setVendorNameById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [highlightRunId, setHighlightRunId] = useState<string | null>(null)
@@ -469,11 +715,11 @@ export function AdminWorkflowOperationsDashboard() {
     )
   }, [searchParams, setSearchParams])
 
-  const writeFilters = useCallback(
-    (filters: Set<WorkflowFilterKey>) => {
+  const writeMetricFilter = useCallback(
+    (metric: ActiveTasksMetricFilter | null) => {
       setSearchParams(
         mutateSearchParams(searchParams, (next) => {
-          writeCsvSet(next, 'filters', filters)
+          writeStringParam(next, 'metric', metric ?? '')
         }),
         { replace: true },
       )
@@ -481,18 +727,109 @@ export function AdminWorkflowOperationsDashboard() {
     [searchParams, setSearchParams],
   )
 
+  const toggleMetricFilter = useCallback(
+    (metric: ActiveTasksMetricFilter) => {
+      writeMetricFilter(metricFilter === metric ? null : metric)
+    },
+    [metricFilter, writeMetricFilter],
+  )
+
   const allRuns = useMemo<AdminWorkflowRow[]>(() => {
     if (!data) return []
     return collectAdminWorkflowRuns(data)
   }, [data])
 
-  const cards = useMemo<KanbanCard[]>(() => {
+  const allCards = useMemo<KanbanCard[]>(() => {
     const runMetadata = data?.runMetadata ?? {}
-    const all = allRuns
+    return allRuns
       .filter((row) => !isCancelledOnActiveTasks(row))
-      .map((row) => buildWorkflowKanbanCard(row, runMetadata[row.id]))
-    return all.filter((card) => cardMatchesWorkflowFilters(card, activeFilters))
-  }, [allRuns, activeFilters, data?.runMetadata])
+      .map((row) => {
+        const card = buildWorkflowKanbanCard(row, runMetadata[row.id])
+        const vendorId = card.assignedVendorId?.trim() || ''
+        if (!vendorId) return card
+        const vendorName = vendorNameById.get(vendorId)?.trim() || null
+        return vendorName ? { ...card, assignedVendorName: vendorName } : card
+      })
+  }, [allRuns, data?.runMetadata, vendorNameById])
+
+  const kpis = useMemo(() => computeActiveTasksKpis(allCards), [allCards])
+
+  const dimensionFilters = useMemo(
+    () => ({
+      property: propertyFilter,
+      taskType: taskTypeFilter,
+      urgency: urgencyFilter,
+      assignee: assigneeFilter,
+    }),
+    [propertyFilter, taskTypeFilter, urgencyFilter, assigneeFilter],
+  )
+
+  const propertyOptions = useMemo(() => {
+    const byKey = new Map<string, string>()
+    for (const card of allCards) {
+      const key = cardPropertyKey(card)
+      const label = card.propertyLabel?.trim()
+      if (!key || !label) continue
+      if (!byKey.has(key)) byKey.set(key, label)
+    }
+    return [...byKey.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [allCards])
+
+  const taskTypeOptions = useMemo(() => {
+    const present = new Set(allCards.map((card) => card.category))
+    return TASK_TYPE_OPTIONS.filter((option) => present.has(option.value))
+  }, [allCards])
+
+  const urgencyOptions = useMemo(() => {
+    const present = new Set(
+      allCards
+        .map((card) => card.urgency?.trim().toLowerCase() || '')
+        .filter(Boolean),
+    )
+    const fromStatic = URGENCY_OPTIONS.filter((option) => present.has(option.value))
+    const extras = [...present]
+      .filter((value) => !URGENCY_OPTIONS.some((option) => option.value === value))
+      .sort()
+      .map((value) => ({
+        value,
+        label: value.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase()),
+      }))
+    return [...fromStatic, ...extras]
+  }, [allCards])
+
+  const assigneeOptions = useMemo(() => {
+    const byId = new Map<string, string>()
+    let hasUnassigned = false
+    for (const card of allCards) {
+      const vendorId = card.assignedVendorId?.trim()
+      if (!vendorId) {
+        hasUnassigned = true
+        continue
+      }
+      const name =
+        card.assignedVendorName?.trim() ||
+        vendorNameById.get(vendorId)?.trim() ||
+        'Assigned vendor'
+      if (!byId.has(vendorId)) byId.set(vendorId, name)
+    }
+    const options = [...byId.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    if (hasUnassigned) {
+      options.unshift({ value: UNASSIGNED_ASSIGNEE, label: 'Unassigned' })
+    }
+    return options
+  }, [allCards, vendorNameById])
+
+  const cards = useMemo<KanbanCard[]>(() => {
+    let filtered = allCards.filter((card) => cardMatchesDimensionFilters(card, dimensionFilters))
+    filtered = filtered.filter((card) => cardMatchesSearch(card, searchQuery))
+    if (!metricFilter) return filtered
+    const allowed = new Set(kpis.runIdsByBucket[metricFilter])
+    return filtered.filter((card) => allowed.has(card.id))
+  }, [allCards, dimensionFilters, searchQuery, metricFilter, kpis])
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -503,9 +840,47 @@ export function AdminWorkflowOperationsDashboard() {
 
     setLoading(true)
     setError(null)
+    const loadStartedAt =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
 
     try {
-      setData(await fetchAdminWorkflowDashboard())
+      const dashboard = await fetchAdminWorkflowDashboard()
+      setData(dashboard)
+      const vendorIds = [
+        ...new Set(
+          collectAdminWorkflowRuns(dashboard)
+            .map((row) => row.assignedVendorId?.trim() || '')
+            .filter(Boolean),
+        ),
+      ]
+      if (vendorIds.length === 0) {
+        setVendorNameById(new Map())
+      } else {
+        const { data: vendors, error: vendorsError } = await supabase
+          .from('vendors')
+          .select('id, name')
+          .eq('landlord_id', getActiveLandlordId())
+          .in('id', vendorIds)
+        if (vendorsError) {
+          console.error('[active-tasks] vendors fetch', vendorsError.message)
+          setVendorNameById(new Map())
+        } else {
+          const next = new Map<string, string>()
+          for (const vendor of vendors ?? []) {
+            const id = typeof vendor.id === 'string' ? vendor.id.trim() : ''
+            const name = typeof vendor.name === 'string' ? vendor.name.trim() : ''
+            if (id && name) next.set(id, name)
+          }
+          setVendorNameById(next)
+        }
+      }
+      const elapsedMs =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartedAt
+      if (import.meta.env.DEV) {
+        console.info(
+          `[active-tasks] dashboard hydrate ${Math.round(elapsedMs)}ms runs=${collectAdminWorkflowRuns(dashboard).length}`,
+        )
+      }
     } catch (err) {
       setError(getErrorMessage(err, 'Something went wrong. Please try again.'))
     } finally {
@@ -571,9 +946,18 @@ export function AdminWorkflowOperationsDashboard() {
     let cancelled = false
     setPipelineLoading(true)
     setPipelineDetail(null)
+    const detailStartedAt =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
 
     void fetchWorkflowPipelineDetail(selectedRunId, allRuns, data.runMetadata).then((result) => {
       if (cancelled) return
+      const elapsedMs =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - detailStartedAt
+      if (import.meta.env.DEV) {
+        console.info(
+          `[active-tasks] pipeline detail ${Math.round(elapsedMs)}ms run=${selectedRunId}`,
+        )
+      }
       setPipelineDetail(result)
       setPipelineLoading(false)
     })
@@ -610,13 +994,6 @@ export function AdminWorkflowOperationsDashboard() {
     }
   }, [load])
 
-  function toggleWorkflowFilter(key: WorkflowFilterKey) {
-    const next = new Set(activeFilters)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    writeFilters(next)
-  }
-
   return (
     <main className="w-full min-w-0 overflow-x-hidden px-4 pb-12 sm:px-6 lg:px-8">
       <div className="py-6">
@@ -626,6 +1003,52 @@ export function AdminWorkflowOperationsDashboard() {
         <p className="sa-enter mt-1 max-w-3xl text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {WORKFLOW_PIPELINE_PAGE_SUBTITLE}
         </p>
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+        {loading ? (
+          <>
+            <KpiCardSkeleton />
+            <KpiCardSkeleton />
+            <KpiCardSkeleton />
+            <KpiCardSkeleton />
+          </>
+        ) : (
+          <>
+            <KpiCard
+              label="Needs your attention"
+              value={String(kpis.needsYourAttention)}
+              icon={needsYourAttentionIcon}
+              selected={metricFilter === 'needs_attention'}
+              onSelect={() => toggleMetricFilter('needs_attention')}
+              title="Tasks that need a landlord decision — escalations, missing vendors, and stuck assignments."
+            />
+            <KpiCard
+              label="Waiting on others"
+              value={String(kpis.waitingOnOthers)}
+              icon={waitingOnOthersIcon}
+              selected={metricFilter === 'waiting_on_others'}
+              onSelect={() => toggleMetricFilter('waiting_on_others')}
+              title="Open work Ulo is coordinating while waiting on a vendor or resident."
+            />
+            <KpiCard
+              label="Scheduled today"
+              value={String(kpis.scheduledToday)}
+              icon={scheduledTodayIcon}
+              selected={metricFilter === 'scheduled_today'}
+              onSelect={() => toggleMetricFilter('scheduled_today')}
+              title="Confirmed visit windows that fall on today’s calendar."
+            />
+            <KpiCard
+              label="Overdue"
+              value={String(kpis.overdue)}
+              icon={overdueIcon}
+              selected={metricFilter === 'overdue'}
+              onSelect={() => toggleMetricFilter('overdue')}
+              title="Open tasks past their response time or due date."
+            />
+          </>
+        )}
       </div>
 
       <StartWorkflowChooser
@@ -667,12 +1090,61 @@ export function AdminWorkflowOperationsDashboard() {
 
       {/* Workflow Pipeline (kanban) — grow with content; AdminLayout owns vertical scroll */}
       <section className="sa-surface flex w-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <AdminFilterToolbar
-          options={WORKFLOW_FILTER_OPTIONS}
-          activeFilters={activeFilters}
-          onToggle={toggleWorkflowFilter}
-          onClear={() => writeFilters(new Set())}
-        />
+        <div className="flex flex-wrap items-center gap-3 border-b border-[#e5e7eb] px-6 py-3 sm:gap-4">
+          <div className="relative min-w-0 w-full flex-1 sm:min-w-[220px] sm:max-w-md">
+            <span className="pointer-events-none absolute left-3 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center">
+              <img
+                src={magnifyingGlassIcon}
+                alt=""
+                className="size-4 object-contain opacity-60"
+                width={16}
+                height={16}
+                decoding="async"
+                aria-hidden
+              />
+            </span>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search tasks by title, property, or work order…"
+              className="sa-surface h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none hover:border-black/10 hover:bg-[#dfe0e6] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
+              aria-label="Search active tasks"
+            />
+          </div>
+          <FilterSelect
+            label="All properties"
+            options={propertyOptions}
+            value={propertyFilter}
+            onChange={(value) => writeDimensionFilter('property', value)}
+          />
+          <FilterSelect
+            label="All task types"
+            options={taskTypeOptions}
+            value={taskTypeFilter}
+            onChange={(value) => writeDimensionFilter('type', value)}
+          />
+          <FilterSelect
+            label="All urgency"
+            options={urgencyOptions}
+            value={urgencyFilter}
+            onChange={(value) => writeDimensionFilter('urgency', value)}
+          />
+          <FilterSelect
+            label="All assignees"
+            options={assigneeOptions}
+            value={assigneeFilter}
+            onChange={(value) => writeDimensionFilter('assignee', value)}
+          />
+          {metricFilter ? (
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <ActiveTasksMetricFilterChip
+                filter={metricFilter}
+                onClear={() => writeMetricFilter(null)}
+              />
+            </div>
+          ) : null}
+        </div>
 
         <WorkflowKanbanBoardErrorBoundary onRetry={() => void load()}>
           <WorkflowKanbanBoard

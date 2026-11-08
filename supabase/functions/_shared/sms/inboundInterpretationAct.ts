@@ -1,3 +1,8 @@
+import { isExplicitNewRepair } from "./explicitNewRepair.ts"
+import { trySubmittedMaintenanceConfirmation } from "./submittedMaintenanceConfirmation.ts"
+import { planLeaseInfoReply } from "./leaseInfoReply.ts"
+import { recoverConversation } from "./aiConversationRecovery.ts"
+import { isHandoffRequest, isNegativeHandoffRequest, makePendingHandoff, loadHandoffContacts, resolveHandoffTarget, buildResolvedHandoffReply, handoffReachedContact, type HandoffContact } from './handoffContacts.ts'
 /**
  * Act on a resolved inbound SMS interpretation (lease, rent, status, …).
  * Explicit confirm is still required before mutating a work order or schedule.
@@ -52,10 +57,13 @@ import { hasStrongRepairAsk } from "../../../../shared/maintenance/tenantInspect
 import { buildResidentRepairClosedSms } from "../../../../shared/maintenance/residentRepairClosedSms.ts"
 import {
   buildEscalatedOtherSms,
+  buildHandoffUnavailableSms,
   buildSmallTalkDuringIntakeSms,
   buildSmallTalkSms,
   buildUnclearClarifySms,
   planAssistantOtherReply,
+  needsConversationRecovery,
+  buildConversationRecoverySms,
   shouldEscalateAssistantOther,
 } from "./tenantAssistantReply.ts"
 import {
@@ -433,7 +441,7 @@ async function maybeReleaseIntake(
   intent: TenantSmsIntent,
   escalate: boolean,
 ): Promise<string | null> {
-  if (!activeIntake) return null
+  if (!activeIntake || ["lease_info", "rent_balance", "rent_late"].includes(intent)) return null
   const { runId } = await releaseMaintenanceIntakePin(supabase, {
     landlordId: ctx.landlordId,
     conversationId: ctx.conversationId,
@@ -774,7 +782,6 @@ async function handleLeaseInfo(
   const dueLabel = profile?.rent_due_day
     ? formatRentDueDayLabel(profile.rent_due_day)
     : null
-  const who = firstName(profile?.full_name)
   const askedCopy = topic === "lease_copy"
   // Never look up / attach a PDF for date-only asks — wrong-tenant risk.
   const documentUrl = askedCopy
@@ -784,74 +791,49 @@ async function handleLeaseInfo(
       unit: profile?.unit ?? null,
     })
     : null
-  const hasInfo = Boolean(start || end || monthly > 0)
+  const leaseReply = planLeaseInfoReply({topic,start,end,documentUrl,
+    rentLine:monthly > 0 ? `Your current rent is ${formatMoney(monthly)} per month.` : null,
+    dueLine:dueLabel ? `Rent is due ${dueLabel}.` : null})
   const attachedCopy = askedCopy && Boolean(documentUrl)
-  const missing = !hasInfo && !attachedCopy
-  const runId = await maybeReleaseIntake(
-    ctx.supabase,
-    ctx,
-    intake,
-    activeIntake,
-    "lease_info",
-    missing,
-  )
+  const missing = leaseReply.missing !== null
+  const runId = await maybeReleaseIntake(ctx.supabase,ctx,intake,activeIntake,"lease_info",missing)
+  const lines = [...leaseReply.lines]
 
-  const lines = [
-    `Hi ${who},`,
-    "",
-    "This is the property management team.",
-    "",
-  ]
-  if (start && end) {
-    lines.push(`Your lease started ${start} and ends ${end}.`)
-  } else if (end) {
-    lines.push(`Your lease ends ${end}.`)
-  } else if (start) {
-    lines.push(`Your lease started ${start}.`)
-  }
-  if (monthly > 0) {
-    lines.push(`Your current rent is ${formatMoney(monthly)} per month.`)
-  }
-  if (dueLabel) {
-    lines.push(`Rent is due ${dueLabel}.`)
-  }
-  // Only attach a PDF when they asked for a copy, and only after a confident
-  // identity match. Date questions stay dates-only — never guess another tenant's file.
-  if (askedCopy && documentUrl) {
-    lines.push("Here's a copy of your lease:")
-    lines.push(documentUrl)
-  } else if (askedCopy && hasInfo) {
-    lines.push(
-      "I don't have the lease file on this thread, but the details above are what's on file. Reply here if you need anything else.",
-    )
-  }
-
+  let leaseNoticeDelivered = false
   if (missing) {
-    lines.push(
-      "I don't have your lease details on file yet. I've let the property team know so they can follow up here.",
-    )
-    void notifyLandlordNeedsAttention(ctx.supabase, {
+    const delivery = await notifyLandlordNeedsAttention(ctx.supabase, {
       landlordId: ctx.landlordId,
       kind: "lease_info_missing",
+      smsBody: `Ulo: ${profile?.full_name?.trim() || "A resident"}${profile?.building?.trim() ? " at " + profile.building.trim() : ""} ${leaseReply.question}. Please ${leaseReply.request} in Ulo.`,
       headline: "Leasing information is missing",
-      detail: `${profile?.full_name ?? "A resident"} asked about their lease over text, and no lease dates or document were on file.`,
-      idempotencyKey: `lease_info_missing:${residentId}`,
+      detail: `${profile?.full_name ?? "A resident"} ${leaseReply.question}; the requested ${leaseReply.missing === "copy" ? "lease copy" : leaseReply.missing === "end_date" ? "lease end date" : "lease dates"} is not on file.`,
+      idempotencyKey: `lease_info_missing:${residentId}:${leaseReply.missing}`,
       residentId,
       unitId: ctx.identity.unit_id ?? null,
       workflowRunId: runId,
-    })
+    }).catch(() => ({smsSent:[],emailSent:[]}))
+    leaseNoticeDelivered = delivery.smsSent.length > 0 || delivery.emailSent.length > 0
+    lines.push(leaseReply.statement!)
+    lines.push(leaseNoticeDelivered
+      ? "I've asked the property team to update the record."
+      : leaseReply.missing === "copy" ? "Please ask your landlord for a copy."
+      : leaseReply.missing === "end_date" ? "Please ask your landlord for the end date."
+      : "Please ask your landlord for the lease dates.")
   }
 
   await logOutcome(ctx, {
     eventType: missing ? "sms.lease_info_missing" : "lease.info_answered",
     message: missing
-      ? "Resident asked about their lease; no lease information was on file, so the property team was notified."
+      ? leaseNoticeDelivered ? "Resident asked about their lease; missing lease information was reported to the property team." : "Resident asked about their lease; no lease details or successful new notification were available."
       : attachedCopy
       ? "Shared lease details and a copy of the lease over text."
       : "Shared lease details with the resident over text.",
     workflowRunId: runId,
     extra: {
       topic,
+      missing_lease_field: leaseReply.missing,
+      lease_notice_delivered: leaseNoticeDelivered,
+      preserve_intake: activeIntake,
       has_lease_dates: Boolean(start || end),
       has_monthly_rent: monthly > 0,
       document_link_included: attachedCopy,
@@ -1338,7 +1320,6 @@ async function handleMaintenanceUpdate(
         .from("maintenance_requests")
         .update(patch)
         .eq("id", ticket.id)
-      // Trigger may insert first with triggered_by=system; this upgrades actor (one row).
       if (reopenToStatus) {
         await recordWorkOrderReopen(ctx.supabase, {
           landlordId: ctx.landlordId,
@@ -1637,7 +1618,7 @@ async function handleScheduleChange(
     approvalRequired: false,
   })
   const visitRef = ticket ? tenantRef(ticket) : ""
-  void notifyLandlordNeedsAttention(ctx.supabase, {
+  const handoff = await notifyLandlordNeedsAttention(ctx.supabase, {
     landlordId: ctx.landlordId,
     kind: "workflow_escalated",
     headline: notice.headline,
@@ -1654,7 +1635,8 @@ async function handleScheduleChange(
     propertyId: facts?.propertyId ?? null,
     workflowRunId: runId,
     requestRef: visitRef || null,
-  })
+  }).catch(() => ({smsSent: [], emailSent: [], skipped: false, reason: "delivery_failed", errors: ["delivery_failed"]}))
+  const teamNotified = handoff.smsSent.length > 0 || handoff.emailSent.length > 0 || handoff.reason === "already_sent"
   await logOutcome(ctx, {
     eventType: "sms.schedule_change_requested",
     message: ticket
@@ -1668,7 +1650,9 @@ async function handleScheduleChange(
     [
       `Hi ${who},`,
       "",
-      ticket
+      !vendorNotified && !teamNotified
+        ? "I haven't cancelled your repair. I couldn't notify the property team automatically. Please contact your property manager about the appointment."
+        : ticket
         ? vendorNotified
           ? `Thanks. I'll check ${preferenceLabel} with the vendor. We'll text you once they confirm a time.`
           : `I've passed ${preferenceLabel} to the property team. We'll text you once a time is confirmed.`
@@ -2392,9 +2376,10 @@ async function handleOther(
   intake: SmsIntakeState,
   pending: ReturnType<typeof pendingContextFromIntake>,
   residentName: string | null,
+  forceHuman = false,
 ): Promise<InboundSmsHandlerResult> {
   const activeIntake = pending.activeIntake
-  if (activeIntake && isAffirmativeReply(ctx.inbound.body)) {
+  if (activeIntake && isAffirmativeReply(ctx.inbound.body) && !intake.awaiting_handoff_target) {
     return { handled: false }
   }
   const who = firstName(residentName)
@@ -2492,7 +2477,7 @@ async function handleOther(
   }
 
   const plan = planAssistantOtherReply({
-    body: ctx.inbound.body,
+    body: forceHuman ? "human please" : ctx.inbound.body,
     activeIntake,
   })
 
@@ -2530,10 +2515,39 @@ async function handleOther(
       message: "Asked a clarifying question instead of starting a repair or escalating.",
       extra: { notify_staff: false },
     })
-    return handled("sms_clarify", buildUnclearClarifySms(who), {
+    const previous = await loadLastOutboundBody(ctx.supabase, ctx.conversationId)
+    const clarification = previous === buildUnclearClarifySms(who)
+      ? buildConversationRecoverySms(who, activeIntake ? pendingIntakeQuestion(intake) : undefined)
+      : activeIntake ? buildConversationRecoverySms(who, pendingIntakeQuestion(intake)) : buildUnclearClarifySms(who)
+    return handled("sms_clarify", clarification, {
       notifyStaff: false,
       preserveIntake: true,
     })
+  }
+
+  let target: HandoffContact | undefined
+  let handoffRequest = ctx.inbound.body
+  if (isHandoffRequest(ctx.inbound.body) || intake.awaiting_handoff_target) {
+    try {
+      // Generic requests need no extra directory reads; names/roles do.
+      const preliminary = resolveHandoffTarget(ctx.inbound.body, [], intake.awaiting_handoff_target ?? undefined)
+      if (preliminary.kind !== "generic") {
+        const contacts = await loadHandoffContacts(ctx.supabase, {landlordId:ctx.landlordId,residentId:ctx.identity.resident_id!,unitId:ctx.identity.unit_id})
+        const resolution = resolveHandoffTarget(ctx.inbound.body, contacts, intake.awaiting_handoff_target ?? undefined)
+        if (resolution.kind === "clarify") {
+          await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:makePendingHandoff(resolution,contacts)})
+          return handled("sms_handoff_clarify", resolution.message, {preserveIntake:true})
+        }
+        if (resolution.kind === "selected") {target=resolution.contact;handoffRequest=resolution.request}
+      }
+      await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
+    } catch {
+      return handled("sms_handoff_clarify", "I couldn't load the saved contacts for your property. Please contact your property manager directly.", {preserveIntake:true})
+    }
+  }
+  if (target && !target.phone && !target.email) {
+    await logOutcome(ctx, {eventType:"sms.handoff_unavailable",message:"The requested saved contact has no delivery destination.",extra:{handoff_target:target.id,handoff_role:target.role,handoff_delivered:false}})
+    return handled("sms_handoff_unavailable", buildResolvedHandoffReply(who,target,handoffRequest,false), {preserveIntake:true,handoffDelivered:false})
   }
 
   // Human request / legal / complaint — escalate and only then say we passed it on.
@@ -2546,31 +2560,47 @@ async function handleOther(
     "other",
     true,
   )
-  void notifyLandlordNeedsAttention(ctx.supabase, {
+  let handoffSms: string | undefined
+  if (plan.kind === "human_request") {
+    const {data: resident} = await ctx.supabase.from("users")
+      .select("full_name,building,unit").eq("id",ctx.identity.resident_id!)
+      .eq("landlord_id",ctx.landlordId).maybeSingle()
+    const name = resident?.full_name?.trim() || residentName?.trim() || "A resident"
+    const place = [resident?.building?.trim(), resident?.unit?.trim() && !/^(n\/?a|none)$/i.test(resident.unit.trim()) ? `Unit ${resident.unit.trim()}` : null].filter(Boolean).join(", ")
+    const callback = /\bcall\s+me\b/i.test(handoffRequest)
+    handoffSms = `Ulo: ${name}${place ? ` at ${place}` : " (property not available)"} ${callback ? "asked you to call them" : "asked to speak with you"}. Call ${ctx.inbound.from}.`
+  }
+  const delivery = await notifyLandlordNeedsAttention(ctx.supabase, {
     landlordId: ctx.landlordId,
+    smsBody: handoffSms,
+    handoffContact: target ? {phone:target.phone,email:target.email} : undefined,
     kind: "workflow_escalated",
     headline: plan.kind === "human_request"
       ? "Resident asked to speak with someone"
       : "Resident raised a complaint or legal concern",
-    detail: latest
-      ? `Latest message: "${latest}"`
+    detail: target
+      ? `Resident asked for ${target.name || target.role}. Request: "${handoffRequest.trim().slice(0,240)}"`
+      : latest ? `Latest message: "${latest}"`
       : "They asked for help that needs the property team.",
-    idempotencyKey: `sms-other:${ctx.conversationId}:${ctx.messageId}`,
+    idempotencyKey: `sms-other:${ctx.conversationId}:${ctx.messageId}${target ? ":"+target.id : ""}`,
     maintenanceRequestId: intake.draft_ticket_id ?? ctx.maintenanceRequestId,
     residentId: ctx.identity.resident_id,
     unitId: ctx.identity.unit_id ?? null,
     workflowRunId: runId,
-  })
+  }).catch(() => ({smsSent: [], emailSent: [], skipped: false, reason: "delivery_failed", errors: ["delivery_failed"]}))
+  const delivered = target ? handoffReachedContact(target,delivery) : delivery.smsSent.length > 0 || delivery.emailSent.length > 0 || delivery.reason === "already_sent"
   await logOutcome(ctx, {
-    eventType: "sms.routed_to_landlord",
-    message: plan.kind === "human_request"
+    eventType: delivered ? "sms.routed_to_landlord" : "sms.handoff_unavailable",
+    message: !delivered ? "Could not notify the property team; gave the resident a direct-contact fallback." : plan.kind === "human_request"
       ? "Passed the resident's request to speak with someone to the property team."
       : "Passed the resident's complaint or legal concern to the property team.",
     workflowRunId: runId,
-    extra: { notify_staff: true },
+    extra: { notify_staff: true, handoff_delivered: delivered, handoff_target:target?.id ?? null, handoff_role:target?.role ?? null },
   })
-  return handled("sms_routed_to_landlord", buildEscalatedOtherSms(who, plan.kind), {
+  return handled("sms_routed_to_landlord", target ? buildResolvedHandoffReply(who,target,handoffRequest,delivered) : delivered ? buildEscalatedOtherSms(who, plan.kind, ctx.inbound.body)
+    : buildHandoffUnavailableSms(who, ctx.inbound.body), {
     notifyStaff: true,
+    handoffDelivered: delivered,
     preserveIntake: false,
   })
 }
@@ -2676,6 +2706,9 @@ export async function tryHandleInterpretedInbound(
   if (!ctx.identity.resident_id?.trim()) return { handled: false }
   if (shouldSkipInboundInterpretation(ctx.inbound.body)) return { handled: false }
 
+  const submittedConfirmation = await trySubmittedMaintenanceConfirmation(ctx)
+  if (submittedConfirmation.handled) return submittedConfirmation
+
   const intake = await loadIntakeRow(ctx.supabase, ctx.conversationId)
   const pending = pendingContextFromIntake(intake)
   const smsContext = await loadResidentSmsContext(ctx.supabase, {
@@ -2695,7 +2728,7 @@ export async function tryHandleInterpretedInbound(
     pending,
     smsContext,
     hasMedia: (ctx.inbound.mediaUrls?.length ?? 0) > 0,
-    skipLlm: pending.awaitingTicketUpdateConfirm ||
+    skipLlm: isHandoffRequest(ctx.inbound.body) || Boolean(intake.awaiting_handoff_target) || pending.awaitingTicketUpdateConfirm ||
       pending.awaitingTicketCancelConfirm ||
       pending.awaitingMoveOutConfirm ||
       intake.awaiting_which_request === true ||
@@ -2739,6 +2772,98 @@ export async function tryHandleInterpretedInbound(
     looksLikeStatusInquiryTicketDescription(row.description)
   )
 
+  if (recognizeInboundIntentSync(ctx.inbound.body).intent === "emergency") {
+    if (intake.awaiting_handoff_target) await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
+    return {handled: false, interpretation: {...interpretation, intent: "maintenance_new", addressesPending: false,
+      needsClarification: false}}
+  }
+
+  // Do not let the access/cancel/update handlers attach a distinct repair to
+  // the latest open ticket. Pass the whole text to fresh intake, including access.
+  if (isExplicitNewRepair(ctx.inbound.body)) {
+    await maybeReleaseIntake(ctx.supabase, ctx, intake, pending.activeIntake, "maintenance_new", false)
+    return { handled: false, interpretation: {
+      ...markAsNewMaintenanceIssue(interpretation), addressesPending: false,
+    } }
+  }
+
+  if (isNegativeHandoffRequest(ctx.inbound.body) || (intake.awaiting_handoff_target && /\b(?:never mind|cancel (?:that|the) (?:call|message|handoff))\b/i.test(ctx.inbound.body))) {
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
+    return handled("sms_handoff_cancelled", "I won't send a contact request from that message. Let me know if you need something else.", {preserveIntake:true})
+  }
+  if (needsConversationRecovery(ctx.inbound.body) && !isHandoffRequest(ctx.inbound.body)) {
+    const recent = Date.now() - Date.parse(intake.clarification_recovery_at ?? "") < 30 * 60_000
+    const count = (recent ? intake.clarification_recovery_count ?? 0 : 0) + 1
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {
+      clarification_recovery_count: count, clarification_recovery_at: new Date().toISOString(),
+    })
+    if (intake.awaiting_handoff_target) {
+      const contacts = await loadHandoffContacts(ctx.supabase, {landlordId:ctx.landlordId,residentId:residentId,unitId:ctx.identity.unit_id})
+      const request = intake.awaiting_handoff_target.request
+      const managerMissing = /\b(?:property\s+)?manager\b/i.test(request) && !contacts.some(c=>c.role === "property_manager" || c.handlesPropertyManagement)
+      const owner = contacts.find(c=>c.role === "landlord")
+      const linkedManager = contacts.find(c=>c.handlesPropertyManagement)
+      const body = linkedManager && /\b(?:property\s+)?manager\b/i.test(request)
+        ? `Your landlord${linkedManager.name ? " " + linkedManager.name : ""} is the saved contact for managing your property. What do you need help with?`
+        : managerMissing && count > 1
+        ? "I don't have a property manager saved. What do you need help with at your property?"
+        : managerMissing
+        ? `You asked for your property manager, but I don't have one saved for your property.${owner ? ` I have ${owner.name || "your landlord"} saved as your landlord. Would you like me to contact your landlord? Reply LANDLORD, or tell me what you need help with.` : " What do you need help with at your property?"}`
+        : "I couldn't identify the contact you meant. Which saved contact should I reach, or what do you need help with at your property?"
+      const recovery = count > 1 ? await recoverConversation(ctx.supabase,{landlordId:ctx.landlordId,conversationId:ctx.conversationId,latest:ctx.inbound.body,
+        focus:managerMissing ? "property_need" : undefined,
+        facts:JSON.stringify({requestedContact:request,propertyManagerSaved:!managerMissing,savedContacts:contacts.map(c=>({name:c.name,role:c.role,handlesPropertyManagement:c.handlesPropertyManagement===true})),pendingSelection:true,noNotificationSent:true}),fallback:body}) : {body,source:"fallback"}
+      return handled("sms_recovery",recovery.body,{preserveIntake:true,notifyStaff:false,recoverySource:recovery.source})
+    }
+    const context = pending.activeIntake ? pendingIntakeQuestion(intake)
+      : tickets.length === 1 ? `I have your request about ${tickets[0].description?.slice(0,160) || "the repair"}. What needs to change?`
+      : tickets.length > 1 ? "You have more than one open repair. Which repair are you referring to, and what needs to change?"
+      : count > 1 ? "What should happen next at your property? Tell me the outcome you need." : undefined
+    const fallback = buildConversationRecoverySms(firstName(profile?.full_name ?? null),context)
+    const recovery = count > 1 ? await recoverConversation(ctx.supabase,{landlordId:ctx.landlordId,conversationId:ctx.conversationId,latest:ctx.inbound.body,
+      facts:JSON.stringify({pendingQuestion:pending.activeIntake?pendingIntakeQuestion(intake):null,openRepairs:tickets.map(t=>t.description?.slice(0,160)),noNotificationSent:true}),fallback}) : {body:fallback,source:"fallback"}
+    return handled("sms_recovery",recovery.body,{preserveIntake:true,notifyStaff:false,recoverySource:recovery.source})
+  }
+  if (intake.awaiting_handoff_target && isHandoffRequest(ctx.inbound.body) && resolveHandoffTarget(ctx.inbound.body,[]).kind === "generic") {
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
+    intake.awaiting_handoff_target = null
+  }
+  if (intake.awaiting_handoff_target && !isHandoffRequest(ctx.inbound.body) &&
+      (isRepairRecognition(recognizeInboundIntentSync(ctx.inbound.body)) ||
+      ["rent_balance","rent_late","lease_info","schedule_change"].includes(interpretation.intent ?? ""))) {
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
+    intake.awaiting_handoff_target = null
+  }
+  // Explicit human requests must not be swallowed by a repair follow-up matcher.
+  const assistantPlan = planAssistantOtherReply({body: ctx.inbound.body, activeIntake: pending.activeIntake})
+  if ((assistantPlan.notifyStaff || isHandoffRequest(ctx.inbound.body) || intake.awaiting_handoff_target) && recognizeInboundIntentSync(ctx.inbound.body).intent !== "emergency") {
+    return handleOther(ctx, intake, pending, profile?.full_name ?? null, true)
+  }
+  if (interpretation.intent === "other" && assistantPlan.kind === "small_talk") {
+    return handleOther(ctx, intake, pending, profile?.full_name ?? null)
+  }
+  if (pending.activeIntake && !(ctx.inbound.mediaUrls?.length) && !/[\p{L}\p{N}]/u.test(ctx.inbound.body)) {
+    return handled("sms_pending_clarify", buildConversationRecoverySms(firstName(profile?.full_name ?? null),
+      pendingIntakeQuestion(intake)), {preserveIntake: true})
+  }
+
+  if (interpretation.intent === "schedule_change" && !intake.awaiting_which_request && !intake.awaiting_reschedule_window) {
+    return handleScheduleChange(ctx, intake, pending.activeIntake, tickets, profile?.full_name ?? null,
+      interpretation.extractedSlots.ticket_id)
+  }
+
+  if (/^(?:system|developer):|ignore (?:all )?(?:prior|previous) instructions/i.test(ctx.inbound.body.trim())) {
+    return handled("sms_clarify", "I haven't changed or closed any requests. What needs attention at your property?", {preserveIntake: true})
+  }
+  if (/\b(?:rent|pay|payment)\b/i.test(ctx.inbound.body) &&
+      /\b(?:sink|leak|repair|heater|outlet)\b/i.test(ctx.inbound.body) &&
+      /\b(?:which|asking about|both)\b/i.test(ctx.inbound.body)) {
+    return handled("sms_topic_clarify", "I can help with both. Are you replying about your repair or your rent payment?", {preserveIntake: true})
+  }
+  if (!(ctx.inbound.mediaUrls?.length) && /\b(?:photo|picture|attachment)\b/i.test(ctx.inbound.body) &&
+      /\b(?:attached|sent|look at|see)\b/i.test(ctx.inbound.body)) {
+    return handled("sms_attachment_clarify", "There isn't an attachment on this message. Please resend it or describe what you'd like me to check.", {preserveIntake: true})
+  }
   const relatedBreakoutIntent = interpretation.intent &&
       (interpretation.intent === "rent_balance" ||
         interpretation.intent === "rent_late" ||

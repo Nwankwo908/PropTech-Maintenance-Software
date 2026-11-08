@@ -191,3 +191,23 @@ describe('Gemini and gpt-4o-mini equipment adapters', () => {
     ).toBe(true)
   })
 })
+
+it('preserves explicit photo framing independently from readable label text',()=>{
+ const photoView={equipment:'water_heater',framing:'whole_appliance',confidence:'high'}
+ const result=equipmentResult({...raw,photoView})
+ expect(result.photoView).toEqual(photoView)
+ expect(result.labelReadability?.status).toBe('readable')
+})
+it.each([null,{equipment:'water_heater',framing:'guessed',confidence:'high'},'whole'])('does not preserve malformed photo view evidence %j',photoView=>{
+ expect(equipmentResult({...raw,photoView}).photoView).toBeUndefined()
+})
+
+it.each(['equipment','framing'])('does not choose a slot when confident provider %s readings disagree',async field=>{
+ const first={...raw,photoView:{equipment:'water_heater',framing:'whole_appliance',confidence:'high'},labelReadability:{...raw.labelReadability,status:'uncertain'}}
+ const second={...raw,photoView:{...first.photoView,[field]:field==='framing'?'label_closeup':'heating_system'}}
+ const result=await withEquipmentBackup(
+  createGeminiVisionProvider('fixture',{fetchImpl:vi.fn(async()=>geminiResponse(first))}),
+  createOpenAiVisionProvider('fixture',{fetchImpl:vi.fn(async()=>openaiResponse(second))}),
+ ).analyzeImage('AQ==')
+ expect(result.photoView).toEqual({equipment:'unknown',framing:'unknown',confidence:'low'})
+})

@@ -4,7 +4,7 @@
  * so account ownership cannot disagree between layers.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { LIMITED_ALPHA_LANDLORD_IDS } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_LANDLORD_IDS, landlordMayUseSharedAlphaLine } from "../../../../shared/landlordCapabilities.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 
 /** Local copy of inbound phone variants — avoid circular import with inbound_db. */
@@ -97,29 +97,39 @@ export async function resolveLandlordIdForAccountOrOpsPhone(
       : LIMITED_ALPHA_LANDLORD_IDS
 
   const accountRows = await loadLandlordAccountPhones(supabase, scope)
+  if (!options?.landlordIds?.length) {
+    // Self-service Alpha accounts are provisioned dynamically; a fixed list
+    // cannot recognize their canonical account phones before an SMS identity exists.
+    const {data: dynamic,error} = await supabase.from("landlords").select("id,phone").in("phone",variants).limit(32)
+    if(error)console.error("[landlord-phone] dynamic account lookup",error.message)
+    else for(const row of dynamic ?? []){
+      if(row.id && row.phone && landlordMayUseSharedAlphaLine(row.id))accountRows.push({landlord_id:row.id,phone:row.phone})
+    }
+  }
   const accountMatches = accountRows
     .filter((row) => phoneMatchesAnyCandidate(fromNumber, [row.phone]))
     .map((row) => ({ landlord_id: row.landlord_id }))
   const fromAccount = uniqueLandlordId(accountMatches)
   if (fromAccount) return fromAccount
+  if (new Set(accountMatches.map(row=>row.landlord_id)).size > 1) return null
 
   // Ops / onboarding / property-manager phones for each scoped landlord.
   const { resolveLandlordOpsPhones } = await import(
     "./tenantActivationAdminAlert.ts"
   )
-  const opsMatches: Array<{ landlord_id: string }> = []
-  for (const landlordId of scope) {
+  const matches = await Promise.all(scope.map(async (landlordId) => {
     const id = landlordId.trim()
-    if (!id) continue
+    if (!id) return null
     try {
       const { phones } = await resolveLandlordOpsPhones(supabase, id)
-      if (phoneMatchesAnyCandidate(fromNumber, phones)) {
-        opsMatches.push({ landlord_id: id })
-      }
+      return phoneMatchesAnyCandidate(fromNumber, phones) ? {landlord_id:id} : null
     } catch (e) {
       console.error("[landlord-phone] ops phone lookup", id, e)
+      return null
     }
-  }
+  }))
+  const opsMatches = matches.filter((row): row is {landlord_id:string} => row !== null)
+
   return uniqueLandlordId(opsMatches)
 }
 

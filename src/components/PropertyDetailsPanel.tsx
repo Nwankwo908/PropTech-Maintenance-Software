@@ -1359,7 +1359,10 @@ function HomeInspectionExpandedPanel({
 
   const trailing = (
     <div className="flex flex-col gap-3">
-      {documentList}
+      <div className="space-y-3">
+        <h3 className="text-[18px] font-semibold leading-6 text-[#0d0f11]">Inspection report</h3>
+        {documentList}
+      </div>
       {hqsLetterList}
     </div>
   )

@@ -316,14 +316,19 @@ export async function phoneHasNonDemoRosterBinding(
     .limit(8)
 
   if (vendorErr) {
-    console.error(
-      "[sms-inbound] shared Twilio non-demo vendor lookup",
-      vendorErr.message,
-    )
-    return false
-  }
+    console.error("[sms-inbound] shared Twilio non-demo vendor lookup", vendorErr.message)
+  } else if ((vendors ?? []).length > 0) return true
 
-  return (vendors ?? []).length > 0
+  const {data: owners,error:ownerErr} = await supabase.from("landlords").select("id")
+    .in("phone",variants).neq("id",DEMO_LANDLORD_ID).limit(8)
+  if (ownerErr) console.error("[sms-inbound] shared Twilio landlord lookup",ownerErr.message)
+  else if ((owners ?? []).length > 0) return true
+  const {data: identities,error:identityErr} = await supabase.from("sms_identities").select("landlord_id")
+    .in("phone_number",variants).in("identity_type",["resident","vendor","landlord"])
+    .not("landlord_id","is",null).neq("landlord_id",DEMO_LANDLORD_ID).limit(16)
+  if(identityErr)console.error("[sms-inbound] shared Twilio identity roster lookup",identityErr.message)
+  return !identityErr && (identities ?? []).length > 0
+
 }
 
 function landlordIdsFromRows(
@@ -354,55 +359,82 @@ export async function resolveLandlordIdForSharedTwilioInbound(
   const explicit: InboundExplicitAssignment[] = []
   const history: InboundHistoryMatch[] = []
 
-  const { data: waitingUsers, error: waitingErr } = await supabase
+  // All roster/history sources remain mandatory for ambiguity handling.
+  // Their reads are independent; concurrent I/O preserves the same decision.
+  const reads = await Promise.all([
+    supabase
     .from("users")
     .select("landlord_id")
     .in("phone", variants)
     .eq("activation_status", "waiting")
     .not("landlord_id", "is", null)
-    .limit(8)
+    .limit(8),
+    supabase
+    .from("users")
+    .select("landlord_id")
+    .in("phone", variants)
+    .not("landlord_id", "is", null)
+    .limit(8),
+    supabase
+    .from("vendors")
+    .select("landlord_id")
+    .in("phone", variants)
+    .not("landlord_id", "is", null)
+    .limit(8),
+    supabase
+    .from("sms_identities")
+    .select("landlord_id, identity_type")
+    .in("phone_number", variants)
+    .not("landlord_id", "is", null)
+    .limit(16),
+    supabase
+    .from("sms_messages")
+    .select("landlord_id, created_at")
+    .eq("direction", "outbound")
+    .in("to_number", variants)
+    .not("landlord_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(5),
+    supabase
+    .from("sms_conversations")
+    .select("landlord_id, updated_at, status")
+    .in("external_phone_number", variants)
+    .not("landlord_id", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(8),
+    supabase
+    .from("sms_phone_account_disconnects")
+    .select("landlord_id")
+    .in("phone_number", variants),
+    import("./landlordAccountPhone.ts").then(({resolveLandlordIdForAccountOrOpsPhone}) =>
+      resolveLandlordIdForAccountOrOpsPhone(supabase, fromNumber)),
+  ] as const)
+
+  const { data: waitingUsers, error: waitingErr } = reads[0]
   if (waitingErr) {
     console.error("[sms-inbound] shared Twilio waiting-resident lookup", waitingErr.message)
   } else {
     for (const id of landlordIdsFromRows(waitingUsers)) explicit.push({ landlordId: id })
   }
 
-  const { data: users, error: usersErr } = await supabase
-    .from("users")
-    .select("landlord_id")
-    .in("phone", variants)
-    .not("landlord_id", "is", null)
-    .limit(8)
+  const { data: users, error: usersErr } = reads[1]
   if (usersErr) {
     console.error("[sms-inbound] shared Twilio user lookup", usersErr.message)
   } else {
     for (const id of landlordIdsFromRows(users)) explicit.push({ landlordId: id })
   }
 
-  const { data: vendors, error: vendorErr } = await supabase
-    .from("vendors")
-    .select("landlord_id")
-    .in("phone", variants)
-    .not("landlord_id", "is", null)
-    .limit(8)
+  const { data: vendors, error: vendorErr } = reads[2]
   if (vendorErr) {
     console.error("[sms-inbound] shared Twilio vendor lookup", vendorErr.message)
   } else {
     for (const id of landlordIdsFromRows(vendors)) explicit.push({ landlordId: id })
   }
 
-  const { resolveLandlordIdForAccountOrOpsPhone } = await import(
-    "./landlordAccountPhone.ts"
-  )
-  const opsLandlordId = await resolveLandlordIdForAccountOrOpsPhone(supabase, fromNumber)
+  const opsLandlordId = reads[7]
   if (opsLandlordId) explicit.push({ landlordId: opsLandlordId })
 
-  const { data: identities, error: identityErr } = await supabase
-    .from("sms_identities")
-    .select("landlord_id, identity_type")
-    .in("phone_number", variants)
-    .not("landlord_id", "is", null)
-    .limit(16)
+  const { data: identities, error: identityErr } = reads[3]
   if (identityErr) {
     console.error("[sms-inbound] shared Twilio identity lookup", identityErr.message)
   } else {
@@ -414,14 +446,7 @@ export async function resolveLandlordIdForSharedTwilioInbound(
     }
   }
 
-  const { data: outbound, error: outboundErr } = await supabase
-    .from("sms_messages")
-    .select("landlord_id, created_at")
-    .eq("direction", "outbound")
-    .in("to_number", variants)
-    .not("landlord_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(5)
+  const { data: outbound, error: outboundErr } = reads[4]
   if (outboundErr) {
     console.error("[sms-inbound] shared Twilio recent-outbound lookup", outboundErr.message)
   } else {
@@ -431,13 +456,7 @@ export async function resolveLandlordIdForSharedTwilioInbound(
     }
   }
 
-  const { data: conversations, error: conversationErr } = await supabase
-    .from("sms_conversations")
-    .select("landlord_id, updated_at, status")
-    .in("external_phone_number", variants)
-    .not("landlord_id", "is", null)
-    .order("updated_at", { ascending: false })
-    .limit(8)
+  const { data: conversations, error: conversationErr } = reads[5]
   if (conversationErr) {
     console.error("[sms-inbound] shared Twilio recent-conversation lookup", conversationErr.message)
   } else {
@@ -457,10 +476,7 @@ export async function resolveLandlordIdForSharedTwilioInbound(
   }
 
   const disconnectedLandlordIds: string[] = []
-  const { data: disconnects, error: disconnectErr } = await supabase
-    .from("sms_phone_account_disconnects")
-    .select("landlord_id")
-    .in("phone_number", variants)
+  const { data: disconnects, error: disconnectErr } = reads[6]
   if (disconnectErr) {
     console.warn("[sms-inbound] phone disconnect lookup", disconnectErr.message)
   } else {

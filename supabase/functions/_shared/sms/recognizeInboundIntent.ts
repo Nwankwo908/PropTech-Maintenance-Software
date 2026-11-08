@@ -1,3 +1,4 @@
+import { maintenanceEvidence } from '../../../../shared/maintenance/messageEvidence.ts'
 /**
  * One recognizer for "what is this inbound text about?".
  *
@@ -108,7 +109,7 @@ export function isRepairRecognition(
 
 /** Short, plain-language echo of the problem for the confirm-back question. */
 export function summarizeIssueText(text: string): string | null {
-  const raw = text.trim().replace(/\s+/g, " ")
+  const raw = maintenanceEvidence(text).trim().replace(/\s+/g, " ")
   if (!raw) return null
   const summary = generateIssueSummary(raw, {
     format: "summary",

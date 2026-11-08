@@ -1,3 +1,4 @@
+import { polishOpeningQuestion, retainInitialEntryDenial } from "./intakeOpeningCopy.ts"
 import { parseDurationHours, resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import {
   LIFE_SAFETY_GUIDANCE,
@@ -1045,7 +1046,7 @@ function confirmationGuidance(
   return lines.length > 0 ? lines.join("\n\n") : null
 }
 
-async function confirmationSummaryForThread(
+export async function confirmationSummaryForThread(
   supabase: SupabaseClient,
   conversationId: string,
   state: SmsIntakeState,
@@ -1276,11 +1277,13 @@ export async function processResidentMaintenanceIntake(
       outdoorTempF,
       ctx.interpretation?.smsContext,
     )
-    state = started.state
+    state = retainInitialEntryDenial(started.state)
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
     state = sanitizeIntakeState(state)
     state = await attachPropertyLayoutCounts(supabase, ctx, state)
     state = applyQuestionPlan(state)
+    const openingCopy = await polishOpeningQuestion(state)
+    state = openingCopy.state
     state = await persistEarlyTicket(supabase, ctx, state)
     await logIntakeClassification(
       supabase,
@@ -1331,6 +1334,7 @@ export async function processResidentMaintenanceIntake(
     })
     return finishIntakeQuestion(supabase, ctx, state, outbound, {
       started: true,
+      openingCopySource: openingCopy.source,
       vendor_trade: state.vendor_trade,
       classification_confidence: state.classification_confidence,
       draft_ticket_id: state.draft_ticket_id,
@@ -1498,7 +1502,7 @@ export async function processResidentMaintenanceIntake(
     if (state.diagnostic_question_type === "answer_clarification") {
       const correction = applySummaryCorrection(state, body)
       if (correction.action === "update") {
-        const planned = applyQuestionPlan({ ...correction.state, step: "awaiting_confirm" })
+        const planned = await persistEarlyTicket(supabase, ctx, applyQuestionPlan({ ...correction.state, step: "awaiting_confirm" }))
         await saveIntakeState(supabase, ctx.conversationId, planned)
         return {
           route: "resident_maintenance_intake",
@@ -1516,11 +1520,11 @@ export async function processResidentMaintenanceIntake(
       )
     }
     if (/^summary$/i.test(body.trim())) {
-      const reprint: SmsIntakeState = {
+      const reprint: SmsIntakeState = await persistEarlyTicket(supabase, ctx, {
         ...state,
         step: "awaiting_confirm",
         clarify_menu_shown_at: undefined,
-      }
+      })
       await saveIntakeState(supabase, ctx.conversationId, reprint)
       return {
         route: "resident_maintenance_intake",
@@ -1537,7 +1541,7 @@ export async function processResidentMaintenanceIntake(
       return finishIntakeQuestion(supabase, ctx, correction.state, correction.question)
     }
     if (correction.action === "update") {
-      const planned = applyQuestionPlan({ ...correction.state, step: "awaiting_confirm" })
+      const planned = await persistEarlyTicket(supabase, ctx, applyQuestionPlan({ ...correction.state, step: "awaiting_confirm" }))
       if (planned.step === "awaiting_confirm") {
         await saveIntakeState(supabase, ctx.conversationId, planned)
         return {

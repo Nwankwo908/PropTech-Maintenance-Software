@@ -8,6 +8,8 @@ import {
   assessmentConfidenceReason,
   assessmentDescription,
   assessmentTableDescription,
+  assessmentMadeLabel,
+  assessmentMadeDisplay,
   isUnmatchedApplianceRow,
   assessmentSerial,
   assessmentActionLabel,
@@ -56,9 +58,17 @@ describe('inspectionAssessmentTable', () => {
       identifiedItem: { type: 'Water heater' },
       condition: { rating: 'fair', summary: 'Rust at the base. About 12 years (estimate).' },
     }, 'Water heater')).toBe('Rust at the base.')
+    expect(assessmentTableDescription({
+      ...base,
+      identifiedItem: { type: 'Water heater' },
+      condition: { rating: 'fair', summary: 'Rust at the base. Made July 2013.' },
+    }, 'Water heater')).toBe('Rust at the base.')
     expect(assessmentTableDescription(base, 'Appliance')).toBe(
       'Shows signs of wear and tarnishing on the finish.',
     )
+    expect(assessmentMadeLabel({ year: 2013, month: 7 })).toBe('July 2013')
+    expect(assessmentMadeLabel({ year: 2013 })).toBe('2013')
+    expect(assessmentMadeLabel(null)).toBe('—')
   })
 
   it('treats an unknown or mismatched appliance as not table-ready', () => {
@@ -185,3 +195,32 @@ describe('inspectionAssessmentTable', () => {
     ).toEqual(['Refrigerator', 'Range'])
   })
 })
+
+it('keeps visible findings without presenting stale AI age claims as current facts',()=>{
+ const result:ApplianceVisionResult={...base,manufactureDate:{year:null,month:null},estimatedAge:{value:null,confidence:'low',basis:'Unknown'},condition:{rating:'fair',summary:'Water heater appears functional with intact casing and controls, but it is past typical design life expectancy (manufactured in 2008) and lacks a drain pan.'}};
+ expect(assessmentTableDescription(result,'Water heater')).toBe('Water heater appears functional with intact casing and controls. Lacks a drain pan.');
+ expect(assessmentMadeLabel(result.manufactureDate)).toBe('—');
+ expect(result.condition.summary).toContain('manufactured in 2008');
+});
+it('does not repeat a prose date that disagrees with the structured date',()=>{
+ const result:ApplianceVisionResult={...base,manufactureDate:{year:2013,month:7},condition:{rating:'fair',summary:'Manufactured in 2008. Rust at the base. It is 18 years old and has a loose panel.'}};
+ expect(assessmentTableDescription(result,'Heating system')).toBe('Rust at the base. Has a loose panel.');
+ expect(assessmentMadeLabel(result.manufactureDate)).toBe('July 2013');
+});
+it('retains condition-only notes and omits descriptions containing only age claims',()=>{
+ expect(assessmentTableDescription({...base,condition:{rating:'fair',summary:'The unit exceeds its useful life. Made in 2008.'}},'Appliance')).toBe('');
+ expect(assessmentTableDescription({...base,condition:{rating:'poor',summary:'Rust at the base, loose casing and visible water staining.'}},'Water heater')).toBe('Rust at the base, loose casing and visible water staining.');
+});
+
+it('shows a photo-derived manufacture year with an asterisk without changing saved fields',()=>{
+ const result:ApplianceVisionResult={...base,manufactureDate:{year:null,month:null},estimatedAge:{value:null,confidence:'low',basis:'Unknown'},condition:{rating:'fair',summary:'Intact casing, but past design life (manufactured in 2008) and lacks a drain pan.'}};
+ expect(assessmentMadeDisplay(result)).toEqual({label:'2008*',estimated:true});
+ expect(result.manufactureDate).toEqual({year:null,month:null});expect(result.estimatedAge.value).toBe(null);
+ expect(assessmentTableDescription(result,'Water heater')).not.toMatch(/2008|design life/);
+ expect(assessmentMadeDisplay({...result,manufactureDate:{year:2013,month:7}})).toEqual({label:'July 2013',estimated:false});
+});
+it('does not invent a manufacture estimate from a serial, age, conflicting years or negated reading',()=>{
+ for(const summary of ['Serial 2008T422715.','About 18 years old.','Manufactured in 2008. Made in 2013.','Not manufactured in 2008.','Manufactured in 2099.']){
+  expect(assessmentMadeDisplay({...base,condition:{rating:'fair',summary}})).toEqual({label:'—',estimated:false});
+ }
+});

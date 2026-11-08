@@ -1,3 +1,4 @@
+import { stableRecordId } from "../stableRecordId.ts"
 /**
  * Official activity log writer for all Ulo features.
  *
@@ -28,6 +29,7 @@ export type ActivityLogActorType =
 
 /** Automation outcomes that must not spam one row per cron pass. */
 export const DEDUPED_ACTIVITY_EVENT_TYPES = new Set([
+  "maintenance.submitted_needs_vendor",
   "maintenance.sla_expired_needs_vendor",
   "maintenance.vendor_declined_needs_vendor",
   "maintenance.landlord_choice_unanswered",
@@ -90,6 +92,7 @@ export function normalizeActivityLogSource(
 async function bumpDedupedActivityEvent(
   supabase: SupabaseClient,
   params: RecordActivityLogInput,
+  attempt = 0,
 ): Promise<string | null> {
   const ticketId = params.maintenanceRequestId?.trim()
   if (!ticketId || !DEDUPED_ACTIVITY_EVENT_TYPES.has(params.eventType)) {
@@ -136,14 +139,32 @@ async function bumpDedupedActivityEvent(
     episode_open: true,
   }
 
-  const { error: updErr } = await supabase
-    .from("operations_graph_events")
-    .update({
-      repeat_count: nextCount,
-      last_seen_at: now,
-      metadata,
-    })
-    .eq("id", open.id)
+  const update = supabase.from("operations_graph_events").update({
+    repeat_count: nextCount,
+    last_seen_at: now,
+    metadata,
+  }).eq("id", open.id)
+  if (params.eventType === "maintenance.submitted_needs_vendor") {
+    // Compare-and-set protects repeat counts and a concurrent episode close.
+    const guarded = update.is("metadata->>episode_closed_at", null)
+    const expectedCount = typeof open.repeat_count === "number"
+      ? guarded.eq("repeat_count", open.repeat_count)
+      : guarded.is("repeat_count", null)
+    const { data: changed, error } = await expectedCount.select("id").maybeSingle()
+    if (error) {
+      console.error("[recordActivityLog] episode repeat update", error.message)
+      return null
+    }
+    if (!changed) {
+      if (attempt >= 15) {
+        console.error("[recordActivityLog] episode repeat contention")
+        return null
+      }
+      return await bumpDedupedActivityEvent(supabase, params, attempt + 1)
+    }
+    return open.id as string
+  }
+  const { error: updErr } = await update
 
   if (updErr) {
     console.error(
@@ -222,6 +243,29 @@ export async function recordActivityLog(
     if (bumped) return bumped
   }
 
+  let episodeId: string | undefined
+  if (params.eventType === "maintenance.submitted_needs_vendor") {
+    const ticketId = params.maintenanceRequestId?.trim()
+    if (!ticketId) return null
+    const { data: previous, error: previousError } = await supabase
+      .from("operations_graph_events").select("id, metadata")
+      .eq("landlord_id", params.landlordId).eq("event_type", params.eventType)
+      .eq("maintenance_request_id", ticketId)
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .limit(1).maybeSingle()
+    if (previousError) {
+      console.error("[recordActivityLog] episode lookup", previousError.message)
+      return null
+    }
+    if (previous && previous.metadata?.episode_closed_at == null) {
+      // Another request may have inserted between the first lookup and this one.
+      return await bumpDedupedActivityEvent(supabase, params)
+    }
+    episodeId = await stableRecordId("maintenance-submitted-needs-vendor-episode", [
+      params.landlordId, ticketId, previous?.id ?? "initial",
+    ])
+  }
+
   const now = new Date().toISOString()
   const isDeduped = DEDUPED_ACTIVITY_EVENT_TYPES.has(params.eventType)
   const insertRow: Record<string, unknown> = {
@@ -257,11 +301,14 @@ export async function recordActivityLog(
     insertRow.last_seen_at = now
   }
 
-  const { data, error } = await supabase
-    .from("operations_graph_events")
-    .insert(insertRow)
-    .select("id")
-    .single()
+  const write = episodeId
+    ? supabase.from("operations_graph_events").upsert({ ...insertRow, id: episodeId }, {
+      onConflict: "id", ignoreDuplicates: true,
+    })
+    : supabase.from("operations_graph_events").insert(insertRow)
+  const { data, error } = episodeId
+    ? await write.select("id").maybeSingle()
+    : await write.select("id").single()
 
   if (error) {
     console.error(
@@ -271,6 +318,11 @@ export async function recordActivityLog(
       error.message,
     )
     return null
+  }
+
+  if (episodeId && !data?.id) {
+    // A concurrent winner owns the primary and property-graph records.
+    return await bumpDedupedActivityEvent(supabase, params)
   }
 
   const eventId = (data?.id as string | undefined) ?? null

@@ -1,7 +1,7 @@
 /**
- * When a landlord turns off AI dispatch, routine jobs wait for their approval
- * before any vendor is texted. Emergencies and accounts that still allow
- * dispatch keep the existing outreach path.
+ * Routine jobs require landlord selection before any vendor is contacted.
+ * AI-dispatch settings do not authorize pre-approval availability probes.
+ * Emergencies retain their existing outreach policy.
  */
 
 export function shouldHoldRoutineVendorOutreach(input: {
@@ -9,7 +9,6 @@ export function shouldHoldRoutineVendorOutreach(input: {
   emergency: boolean
   landlordAcknowledged: boolean
 }): boolean {
-  if (input.allowAiDispatch) return false
   if (input.emergency) return false
   if (input.landlordAcknowledged) return false
   return true

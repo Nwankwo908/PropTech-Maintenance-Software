@@ -51,10 +51,19 @@ export type TryDemoTooltipSide = 'auto' | 'left'
 
 function rectFromElement(el: HTMLElement): DOMRect | null {
   // Table row-groups often report 0×0 — union children first when marked as a cluster.
+  // Portaled flyouts (e.g. Notifications next to the rail) opt in via data-try-demo-spotlight-link.
   if (el.dataset.tryDemoSpotlightCluster === '1') {
     const childRects = Array.from(el.children)
       .map((child) => (child as HTMLElement).getBoundingClientRect())
       .filter((r) => r.width > 0 || r.height > 0)
+    if (el.id) {
+      for (const linked of document.querySelectorAll<HTMLElement>(
+        `[data-try-demo-spotlight-link="${CSS.escape(el.id)}"]`,
+      )) {
+        const linkedRect = linked.getBoundingClientRect()
+        if (linkedRect.width > 0 || linkedRect.height > 0) childRects.push(linkedRect)
+      }
+    }
     if (childRects.length > 0) {
       const top = Math.min(...childRects.map((r) => r.top))
       const left = Math.min(...childRects.map((r) => r.left))

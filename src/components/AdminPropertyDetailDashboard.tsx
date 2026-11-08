@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import unitKpiIcon from '@/assets/bedroom (1).png'
 import occupancyKpiIcon from '@/assets/room-key.png'
 import openRepairsIcon from '@/assets/repair-tool.png'
@@ -24,8 +24,11 @@ import { PropertyHomeDataPanel } from '@/components/PropertyHomeDataPanel'
 import { PropertyAccessRail } from '@/components/PropertyAccessRail'
 import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { isSingleFamilyPropertyType } from '@shared/properties/propertyType'
+import {
+  persistPropertyTypeCorrections,
+  propertyTypeCorrectionsFromInventory,
+} from '@/lib/propertyInventoryType'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, workflowMatchesPropertyScope, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
@@ -90,6 +93,7 @@ import {
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
 import { findPropertyById, findPropertyByName, listPropertiesForLandlord, linkUnitsToProperty, updatePropertyDetails, zillowLookupAddressFromProperty, type PropertyRecord } from '@/lib/properties'
+import { savePropertyUnitFields } from '@/lib/propertyUnitFields'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
@@ -257,9 +261,7 @@ export function AdminPropertyDetailDashboard() {
   const propertyInsuranceTabRef = useRef<HTMLElement | null>(null)
 
   const activeTab = parsePropertyDetailTab(searchParams.get('tab')) as PropertyTab
-  const tabListRef = useRef<HTMLDivElement>(null)
   const tabItemRefs = useRef<Map<PropertyTab, HTMLElement>>(new Map())
-  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, ready: false })
   const [tickets, setTickets] = useState<PropertyTicket[]>([])
   const [units, setUnits] = useState<PropertyUnit[]>([])
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
@@ -328,6 +330,19 @@ export function AdminPropertyDetailDashboard() {
       })
     }
   }, [location.pathname, location.search, location.state, navigate, searchParams])
+
+  useEffect(() => {
+    if (searchParams.get('rail') !== 'access') return
+    setPropertyAccessRailOpen(true)
+    const onOverview = !searchParams.get('tab') || searchParams.get('tab') === 'overview'
+    if (!onOverview) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('tab')
+      next.set('rail', 'access')
+      const qs = next.toString()
+      navigate(`${location.pathname}${qs ? `?${qs}` : ''}`, { replace: true })
+    }
+  }, [location.pathname, navigate, searchParams])
 
   useEffect(() => {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'property_insurance')) return
@@ -429,6 +444,8 @@ export function AdminPropertyDetailDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
+    const loadStartedAt =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
     await activateUnitsFromResidentAssignments({
       landlordId,
       source: 'property_sync',
@@ -703,7 +720,16 @@ export function AdminPropertyDetailDashboard() {
       setError(getErrorMessage(err, 'Could not load property.'))
     } finally {
       window.clearTimeout(timeoutId)
-      if (!timedOut && loadSeq === loadSeqRef.current) setLoading(false)
+      if (!timedOut && loadSeq === loadSeqRef.current) {
+        setLoading(false)
+        if (import.meta.env.DEV) {
+          const elapsedMs =
+            (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartedAt
+          console.info(
+            `[property-overview] hydrate ${Math.round(elapsedMs)}ms property=${buildingName}`,
+          )
+        }
+      }
     }
   }, [propertySlug, navigate, searchParams])
 
@@ -740,22 +766,6 @@ export function AdminPropertyDetailDashboard() {
     void loadProperty()
   }, [loadProperty])
 
-  useLayoutEffect(() => {
-    function measureIndicator() {
-      const list = tabListRef.current
-      const item = tabItemRefs.current.get(activeTab)
-      if (!list || !item) return
-      setTabIndicator({
-        left: item.offsetLeft,
-        width: item.offsetWidth,
-        ready: true,
-      })
-    }
-    measureIndicator()
-    window.addEventListener('resize', measureIndicator)
-    return () => window.removeEventListener('resize', measureIndicator)
-  }, [activeTab, building])
-
   function selectPropertyTab(tab: PropertyTab) {
     if (tab === 'details') {
       dismissSetupSuccessCheckboxGuide('property_tab')
@@ -788,25 +798,95 @@ export function AdminPropertyDetailDashboard() {
     }
   }
 
+  const inventoryCorrections = useMemo(
+    () =>
+      propertyTypeCorrectionsFromInventory({
+        properties: (canonicalProperties.length > 0
+          ? canonicalProperties
+          : canonicalProperty
+            ? [canonicalProperty]
+            : []
+        ).map((property) => ({
+          id: property.id,
+          name: property.name,
+          streetAddress: property.streetAddress,
+          propertyType: property.propertyType,
+        })),
+        units: units.map((unit) => ({
+          propertyId: unit.propertyId,
+          building: unit.building,
+          unitLabel: unit.unitLabel,
+        })),
+        residents: residents.map((resident) => ({
+          building: resident.building,
+          unit: resident.unit,
+          status: resident.status,
+        })),
+      }),
+    [canonicalProperties, canonicalProperty, units, residents],
+  )
+
+  const correctedTypeById = useMemo(
+    () => new Map(inventoryCorrections.map((correction) => [correction.propertyId, correction])),
+    [inventoryCorrections],
+  )
+
+  useEffect(() => {
+    if (inventoryCorrections.length === 0) return
+    let cancelled = false
+    void persistPropertyTypeCorrections(inventoryCorrections).then((updatedIds) => {
+      if (cancelled || updatedIds.length === 0) return
+      setCanonicalProperties((prev) =>
+        prev.map((property) => {
+          const correction = correctedTypeById.get(property.id)
+          if (!correction || !updatedIds.includes(property.id)) return property
+          return {
+            ...property,
+            propertyType: correction.propertyType,
+            unitCount: correction.unitCount,
+          }
+        }),
+      )
+      setCanonicalProperty((prev) => {
+        if (!prev || !updatedIds.includes(prev.id)) return prev
+        const correction = correctedTypeById.get(prev.id)
+        if (!correction) return prev
+        return {
+          ...prev,
+          propertyType: correction.propertyType,
+          unitCount: correction.unitCount,
+        }
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [inventoryCorrections, correctedTypeById])
+
   const canonicalPropertiesForHealth = useMemo(
     (): PropertyHealthCanonicalProperty[] =>
       canonicalProperties.map((property) => ({
         id: property.id,
         name: property.name,
-        propertyType: property.propertyType,
+        propertyType: correctedTypeById.get(property.id)?.propertyType ?? property.propertyType,
       })),
-    [canonicalProperties],
+    [canonicalProperties, correctedTypeById],
   )
 
   const activeCanonicalProperty = useMemo((): PropertyHealthCanonicalProperty | null => {
     if (canonicalProperty) {
-      return { id: canonicalProperty.id, name: canonicalProperty.name, propertyType: canonicalProperty.propertyType }
+      return {
+        id: canonicalProperty.id,
+        name: canonicalProperty.name,
+        propertyType:
+          correctedTypeById.get(canonicalProperty.id)?.propertyType ?? canonicalProperty.propertyType,
+      }
     }
     if (!building) return null
     return canonicalPropertiesForHealth.find(
       (property) => normalizeBuildingKey(property.name) === normalizeBuildingKey(building),
     ) ?? null
-  }, [canonicalProperty, building, canonicalPropertiesForHealth])
+  }, [canonicalProperty, building, canonicalPropertiesForHealth, correctedTypeById])
 
   const buildingUnits = useMemo(() => {
     if (!building) return []
@@ -824,10 +904,11 @@ export function AdminPropertyDetailDashboard() {
   }, [units, building, activeCanonicalProperty])
 
   const editPropertyFormValues: AddPropertyFormPayload = useMemo(() => {
-    const unitCount = canonicalProperty?.unitCount ?? buildingUnits.length
+    const correction = canonicalProperty ? correctedTypeById.get(canonicalProperty.id) : null
+    const unitCount = correction?.unitCount ?? canonicalProperty?.unitCount ?? buildingUnits.length
     return {
       propertyName: canonicalProperty?.name ?? building ?? '',
-      propertyType: canonicalProperty?.propertyType ?? '',
+      propertyType: correction?.propertyType ?? canonicalProperty?.propertyType ?? '',
       streetAddress: canonicalProperty?.streetAddress ?? '',
       city: canonicalProperty?.city ?? '',
       state: canonicalProperty?.state ?? '',
@@ -835,8 +916,12 @@ export function AdminPropertyDetailDashboard() {
       totalUnits: unitCount > 0 ? String(unitCount) : '',
       yearBuilt: canonicalProperty?.yearBuilt != null ? String(canonicalProperty.yearBuilt) : null,
       amenities: [],
+      units: buildingUnits.map((unit) => ({
+        id: unit.id,
+        label: unit.unitLabel,
+      })),
     }
-  }, [canonicalProperty, building, buildingUnits.length])
+  }, [canonicalProperty, building, buildingUnits, correctedTypeById])
 
   async function saveEditedProperty(payload: AddPropertyFormPayload) {
     if (!canonicalProperty) {
@@ -867,6 +952,19 @@ export function AdminPropertyDetailDashboard() {
     if (!updated.ok) {
       setEditPropertyNotice(updated.error)
       return
+    }
+
+    if (payload.units && payload.units.length > 0) {
+      const unitsSaved = await savePropertyUnitFields({
+        landlordId: getActiveLandlordId(),
+        propertyId: canonicalProperty.id,
+        buildingName: payload.propertyName,
+        units: payload.units,
+      })
+      if (!unitsSaved.ok) {
+        setEditPropertyNotice(unitsSaved.error)
+        return
+      }
     }
 
     if (payload.propertyName.trim().toLowerCase() !== canonicalProperty.name.trim().toLowerCase()) {
@@ -1089,7 +1187,11 @@ export function AdminPropertyDetailDashboard() {
     return buildPropertyUnitRows({
       building,
       propertyId: activeCanonicalProperty?.id ?? null,
-      propertyType: canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType ?? null,
+      propertyType:
+        (canonicalProperty ? correctedTypeById.get(canonicalProperty.id)?.propertyType : null) ??
+        canonicalProperty?.propertyType ??
+        activeCanonicalProperty?.propertyType ??
+        null,
       units: buildingUnits,
       residents: buildingResidents,
       tickets: buildingTickets.map((ticket) => ({
@@ -1104,7 +1206,7 @@ export function AdminPropertyDetailDashboard() {
       })),
       workflowData,
     })
-  }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData, activeCanonicalProperty, canonicalProperty])
+  }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData, activeCanonicalProperty, canonicalProperty, correctedTypeById])
 
   const allWorkflowRuns = useMemo(
     () => (workflowData ? collectAdminWorkflowRuns(workflowData) : []),
@@ -1147,7 +1249,9 @@ export function AdminPropertyDetailDashboard() {
   }, [propertyUnitRows, buildingUnits])
 
   const hideUnitsKpi = isSingleFamilyPropertyType(
-    canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType,
+    (canonicalProperty ? correctedTypeById.get(canonicalProperty.id)?.propertyType : null) ??
+      canonicalProperty?.propertyType ??
+      activeCanonicalProperty?.propertyType,
   )
 
   const propertyAnalytics = useMemo(() => {
@@ -1359,11 +1463,10 @@ export function AdminPropertyDetailDashboard() {
   }
 
   const subtitle = formatPropertySubtitle(meta, buildingUnits.length)
-  const limitedAlpha1 = isLimitedAlpha1Landlord(getActiveLandlordId())
   const healthValue = resolvePropertyHealthKpiValue(
     buildingHealth?.status,
     buildingHealth?.score,
-    'over100',
+    'percent',
   )
 
   return (
@@ -1397,14 +1500,7 @@ export function AdminPropertyDetailDashboard() {
         message={SETUP_SUCCESS_PROPERTY_INSURANCE_GUIDE_MESSAGE}
       />
       <div className="py-6">
-        <Link
-          to="/admin/properties"
-          className="sa-link inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] hover:text-[#101828]"
-        >
-          <span aria-hidden>←</span> All properties
-        </Link>
-
-        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
               Property Overview
@@ -1474,7 +1570,12 @@ export function AdminPropertyDetailDashboard() {
                 ? '—'
                 : propertyTableUnitsLabel({
                     unitCount: propertyUnitRows.length || buildingUnits.length,
-                    propertyType: canonicalProperty?.propertyType ?? activeCanonicalProperty?.propertyType,
+                    propertyType:
+                      (canonicalProperty
+                        ? correctedTypeById.get(canonicalProperty.id)?.propertyType
+                        : null) ??
+                      canonicalProperty?.propertyType ??
+                      activeCanonicalProperty?.propertyType,
                   })
             }
             icon={unitKpiIcon}
@@ -1506,75 +1607,18 @@ export function AdminPropertyDetailDashboard() {
         className="mt-6 shrink-0 -mx-8 overflow-x-auto overscroll-x-contain px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"
         aria-label="Property sections"
       >
-        {limitedAlpha1 ? (
-          <div
-            className="flex w-max min-w-full items-end justify-start gap-5 border-b border-[#f3f4f6]"
-            role="tablist"
-            aria-label="Property sections"
-          >
-            {TABS.map((tab) => {
-              const isActive = activeTab === tab.id
-              const className = [
-                'sa-press -mb-px shrink-0 whitespace-nowrap border-b-2 px-0 pb-2.5 pt-3 text-[13px] font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2',
-                isActive
-                  ? 'border-[#186179] text-[#186179]'
-                  : 'border-transparent text-[#6a7282] hover:text-[#186179]',
-              ].join(' ')
-
-              if (tab.href && tab.id !== 'overview') {
-                return (
-                  <Link
-                    key={tab.id}
-                    ref={(node) => setTabItemRef(tab.id, node)}
-                    to={tab.href}
-                    role="tab"
-                    aria-selected={isActive}
-                    className={className}
-                  >
-                    {tab.label}
-                  </Link>
-                )
-              }
-
-              return (
-                <button
-                  key={tab.id}
-                  ref={(node) => setTabItemRef(tab.id, node)}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => selectPropertyTab(tab.id)}
-                  className={className}
-                >
-                  {tab.label}
-                </button>
-              )
-            })}
-          </div>
-        ) : (
         <div
-          ref={tabListRef}
-          className="property-tab-list relative inline-flex w-max max-w-none flex-nowrap gap-1 rounded-full bg-[#f3f4f6] p-1"
+          className="flex w-max min-w-full items-end justify-start gap-5 border-b border-[#e5e7eb]"
+          role="tablist"
+          aria-label="Property sections"
         >
-          <span
-            aria-hidden
-            className={[
-              'property-tab-indicator pointer-events-none absolute top-1 bottom-1 rounded-full bg-white shadow-[0px_1px_2px_rgba(0,0,0,0.06)] border border-[#e5e7eb]',
-              tabIndicator.ready ? 'opacity-100' : 'opacity-0',
-            ].join(' ')}
-            style={{
-              left: tabIndicator.left,
-              width: tabIndicator.width,
-            }}
-          />
           {TABS.map((tab) => {
             const isActive = activeTab === tab.id
             const className = [
-              'property-tab-trigger relative z-[1] shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-[13px] font-medium leading-5 outline-none transition-colors duration-200',
-              'focus-visible:shadow-[0_0_0_2px_#ffffff,0_0_0_4px_#187960]',
+              'sa-press -mb-px shrink-0 whitespace-nowrap border-b-2 px-0 pb-2.5 pt-3 text-[13px] font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2',
               isActive
-                ? 'text-[#0a0a0a]'
-                : 'text-[#6a7282] hover:text-[#101828] active:text-[#0a0a0a]',
+                ? 'border-[#186179] text-[#186179]'
+                : 'border-transparent text-[#6a7282] hover:text-[#186179]',
             ].join(' ')
 
             if (tab.href && tab.id !== 'overview') {
@@ -1583,8 +1627,9 @@ export function AdminPropertyDetailDashboard() {
                   key={tab.id}
                   ref={(node) => setTabItemRef(tab.id, node)}
                   to={tab.href}
+                  role="tab"
+                  aria-selected={isActive}
                   className={className}
-                  aria-current={isActive ? 'page' : undefined}
                 >
                   {tab.label}
                 </Link>
@@ -1596,16 +1641,16 @@ export function AdminPropertyDetailDashboard() {
                 key={tab.id}
                 ref={(node) => setTabItemRef(tab.id, node)}
                 type="button"
+                role="tab"
+                aria-selected={isActive}
                 onClick={() => selectPropertyTab(tab.id)}
                 className={className}
-                aria-pressed={isActive}
               >
                 {tab.label}
               </button>
             )
           })}
         </div>
-        )}
       </nav>
 
       <div key={activeTab} className="property-tab-panel min-w-0">
@@ -1722,7 +1767,14 @@ export function AdminPropertyDetailDashboard() {
       <PropertyAccessRail
         open={propertyAccessRailOpen}
         building={building ?? ''}
-        onClose={() => setPropertyAccessRailOpen(false)}
+        onClose={() => {
+          setPropertyAccessRailOpen(false)
+          if (searchParams.get('rail') === 'access') {
+            const next = new URLSearchParams(searchParams)
+            next.delete('rail')
+            setSearchParams(next, { replace: true })
+          }
+        }}
       />
       <MaintenanceHistoryRail
         open={maintenanceHistoryRailOpen}

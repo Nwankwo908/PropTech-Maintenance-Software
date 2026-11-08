@@ -87,6 +87,13 @@ export function propertyDetailPath(
   return base
 }
 
+/** Property overview with the property access right rail open. */
+export function propertyAccessEditPath(propertyIdOrBuilding: string): string {
+  const base = propertyDetailPath(propertyIdOrBuilding)
+  const join = base.includes('?') ? '&' : '?'
+  return `${base}${join}rail=access`
+}
+
 /** @deprecated Prefer propertyDetailPath(propertyId). Accepts id or legacy building name. */
 export function buildingDetailPath(
   buildingOrPropertyId: string,

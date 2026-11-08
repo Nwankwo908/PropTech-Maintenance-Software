@@ -76,11 +76,26 @@ export function mediaKindFromContentType(contentType: string): SmsMediaKind | nu
   return null
 }
 
-/** iPhone MMS video/3gpp is H.263 + AMR. A normal video tag cannot play it. */
+/**
+ * Videos that browsers often cannot play natively in the landlord inbox.
+ * iPhone MMS video/3gpp is H.263 + AMR. HEVC/H.265 (common in .mov / hvc1)
+ * also fails in many desktop Chromium sessions.
+ */
 export function needsBrowserVideoConversion(ref: string): boolean {
   const lower = ref.trim().toLowerCase()
+  const pathOnly = lower.split('?')[0] ?? lower
   if (lower.includes('video/3gpp') || lower.includes('video/3gp')) return true
-  return UNPLAYABLE_VIDEO_EXT.test(lower.split('?')[0] ?? lower)
+  if (
+    lower.includes('hevc') ||
+    lower.includes('hvc1') ||
+    lower.includes('hev1') ||
+    lower.includes('h265') ||
+    lower.includes('video/quicktime')
+  ) {
+    return true
+  }
+  if (/\.mov(?:$|[?#])/i.test(pathOnly)) return true
+  return UNPLAYABLE_VIDEO_EXT.test(pathOnly)
 }
 
 /** Stored next to the original. The original path is never replaced. */

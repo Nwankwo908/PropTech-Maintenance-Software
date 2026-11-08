@@ -562,7 +562,7 @@ export async function completeJobWithPhotos(
     ok: true,
     photoCount: paths.length,
     message:
-      "Photos saved. We texted the resident for a quick rating — the job closes when they reply.",
+      "Photos saved. This job is pending final close-out — no further action needed from you.",
   }
 }
 

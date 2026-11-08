@@ -41,8 +41,11 @@ describe('sms media helpers', () => {
     expect(mediaKindFromContentType('video/3gpp')).toBe('video')
     expect(needsBrowserVideoConversion('sms/c/m/0.3gp')).toBe(true)
     expect(needsBrowserVideoConversion('sms/c/m/0.mp4')).toBe(false)
+    expect(needsBrowserVideoConversion('sms/c/m/clip.mov')).toBe(true)
+    expect(needsBrowserVideoConversion('sms/c/m/hevc_aac.mp4')).toBe(true)
     expect(playbackSiblingPath('sms/c/m/0.3gp')).toBe('sms/c/m/0.playback.mp4')
     expect(playbackSiblingPath('sms/c/m/0.mp4')).toBeNull()
+    expect(playbackSiblingPath('sms/c/m/clip.mov')).toBe('sms/c/m/clip.playback.mp4')
   })
 
   it('uses media copy when the SMS body is empty', () => {

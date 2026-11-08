@@ -1,3 +1,4 @@
+import { clearManualStageOverrideForTicket } from "./workflowStageMove/manualStageOverride.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { runMaintenanceRequestViaEngine } from "./engine/maintenanceRequestEngine.ts"
 import { workflowEscalatedNeedsAdminVendor } from "./maintenance_admin_escalation.ts"
@@ -72,9 +73,7 @@ export async function tryAutoReassignAfterDecline(
 
   // Vendor decline is a real event — clear any manual stage override, then continue.
   try {
-    const { clearManualStageOverrideForTicket } = await import(
-      "./workflowStageMove/manualStageOverride.ts"
-    )
+
     await clearManualStageOverrideForTicket(supabase, {
       ticketId,
       reason: "vendor_declined",

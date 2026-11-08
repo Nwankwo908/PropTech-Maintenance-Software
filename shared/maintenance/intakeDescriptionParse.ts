@@ -6,7 +6,7 @@
 const TENANT_UPDATE_SPLIT = /(?:^|\n+)\s*Tenant update:\s*/i
 
 const LABELED_LINE_RE =
-  /^\s*(Affected area|Safety concerns|First noticed|Resident availability|Entry if not home|Entry if absent|Preferred contact method|Preferred contact):\s*(.+?)\s*$/i
+  /^\s*(Affected area|Equipment|Serves floor|Safety concerns|First noticed|Resident availability|Entry if not home|Entry if absent|Preferred contact method|Preferred contact):\s*(.+?)\s*$/i
 
 const WINDOW_CUE =
   /\b(?:(?:this|next|coming)\s+)?(?:saturday|sunday|monday|tuesday|wednesday|thursday|friday|sat|sun|mon|tue|wed|thu|fri)\b|\ball\s+day\b|\bafter\s+\d|\bbetween\s+\d|\b(?:am|pm)\b/i
@@ -49,7 +49,7 @@ export function parseIntakeDescriptionParts(raw: string): IntakeDescriptionParts
     })
     .join('\n')
     .replace(
-      /\s*(Affected area|Safety concerns|First noticed|Resident availability|Entry if not home|Entry if absent|Preferred contact method|Preferred contact):\s*[^\n]+/gi,
+      /\s*(Affected area|Equipment|Serves floor|Safety concerns|First noticed|Resident availability|Entry if not home|Entry if absent|Preferred contact method|Preferred contact):\s*[^\n]+/gi,
       (full, label: string) => {
         const m =
           full.match(LABELED_LINE_RE) ??

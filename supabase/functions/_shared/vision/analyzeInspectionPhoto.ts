@@ -28,9 +28,10 @@ export async function analyzeInspectionPhotoRow(
   storagePath: string | null = null,
   nameplate?: { base64: string; mediaType: string } | null,
   photoContext?: EquipmentPhotoContext,
+  options: { persist?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   const started = Date.now()
-  await supabase
+  if (options.persist !== false) await supabase
     .from("property_inspection_photos")
     .update({ status: "analyzing", error_message: null, updated_at: new Date().toISOString() })
     .eq("id", photoId)
@@ -133,6 +134,7 @@ export async function analyzeInspectionPhotoRow(
     const providerLabel = dibPass
       ? buildHybridVisionProviderLabel(storedProvider)
       : storedProvider
+    if (options.persist === false) return { id: photoId, status: 'needs_review', ai_result: enriched, provider: providerLabel, latency_ms: latencyMs, serial_review: serialReview }
     const { data, error } = await supabase
       .from("property_inspection_photos")
       .update({
@@ -171,6 +173,7 @@ export async function analyzeInspectionPhotoRow(
     return data as Record<string, unknown>
   } catch (err) {
     const message = err instanceof Error ? err.message : "Vision analysis failed"
+    if (options.persist === false) return { id: photoId, status: 'error', error_message: 'Photo analysis temporarily unavailable.', latency_ms: Date.now()-started }
     console.error("[analyze-inspection-photo]", photoId, message)
     const { data } = await supabase
       .from("property_inspection_photos")

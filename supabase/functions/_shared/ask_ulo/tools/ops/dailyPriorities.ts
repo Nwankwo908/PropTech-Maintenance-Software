@@ -244,10 +244,15 @@ export function dailyPrioritySelectionMessage(
   return `I selected ${title}. There's no confirmation step for this item.`
 }
 
+export function cleanPriorityUnitLabel(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim()
+  return !text || /^(?:unit\s+)?(?:n\/?a|none|unknown|not applicable|no unit|--?)$/i.test(text) ? null : text
+}
+
 function placeLabel(c: Pick<DailyPriorityCandidate, "propertyLabel" | "unitLabel" | "propertyType">): string {
   return formatLocationWithOptionalUnit({
     propertyLabel: c.propertyLabel,
-    unitLabel: c.unitLabel,
+    unitLabel: cleanPriorityUnitLabel(c.unitLabel),
     propertyType: c.propertyType,
   })
 }
@@ -298,7 +303,7 @@ export function rankDailyPriorityCandidates(
       displayId,
       title: c.title.trim() || "Open request",
       propertyLabel: c.propertyLabel,
-      unitLabel: c.unitLabel,
+      unitLabel: cleanPriorityUnitLabel(c.unitLabel),
       propertyId: c.propertyId ?? null,
       unitId: c.unitId ?? null,
       propertyType: c.propertyType ?? null,

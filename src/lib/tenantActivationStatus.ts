@@ -66,7 +66,7 @@ export function resolveTenantActivationChip(input: {
   if (consent === 'opted_in' || raw === 'activated') {
     return {
       status: 'activated',
-      label: 'Activated',
+      label: 'SMS Activated',
       detail: 'Resident opted in and can receive messages.',
       className: 'bg-[#dbfce7] text-[#008236]',
       actionRequired: false,
@@ -131,7 +131,7 @@ export function resolveTenantActivationChip(input: {
   }
   return {
     status: 'not_started',
-    label: 'Not activated',
+    label: 'SMS Not Activated',
     detail: 'Welcome SMS has not been sent yet.',
     className: 'bg-[#f3f4f6] text-[#6a7282]',
     actionRequired: false,

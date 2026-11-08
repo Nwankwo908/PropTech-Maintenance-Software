@@ -113,7 +113,7 @@ function licenseItem(record: VerificationRecord): VerificationChecklistItem {
     label: "State License",
     status: "missing",
     required: false,
-    detail: "Optional — recommended for licensed trades",
+    detail: "Recommended for licensed trades",
   }
 }
 
@@ -128,7 +128,7 @@ function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem 
       label: "General Liability (recommended $500K)",
       status: "missing",
       required: false,
-      detail: "Optional — recommended $500K minimum GL",
+      detail: "Recommended $500K minimum GL",
     }
   }
   const notExpired = !exp || exp >= todayIso()
@@ -181,7 +181,7 @@ function w9Item(record: VerificationRecord): VerificationChecklistItem {
     label: "W-9 on file",
     status: "missing",
     required: false,
-    detail: "Optional — not required to verify",
+    detail: "Not required to verify",
   }
 }
 
@@ -199,7 +199,7 @@ function stripeConnectItem(record: VerificationRecord): VerificationChecklistIte
       label: "Set up your payout account",
       status: "missing",
       required: false,
-      detail: "Optional — not required to confirm details",
+      detail: "Not required to confirm details",
     }
 }
 

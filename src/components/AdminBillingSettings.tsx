@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import {
@@ -329,16 +329,8 @@ function AdminBillingSettingsBody() {
 
   return (
     <>
-      <div className="py-6">
-        <Link
-          to="/admin/settings"
-          className="sa-link inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
-        >
-          <span aria-hidden>←</span>
-          Settings
-        </Link>
-
-        <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
               Subscription & Billing

@@ -1,3 +1,5 @@
+import { isExplicitNewRepair } from "./explicitNewRepair.ts"
+import { classifyAssistantOtherMessage, isSimpleCourtesy } from './tenantAssistantReply.ts'
 /**
  * Contextual interpretation of resident inbound SMS.
  *
@@ -25,7 +27,7 @@ import {
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 import { looksLikeClosedRepairStatusAsk } from "./maintenanceTicketContext.ts"
-import { looksLikeTenantReportedFix } from "../../../../shared/maintenance/tenantReportedFix.ts"
+import { looksLikeTenantReportedFix, hasUnresolvedRepairEvidence } from "../../../../shared/maintenance/tenantReportedFix.ts"
 import {
   classifyRentSmsIntent,
 } from "./rentIntent.ts"
@@ -128,10 +130,12 @@ const CANCEL_PHRASE =
 /** True when the resident is stopping / resolving the current request. */
 export function looksLikeCancelRepair(body: string): boolean {
   const text = body.trim()
-  if (!text) return false
+  if (!text || hasUnresolvedRepairEvidence(text)) return false
+  if (/\b(?:don't|do not|never)\s+(?:cancel|close)\b/i.test(text)) return false
+  if (/\b(?:still|again)\b[^.!?]{0,35}\b(?:leaking|flooding|water|broken)\b/i.test(text)) return false
   if (/\bnever ?mind\b/i.test(text) && /\bi meant\b/i.test(text)) return false
   if (looksLikeTenantReportedFix(text)) return true
-  return CANCEL_SHORT.test(text) || CANCEL_PHRASE.test(text)
+  return /\bcancel (?:that|this) one\b/i.test(text) || CANCEL_SHORT.test(text) || CANCEL_PHRASE.test(text)
 }
 
 const REOPEN_REPAIR =
@@ -147,7 +151,7 @@ const WEEKDAY_WORD =
   "mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?"
 
 const SCHEDULE_CHANGE =
-  /\b(reschedule|re-?schedule|different time|another time|can'?t make|cannot make|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (?:doesn'?t|does not|won'?t|will not) work|(?:doesn'?t|does not) work for me|can they come|come after|come before|after \d{1,2}|before \d{1,2})\b/i
+  /\b(reschedule|re-?schedule|different (?:time|appointment|visit)|another time|can'?t make|cannot make|change(?:\s+the)?\s+(?:time|appointment|visit)|move(?:\s+the)?\s+(?:appointment|visit|time)|tomorrow (?:doesn'?t|does not|won'?t|will not) work|(?:doesn'?t|does not) work for me|can they come|come after|come before|after \d{1,2}|before \d{1,2})\b/i
 
 /** "Good morning" is a greeting, not a visit time. */
 const GREETING = /\b(?:good\s+)?(?:morning|afternoon|evening)\b(?=\s*[,.!]|\s*$)|\bgood\s+(?:morning|afternoon|evening|night)\b/gi
@@ -771,6 +775,17 @@ export function heuristicInterpretInbound(
     }
   }
 
+  if (isSimpleCourtesy(body) || (pending.activeIntake && !pending.hasMedia && !/[\p{L}\p{N}]/u.test(body))) return {
+    addressesPending: false, intent: "other", extractedSlots: {},
+    needsClarification: false, source: "heuristic",
+  }
+  const assistantKind = classifyAssistantOtherMessage(body)
+  if (assistantKind === "human_request" || assistantKind === "complaint_or_legal") {
+    if (recognizeInboundIntentSync(body).intent !== "emergency") return {
+      addressesPending: false, intent: "other", extractedSlots: {},
+      needsClarification: false, source: "heuristic",
+    }
+  }
   const pendingMatch = pendingAnswerForStep(body, pending)
   const recognition = recognizeInboundIntentSync(body, {
     activeIntake: pending.activeIntake,
@@ -781,6 +796,18 @@ export function heuristicInterpretInbound(
       pendingAnswer: "summary",
       intent: "maintenance_new",
       extractedSlots: {},
+      needsClarification: false,
+      source: "heuristic",
+      recognition,
+    }
+  }
+  // A new repair can include entry instructions without updating the old job.
+  // Emergencies retain their existing fast path and priority.
+  if (recognition.intent !== "emergency" && isExplicitNewRepair(body)) {
+    return {
+      addressesPending: false,
+      intent: "maintenance_new",
+      extractedSlots: { contextual_action: "new_issue" },
       needsClarification: false,
       source: "heuristic",
       recognition,

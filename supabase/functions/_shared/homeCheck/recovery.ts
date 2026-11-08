@@ -34,6 +34,7 @@ export async function runHomeCheckPhotoRecovery(db: SupabaseClient, landlordId?:
     if (!reserved.data) continue
     const notice = reserved.data
     let state = 'uncertain'
+    let outcomeError: Error | null = null
     try {
       const check = await loadHomeCheck(db, id, notice.landlord_id)
       if (landlordId && check.landlord_id !== landlordId) throw new Error('Notice account mismatch')
@@ -74,8 +75,9 @@ export async function runHomeCheckPhotoRecovery(db: SupabaseClient, landlordId?:
       // Reserve BEFORE sending. A crash/ambiguous provider outcome is never blindly resent.
       const saved = await db.from('home_check_recovery_notices').update({ state, updated_at: new Date().toISOString() })
         .eq('id', notice.id).eq('check_id', id).eq('state', 'sending')
-      if (saved.error) throw new Error('Recovery notice outcome requires review')
+      if (saved.error) outcomeError = new Error('Recovery notice outcome requires review')
     }
+    if (outcomeError) throw outcomeError
   }
   return counts
 }

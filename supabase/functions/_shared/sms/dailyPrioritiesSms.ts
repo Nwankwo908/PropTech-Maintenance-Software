@@ -19,6 +19,8 @@ import {
   type DailyPriorityActorRole,
 } from "../ask_ulo/tools/ops/dailyPriorities.ts"
 
+import { draftDailyPrioritiesSms } from "./dailyPrioritiesSmsCopy.ts"
+
 export { isDailyPrioritiesQuestion }
 
 /** Resolve Ask Ulo actor role from SMS identity (fail closed). */
@@ -88,7 +90,8 @@ export async function answerDailyPrioritiesSms(
     })
     listId = persisted?.listId ?? null
   }
-  return { text: result.smsText, listId, readOnly: true }
+  const copy = await draftDailyPrioritiesSms(result, { allowReplies: Boolean(listId) && input.role === "landlord" })
+  return { text: copy.text, listId, readOnly: true }
 }
 
 export async function tryHandleDailyPrioritiesAskSms(

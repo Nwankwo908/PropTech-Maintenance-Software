@@ -109,8 +109,6 @@ const SAFETY_RE =
 const BANNED_JARGON =
   /\b(workflow|probe|probed|classified|batch|reassigned|escalat|fsm|sla|digest|graph|token)\b/i
 
-const RAW_EVENT_NAME = /^[a-z]+(?:[ _][a-z0-9]+)+$/i
-
 const LEGAL_SUFFIX_RE =
   /\b(?:llc|l\.l\.c|inc|incorporated|co|corp|corporation|ltd|limited|plc|pllc|pc|p\.c)\b\.?/gi
 
@@ -169,7 +167,7 @@ export function shortIssueForFacts(
  * Cap at 2–3 meaningful words when longer.
  */
 export function vendorDisplayName(name: string | null | undefined): string | null {
-  let cleaned = (name ?? '')
+  const cleaned = (name ?? '')
     .replace(LEGAL_SUFFIX_RE, '')
     .replace(/[,\s]+$/g, '')
     .replace(/\s+/g, ' ')

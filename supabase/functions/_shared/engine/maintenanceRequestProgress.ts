@@ -1,3 +1,4 @@
+import { stableRecordId } from "../stableRecordId.ts"
 /**
  * Maintenance request workflow run progress — shared by template act and legacy callers.
  */
@@ -5,7 +6,6 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import type { WorkflowTriggerType } from "./types.ts"
 import {
   backfillPipelineStageEvents,
-  createWorkflowRun,
   getWorkflowRunById,
   logPipelineStageEvent,
   updateWorkflowRun,
@@ -34,22 +34,32 @@ export type StartMaintenanceRequestRunParams = {
 export async function findMaintenanceRequestRunId(
   supabase: SupabaseClient,
   ticketId: string,
+  options?: { landlordId?: string; failClosed?: boolean },
 ): Promise<string | null> {
-  const { data, error } = await supabase
+  let query = supabase
     .from("workflow_runs")
-    .select("id")
+    .select("id, landlord_id, metadata")
     .eq("template_id", "maintenance_request")
     .eq("entity_type", "maintenance_request")
     .eq("entity_id", ticketId)
+  const { data, error } = await query
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle()
 
   if (error) {
     console.error("[maintenance-request] find run", error.message)
+    if (options?.failClosed) throw Error("Maintenance workflow lookup failed")
     return null
   }
 
+  if (data?.id && options?.landlordId) {
+    const owner = typeof data.landlord_id === "string" ? data.landlord_id
+      : typeof data.metadata?.landlord_id === "string" ? data.metadata.landlord_id : null
+    if (!owner || owner.trim().toLowerCase() !== options.landlordId.trim().toLowerCase()) {
+      throw Error("Maintenance workflow owner mismatch")
+    }
+  }
   return (data?.id as string | undefined) ?? null
 }
 
@@ -58,7 +68,7 @@ export async function startMaintenanceRequestRun(
   supabase: SupabaseClient,
   params: StartMaintenanceRequestRunParams,
 ): Promise<{ workflowRunId: string | null }> {
-  const existingId = await findMaintenanceRequestRunId(supabase, params.ticketId)
+  const existingId = await findMaintenanceRequestRunId(supabase, params.ticketId, { landlordId: params.landlordId, failClosed: true })
   if (existingId) {
     if (params.vendorAssigned) {
       await updateWorkflowRun(supabase, existingId, {
@@ -73,31 +83,54 @@ export async function startMaintenanceRequestRun(
 
   const residentId = params.residentId?.trim() || null
 
-  const run = await createWorkflowRun(supabase, {
-    templateId: "maintenance_request",
-    landlordId: params.landlordId,
-    triggerType: params.triggerType,
-    currentStep,
-    entityType: "maintenance_request",
-    entityId: params.ticketId,
-    residentId,
-    unitId: params.unitId ?? null,
-    propertyId: params.propertyId ?? null,
-    metadata: {
-      due_at: params.dueAt,
-      issue_category: params.issueCategory,
-      severity: params.severity,
-      unit_label: params.unitLabel?.trim() || undefined,
-      source: params.source,
-      intake_run_id: params.intakeRunId ?? undefined,
-      conversation_id: params.conversationId ?? undefined,
-      vendor_assigned: Boolean(params.vendorAssigned),
-    },
-  })
-
-  if (!run) {
-    return { workflowRunId: null }
+  // The primary key arbitrates concurrent first starts. Ignore a conflict rather
+  // than overwriting the winner or falling back to an unrelated random run.
+  const id = await stableRecordId("maintenance-request-run", [params.landlordId, params.ticketId])
+  const { data: inserted, error: insertError } = await supabase.from("workflow_runs")
+    .upsert({
+      id,
+      template_id: "maintenance_request",
+      landlord_id: params.landlordId,
+      trigger_type: params.triggerType,
+      status: "active",
+      entity_type: "maintenance_request",
+      entity_id: params.ticketId,
+      resident_id: residentId,
+      unit_id: params.unitId ?? null,
+      property_id: params.propertyId ?? null,
+      current_stage: currentStep,
+      current_step: currentStep,
+      completed_at: null,
+      metadata: {
+        landlord_id: params.landlordId,
+        trigger_type: params.triggerType,
+        due_at: params.dueAt,
+        issue_category: params.issueCategory,
+        severity: params.severity,
+        unit_label: params.unitLabel?.trim() || undefined,
+        source: params.source,
+        intake_run_id: params.intakeRunId ?? undefined,
+        conversation_id: params.conversationId ?? undefined,
+        vendor_assigned: Boolean(params.vendorAssigned),
+      },
+    }, { onConflict: "id", ignoreDuplicates: true })
+    .select("id").maybeSingle()
+  if (insertError) throw Error(`Maintenance workflow creation failed: ${insertError.message}`)
+  const run = await getWorkflowRunById(supabase, id)
+  if (!run || run.landlord_id?.toLowerCase() !== params.landlordId.trim().toLowerCase() || run.template_id !== "maintenance_request" ||
+    run.entity_type !== "maintenance_request" || run.entity_id?.toLowerCase() !== params.ticketId.trim().toLowerCase()) {
+    throw Error("Maintenance workflow identity verification failed")
   }
+  if (!inserted?.id) return { workflowRunId: run.id }
+
+  // Only the actual creator appends the initial pipeline events.
+  await logPipelineStageEvent(supabase, {
+    runId: run.id,
+    stage: "trigger",
+    step: currentStep,
+    message: "Workflow run started",
+    metadata: { trigger_type: params.triggerType, template_id: "maintenance_request" },
+  })
 
   await backfillPipelineStageEvents(supabase, {
     runId: run.id,

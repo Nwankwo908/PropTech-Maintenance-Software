@@ -557,16 +557,13 @@ async function insertImportedResident(
         phone = null
         continue
       }
-      if (/email/i.test(lastError) && !email.includes('@onboarding.local')) {
-        email = `ulo.${residentId.toLowerCase()}@onboarding.local`
+      // Never invent @onboarding.local placeholders — blank is allowed (nonempty-email unique).
+      if (/email/i.test(lastError) && email.trim()) {
+        email = ''
         continue
       }
       if (phone) {
         phone = null
-        continue
-      }
-      if (!email.includes('@onboarding.local')) {
-        email = `ulo.${residentId.toLowerCase()}@onboarding.local`
         continue
       }
     }

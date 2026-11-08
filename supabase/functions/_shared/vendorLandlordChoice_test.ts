@@ -197,7 +197,7 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
   })
   assertStringIncludes(one, "Hi Alex — vendor needed")
   assertStringIncludes(one, "563 Springdale Circle · dripping faucet")
-  assertStringIncludes(one, "Ivanhomesolutions can take this job.")
+  assertStringIncludes(one, "Ivanhomesolutions matches this repair.")
   assertStringIncludes(one, "Reply YES to send the job to Ivanhomesolutions")
   assertStringIncludes(one, "if you have more than one pending, include the address")
   assertStringIncludes(one, "Ref: WO-E6F7")
@@ -728,4 +728,13 @@ Deno.test("two pending asks: bare number is ambiguous; property disambiguates", 
     assertEquals(withWo.ask.conversationId, "c1")
     assertEquals(withWo.option.id, "v2")
   }
+})
+
+Deno.test("uncontacted roster candidates do not claim availability or booking and retain denied entry",()=>{
+ const body=buildLandlordVendorChoiceSms({workOrderRef:"WO-TEST",tradeLabel:"carpentry",issueHeadline:"Closet door off track (main bedroom)",options:[{id:"qa-a",name:"QA Carpenter A",role:"specialist"},{id:"qa-b",name:"QA Carpenter B",role:"specialist"}],entryOkIfAbsent:false})
+ assertStringIncludes(body,"QA Carpenter A")
+ assertStringIncludes(body,"QA Carpenter B")
+ assertStringIncludes(body,"Availability and price still need confirmation")
+ assertStringIncludes(body,"Do not enter unless someone is home")
+ assertEquals(/can take this job|is available|booked/i.test(body),false)
 })

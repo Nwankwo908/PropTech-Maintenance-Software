@@ -108,9 +108,9 @@ export function shouldShowPropertyHealthScore(
   )
 }
 
-/** Main KPI value — omit "%" when the score is exactly 0. */
+/** Property Health is displayed consistently as a percentage of the possible score. */
 export function formatPropertyHealthKpiValue(score: number): string {
-  return score === 0 ? '0' : `${score}%`
+  return `${score}%`
 }
 
 /**
@@ -120,13 +120,13 @@ export function formatPropertyHealthKpiValue(score: number): string {
 export function resolvePropertyHealthKpiValue(
   status: PropertyHealthStatus | null | undefined,
   score: number | null | undefined,
-  format: 'percent' | 'over100' = 'percent',
+  _format: 'percent' | 'over100' = 'percent',
 ): string {
   if (!status || status === 'pending_setup') return 'Pending'
   if (status === 'unknown' || !shouldShowPropertyHealthScore(status) || score == null) {
-    return format === 'over100' ? '— / 100' : '—'
+    return '—'
   }
-  return format === 'over100' ? `${score} / 100` : formatPropertyHealthKpiValue(score)
+  return formatPropertyHealthKpiValue(score)
 }
 
 /** Trend pill — hide when there is no change (0%). */
@@ -1188,7 +1188,7 @@ function filterAssetsForScope(
 ): PropertyHealthAsset[] {
   const aliases = buildingScopeAliasKeys(building, property, units)
   return assets.filter((asset) => {
-    if (property?.id && asset.propertyId && asset.propertyId === property.id) return true
+    if (property?.id && asset.propertyId) return asset.propertyId === property.id
     return aliases.has(normalizeBuildingKey(asset.building))
   })
 }
@@ -1433,7 +1433,19 @@ export function computePropertyHealthScope(
     scopeProperty,
     inputs.units,
   )
-  const trackedUnits = resolveTrackedHealthUnits(scopedUnits, occupyingResidents)
+  const scopedAssets =
+    scopeBuilding != null
+      ? filterAssetsForScope(inputs.assets ?? [], scopeBuilding, scopeProperty, inputs.units)
+      : (inputs.assets ?? [])
+  let trackedUnits = resolveTrackedHealthUnits(scopedUnits, occupyingResidents)
+  // A standalone home can have Home Check records without a separate units row.
+  // Score only its own evidence; this in-memory denominator does not imply occupancy.
+  if (trackedUnits.length === 0 && scopedUnits.length === 0 && scopeProperty &&
+      isSingleFamilyPropertyType(scopeProperty.propertyType) &&
+      scopedAssets.some(asset => asset.propertyId === scopeProperty.id)) {
+    trackedUnits = [{ id: `property:${scopeProperty.id}`, unitLabel: scopeProperty.name,
+      building: scopeProperty.name, status: 'unknown' }]
+  }
   if (trackedUnits.length === 0) {
     if (scopeBuilding == null) return null
     return buildNeutralScopeScore()
@@ -1449,10 +1461,6 @@ export function computePropertyHealthScope(
           scopeProperty,
         )
       : inputs.tickets
-  const scopedAssets =
-    scopeBuilding != null
-      ? filterAssetsForScope(inputs.assets ?? [], scopeBuilding, scopeProperty, inputs.units)
-      : (inputs.assets ?? [])
 
   // Occupancy: active leases vs. every unit onboarded for this property.
   const inventory =
@@ -1649,13 +1657,10 @@ function collectBuildingHealthRows(
       filterUnitsForScope(inputs.units, building, scopeProperty),
       scopeProperty?.name ?? building,
     )
-    const scopeScore =
-      buildingUnits.length > 0
-        ? computePropertyHealthScope(inputs, {
-            building,
-            property: scopeProperty ?? undefined,
-          })
-        : buildNeutralScopeScore()
+    const scopeScore = computePropertyHealthScope(inputs, {
+      building,
+      property: scopeProperty ?? undefined,
+    })
 
     if (!scopeScore) continue
 

@@ -293,6 +293,8 @@ serve(async (req) => {
       }
 
       const label = await propertyLabel(supabase, propertyId, String(assessment.building))
+      const building = String(assessment.building ?? label.name ?? "").trim()
+      const place = building || label.name
       await recordActivityLog(supabase, {
         landlordId,
         eventType: "inspection.capture_session_started",
@@ -300,9 +302,14 @@ serve(async (req) => {
         actorType: "landlord",
         propertyId,
         metadata: {
-          message: "Phone photo capture started for this inspection.",
+          message: place
+            ? `Started phone photo capture for equipment scan at ${place}`
+            : "Started phone photo capture for an equipment scan",
           assessmentId,
           sessionId: session.id,
+          building: place || null,
+          property_name: label.name || null,
+          property_address: label.address || null,
         },
       })
 
@@ -335,6 +342,20 @@ serve(async (req) => {
           .eq("id", sessionId)
           .eq("landlord_id", landlordId)
       }
+      const photos = await photoCount(supabase, sessionId)
+      let building = ""
+      if (session.assessment_id) {
+        const { data: assessment } = await supabase
+          .from("property_inspection_assessments")
+          .select("building")
+          .eq("id", session.assessment_id)
+          .maybeSingle()
+        building = String(assessment?.building ?? "").trim()
+      }
+      const label = await propertyLabel(supabase, session.property_id, building || "this property")
+      const place = building || label.name
+      const countBit =
+        photos > 0 ? ` (${photos} photo${photos === 1 ? "" : "s"})` : ""
       await recordActivityLog(supabase, {
         landlordId,
         eventType: "inspection.capture_session_ended",
@@ -342,8 +363,15 @@ serve(async (req) => {
         actorType: "landlord",
         propertyId: session.property_id,
         metadata: {
-          message: "Phone photo capture ended.",
+          message: place
+            ? `Finished phone photo capture for equipment scan at ${place}${countBit}`
+            : `Finished phone photo capture for an equipment scan${countBit}`,
           sessionId,
+          assessmentId: session.assessment_id,
+          building: place || null,
+          property_name: label.name || null,
+          property_address: label.address || null,
+          photo_count: photos,
         },
       })
       return jsonResponse({ ok: true })

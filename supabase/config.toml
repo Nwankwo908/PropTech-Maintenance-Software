@@ -96,6 +96,12 @@ verify_jwt = false
 import_map = "./functions/synthesize-property-insights/deno.json"
 entrypoint = "./functions/synthesize-property-insights/index.ts"
 
+[functions.summarize-landlord-response-topics]
+enabled = true
+verify_jwt = false
+import_map = "./functions/summarize-landlord-response-topics/deno.json"
+entrypoint = "./functions/summarize-landlord-response-topics/index.ts"
+
 [functions.start-insight-inspection-scheduling]
 enabled = true
 verify_jwt = false
@@ -576,3 +582,6 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/integration-sms-journey/deno.json"
 entrypoint = "./functions/integration-sms-journey/index.ts"
+
+[functions.run-home-check-visits]
+verify_jwt = false

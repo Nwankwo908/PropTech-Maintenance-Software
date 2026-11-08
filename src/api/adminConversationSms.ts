@@ -34,6 +34,7 @@ async function invokeAdminConversationSms(input: {
   action: 'takeover' | 'release' | 'send'
   conversationId: string
   body?: string
+  replyToMessageId?: string
 }): Promise<AdminConversationSmsResult> {
   const url = adminConversationSmsUrl()
   const secret = getAdminEdgeSecret()
@@ -57,6 +58,7 @@ async function invokeAdminConversationSms(input: {
       conversation_id: conversationId,
       landlord_id: landlordId,
       body: input.body ?? '',
+      ...(input.replyToMessageId ? { reply_to_message_id: input.replyToMessageId } : {}),
     }),
   })
 
@@ -92,12 +94,18 @@ export function releaseConversationTakeover(conversationId: string) {
   return invokeAdminConversationSms({ action: 'release', conversationId })
 }
 
-export function sendConversationSms(conversationId: string, body: string) {
+export function sendConversationSms(
+  conversationId: string,
+  body: string,
+  options?: { replyToMessageId?: string },
+) {
   const trimmed = body.trim()
   if (!trimmed) throw new Error('Message cannot be empty.')
+  const replyToMessageId = options?.replyToMessageId?.trim() || undefined
   return invokeAdminConversationSms({
     action: 'send',
     conversationId,
     body: trimmed,
+    replyToMessageId,
   })
 }

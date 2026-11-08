@@ -20,6 +20,7 @@ import {
   type Category,
   type Urgency,
 } from "./workOrderContext.ts"
+import { summarizeMaintenanceRequestDeterministic } from "../../../shared/maintenance/maintenanceRequestFacts.ts"
 
 export interface StaleVendorTicket {
   id: string
@@ -37,10 +38,40 @@ export interface StaleVendorTicket {
   photoCount?: number | null
   // Cached context columns (null -> derived on the fly with the heuristic)
   summary?: string | null
+  /** Specific issue title — preferred over trade-label summaries. */
+  issueHeadline?: string | null
   category?: string | null
   room?: string | null
   locationDetail?: string | null
   urgency?: string | null
+}
+
+/** Concise digest headline from the same confirmed facts as landlord/vendor views. */
+export function digestIssueLine(t: {
+  description: string
+  summary?: string | null
+  issueHeadline?: string | null
+  category?: string | null
+  locationDetail?: string | null
+  room?: string | null
+}): { title: string; location: string | null; condition: string | null } {
+  const polished = summarizeMaintenanceRequestDeterministic(t.description ?? "", {
+    category: t.category,
+  })
+  const title =
+    (t.issueHeadline ?? "").trim() ||
+    polished.title ||
+    (t.summary ?? "").trim() ||
+    "Maintenance request"
+  const location =
+    (t.locationDetail ?? "").trim() ||
+    polished.location ||
+    (t.room ?? "").trim() ||
+    null
+  const condition = polished.facts.reportedCondition
+    ? polished.facts.reportedCondition.replace(/\.$/, "")
+    : null
+  return { title, location, condition }
 }
 
 export interface DigestOptions {
@@ -86,16 +117,19 @@ const PLACEHOLDER_NAMES = /^(resident|tenant|unknown|n\/a|-)?$/i
 
 function enrich(t: StaleVendorTicket, now: Date): Enriched {
   const derived = deriveContextHeuristic(t.description)
+  const issue = digestIssueLine(t)
   const urgency = (["emergency", "safety", "routine"].includes(t.urgency ?? "") ? t.urgency : derived.urgency) as Urgency
   const since = new Date(t.parkedSince ?? t.createdAt)
   const name = t.residentName?.trim() ?? ""
+  const summaryBits = [issue.title]
+  if (issue.condition) summaryBits.push(issue.condition)
   return {
     ...t,
     ctx: {
-      summary: t.summary?.trim() || derived.summary,
+      summary: summaryBits.join(" — "),
       category: (t.category as Category) || derived.category,
-      room: t.room ?? derived.room,
-      locationDetail: t.locationDetail ?? derived.location_detail,
+      room: issue.location || t.room || derived.room,
+      locationDetail: issue.location || t.locationDetail || derived.location_detail,
       // Keyword detection can only raise urgency, never lower a stored value.
       urgency: rankUrgency(derived.urgency) > rankUrgency(urgency) ? derived.urgency : urgency,
     },
@@ -113,7 +147,12 @@ export function formatAge(hours: number): string {
 
 function placeLine(t: Enriched): string | null {
   const addr = [t.propertyAddress, t.unit].filter(Boolean).join(", ")
-  const spot = [t.ctx.room, t.ctx.locationDetail].filter(Boolean).join(" — ")
+  const room = (t.ctx.room ?? "").trim()
+  const detail = (t.ctx.locationDetail ?? "").trim()
+  const spot =
+    room && detail && room.toLowerCase() === detail.toLowerCase()
+      ? room
+      : [room, detail].filter(Boolean).join(" — ")
   const parts = [addr, spot].filter(Boolean)
   return parts.length ? parts.join(" · ") : null
 }

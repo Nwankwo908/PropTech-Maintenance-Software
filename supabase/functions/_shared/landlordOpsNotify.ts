@@ -19,6 +19,7 @@ export function normalizeOpsEmail(raw: string): string | null {
 export const PLATFORM_LOGIN_EMAILS = new Set([
   "limitedalpha1@ulohome.io",
   "limitedalpha2@ulohome.io",
+  "limitedalpha3@ulohome.io",
   "demo@ulohome.io",
   "newlandlord@ulohome.io",
 ])
@@ -300,6 +301,8 @@ export async function sendLandlordOpsEmail(
     text: string
     html: string
     extraEmails?: string[]
+    /** Restrict delivery after the normal vendor/recipient safety gate. */
+    onlyEmails?: string[]
     excludeEmails?: string[]
     envEmails?: string[]
     accountHolderOnly?: boolean
@@ -321,6 +324,7 @@ export async function sendLandlordOpsEmail(
   const sent: string[] = []
   const errors: string[] = []
   for (const email of emails) {
+    if (params.onlyEmails && !params.onlyEmails.some(e => normalizeOpsEmail(e) === email)) continue
     const result = await sendResendEmail(
       email,
       params.subject,

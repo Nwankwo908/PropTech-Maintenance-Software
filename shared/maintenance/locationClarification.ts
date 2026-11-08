@@ -24,7 +24,7 @@ const BROAD_QUALIFIER =
   "upstairs|downstairs|upper|lower|front|back|rear|main|side|left|right|first(?:[\\s-]?floor)?|second(?:[\\s-]?floor)?|third(?:[\\s-]?floor)?|1st|2nd|3rd|basement|attic|garage|kitchen|bedroom|bed\\s?room|bathroom|bath|living\\s?room|dining(?:\\s?room)?|laundry|office|guest|master|primary|kids?'?"
 
 const CONVERSATION_INSTRUCTION =
-  /^(?:(?:a|this is a|it'?s a|its a)\s+)?(?:new|separate|different)\s+(?:problem|issue|request)\b[.!:,\-—]*\s*|^none of (?:these|those|them)\b[.!:,\-—]*\s*/i
+  /^(?:(?:a|this is a|it'?s a|its a)\s+)?(?:(?:new|separate|different)\s+)+(?:qa\s+)?(?:maintenance\s+)?(?:problem|issue|request|repair)(?:\s+qa\s+repair)?\b[.!:,\-—]*\s*|^none of (?:these|those|them)\b[.!:,\-—]*\s*/i
 
 const SPECIFIC_EXTERIOR =
   /\b(?:front|back|side|rear)\s+(?:porch|yard|door|steps|stairs|entrance|of the (?:house|home|building))\b|\b(?:driveway|sidewalk|roof|gutter|balcony|deck|patio|garage|fence|carport|front porch|back porch)\b/i

@@ -214,8 +214,17 @@ function openingProblem(text: string): string {
 }
 
 function leakSourceAlreadyNamed(opening: string): boolean {
-  return /\b(?:sink|faucet|toilet|pipe|ceiling|roof|fridge|refrigerator|dishwasher|washer|dryer|water heater|tub|shower)\b/i
+  return /\b(?:sink|faucet|toilet|pipe|ceiling|roof|fridge|refrigerator|dishwasher|washer|dryer|water heater|tub|shower|baseboard\s+heat(?:er|ing)?)\b/i
     .test(opening)
+}
+
+function firstProblemSentence(text: string): { opening: string; followUps: string[] } {
+  const parts = text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+  if (parts.length === 0) return { opening: text, followUps: [] }
+  return { opening: parts[0]!, followUps: parts.slice(1) }
 }
 
 function asLightOutage(opening: string): string {
@@ -232,46 +241,82 @@ function isDirectProblem(text: string): boolean {
   return !/\b(?:hi|hello|hey|thank|thanks|trying to see|wondering|i hope)\b/i.test(text)
 }
 
+/** Keep confirmed follow-up facts (e.g. rusted valve) attributed as reported. */
+function withReportedFollowUps(base: string, followUps: string[]): string {
+  const extras: string[] = []
+  for (const raw of followUps) {
+    if (!/\b(?:rust(?:ed|y)?|valve|may need to be replaced)\b/i.test(raw)) continue
+    // Skip near-duplicate location restatements of the same leak.
+    if (/^the leak is in\b/i.test(raw) && !/\b(?:rust|valve)\b/i.test(raw)) continue
+    const body = raw.replace(/[.!?]+$/g, "").trim()
+    if (!body) continue
+    const lowered = body.charAt(0).toLowerCase() + body.slice(1)
+    if (base.toLowerCase().includes(lowered.toLowerCase())) continue
+    extras.push(`The resident reports ${lowered}.`)
+  }
+  if (extras.length === 0) return base
+  const lead = ensureSentence(base.replace(/[.!?]+$/g, ""))
+  return [lead, ...extras].join(" ")
+}
+
 /** One sentence naming the problem and, when known, the confirmed place and item. */
 export function problemSentence(
   problem: string,
   location: string | null,
   itemDetail?: string | null,
 ): string {
-  const opening = asLightOutage(openingProblem(problem))
+  const full = asLightOutage(openingProblem(problem))
+  // Prefer the first sentence so a multi-sentence resident report is not forced
+  // through the short title fallback (e.g. baseboard leak + rusted valve).
+  const { opening: first, followUps } = firstProblemSentence(full)
+  const opening = first || full
+  const finish = (sentence: string) => withReportedFollowUps(sentence, followUps)
   if (!isDirectProblem(opening)) {
-    const phrase = generateIssueSummary(opening, { format: "title", maxChars: 80 })
+    const phrase = generateIssueSummary(full, { format: "title", maxChars: 80 })
       .replace(/^an?\s+/i, "")
-    return ensureSentence(phrase || opening)
+    return finish(ensureSentence(phrase || opening))
   }
   const place = location?.replace(/\s+/g, " ").trim().toLowerCase() || null
   const itemPhrase = confirmedItemPhrase(opening, itemDetail)
   if (/\b(?:smell(?:s)?\s+(?:of\s+)?gas|gas\s+(?:smell|leak)|i smell gas)\b/i.test(opening)) {
     if (place && !opening.toLowerCase().includes(place)) {
-      return `There is a gas smell in the ${place}.`
+      return finish(`There is a gas smell in the ${place}.`)
     }
     const named = opening.match(/\bin the ([a-z0-9][a-z0-9\s-]{1,30})$/i)?.[1]
-    return named
-      ? `There is a gas smell in the ${named.toLowerCase()}.`
-      : "There is a gas smell."
+    return finish(
+      named
+        ? `There is a gas smell in the ${named.toLowerCase()}.`
+        : "There is a gas smell.",
+    )
+  }
+
+  const closetDoor = opening.match(/^(?:the|my|our)\s+(?:[a-z]+\s+){0,2}closet door\s+(.+)$/i)
+  if (closetDoor && place) {
+    return finish(ensureSentence(`The closet door in the ${place} ${closetDoor[1]}`))
   }
 
   const fixture = opening.match(
     /^(?:the|my|our|there(?:'s| is) an?)\s+(?:([a-z]+)\s+)?(light|sink|faucet|toilet|window|door|outlet|fan|shower)\b\s*(.*)$/i,
   )
   if (itemPhrase && /\bappliance\b/i.test(opening) && !/\b(?:fridge|refrigerator|stove|oven|dishwasher|washer|dryer)\b/i.test(opening)) {
-    return place
-      ? `The ${itemPhrase} isn't working in the ${place}.`
-      : `The ${itemPhrase} isn't working.`
+    return finish(
+      place
+        ? `The ${itemPhrase} isn't working in the ${place}.`
+        : `The ${itemPhrase} isn't working.`,
+    )
   }
   if (itemPhrase && /\b(?:bugs?|pests?|insects?)\b/i.test(opening)) {
-    return place ? `There are ${itemPhrase} in the ${place}.` : `There are ${itemPhrase}.`
+    return finish(
+      place ? `There are ${itemPhrase} in the ${place}.` : `There are ${itemPhrase}.`,
+    )
   }
   if (itemPhrase && /\b(?:leak(?:ing)?|dripp(?:ing)?)\b/i.test(opening) && !leakSourceAlreadyNamed(opening)) {
     const noun = itemPhrase.replace(/^(?:a|an|the)\s+/i, "")
-    return place
-      ? `The ${noun} is leaking in the ${place}.`
-      : `The ${noun} is leaking.`
+    return finish(
+      place
+        ? `The ${noun} is leaking in the ${place}.`
+        : `The ${noun} is leaking.`,
+    )
   }
 
   if (fixture) {
@@ -282,30 +327,32 @@ export function problemSentence(
     if (!rest) rest = "needs repair"
     if (noun === "light" && itemPhrase && itemPhrase !== "light") {
       const detail = /\b(?:out|won'?t turn on|isn'?t working|not working)\b/i.test(rest) ? "is out" : rest
-      return place
-        ? `The ${itemPhrase} in the ${place} ${detail}.`
-        : `The ${itemPhrase} ${detail}.`
+      return finish(
+        place
+          ? `The ${itemPhrase} in the ${place} ${detail}.`
+          : `The ${itemPhrase} ${detail}.`,
+      )
     }
     if (place && !opening.toLowerCase().includes(place)) {
       const detail = noun === "light" && /^(?:is out|out)$/i.test(rest) ? "won't turn on" : rest
       if (noun === "light" && place.split(/\s+/).length > 1) {
-        return `The light in the ${place} ${detail}.`
+        return finish(`The light in the ${place} ${detail}.`)
       }
-      if (!place.includes(noun)) return `The ${place} ${noun} ${detail}.`
-      return `The ${noun} in the ${place} ${detail}.`
+      if (!place.includes(noun)) return finish(`The ${place} ${noun} ${detail}.`)
+      return finish(`The ${noun} in the ${place} ${detail}.`)
     }
-    if (broad && broad !== noun) return `The ${broad} ${noun} ${rest}.`
-    return `The ${noun} ${rest}.`
+    if (broad && broad !== noun) return finish(`The ${broad} ${noun} ${rest}.`)
+    return finish(`The ${noun} ${rest}.`)
   }
 
   if (/\bthere(?:'s| is) a leak outside\b/i.test(opening) && place && !/^outside$/.test(place)) {
-    return `There is a leak on the ${place}.`
+    return finish(`There is a leak on the ${place}.`)
   }
   if (place && !opening.toLowerCase().includes(place)) {
     const base = ensureSentence(opening).replace(/\.$/, "")
-    return `${base}. It is in the ${place}.`
+    return finish(`${base}. It is in the ${place}.`)
   }
-  return ensureSentence(opening || "Maintenance issue")
+  return finish(ensureSentence(opening || "Maintenance issue"))
 }
 
 export function scopeSentence(value: string | null | undefined): string | null {
@@ -324,7 +371,7 @@ export function entrySentence(value: string | null | undefined): string | null {
   const lower = (value ?? "").replace(/\s+/g, " ").trim().toLowerCase()
   if (!lower) return null
   if (/^(?:y|yes)\b/.test(lower)) return "Staff or a vendor may enter if no one is home."
-  if (/^(?:n|no)\b/.test(lower)) return "Do not enter if no one is home."
+  if (/^(?:n|no)\b/.test(lower)) return "Do not enter unless someone is home."
   if (lower === "not_sure" || /^(?:not sure|unsure)\b/.test(lower)) {
     return "It isn't confirmed whether someone can enter if no one is home."
   }

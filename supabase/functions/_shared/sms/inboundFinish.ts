@@ -1,9 +1,9 @@
+import { conversationalSms } from "./conversationalSms.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { InboundSMSMessage } from "./types.ts"
 import type { SmsIdentityRow } from "./inbound_db.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
-import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
   actorIdForIdentity,
   actorTypeForIdentity,
@@ -19,11 +19,8 @@ import {
   OUTBOUND_LOOP_FLAG_KEY,
 } from "./tenantDistress.ts"
 import {
-  buildReplyLoopAttention,
-  loadReplyLoopContext,
   replyLoopNeedsIntervention,
 } from "./replyLoopAttention.ts"
-import { normalizeOutboundForLoopCompare } from "./sms_inbound_guard.ts"
 import { matchEmergencyNet } from "../../../../shared/maintenance/deterministicRules.ts"
 import { isRentCollectionPaused } from "../engine/rentCollectionPolicy.ts"
 import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
@@ -38,6 +35,13 @@ import type {
   InboundSmsHandlerResult,
 } from "./inboundHandlerTypes.ts"
 import type { ProcessInboundSmsResult } from "./inboundHandlerTypes.ts"
+
+// Interactive replies may legitimately repeat for a new inbound. Same-inbound retries
+// remain suppressed, and suppression alone must not create a new staff task.
+const INBOUND_SCOPED_REPLY_ROUTES = new Set([
+  "home_check", "sms_routed_to_landlord", "sms_recovery",
+  "sms_handoff_clarify", "sms_handoff_unavailable", "sms_handoff_cancelled",
+])
 
 export async function trySendAutoReply(
   supabase: SupabaseClient,
@@ -106,6 +110,8 @@ export async function trySendAutoReply(
     return undefined
   }
 
+  replyBody = conversationalSms(replyBody)
+
   let scheduleState = null
   let intakeState: unknown = null
   try {
@@ -156,12 +162,19 @@ export async function trySendAutoReply(
     }
   }
 
+  // An explicit reprint is expected to match a previous summary. Keep retry
+  // protection anchored to this inbound, without creating a new staff task.
+  const scopeToInbound = INBOUND_SCOPED_REPLY_ROUTES.has(params.workflowRoute ?? "") ||
+    (params.workflowRoute === "resident_maintenance_intake" && /^summary[.!]?$/i.test(params.inboundBody?.trim() ?? "")) ||
+    (params.workflowRoute === "resident_maintenance_intake" &&
+      params.source === "resident_submitted_confirmation" &&
+      /^yes[.!]?$/i.test(params.inboundBody?.trim() ?? ""))
   // All automated replies — vendor + resident — share the identical-body loop gate.
   const circuit = await shouldTripOutboundCircuit(supabase, {
     conversationId: params.conversationId,
     body: replyBody,
     scheduleState,
-    replyToInboundId: params.workflowRoute === "home_check" ? params.inboundMessageId : undefined,
+    replyToInboundId: scopeToInbound ? params.inboundMessageId : undefined,
   })
   if (circuit.trip) {
     console.warn("[sms-inbound] outbound circuit breaker tripped", {
@@ -192,53 +205,10 @@ export async function trySendAutoReply(
       })
       // Home Check attachment/hold state is already durable. A replayed
       // clarification is not a repair requiring a property-team intervention.
-      if (params.workflowRoute === "home_check") return undefined
-      let loopIsLandlordThread = false
-      try {
-        const { data: loopConv } = await supabase
-          .from("sms_conversations")
-          .select("conversation_type")
-          .eq("id", params.conversationId)
-          .maybeSingle()
-        const ctype = String(loopConv?.conversation_type || "")
-        loopIsLandlordThread =
-          ctype === "landlord_update" ||
-          params.workflowRoute === "landlord_estimate_decision" ||
-          params.workflowRoute === "invoice_payment" ||
-          params.source.includes("estimate_decision") ||
-          params.source.includes("invoice_payment")
-      } catch {
-        loopIsLandlordThread = false
-      }
+      if (scopeToInbound) return undefined
+      // Suppression diagnostics belong in internal activity logs, never an
+      // unsolicited landlord SMS/email. Preserve the loop marker for recovery.
       if (replyLoopNeedsIntervention(replyBody)) {
-        const audience = loopIsLandlordThread ? "property_team" : "resident"
-        const context = await loadReplyLoopContext(supabase, {
-          landlordId: params.landlordId,
-          conversationId: params.conversationId,
-          audience,
-        })
-        const copy = buildReplyLoopAttention({
-          audience,
-          residentName: context.residentName,
-          propertyAddress: context.propertyAddress,
-          unitLabel: context.unitLabel,
-          propertyType: context.propertyType,
-          repairLabel: context.repairLabel,
-          suppressedBody: replyBody,
-        })
-        const bodyKey = normalizeOutboundForLoopCompare(replyBody).slice(0, 80)
-        void notifyLandlordNeedsAttention(supabase, {
-          landlordId: params.landlordId,
-          kind: "workflow_escalated",
-          headline: copy.headline,
-          detail: copy.detail,
-          whyLine: copy.whyLine,
-          nextSteps: copy.nextSteps,
-          dashboardUrl: context.dashboardUrl,
-          maintenanceRequestId: context.ticketId,
-          requestRef: context.requestRef,
-          idempotencyKey: `sms-loop:${params.conversationId}:${bodyKey}`,
-        })
         try {
           const { data: convo } = await supabase
             .from("sms_conversations")

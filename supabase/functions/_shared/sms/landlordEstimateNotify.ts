@@ -16,6 +16,7 @@ import {
 } from "./inbound_db.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./tenantActivationAdminAlert.ts"
+import { landlordThreadCanSend } from "./landlordAskHold.ts"
 import { buildLandlordEstimateApprovalSms } from "./estimateApprovalSms.ts"
 import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
 import { formatUnitReference } from "../properties/unitLabelDisplay.ts"

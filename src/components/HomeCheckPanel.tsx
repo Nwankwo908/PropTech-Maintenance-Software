@@ -1,17 +1,16 @@
+import { HomeCheckSerialReview } from './HomeCheckSerialReview'
+import { removeInspectionAsset } from '@/api/inspectionAssetAssess'
 import { InspectionAssessmentTable, type InspectionAssessmentTableRow } from './InspectionAssessmentTable'
 import { PmHomeCheckPhotoReviews } from './PmHomeCheckPhotoReviews'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApplianceVisionResult } from '@/lib/vision/types'
 import { isUnmatchedApplianceRow } from '@/lib/inspectionAssessmentTable'
 import { type HomeCheckList, homeCheckRequest } from '@/api/homeCheck'
 import { supabase } from '@/lib/supabase'
-import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import { HOME_CHECK_CHANGED_EVENT } from '@/lib/homeCheckEvents'
 import {
   HOME_CHECK_MONTHS,
   homeCheckAssetPreview,
-  homeCheckLabelCorrection,
-  homeCheckLabelDraft,
   homeCheckReviewLabels,
   homeCheckReviewResult,
   type HomeCheckLabelDraft,
@@ -22,6 +21,26 @@ type ListedHomeCheck = HomeCheckList['checks'][number] & {
   confirmed_at?: string | null
   labels_readable?: boolean | null
   issue_ticket_id?: string | null
+}
+
+/** Historical value is a review candidate only; never merge it into current analysis. */
+export function previousSerialForReview(check: ListedHomeCheck, asset: ListedHomeCheck['assets'][number], checks: readonly ListedHomeCheck[]): string | undefined {
+  if (asset.fields.serial.value || asset.fields.serial.source === 'landlord') return undefined
+  const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  const make = normalize(asset.fields.make.value), model = normalize(asset.fields.model.value)
+  if (!make || !model) return undefined
+  const prior = checks.filter(row => row.id !== check.id && row.confirmed_at
+    && normalize(row.unit_label) === normalize(check.unit_label)
+    && Date.parse(row.created_at) < Date.parse(check.created_at))
+    .sort((a,b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+  for (const row of prior) {
+    const matches = row.assets.filter(old => old.verified && old.system === asset.system
+      && normalize(old.fields.make.value) === make && normalize(old.fields.model.value) === model
+      && old.fields.serial.value)
+    const values = [...new Set(matches.map(old => String(old.fields.serial.value).trim()))]
+    if (values.length) return values.length === 1 ? values[0] : undefined
+  }
+  return undefined
 }
 
 function applianceFamily(row: InspectionAssessmentTableRow): string {
@@ -37,13 +56,15 @@ function plateScore(row: InspectionAssessmentTableRow): number {
     const text = value?.trim() ?? ''
     return Boolean(text) && text !== '-' && text.toLowerCase() !== 'unknown'
   }
+  const made = row.result?.manufactureDate
   return (present(item?.brand) ? 2 : 0)
     + (present(item?.modelNumber) ? 2 : 0)
     + (present(item?.serialNumber) ? 2 : 0)
+    + (made?.year || made?.month ? 1 : 0)
     + (row.actionLabel === 'Details verified' ? 5 : 0)
 }
 
-/** One row for each appliance. A later row replaces an earlier one only when it has more plate detail. */
+/** Latest Home Check snapshot wins as a whole; never borrow old verified fields into a new draft. */
 export function oneRowPerAppliance<T extends InspectionAssessmentTableRow>(rows: readonly T[]): T[] {
   const chosen = new Map<string, T>()
   const order: string[] = []
@@ -55,7 +76,13 @@ export function oneRowPerAppliance<T extends InspectionAssessmentTableRow>(rows:
       order.push(key)
       continue
     }
-    if (plateScore(row) > plateScore(current)) chosen.set(key, row)
+    const date = Date.parse(row.recordedAt ?? '')
+    const currentDate = Date.parse(current.recordedAt ?? '')
+    const dated = Number.isFinite(date)
+    const currentDated = Number.isFinite(currentDate)
+    if (dated && (!currentDated || date > currentDate)) chosen.set(key, row)
+    else if (dated === currentDated && (!dated || date === currentDate) &&
+      plateScore(row) > plateScore(current)) chosen.set(key, row)
   }
   return order.map((key) => chosen.get(key) as T)
 }
@@ -67,45 +94,39 @@ function ManufactureDateFields(
   { draft, onChange }: { draft: HomeCheckLabelDraft; onChange: (next: HomeCheckLabelDraft) => void },
 ) {
   return (
-    <div className='mt-1 space-y-1'>
-      <div className='flex flex-wrap items-center gap-2'>
-        <select
-          aria-label='Manufacture month'
-          value={draft.manufactureMonth}
-          onClick={(event) => event.stopPropagation()}
-          onChange={(event) => onChange({ ...draft, manufactureMonth: event.target.value })}
-          className={PLATE_INPUT}
-        >
-          <option value=''>Month unknown</option>
-          {HOME_CHECK_MONTHS.map((name, index) => (
-            <option key={name} value={String(index + 1)}>{name}</option>
-          ))}
-        </select>
-        <input
-          aria-label='Manufacture year'
-          inputMode='numeric'
-          placeholder='Year'
-          value={draft.manufactureYear}
-          onClick={(event) => event.stopPropagation()}
-          onChange={(event) => onChange({ ...draft, manufactureYear: event.target.value })}
-          className={`${PLATE_INPUT} w-16`}
-        />
-      </div>
-      <p className='text-[12px] leading-4 text-[#64748b]'>
-        Age is calculated from the month and year on the plate. Leave either one blank when it is not readable.
-      </p>
+    <div className='flex flex-col items-end gap-1'>
+      <select
+        aria-label='Manufacture month'
+        value={draft.manufactureMonth}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => onChange({ ...draft, manufactureMonth: event.target.value })}
+        className={`${PLATE_INPUT} max-w-full text-right`}
+      >
+        <option value=''>Month unknown</option>
+        {HOME_CHECK_MONTHS.map((name, index) => (
+          <option key={name} value={String(index + 1)}>{name}</option>
+        ))}
+      </select>
+      <input
+        aria-label='Manufacture year'
+        inputMode='numeric'
+        placeholder='Year'
+        value={draft.manufactureYear}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => onChange({ ...draft, manufactureYear: event.target.value })}
+        className={`${PLATE_INPUT} w-16 text-right`}
+      />
     </div>
   )
 }
 
 export function HomeCheckPanel({
-  building,
   propertyId,
   equipmentRows = [],
   equipmentCheckedIds = [],
   onEquipmentCheckedIdsChange,
   onEquipmentChangeRow,
-  equipmentActions = null,
+  onAssetsDeleted,
 }: {
   building: string
   propertyId?: string | null
@@ -113,20 +134,34 @@ export function HomeCheckPanel({
   equipmentCheckedIds?: string[]
   onEquipmentCheckedIdsChange?: (ids: string[]) => void
   onEquipmentChangeRow?: (id: string, result: ApplianceVisionResult) => void
-  equipmentActions?: ReactNode
+  onAssetsDeleted?: (ids: string[]) => void | Promise<void>
 }) {
   const [list, setList] = useState<HomeCheckList | null>(null)
+  const [loadedPropertyId, setLoadedPropertyId] = useState<string | null>(null)
+  const requestVersion = useRef(0)
+  const reviewScopeVersion = useRef(0)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [serialSaved, setSerialSaved] = useState(false)
+  const [serialReview, setSerialReview] = useState<{propertyId:string;checkId:string;assetId:string;photoId:string;value:string;previouslySaved:boolean;previewUrl:string|null}|null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [labelEdits, setLabelEdits] = useState<Record<string, HomeCheckLabelDraft>>({})
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
   const refresh = useCallback(async () => {
     if (!propertyId || !supabase) return
+    const version = ++requestVersion.current
     const result = await homeCheckRequest<HomeCheckList>({ action: 'list', propertyId })
+    if (version !== requestVersion.current) return
     setList(result)
+    setLoadedPropertyId(propertyId)
   }, [propertyId])
   useEffect(() => {
     let cancelled = false
+    reviewScopeVersion.current++
+    setError('')
+    setSerialReview(null)
+    setSerialSaved(false)
+    setSelectedAssetIds([])
+    setLabelEdits({})
     const update = () => {
       void refresh().catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load Home Checks.')
@@ -142,28 +177,44 @@ export function HomeCheckPanel({
     window.addEventListener(HOME_CHECK_CHANGED_EVENT, onChanged)
     return () => {
       cancelled = true
+      requestVersion.current++
+      reviewScopeVersion.current++
       window.clearInterval(timer)
       window.removeEventListener(HOME_CHECK_CHANGED_EVENT, onChanged)
     }
   }, [propertyId, refresh])
-  async function confirm(id: string) {
-    setBusy(true)
+  async function deleteSelected(ids: string[]) {
+    if (deleting || ids.length === 0) return
+    setDeleting(true)
     setError('')
+    const deleted: string[] = []
     try {
-      const record = list?.checks.find((check) => check.id === id)
-      const labelCorrections = record?.assets.filter((asset) =>
-        labelEdits[asset.id]
-      ).map((asset) => homeCheckLabelCorrection(asset.id, labelEdits[asset.id])) || []
-      await homeCheckRequest({ action: 'confirm', id, labelCorrections })
-      await refresh()
-      notifyAssetRegistryChanged(building)
+      for (const id of ids) {
+        await removeInspectionAsset(id)
+        deleted.push(id)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not confirm Home Check.')
+      const reason = err instanceof Error ? err.message : 'Could not delete the selected records.'
+      setError(deleted.length ? `Deleted ${deleted.length} of ${ids.length} selected records. ${reason}` : reason)
     } finally {
-      setBusy(false)
+      if (deleted.length) {
+        const removed = new Set(deleted)
+        setSelectedAssetIds(previous => previous.filter(id => !removed.has(id)))
+        onEquipmentCheckedIdsChange?.(equipmentCheckedIds.filter(id => !removed.has(id)))
+        setList(previous => previous ? { ...previous, checks: previous.checks.map(check => ({
+          ...check, assets: check.assets.filter(asset => !removed.has(asset.id)),
+        })) } : previous)
+        try {
+          await onAssetsDeleted?.(deleted)
+          await refresh()
+        } catch {
+          setError(previous => previous || 'Records were deleted, but the table could not refresh. Reload the page.')
+        }
+      }
+      setDeleting(false)
     }
   }
-  const visibleChecks = list?.checks.filter((check) => {
+  const visibleChecks = (loadedPropertyId === propertyId ? list : null)?.checks.filter((check) => {
     const record = check as ListedHomeCheck
     return record.assets.length > 0 || Boolean(record.issue_ticket_id)
   }) ?? []
@@ -181,8 +232,17 @@ export function HomeCheckPanel({
       const draft = !asset.verified ? labelEdits[asset.id] : undefined
       const labels = homeCheckReviewLabels(asset)
       const result = homeCheckReviewResult(asset, draft)
+      const previousSerial = previousSerialForReview(record, asset, visibleChecks)
       return {
         id: asset.id,
+        recordedAt: record.created_at,
+        previousSerial,
+        onReviewSerial: !asset.verified && asset.fields.serial.photoIds[0] && propertyId ? () => setSerialReview({
+          propertyId,checkId:record.id,assetId:asset.id,photoId:asset.fields.serial.photoIds[0],
+          value:asset.fields.serial.value == null ? previousSerial ?? '' : String(asset.fields.serial.value),
+          previouslySaved:Boolean(previousSerial),
+          previewUrl:record.photos.find(p => p.slot === (asset.system === 'water_heater' ? 'water_heater_label' : 'heating_label'))?.previewUrl ?? null,
+        }) : undefined,
         previewUrl: homeCheckAssetPreview(asset.system, record.photos),
         editable: Boolean(draft),
         labelFieldsOnly: true,
@@ -192,7 +252,7 @@ export function HomeCheckPanel({
         result: labels.actionLabel === 'Details verified'
           ? { ...result, labelReadability: undefined }
           : result,
-        descriptionExtra: draft
+        madeExtra: draft
           ? (
             <ManufactureDateFields
               draft={draft}
@@ -200,11 +260,7 @@ export function HomeCheckPanel({
                 setLabelEdits((previous) => ({ ...previous, [asset.id]: next }))}
             />
           )
-          : (
-            <p className='mt-1 text-[12px] leading-4 text-[#64748b]'>
-              {labels.manufactureLabel}
-            </p>
-          ),
+          : undefined,
       }
     })
   })
@@ -215,64 +271,23 @@ export function HomeCheckPanel({
   ]
   const photosDoNotMatch = candidateRows.some(isUnmatchedApplianceRow)
   const tableRows = oneRowPerAppliance(candidateRows.filter((row) => !isUnmatchedApplianceRow(row)))
-  const displayedHomeIds = new Set(tableRows.map((row) => row.id))
-  const tableChecks = visibleChecks.filter((check) =>
-    check.assets.some((asset) => displayedHomeIds.has(asset.id))
-  )
-  const selectable = visibleChecks.some((check) => {
-    const record = check as ListedHomeCheck
-    return Boolean(record.completed_at && !record.confirmed_at && record.assets.length)
-  }) || equipmentRows.length > 0
+  const visibleIds = new Set(tableRows.map(row => row.id))
+  const selectedIds = [...new Set([...selectedAssetIds, ...equipmentCheckedIds])].filter(id => visibleIds.has(id))
+  const selectable = tableRows.length > 0
   return (
     <div className='space-y-4'>
       {error && <p role='alert' className='text-sm text-red-700'>{error}</p>}
-      {tableChecks.some((check) => {
-        const record = check as ListedHomeCheck
-        return Boolean(record.completed_at && !record.confirmed_at && record.assets.length)
-      }) || equipmentActions ? (
-        <div className='flex flex-wrap justify-end gap-2'>
-          {tableChecks.map((check) => {
-            const record = check as ListedHomeCheck
-            const canReview = Boolean(record.completed_at && !record.confirmed_at && record.assets.length)
-            if (!canReview) return null
-            const selectedHere = record.assets.filter((asset) =>
-              selectedAssetIds.includes(asset.id) && !asset.verified
-            )
-            const confirmBlocked = busy || record.assets.length !== 2 || record.photos.some((photo) =>
-              photo.state === 'queued' || photo.state === 'analyzing'
-            ) || record.assets.some((asset) =>
-              asset.labelReadability?.retakeRequested && !labelEdits[asset.id]
-            )
-            return (
-              <div key={record.id} className='flex flex-wrap justify-end gap-2'>
-                <button
-                  type='button'
-                  disabled={selectedHere.length === 0 || busy}
-                  onClick={() => {
-                    setLabelEdits((previous) => {
-                      const next = { ...previous }
-                      for (const asset of selectedHere) {
-                        if (!next[asset.id]) next[asset.id] = homeCheckLabelDraft(asset)
-                      }
-                      return next
-                    })
-                  }}
-                  className='rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-[13px] font-semibold text-[#334155] disabled:opacity-40'
-                >
-                  Edit selected{selectedHere.length ? ` (${selectedHere.length})` : ''}
-                </button>
-                <button
-                  type='button'
-                  disabled={confirmBlocked}
-                  onClick={() => void confirm(record.id)}
-                  className='rounded-[10px] bg-[#186179] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40'
-                >
-                  Confirm asset records
-                </button>
-              </div>
-            )
-          })}
-          {equipmentActions}
+      {serialSaved ? <p role='status' className='text-sm text-[#186179]'>Serial review saved. This did not confirm the Home Check.</p> : null}
+      {selectedIds.length > 0 ? (
+        <div className='flex justify-end'>
+          <button
+            type='button'
+            disabled={deleting}
+            onClick={() => void deleteSelected([...selectedIds])}
+            className='rounded-[10px] border border-[#fecaca] bg-white px-4 py-2 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] disabled:opacity-40'
+          >
+            {deleting ? 'Deleting…' : `Delete selected (${selectedIds.length})`}
+          </button>
         </div>
       ) : null}
       {photosDoNotMatch ? (
@@ -289,35 +304,51 @@ export function HomeCheckPanel({
           <p>Recent photos do not match the selected system. Please try again.</p>
         </div>
       ) : null}
-      {tableRows.length > 0 && (
-        <InspectionAssessmentTable
-          rows={tableRows}
-          checkedIds={selectable ? [...selectedAssetIds, ...equipmentCheckedIds] : undefined}
-          onCheckedIdsChange={selectable ? (ids) => {
-            setSelectedAssetIds(ids.filter((id) => homeRowIds.has(id)))
-            onEquipmentCheckedIdsChange?.(ids.filter((id) => !homeRowIds.has(id)))
-          } : undefined}
-          onChangeRow={(id, result) => {
-            if (!homeRowIds.has(id)) {
-              onEquipmentChangeRow?.(id, result)
-              return
-            }
-            setLabelEdits((previous) => {
-              const current = previous[id]
-              if (!current) return previous
-              return {
-                ...previous,
-                [id]: {
-                  ...current,
-                  modelNumber: result.identifiedItem.modelNumber ?? '',
-                  serialNumber: result.identifiedItem.serialNumber ?? '',
-                },
+      {tableRows.length > 0 ? (
+        <div className='space-y-3'>
+          <h3 className='text-[18px] font-semibold leading-6 text-[#0d0f11]'>Appliance equipment</h3>
+          <InspectionAssessmentTable
+            rows={tableRows}
+            showActionColumn={false}
+            checkedIds={selectable ? [...selectedAssetIds, ...equipmentCheckedIds] : undefined}
+            onCheckedIdsChange={selectable ? (ids) => {
+              setSelectedAssetIds(ids.filter((id) => homeRowIds.has(id)))
+              onEquipmentCheckedIdsChange?.(ids.filter((id) => !homeRowIds.has(id)))
+            } : undefined}
+            onChangeRow={(id, result) => {
+              if (!homeRowIds.has(id)) {
+                onEquipmentChangeRow?.(id, result)
+                return
               }
-            })
-          }}
-        />
-      )}
+              setLabelEdits((previous) => {
+                const current = previous[id]
+                if (!current) return previous
+                return {
+                  ...previous,
+                  [id]: {
+                    ...current,
+                    modelNumber: result.identifiedItem.modelNumber ?? '',
+                    serialNumber: result.identifiedItem.serialNumber ?? '',
+                  },
+                }
+              })
+            }}
+          />
+        </div>
+      ) : null}
       <PmHomeCheckPhotoReviews propertyId={propertyId} />
+      {serialReview && serialReview.propertyId === propertyId ? <HomeCheckSerialReview
+        key={`${serialReview.assetId}:${serialReview.photoId}`} value={serialReview.value} previouslySaved={serialReview.previouslySaved} previewUrl={serialReview.previewUrl}
+        onClose={() => setSerialReview(current => current === serialReview ? null : current)}
+        onSave={async serial => {
+          const version = reviewScopeVersion.current
+          await homeCheckRequest({action:'serial_review',id:serialReview.checkId,propertyId:serialReview.propertyId,
+            assetId:serialReview.assetId,photoId:serialReview.photoId,serial,unknown:serial===null})
+          if (version !== reviewScopeVersion.current) return
+          setSerialSaved(true)
+          try { await refresh() } catch { setError('The serial review was saved, but the table could not refresh. Reload the page.') }
+          window.dispatchEvent(new CustomEvent(HOME_CHECK_CHANGED_EVENT,{detail:{propertyId:serialReview.propertyId}}))
+        }} /> : null}
     </div>
   )
 }

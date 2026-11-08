@@ -244,6 +244,13 @@ const RENT_RECEIPT_METHOD_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
+/** Landlord-facing label for a rent receipt payment method slug. */
+export function formatRentPaymentMethodLabel(raw: string | null | undefined): string | null {
+  const value = (raw ?? '').trim()
+  if (!value) return null
+  return RENT_RECEIPT_METHOD_LABELS[value.toLowerCase()] || value
+}
+
 export function formatMaintenanceHistoryInvoiceLabel(
   invoice: { invoiceNumber?: string | null } | null,
 ): string {

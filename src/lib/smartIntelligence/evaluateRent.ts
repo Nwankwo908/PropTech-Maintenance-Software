@@ -1,5 +1,6 @@
 import { workflowOperationsPath } from '@/lib/adminWorkflowKanban'
 import type { AdminRentCollectionRow } from '@/lib/adminWorkflows'
+import { resolveResidentRentOwed } from '@/lib/residentRentHistory'
 import {
   calendarDaysUntil,
   formatUsd,
@@ -10,9 +11,11 @@ import {
 import type { SmartInsight, SmartIntelligenceContext } from '@/lib/smartIntelligence/types'
 
 function activeRentRun(ctx: SmartIntelligenceContext): AdminRentCollectionRow | null {
+  const residentId = ctx.resident.id.trim()
   const runs = ctx.workflowData?.rentCollection.runs ?? []
   const open = runs.filter(
     (run) =>
+      (run.residentId ?? '').trim() === residentId &&
       run.status !== 'completed' &&
       run.status !== 'cancelled' &&
       run.rentClassification !== 'paid' &&
@@ -131,18 +134,27 @@ export function evaluateRentIntelligence(ctx: SmartIntelligenceContext): SmartIn
     })
   }
 
-  if (balance > 0 && !insights.some((item) => item.id.startsWith('rent-combined'))) {
-    const significant = balance >= 400
+  const rentOwed = resolveResidentRentOwed({
+    residentId: resident.id,
+    balanceDue: resident.balanceDue,
+    monthlyRent: resident.monthlyRent,
+    workflowData: ctx.workflowData,
+  })
+  if (
+    rentOwed.amount > 0 &&
+    !insights.some((item) => item.type === 'rent' && item.amount != null)
+  ) {
+    const significant = rentOwed.amount >= 400
     insights.push({
       id: `rent-balance-${resident.id}`,
       type: 'rent',
       priority: significant ? 'urgent' : 'attention',
       title: 'Outstanding balance',
-      description: `${firstWord(resident.name)} has a remaining balance of ${formatUsd(balance)}.`,
-      action: { label: 'Review Balance', route: leaseRoute },
-      amount: balance,
-      entityId: resident.id,
-      score: scoreInsight(significant ? 'urgent' : 'attention', { amount: balance }),
+      description: `${firstWord(resident.name)} owes ${formatUsd(rentOwed.amount)} in rent.`,
+      action: { label: 'Confirm Payment', route: run?.id ? rentRoute : leaseRoute },
+      amount: rentOwed.amount,
+      entityId: run?.id ?? resident.id,
+      score: scoreInsight(significant ? 'urgent' : 'attention', { amount: rentOwed.amount }),
     })
   }
 

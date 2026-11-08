@@ -37,9 +37,19 @@ import {
   STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL,
 } from '@/lib/maintenanceAdminVendor'
 import { extractStructuredIssueDetails } from '@shared/maintenance/structuredIssueDetails.ts'
+import {
+  deriveMaintenanceScheduleState,
+  formatAskedAgo,
+  parsePendingResidentScheduleAsk,
+  resolveScheduleWhenLabel,
+  visitLabelKindForScheduleState,
+  type MaintenanceScheduleState,
+  type PendingResidentScheduleAsk,
+} from '@/lib/maintenanceScheduleState'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatTicketRequestNumber, formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
+import { displayResidentEmail } from '@/lib/residentProfileDetail'
 import { pickPrimaryWorkOrderConversationId } from '@/lib/workOrderConversationPreference'
 import {
   buildMoveOutTimeline,
@@ -112,7 +122,18 @@ export type WorkflowPipelineResident = {
   emergencyContact: string
 }
 
+export type WorkflowPipelineVendor = {
+  id: string | null
+  name: string
+  initials: string
+  statusLine: string
+  phone: string
+  email: string
+}
+
 export type WorkflowPipelineProperty = {
+  /** Canonical properties.id when resolved. */
+  id: string | null
   property: string
   building: string
   address: string
@@ -149,6 +170,12 @@ export type WorkflowPipelineDetail = {
   priorityLabel: string | null
   priorityClassName: string | null
   createdLine: string
+  /** Repair timeline — date reported (same calendar format as estimated completion). */
+  reportedDateLabel: string
+  /** Repair timeline — estimated completion date. */
+  estimatedCompletionLabel: string
+  /** Repair timeline — estimated cost. */
+  estimatedCostLabel: string
   locationLine: string
   description: string
   /** Plain-language “what’s happening now” under the issue summary. */
@@ -165,6 +192,7 @@ export type WorkflowPipelineDetail = {
   /** Vendor invoice + 1099-NEC YTD tracking for maintenance jobs. */
   invoiceSection: WorkflowPipelineInvoiceSection | null
   resident: WorkflowPipelineResident | null
+  vendor: WorkflowPipelineVendor | null
   property: WorkflowPipelineProperty
   attachments: WorkflowPipelineAttachment[]
   /** Vendor close-out photos (`completion_photo_paths`). */
@@ -200,6 +228,9 @@ export type WorkflowPipelineDetail = {
   templateId: string
   assignedVendorId: string | null
   assignedVendorName: string | null
+  vendorWorkStatus: string | null
+  scheduledAt: string | null
+  scheduleConfirmedAt: string | null
   stageMoveTicketIds: string[]
   inspectionReportId: string | null
   /**
@@ -209,6 +240,18 @@ export type WorkflowPipelineDetail = {
   activityVendorName: string | null
   activityVendorStatus: string | null
   activityTimeline: SlaOverdueTimelineEntry[]
+}
+
+/** Vendor accepted / in progress, but no confirmed visit window yet. */
+export function needsVisitNotConfirmedBanner(detail: {
+  isMaintenanceWorkflow?: boolean
+  vendorWorkStatus: string | null
+  scheduleConfirmedAt: string | null
+}): boolean {
+  if (!detail.isMaintenanceWorkflow) return false
+  if (detail.scheduleConfirmedAt?.trim()) return false
+  const vws = (detail.vendorWorkStatus ?? '').trim().toLowerCase()
+  return vws === 'accepted' || vws === 'in_progress'
 }
 
 const RENT_PIPELINE_LABELS = [
@@ -296,6 +339,18 @@ function formatCreatedLine(iso: string): string {
   return `Created ${monthDay}`
 }
 
+/** Shared calendar date for Repair timeline columns (e.g. Nov 8, 2026). */
+export function formatRepairTimelineDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 function formatDueLabel(iso: string | null | undefined): string {
   if (!iso) return '—'
   const date = new Date(iso)
@@ -309,21 +364,102 @@ function formatDueLabel(iso: string | null | undefined): string {
   })
 }
 
-function formatVisitLabel(
-  scheduledAt: string | null | undefined,
-  scheduleConfirmedAt: string | null | undefined,
-): string {
-  if (!scheduledAt?.trim()) return '—'
-  const date = new Date(scheduledAt)
-  if (Number.isNaN(date.getTime())) return '—'
-  const when = date.toLocaleString('en-US', {
+function formatVisitWhenLong(iso: string): string | null {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
   })
-  return scheduleConfirmedAt?.trim() ? `${when} · confirmed` : `${when} · pending confirm`
+}
+
+/** Visit field — · proposed / · confirmed / · passed (never “pending confirm”). */
+export function formatVisitLabel(
+  scheduledAt: string | null | undefined,
+  scheduleConfirmedAt: string | null | undefined,
+  options?: {
+    scheduleState?: MaintenanceScheduleState | null
+    pendingResidentAsk?: PendingResidentScheduleAsk | null
+    nowMs?: number
+  },
+): string {
+  const state =
+    options?.scheduleState ??
+    deriveMaintenanceScheduleState({
+      vendorWorkStatus: null,
+      scheduledAt,
+      scheduleConfirmedAt,
+      scheduleStatus: null,
+      residentConfirmationStatus: null,
+      pendingResidentAsk: options?.pendingResidentAsk,
+      nowMs: options?.nowMs,
+    })
+  const when = resolveScheduleWhenLabel({
+    scheduledAt,
+    pendingResidentAsk: options?.pendingResidentAsk,
+    formatIso: formatVisitWhenLong,
+  })
+  if (!when) return '—'
+  const kind =
+    visitLabelKindForScheduleState(state) ??
+    (scheduleConfirmedAt?.trim()
+      ? 'confirmed'
+      : scheduledAt?.trim() || options?.pendingResidentAsk
+        ? 'proposed'
+        : null)
+  if (kind === 'confirmed') return `${when} · confirmed`
+  if (kind === 'passed') return `${when} · passed`
+  if (kind === 'proposed') return `${when} · proposed`
+  return when
+}
+
+function firstNameLabel(name: string | null | undefined, fallback: string): string {
+  const part = name?.trim().split(/\s+/).filter(Boolean)[0]
+  return part || fallback
+}
+
+function buildScheduleStatusCopy(input: {
+  state: MaintenanceScheduleState
+  vendorName: string | null
+  residentName: string | null
+  scheduledAt: string | null
+  pendingResidentAsk: PendingResidentScheduleAsk | null
+  nowMs?: number
+}): string | null {
+  if (input.state === 'none') return null
+  const vendor = input.vendorName?.trim() || 'the vendor'
+  const resident = firstNameLabel(input.residentName, 'the resident')
+  const when =
+    resolveScheduleWhenLabel({
+      scheduledAt: input.scheduledAt,
+      pendingResidentAsk: input.pendingResidentAsk,
+      formatIso: formatVisitWhenShort,
+    }) || 'that time'
+  const askedAgo = formatAskedAgo(input.pendingResidentAsk?.askedAt, input.nowMs)
+
+  switch (input.state) {
+    case 'awaiting_resident_first_confirm':
+      return askedAgo
+        ? `Waiting on ${resident} to confirm ${vendor} for ${when} (asked ${askedAgo}).`
+        : `Waiting on ${resident} to confirm ${vendor} for ${when}.`
+    case 'awaiting_resident_reschedule_confirm':
+      return `${vendor} moved the visit to ${when}. Waiting on ${resident} to confirm.`
+    case 'resident_declined_waiting_vendor':
+      return `${resident} said that time doesn't work. Waiting on ${vendor} for a new time.`
+    case 'window_saved_awaiting_vendor_accept':
+      return `Time saved for ${when}. Waiting on ${vendor} to accept the job.`
+    case 'proposed_window_passed':
+      return `The proposed time (${when}) passed without confirmation.`
+    case 'confirmed_upcoming':
+      return `${vendor} is scheduled for ${when}.`
+    case 'confirmed_visit_passed_no_update':
+      return `The visit was ${when} and there's no update from ${vendor}.`
+    default:
+      return null
+  }
 }
 
 /** Landlord-facing one-liner for the Active Tasks Overview section. */
@@ -336,6 +472,14 @@ export function buildMaintenanceOverviewStatusContext(input: {
   runStatus: string
   scheduledAt: string | null
   scheduleConfirmedAt: string | null
+  scheduleStatus?: string | null
+  residentConfirmationStatus?: string | null
+  vendorNotifiedAt?: string | null
+  pendingResidentAsk?: PendingResidentScheduleAsk | null
+  residentName?: string | null
+  awaitingResidentRating?: boolean
+  reopenedByResident?: boolean
+  nowMs?: number
   issueCategory?: string | null
   /** Observation or unapproved Home Check follow-up: do not say a vendor is being matched. */
   holdVendorDispatch?: boolean
@@ -350,8 +494,8 @@ export function buildMaintenanceOverviewStatusContext(input: {
       : 'Observation only. No vendor is being contacted.'
   }
   const vendor = input.vendorName?.trim() || 'the vendor'
+  const resident = firstNameLabel(input.residentName, 'the resident')
   const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
-  const visit = formatVisitLabel(input.scheduledAt, input.scheduleConfirmedAt)
 
   // Landlord choice wins over stale pending_accept (e.g. probe NO that didn't
   // flip vendor_work_status yet, or status lag after decline).
@@ -371,6 +515,22 @@ export function buildMaintenanceOverviewStatusContext(input: {
       : STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT
   }
 
+  if (input.reopenedByResident) {
+    return 'Reopened by the resident'
+  }
+
+  if (vws === 'completed' || vws === 'cancelled') {
+    if (vws === 'completed' && input.awaitingResidentRating) {
+      return `Work done. Waiting on ${resident}'s 1–5 rating to close the job.`
+    }
+    if (vws === 'completed') {
+      return input.vendorName?.trim()
+        ? `Work marked complete by ${vendor}.`
+        : 'Work marked complete.'
+    }
+    return 'This work order was cancelled.'
+  }
+
   if ((input.runStatus ?? '').trim().toLowerCase() === 'escalated') {
     const plain = formatLandlordEscalationReason(
       input.escalationReason,
@@ -379,14 +539,34 @@ export function buildMaintenanceOverviewStatusContext(input: {
     if (plain) return plain
   }
 
-  if (visit !== '—') {
-    if (vws === 'in_progress') {
+  const scheduleState = deriveMaintenanceScheduleState({
+    vendorWorkStatus: input.vendorWorkStatus,
+    scheduledAt: input.scheduledAt,
+    scheduleConfirmedAt: input.scheduleConfirmedAt,
+    scheduleStatus: input.scheduleStatus,
+    residentConfirmationStatus: input.residentConfirmationStatus,
+    vendorNotifiedAt: input.vendorNotifiedAt,
+    pendingResidentAsk: input.pendingResidentAsk,
+    nowMs: input.nowMs,
+  })
+  const scheduleCopy = buildScheduleStatusCopy({
+    state: scheduleState,
+    vendorName: input.vendorName,
+    residentName: input.residentName ?? null,
+    scheduledAt: input.scheduledAt,
+    pendingResidentAsk: input.pendingResidentAsk ?? null,
+    nowMs: input.nowMs,
+  })
+  if (scheduleCopy) {
+    if (vws === 'in_progress' && scheduleState === 'confirmed_upcoming') {
+      const visit = formatVisitLabel(input.scheduledAt, input.scheduleConfirmedAt, {
+        scheduleState,
+        pendingResidentAsk: input.pendingResidentAsk,
+        nowMs: input.nowMs,
+      })
       return `Repair in progress with ${vendor}. Visit ${visit}.`
     }
-    if (input.scheduleConfirmedAt?.trim()) {
-      return `Visit confirmed with ${vendor}: ${visit}.`
-    }
-    return `Visit proposed with ${vendor}: ${visit}. Waiting on confirmation.`
+    return scheduleCopy
   }
 
   switch (vws) {
@@ -398,12 +578,6 @@ export function buildMaintenanceOverviewStatusContext(input: {
       return `Repair is in progress with ${vendor}.`
     case 'declined':
       return `${vendor} declined. Ulo is looking for another vendor.`
-    case 'completed':
-      return input.vendorName?.trim()
-        ? `Work marked complete by ${vendor}.`
-        : 'Work marked complete.'
-    case 'cancelled':
-      return 'This work order was cancelled.'
     case 'unassigned':
     case '':
       return 'No vendor assigned yet. Ulo is matching someone for this repair.'
@@ -414,6 +588,80 @@ export function buildMaintenanceOverviewStatusContext(input: {
   const last = input.lastEventMessage?.trim()
   if (last && last.length <= 160) return last
   return `Current stage: ${input.stageLabel}.`
+}
+
+/**
+ * One landlord-facing Issue details narrative — prose only, no labeled scrap
+ * lines (Serves:/Flag:/Location:). Serves-floor belongs on the Location side field.
+ */
+export function composeIssueDetailsNarrative(input: {
+  reportedDetail: string | null
+  displayDescription: string | null
+  triageFlags: string[]
+  availability: string | null
+  needsClarification: string | null
+  rawFallback: string
+}): string {
+  const paragraphs: string[] = []
+  const reported = input.reportedDetail?.trim() || ''
+  if (reported) {
+    paragraphs.push(reported)
+  } else {
+    const cleaned = (input.displayDescription ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line &&
+          !/^(Serves|Location|Equipment|Flag|Safety|Resident availability|Clarify):/i.test(
+            line,
+          ),
+      )
+      .join('\n')
+      .trim()
+    if (cleaned) paragraphs.push(cleaned)
+  }
+
+  for (const flag of input.triageFlags) {
+    const text = flag.trim()
+    if (text) paragraphs.push(text)
+  }
+
+  const availability = input.availability?.trim()
+  if (availability) {
+    paragraphs.push(`Resident availability: ${availability}.`.replace(/\.\.$/, '.'))
+  }
+
+  const clarify = input.needsClarification?.trim()
+  if (clarify) {
+    paragraphs.push(`Still need to clarify: ${clarify.replace(/\.$/, '')}.`)
+  }
+
+  return paragraphs.join('\n\n').trim() || input.rawFallback.trim() || ''
+}
+
+/** Location side value — physical place, with serves-floor when it adds new info. */
+export function formatIssueLocationWithServes(
+  location: string | null | undefined,
+  servesFloor: string | null | undefined,
+): string {
+  const loc = location?.trim() || ''
+  const serves = servesFloor?.trim() || ''
+  if (loc && serves) {
+    const locLower = loc.toLowerCase()
+    const servesLower = serves.toLowerCase()
+    if (
+      locLower.includes(servesLower) ||
+      locLower.includes('serves') ||
+      locLower.includes('serving')
+    ) {
+      return loc
+    }
+    return `${loc} · serves ${serves}`
+  }
+  if (loc) return loc
+  if (serves) return `Serves ${serves}`
+  return ''
 }
 
 /** Status chip value for Active Tasks Overview (not the kanban column alone). */
@@ -507,33 +755,67 @@ export function buildMaintenanceRepairNextAction(input: {
   vendorName: string | null
   scheduledAt: string | null
   scheduleConfirmedAt: string | null
+  scheduleStatus?: string | null
+  residentConfirmationStatus?: string | null
+  vendorNotifiedAt?: string | null
+  pendingResidentAsk?: PendingResidentScheduleAsk | null
+  residentName?: string | null
+  awaitingResidentRating?: boolean
+  reopenedByResident?: boolean
+  nowMs?: number
   awaitingLandlordChoice?: boolean
   stalePendingAcceptNeedsAdmin?: boolean
   hasCompletionPhotos?: boolean
   holdVendorDispatch?: boolean
-}): string {
+}): string | null {
   if (input.holdVendorDispatch) {
     return 'Review the Home Check before contacting a vendor.'
   }
   const vendor = input.vendorName?.trim() || null
+  const resident = firstNameLabel(input.residentName, 'the resident')
   const vws = (input.vendorWorkStatus ?? '').trim().toLowerCase()
 
   if (input.awaitingLandlordChoice) {
-    return 'Choose a vendor to move this repair forward.'
+    return null
   }
 
   if (input.stalePendingAcceptNeedsAdmin) {
-    return vendor
-      ? `${vendor} never accepted. Choose a vendor to move this repair forward.`
-      : 'Choose a vendor to move this repair forward.'
+    return vendor ? `${vendor} never accepted.` : null
+  }
+
+  if (input.reopenedByResident) {
+    return 'Reopened by the resident'
   }
 
   if (vws === 'completed') {
+    if (input.awaitingResidentRating) {
+      return `Work done. Waiting on ${resident}'s 1–5 rating to close the job.`
+    }
     return vendor ? `Work marked complete by ${vendor}.` : 'Work marked complete.'
   }
   if (vws === 'cancelled') {
     return 'This work order was cancelled.'
   }
+
+  const scheduleState = deriveMaintenanceScheduleState({
+    vendorWorkStatus: input.vendorWorkStatus,
+    scheduledAt: input.scheduledAt,
+    scheduleConfirmedAt: input.scheduleConfirmedAt,
+    scheduleStatus: input.scheduleStatus,
+    residentConfirmationStatus: input.residentConfirmationStatus,
+    vendorNotifiedAt: input.vendorNotifiedAt,
+    pendingResidentAsk: input.pendingResidentAsk,
+    nowMs: input.nowMs,
+  })
+  const scheduleCopy = buildScheduleStatusCopy({
+    state: scheduleState,
+    vendorName: input.vendorName,
+    residentName: input.residentName ?? null,
+    scheduledAt: input.scheduledAt,
+    pendingResidentAsk: input.pendingResidentAsk ?? null,
+    nowMs: input.nowMs,
+  })
+  if (scheduleCopy) return scheduleCopy
 
   if (vws === 'pending_accept') {
     return vendor
@@ -542,26 +824,11 @@ export function buildMaintenanceRepairNextAction(input: {
   }
 
   if (vws === 'declined') {
-    return vendor
-      ? `${vendor} declined. Choose a vendor to move this repair forward.`
-      : 'Choose a vendor to move this repair forward.'
+    return vendor ? `${vendor} declined.` : null
   }
 
   if (vws === 'unassigned' || !vws) {
-    return 'Choose a vendor to move this repair forward.'
-  }
-
-  const scheduledAt = input.scheduledAt?.trim() || null
-  if (scheduledAt) {
-    const when = formatVisitWhenShort(scheduledAt)
-    if (when) {
-      if (input.scheduleConfirmedAt?.trim()) {
-        return vendor ? `${vendor} is scheduled for ${when}.` : `Visit scheduled for ${when}.`
-      }
-      return vendor
-        ? `${vendor} proposed ${when}. Waiting on confirmation.`
-        : `Visit proposed for ${when}. Waiting on confirmation.`
-    }
+    return null
   }
 
   if (vws === 'accepted') {
@@ -883,6 +1150,7 @@ async function buildPropertyBlock(
   })
 
   return {
+    id: record?.id?.trim() || null,
     property: dash(record?.name || propertyLabel),
     building: dash(propertyLabel),
     address: dash(street || locationLine),
@@ -1121,7 +1389,11 @@ async function loadMaintenanceConversationAttachments(
 type TicketEnrichment = {
   ticket: Record<string, unknown> | null
   invoice: Record<string, unknown> | null
+  vendorId: string | null
   vendorName: string | null
+  vendorPhone: string | null
+  vendorEmail: string | null
+  vendorCategory: string | null
   resident: Record<string, unknown> | null
   conversationId: string | null
   vendorConversationId: string | null
@@ -1129,6 +1401,9 @@ type TicketEnrichment = {
   maintenanceRequestId: string | null
   ticketCreatedAt: string | null
   nextTicketCreatedAt: string | null
+  pendingResidentAsk: PendingResidentScheduleAsk | null
+  awaitingResidentRating: boolean
+  reopenedByResident: boolean
 }
 
 async function loadTicketEnrichment(
@@ -1140,7 +1415,11 @@ async function loadTicketEnrichment(
     return {
       ticket: null,
       invoice: null,
+      vendorId: null,
       vendorName: null,
+      vendorPhone: null,
+      vendorEmail: null,
+      vendorCategory: null,
       resident: null,
       conversationId: null,
       vendorConversationId: null,
@@ -1148,6 +1427,9 @@ async function loadTicketEnrichment(
       maintenanceRequestId: null,
       ticketCreatedAt: null,
       nextTicketCreatedAt: null,
+      pendingResidentAsk: null,
+      awaitingResidentRating: false,
+      reopenedByResident: false,
     }
   }
 
@@ -1156,18 +1438,26 @@ async function loadTicketEnrichment(
 
   let ticket: Record<string, unknown> | null = null
   let invoice: Record<string, unknown> | null = null
+  let vendorId: string | null = null
   let vendorName: string | null = null
+  let vendorPhone: string | null = null
+  let vendorEmail: string | null = null
+  let vendorCategory: string | null = null
   let resident: Record<string, unknown> | null = null
   let conversationId = asString(metadata.conversation_id)
   let vendorConversationId: string | null = null
   let conversationIds: string[] = []
   let nextTicketCreatedAt: string | null = null
+  let pendingResidentAsk: PendingResidentScheduleAsk | null = null
+  let awaitingResidentRating = false
+  let reopenedByResident = false
+  const intakeCandidates: Array<{ intakeState: unknown; updatedAt: string | null }> = []
 
   if (ticketId) {
     const { data } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, created_at, description, priority, urgency, issue_category, issue_headline, location_detail, unit, due_at, scheduled_at, schedule_confirmed_at, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
+        'id, created_at, description, priority, urgency, issue_category, issue_headline, location_detail, unit, due_at, scheduled_at, schedule_confirmed_at, schedule_status, resident_confirmation_status, vendor_notified_at, scheduled_window_text, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, auto_reassign_last_outcome, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
       )
       .eq('landlord_id', landlordId)
       .eq('id', ticketId)
@@ -1205,21 +1495,35 @@ async function loadTicketEnrichment(
       .maybeSingle()
     invoice = (invoiceRow as Record<string, unknown> | null) ?? null
 
-    const vendorId =
-      asString(ticket?.assigned_vendor_id) || asString(invoice?.vendor_id)
+    vendorId = asString(ticket?.assigned_vendor_id) || asString(invoice?.vendor_id) || null
     if (vendorId) {
-      const { data: vendorRow } = await supabase.from('vendors').select('name').eq('id', vendorId).maybeSingle()
-      vendorName = asString((vendorRow as Record<string, unknown> | null)?.name) || null
+      const { data: vendorRow } = await supabase
+        .from('vendors')
+        .select('name, phone, email, category')
+        .eq('id', vendorId)
+        .maybeSingle()
+      const vendor = (vendorRow as Record<string, unknown> | null) ?? null
+      vendorName = asString(vendor?.name) || null
+      vendorPhone = asString(vendor?.phone) || null
+      vendorEmail = asString(vendor?.email) || null
+      vendorCategory = asString(vendor?.category) || null
     }
 
     // Resident intake and vendor job SMS are separate threads (same as Messages).
     // Prefer resident for "See thread"; keep vendor id for a dedicated vendor view.
     const { data: convRows } = await supabase
       .from('sms_conversations')
-      .select('id, conversation_type, updated_at, resident_id, external_phone_number')
+      .select('id, conversation_type, updated_at, resident_id, external_phone_number, intake_state')
       .eq('landlord_id', landlordId)
       .eq('maintenance_request_id', ticketId)
       .order('updated_at', { ascending: false })
+
+    for (const entry of (convRows ?? []) as Record<string, unknown>[]) {
+      intakeCandidates.push({
+        intakeState: entry.intake_state,
+        updatedAt: asString(entry.updated_at) || null,
+      })
+    }
 
     const byTicket = ((convRows ?? []) as Record<string, unknown>[]).map((entry) => ({
       id: asString(entry.id),
@@ -1233,12 +1537,18 @@ async function loadTicketEnrichment(
     if (residentLookupId) {
       const { data: residentConvRows } = await supabase
         .from('sms_conversations')
-        .select('id, conversation_type, updated_at')
+        .select('id, conversation_type, updated_at, intake_state')
         .eq('landlord_id', landlordId)
         .eq('resident_id', residentLookupId)
         .eq('conversation_type', 'resident_intake')
         .order('updated_at', { ascending: false })
         .limit(5)
+      for (const entry of (residentConvRows ?? []) as Record<string, unknown>[]) {
+        intakeCandidates.push({
+          intakeState: entry.intake_state,
+          updatedAt: asString(entry.updated_at) || null,
+        })
+      }
       byResident = ((residentConvRows ?? []) as Record<string, unknown>[]).map((entry) => ({
         id: asString(entry.id),
         conversation_type: asString(entry.conversation_type) || 'resident_intake',
@@ -1248,18 +1558,26 @@ async function loadTicketEnrichment(
       const normalizedPhone = normalizePhoneForDb(residentPhone) ?? residentPhone
       const { data: phoneConvRows } = await supabase
         .from('sms_conversations')
-        .select('id, conversation_type, updated_at, external_phone_number')
+        .select('id, conversation_type, updated_at, external_phone_number, intake_state')
         .eq('landlord_id', landlordId)
         .eq('conversation_type', 'resident_intake')
         .order('updated_at', { ascending: false })
         .limit(25)
-      byResident = ((phoneConvRows ?? []) as Record<string, unknown>[])
-        .filter((entry) => {
+      const matchedPhoneRows = ((phoneConvRows ?? []) as Record<string, unknown>[]).filter(
+        (entry) => {
           const phone = asString(entry.external_phone_number)
           if (!phone) return false
           const normalized = normalizePhoneForDb(phone) ?? phone
           return normalized === normalizedPhone || phone === residentPhone
+        },
+      )
+      for (const entry of matchedPhoneRows.slice(0, 5)) {
+        intakeCandidates.push({
+          intakeState: entry.intake_state,
+          updatedAt: asString(entry.updated_at) || null,
         })
+      }
+      byResident = matchedPhoneRows
         .map((entry) => ({
           id: asString(entry.id),
           conversation_type: asString(entry.conversation_type) || 'resident_intake',
@@ -1267,6 +1585,50 @@ async function loadTicketEnrichment(
         .filter((entry) => entry.id)
         .slice(0, 5)
     }
+
+    for (const candidate of intakeCandidates) {
+      const ask = parsePendingResidentScheduleAsk({
+        intakeState: candidate.intakeState,
+        ticketId,
+        conversationUpdatedAt: candidate.updatedAt,
+      })
+      if (ask) {
+        pendingResidentAsk = ask
+        break
+      }
+    }
+
+    const [{ data: feedbackRow }, { data: reopenRow }] = await Promise.all([
+      supabase
+        .from('vendor_feedback_requests')
+        .select('id, status')
+        .eq('landlord_id', landlordId)
+        .eq('maintenance_request_id', ticketId)
+        .eq('status', 'open')
+        .maybeSingle(),
+      supabase
+        .from('maintenance_work_order_reopens')
+        .select('id, triggered_by, new_status')
+        .eq('landlord_id', landlordId)
+        .eq('maintenance_request_id', ticketId)
+        .eq('triggered_by', 'tenant_sms')
+        .order('reopened_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ])
+    awaitingResidentRating = Boolean(asString((feedbackRow as Record<string, unknown> | null)?.id))
+    const reopenStatus = asString(
+      (reopenRow as Record<string, unknown> | null)?.new_status,
+    ).toLowerCase()
+    const currentVws = asString(ticket?.vendor_work_status).toLowerCase()
+    reopenedByResident = Boolean(
+      asString((reopenRow as Record<string, unknown> | null)?.id) &&
+        currentVws &&
+        currentVws !== 'completed' &&
+        currentVws !== 'cancelled' &&
+        reopenStatus !== 'completed' &&
+        reopenStatus !== 'cancelled',
+    )
 
     const seen = new Set<string>()
     const rows: { id: string; conversation_type: string }[] = []
@@ -1321,7 +1683,11 @@ async function loadTicketEnrichment(
   return {
     ticket,
     invoice,
+    vendorId,
     vendorName,
+    vendorPhone,
+    vendorEmail,
+    vendorCategory,
     resident,
     conversationId: conversationId || null,
     vendorConversationId,
@@ -1329,6 +1695,9 @@ async function loadTicketEnrichment(
     maintenanceRequestId: ticketId || null,
     ticketCreatedAt: asString(ticket?.created_at) || null,
     nextTicketCreatedAt,
+    pendingResidentAsk,
+    awaitingResidentRating,
+    reopenedByResident,
   }
 }
 
@@ -1654,6 +2023,9 @@ export async function fetchWorkflowPipelineDetail(
       priorityLabel: null,
       priorityClassName: null,
       createdLine: formatCreatedLine(row.startedAt),
+      reportedDateLabel: formatRepairTimelineDate(row.startedAt),
+      estimatedCompletionLabel: formatRepairTimelineDate(dateIso),
+      estimatedCostLabel: '—',
       locationLine: [
         row.propertyLabel,
         row.unitLabel ? `Unit ${row.unitLabel}` : null,
@@ -1683,6 +2055,7 @@ export async function fetchWorkflowPipelineDetail(
       maintenanceDetails: [],
       invoiceSection: null,
       resident: null,
+      vendor: null,
       property: await buildPropertyBlock(row, metadata, null),
       attachments: [],
       vendorAttachments: [],
@@ -1695,6 +2068,9 @@ export async function fetchWorkflowPipelineDetail(
       templateId: row.templateId,
       assignedVendorId: null,
       assignedVendorName: null,
+      vendorWorkStatus: null,
+      scheduledAt: null,
+      scheduleConfirmedAt: null,
       stageMoveTicketIds: [],
       inspectionReportId: null,
       activityVendorName: null,
@@ -1796,29 +2172,16 @@ export async function fetchWorkflowPipelineDetail(
     if (!msg || looksLikeInternalEscalationCode(msg)) return null
     return msg
   })()
-  const issueDescription = (() => {
-    if (!structuredMaintenance) return rawTicketDescription.trim() || ''
-    // Prefer the polished tenant-attributed paragraph; keep triage flags below it.
-    const lines: string[] = []
-    if (structuredMaintenance.reportedDetail) {
-      lines.push(structuredMaintenance.reportedDetail)
-    } else if (structuredMaintenance.displayDescription) {
-      lines.push(structuredMaintenance.displayDescription)
-    }
-    if (structuredMaintenance.servesFloor) {
-      lines.push(`Serves: ${structuredMaintenance.servesFloor}`)
-    }
-    for (const flag of structuredMaintenance.triageFlags) {
-      lines.push(`Flag: ${flag}`)
-    }
-    if (structuredMaintenance.availability) {
-      lines.push(`Resident availability: ${structuredMaintenance.availability}`)
-    }
-    if (structuredMaintenance.needsClarification) {
-      lines.push(`Clarify: ${structuredMaintenance.needsClarification}`)
-    }
-    return lines.join('\n').trim() || rawTicketDescription.trim() || ''
-  })()
+  const issueDescription = structuredMaintenance
+    ? composeIssueDetailsNarrative({
+        reportedDetail: structuredMaintenance.reportedDetail,
+        displayDescription: structuredMaintenance.displayDescription,
+        triageFlags: structuredMaintenance.triageFlags,
+        availability: structuredMaintenance.availability,
+        needsClarification: structuredMaintenance.needsClarification,
+        rawFallback: rawTicketDescription,
+      })
+    : rawTicketDescription.trim() || ''
 
   const description = homeCheckTitle === 'Home Check'
     ? 'Observation only. Photos of the water heater and heating system are saved here. This does not request a repair.'
@@ -1833,6 +2196,12 @@ export async function fetchWorkflowPipelineDetail(
 
   const scheduledAt = asString(ticket?.scheduled_at) || asString(metadata.scheduled_at)
   const scheduleConfirmedAt = asString(ticket?.schedule_confirmed_at)
+  const scheduleStatus = asString(ticket?.schedule_status)
+  const residentConfirmationStatus = asString(ticket?.resident_confirmation_status)
+  const vendorNotifiedAt = asString(ticket?.vendor_notified_at)
+  const pendingResidentAsk = enrichment.pendingResidentAsk
+  const awaitingResidentRating = enrichment.awaitingResidentRating
+  const reopenedByResident = enrichment.reopenedByResident
   const awaitingLandlordChoice = Boolean(
     asString(ticket?.awaiting_landlord_choice_at) ||
       /awaiting landlord vendor choice/i.test(asString(ticket?.vendor_notify_error)),
@@ -1852,6 +2221,17 @@ export async function fetchWorkflowPipelineDetail(
       isMaintenanceAdminVendorEscalationReason(row.escalationReason),
   })
   const holdVendorDispatch = Boolean(homeCheckTitle)
+  const residentName =
+    asString(enrichment.resident?.full_name) || asString(ticket?.resident_name) || row.residentName || ''
+  const scheduleState = deriveMaintenanceScheduleState({
+    vendorWorkStatus,
+    scheduledAt,
+    scheduleConfirmedAt,
+    scheduleStatus,
+    residentConfirmationStatus,
+    vendorNotifiedAt,
+    pendingResidentAsk,
+  })
   const statusContext = isMaintenance || holdVendorDispatch
     ? buildMaintenanceOverviewStatusContext({
         vendorWorkStatus,
@@ -1862,6 +2242,13 @@ export async function fetchWorkflowPipelineDetail(
         runStatus: row.status,
         scheduledAt,
         scheduleConfirmedAt,
+        scheduleStatus,
+        residentConfirmationStatus,
+        vendorNotifiedAt,
+        pendingResidentAsk,
+        residentName,
+        awaitingResidentRating,
+        reopenedByResident,
         issueCategory: homeCheckTitle === 'Home Check follow-up' ? 'home_check_warning' : issueCategory,
         holdVendorDispatch,
         awaitingLandlordChoice,
@@ -1893,14 +2280,18 @@ export async function fetchWorkflowPipelineDetail(
         vendorName: enrichment.vendorName,
         scheduledAt,
         scheduleConfirmedAt,
+        scheduleStatus,
+        residentConfirmationStatus,
+        vendorNotifiedAt,
+        pendingResidentAsk,
+        residentName,
+        awaitingResidentRating,
+        reopenedByResident,
         awaitingLandlordChoice,
         stalePendingAcceptNeedsAdmin,
         hasCompletionPhotos,
       })
     : null
-
-  const residentName =
-    asString(enrichment.resident?.full_name) || asString(ticket?.resident_name) || row.residentName || ''
   const residentBlock: WorkflowPipelineResident | null = residentName
     ? {
         id: row.residentId,
@@ -1915,7 +2306,10 @@ export async function fetchWorkflowPipelineDetail(
           .filter(Boolean)
           .join(' · '),
         phone: asString(enrichment.resident?.phone) || asString(ticket?.resident_phone) || '—',
-        email: asString(enrichment.resident?.email) || asString(ticket?.email) || '—',
+        email:
+          displayResidentEmail(
+            asString(enrichment.resident?.email) || asString(ticket?.email) || '',
+          ) || '—',
         moveIn: enrichment.resident?.move_in_date
           ? new Date(asString(enrichment.resident?.move_in_date)).toLocaleDateString(undefined, {
               month: 'short',
@@ -1979,6 +2373,20 @@ export async function fetchWorkflowPipelineDetail(
   const activityVendorStatus = isMaintenance
     ? vendorStatusLabel(vendorWorkStatus, activityVendorName)
     : null
+  const vendorNameForBlock = enrichment.vendorName?.trim() || ''
+  const vendorTradeLabel = enrichment.vendorCategory
+    ? formatVendorTradeLabel(enrichment.vendorCategory, { emptyLabel: '' }).trim()
+    : ''
+  const vendorBlock: WorkflowPipelineVendor | null = vendorNameForBlock
+    ? {
+        id: enrichment.vendorId,
+        name: vendorNameForBlock,
+        initials: initials(vendorNameForBlock),
+        statusLine: vendorTradeLabel || '',
+        phone: enrichment.vendorPhone?.trim() || '—',
+        email: enrichment.vendorEmail?.trim() || '—',
+      }
+    : null
   const activityTimeline = isMaintenance
     ? buildMaintenanceWorkOrderTimeline(
         ticket
@@ -2015,6 +2423,11 @@ export async function fetchWorkflowPipelineDetail(
     priorityLabel: priority?.label ?? null,
     priorityClassName: priority?.className ?? null,
     createdLine: formatCreatedLine(row.startedAt),
+    reportedDateLabel: formatRepairTimelineDate(
+      asString(ticket?.created_at) || row.startedAt,
+    ),
+    estimatedCompletionLabel: formatRepairTimelineDate(dueAt),
+    estimatedCostLabel: formatCurrency(estimatedCost),
     locationLine: [
       formatLocationWithOptionalUnit({
         propertyLabel: row.propertyLabel,
@@ -2058,7 +2471,10 @@ export async function fetchWorkflowPipelineDetail(
           },
           {
             label: 'Visit',
-            value: formatVisitLabel(scheduledAt, scheduleConfirmedAt),
+            value: formatVisitLabel(scheduledAt, scheduleConfirmedAt, {
+              scheduleState,
+              pendingResidentAsk,
+            }),
           },
           { label: 'Expected Completion', value: formatDueLabel(dueAt) },
           { label: 'Estimated Cost', value: formatCurrency(estimatedCost) },
@@ -2075,10 +2491,13 @@ export async function fetchWorkflowPipelineDetail(
           {
             label: 'Location',
             value: dash(
-              structuredMaintenance?.locationDetail ||
-                asString(ticket?.location_detail) ||
-                row.issueLocationDetail ||
-                '',
+              formatIssueLocationWithServes(
+                structuredMaintenance?.locationDetail ||
+                  asString(ticket?.location_detail) ||
+                  row.issueLocationDetail ||
+                  '',
+                structuredMaintenance?.servesFloor,
+              ),
             ),
           },
           {
@@ -2104,6 +2523,7 @@ export async function fetchWorkflowPipelineDetail(
       : [],
     invoiceSection,
     resident: residentBlock,
+    vendor: vendorBlock,
     property: await buildPropertyBlock(row, metadata, ticket),
     attachments,
     vendorAttachments,
@@ -2121,6 +2541,9 @@ export async function fetchWorkflowPipelineDetail(
     templateId: row.templateId,
     assignedVendorId: card.assignedVendorId,
     assignedVendorName: enrichment.vendorName?.trim() || null,
+    vendorWorkStatus: vendorWorkStatus || null,
+    scheduledAt: scheduledAt || null,
+    scheduleConfirmedAt: scheduleConfirmedAt || null,
     stageMoveTicketIds: card.stageMoveTicketIds,
     inspectionReportId: card.inspectionReportId ?? row.inspectionReportId ?? null,
     activityVendorName,

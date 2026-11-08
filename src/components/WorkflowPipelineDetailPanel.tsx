@@ -34,18 +34,13 @@ import type {
   WorkflowPipelineField,
   WorkflowPipelineStep,
 } from '@/lib/workflowPipelineDetail'
+import { needsVisitNotConfirmedBanner } from '@/lib/workflowPipelineDetail'
 import { isVisibleSlaTimelineEntry } from '@/lib/slaOverdueActionReview'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { residentDetailPath } from '@/lib/propertyRoutes'
+import scheduleBannerArt from '@/assets/landing/schedule.png'
+import { propertyAccessEditPath, residentDetailPath } from '@/lib/propertyRoutes'
+import { vendorDetailPath } from '@/lib/vendorRoutes'
 import { supabase } from '@/lib/supabase'
-
-function CloseIcon() {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 function CheckIcon() {
   return (
@@ -55,28 +50,215 @@ function CheckIcon() {
   )
 }
 
+function LocationIcon() {
+  return (
+    <svg
+      className="size-3.5 shrink-0 text-[#6a7282]"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden
+    >
+      <path d="M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11Z" strokeLinejoin="round" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
+  )
+}
+
+function TenantIcon() {
+  return (
+    <svg
+      className="size-3.5 shrink-0 text-[#6a7282]"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  )
+}
+
+function headerPlaceLabel(detail: WorkflowPipelineDetail): string | null {
+  const address = detail.property.address?.trim()
+  if (address && address !== '—') return address
+  const property = detail.property.property?.trim()
+  if (property && property !== '—') {
+    const unit = detail.property.unit?.trim()
+    if (unit && unit !== '—') return `${property} · ${unit}`
+    return property
+  }
+  const location = detail.locationLine?.trim()
+  if (!location) return null
+  const residentName = detail.resident?.name?.trim()
+  if (!residentName) return location
+  return (
+    location
+      .split(' · ')
+      .map((part) => part.trim())
+      .filter((part) => part && part !== residentName)
+      .join(' · ') || null
+  )
+}
+
+function PhoneIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <path
+        d="M6.5 4h3l1.5 5-2 1.5a11 11 0 0 0 5 5l1.5-2 5 1.5v3a2 2 0 0 1-2 2A14 14 0 0 1 4 8.5 2 2 0 0 1 6.5 4z"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function MailIcon() {
   return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <path d="M4 4h16v16H4z" strokeLinejoin="round" />
-      <path d="m4 7 8 6 8-6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <path d="M4 6h16v12H4V6zm0 0l8 6 8-6" strokeLinejoin="round" />
     </svg>
   )
 }
 
-function BackIcon() {
+function ContactFieldValue({
+  kind,
+  value,
+}: {
+  kind: 'phone' | 'email'
+  value: string
+}) {
   return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+    <div className="flex min-w-0 items-center gap-2 text-[14px] font-medium leading-5 text-[#0a0a0a]">
+      {kind === 'phone' ? <PhoneIcon /> : <MailIcon />}
+      <span className="min-w-0 whitespace-pre-wrap break-words">{value}</span>
+    </div>
+  )
+}
+
+function UnitDoorIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16" strokeLinejoin="round" />
+      <path d="M3 21h18" strokeLinecap="round" />
+      <path d="M14 12h.01" strokeLinecap="round" />
     </svg>
   )
 }
 
-function ThreadIcon() {
+function ManagerIcon() {
   return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" strokeLinejoin="round" />
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="7" r="4" />
     </svg>
+  )
+}
+
+function AccessKeyIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <circle cx="8" cy="15" r="4" />
+      <path d="M10.5 12.5 21 2" strokeLinecap="round" />
+      <path d="M16 4l3 3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function EntryCodeIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <rect x="4" y="10" width="16" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" strokeLinecap="round" />
+      <circle cx="12" cy="15" r="1.25" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function AddressPinIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className="size-4 shrink-0 text-[#9ca3af]"
+      aria-hidden
+    >
+      <path d="M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11Z" strokeLinejoin="round" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
+  )
+}
+
+function PropertyAccessFieldValue({
+  kind,
+  value,
+}: {
+  kind: 'address' | 'unit' | 'manager' | 'access' | 'entry'
+  value: string
+}) {
+  const icon =
+    kind === 'address' ? (
+      <AddressPinIcon />
+    ) : kind === 'unit' ? (
+      <UnitDoorIcon />
+    ) : kind === 'manager' ? (
+      <ManagerIcon />
+    ) : kind === 'access' ? (
+      <AccessKeyIcon />
+    ) : (
+      <EntryCodeIcon />
+    )
+  return (
+    <div className="flex min-w-0 items-start gap-2 text-[14px] font-medium leading-5 text-[#0a0a0a]">
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <span className="min-w-0 whitespace-pre-wrap break-words">{value}</span>
+    </div>
   )
 }
 
@@ -192,10 +374,17 @@ function FieldGrid({
   overrides,
 }: {
   fields: WorkflowPipelineField[]
-  columns?: 2 | 4
+  columns?: 2 | 3 | 4 | 5
   overrides?: Partial<Record<string, { control: ReactNode }>>
 }) {
-  const gridClass = columns === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-2 xl:grid-cols-4'
+  const gridClass =
+    columns === 2
+      ? 'sm:grid-cols-2'
+      : columns === 3
+        ? 'sm:grid-cols-3'
+        : columns === 5
+          ? 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5'
+          : 'sm:grid-cols-2 xl:grid-cols-4'
   return (
     <div className={`grid grid-cols-1 gap-4 ${gridClass}`}>
       {fields.map((field) => {
@@ -244,10 +433,10 @@ function detailToStageMoveCard(detail: WorkflowPipelineDetail): WorkflowKanbanCa
     stageMoveTicketIds: ticketIds,
     assignedVendorId: detail.assignedVendorId,
     assignedVendorName: detail.assignedVendorName,
-    vendorWorkStatus: null,
+    vendorWorkStatus: detail.vendorWorkStatus,
     dueAt: null,
-    scheduledAt: null,
-    scheduleConfirmedAt: null,
+    scheduledAt: detail.scheduledAt,
+    scheduleConfirmedAt: detail.scheduleConfirmedAt,
     urgency: null,
     propertyId: null,
     propertyLabel: null,
@@ -268,6 +457,19 @@ function detailToStageMoveCard(detail: WorkflowPipelineDetail): WorkflowKanbanCa
 
 const selectClassName =
   'mt-0 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-2.5 py-1.5 text-[14px] font-medium text-[#0a0a0a] outline-none hover:border-[#d1d5db] focus-visible:ring-2 focus-visible:ring-[#0030b5]'
+
+const dropdownSelectClassName =
+  'mt-0 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-1.5 pl-2.5 pr-7 text-[14px] font-medium text-[#0a0a0a] outline-none hover:border-[#d1d5db] focus-visible:ring-2 focus-visible:ring-[#0030b5]'
+
+function SelectChevron() {
+  return (
+    <span className="pointer-events-none absolute top-1/2 right-[4px] size-4 -translate-y-1/2 text-[#6a7282]">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+        <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  )
+}
 
 function WorkflowStepIndicator({
   step,
@@ -307,7 +509,6 @@ function WorkflowProgressStepper({
   title,
   nextAction,
   changeStage,
-  activity,
 }: {
   steps: WorkflowPipelineStep[]
   caption: string
@@ -319,11 +520,6 @@ function WorkflowProgressStepper({
     options: Array<{ id: WorkflowKanbanStageId; label: string; disabled: boolean; reason?: string }>
     onChange: (to: WorkflowKanbanStageId) => void
   } | null
-  activity?: {
-    vendorName: string | null
-    vendorStatus: string | null
-    timeline: Array<{ timeLabel: string; description: string; actor: string }>
-  } | null
 }) {
   const stepCount = steps.length
   const progressIndex = resolveWorkflowProgressIndex(steps)
@@ -333,8 +529,6 @@ function WorkflowProgressStepper({
       ? '0%'
       : `calc((100% - ${100 / stepCount}%) * ${progressIndex / (stepCount - 1)})`
   const [stageMenuOpen, setStageMenuOpen] = useState(false)
-  const timeline = (activity?.timeline ?? []).filter(isVisibleSlaTimelineEntry)
-  const showActivity = Boolean(activity?.vendorName || timeline.length > 0)
 
   return (
     <section className="w-full rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -458,41 +652,86 @@ function WorkflowProgressStepper({
       {changeStage?.busy ? (
         <p className="mt-2 text-[12px] text-[#6a7282]">Updating stage…</p>
       ) : null}
+    </section>
+  )
+}
 
-      {showActivity ? (
-        <div className="sa-enter mt-5 border-t border-[#f3f4f6] pt-5" aria-label="Work order activity">
-          {activity?.vendorName ? (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                Vendor
-              </p>
-              <p className="mt-1 text-[15px] font-semibold leading-6 text-[#0a0a0a]">
-                {activity.vendorName}
-              </p>
-              {activity.vendorStatus ? (
-                <p className="text-[13px] leading-5 text-[#6a7282]">{activity.vendorStatus}</p>
-              ) : null}
-            </div>
+type WorkOrderDetailTab = 'details' | 'activity' | 'messages'
+
+const WORK_ORDER_DETAIL_TABS: Array<{ id: WorkOrderDetailTab; label: string }> = [
+  { id: 'details', label: 'Details' },
+  { id: 'activity', label: 'Activity' },
+  { id: 'messages', label: 'Messages' },
+]
+
+function RepairTimelineList({
+  timeline,
+}: {
+  timeline: Array<{ timeLabel: string; description: string; actor: string }>
+}) {
+  const visibleTimeline = timeline.filter(isVisibleSlaTimelineEntry)
+  if (visibleTimeline.length === 0) {
+    return (
+      <p className="text-[13px] leading-5 text-[#6a7282]">No timeline events for this repair yet.</p>
+    )
+  }
+  return (
+    <ul className="space-y-3">
+      {visibleTimeline.map((entry) => (
+        <li
+          key={`${entry.timeLabel}-${entry.description}-${entry.actor}`}
+          className="sa-enter grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-0.5 text-[13px] leading-5"
+        >
+          <span className="tabular-nums text-[#6a7282]">{entry.timeLabel}</span>
+          <span className="text-[#364153]">{entry.description}</span>
+          <span className="text-right text-[#9ca3af]">{entry.actor}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function WorkOrderActivityPanel({
+  vendorName,
+  vendorStatus,
+  timeline,
+}: {
+  vendorName: string | null
+  vendorStatus: string | null
+  timeline: Array<{ timeLabel: string; description: string; actor: string }>
+}) {
+  const visibleTimeline = timeline.filter(isVisibleSlaTimelineEntry)
+  if (!vendorName && visibleTimeline.length === 0) {
+    return (
+      <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <p className="text-[13px] leading-5 text-[#6a7282]">No activity for this work order yet.</p>
+      </section>
+    )
+  }
+  return (
+    <section
+      className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+      aria-label="Work order activity"
+    >
+      {vendorName ? (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+            Vendor
+          </p>
+          <p className="mt-1 text-[15px] font-semibold leading-6 text-[#0a0a0a]">{vendorName}</p>
+          {vendorStatus ? (
+            <p className="text-[13px] leading-5 text-[#6a7282]">{vendorStatus}</p>
           ) : null}
-          {timeline.length > 0 ? (
-            <div className={activity?.vendorName ? 'mt-5' : undefined}>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                Timeline
-              </p>
-              <ul className="mt-3 space-y-3">
-                {timeline.map((entry) => (
-                  <li
-                    key={`${entry.timeLabel}-${entry.description}-${entry.actor}`}
-                    className="sa-enter grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-0.5 text-[13px] leading-5"
-                  >
-                    <span className="tabular-nums text-[#6a7282]">{entry.timeLabel}</span>
-                    <span className="text-[#364153]">{entry.description}</span>
-                    <span className="text-right text-[#9ca3af]">{entry.actor}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+        </div>
+      ) : null}
+      {visibleTimeline.length > 0 ? (
+        <div className={vendorName ? 'mt-5' : undefined}>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+            Timeline
+          </p>
+          <div className="mt-3">
+            <RepairTimelineList timeline={timeline} />
+          </div>
         </div>
       ) : null}
     </section>
@@ -518,7 +757,7 @@ export function WorkflowPipelineDetailPanel({
   const titleId = useId()
   const threadTitleId = useId()
   const location = useLocation()
-  const [panelView, setPanelView] = useState<'work_order' | 'thread'>('work_order')
+  const [detailTab, setDetailTab] = useState<WorkOrderDetailTab>('details')
   const [threadSource, setThreadSource] = useState<'resident' | 'vendor'>('resident')
   const [threadDetail, setThreadDetail] = useState<ConversationMonitoringDetail | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -710,14 +949,9 @@ export function WorkflowPipelineDetailPanel({
     }
   }
 
-  const openThread = (source: 'resident' | 'vendor') => {
-    setThreadSource(source)
-    setPanelView('thread')
-  }
-
   useEffect(() => {
     if (!open) {
-      setPanelView('work_order')
+      setDetailTab('details')
       setThreadSource('resident')
       setThreadDetail(null)
       setThreadError(null)
@@ -736,7 +970,7 @@ export function WorkflowPipelineDetailPanel({
   }, [open])
 
   useEffect(() => {
-    setPanelView('work_order')
+    setDetailTab('details')
     setThreadSource('resident')
     setThreadDetail(null)
     setThreadError(null)
@@ -761,18 +995,22 @@ export function WorkflowPipelineDetailPanel({
         }
         return
       }
-      if (panelView === 'thread') {
-        setPanelView('work_order')
+      if (detailTab === 'messages' || detailTab === 'activity') {
+        setDetailTab('details')
         return
       }
       onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose, panelView, deleteConfirmOpen, deleteSaving])
+  }, [open, onClose, detailTab, deleteConfirmOpen, deleteSaving])
+
+  const hasLinkedThread = Boolean(
+    detail?.conversationId || detail?.vendorConversationId || detail?.uloThread,
+  )
 
   useEffect(() => {
-    if (!open || panelView !== 'thread' || !detail) {
+    if (!open || !detail || !hasLinkedThread) {
       return
     }
 
@@ -789,8 +1027,13 @@ export function WorkflowPipelineDetailPanel({
       if (detail.conversationId) {
         return fetchInboxConversationMonitoring(detail.conversationId)
       }
-      if (!detail.uloThread) return null
-      return fetchWorkflowUloThreadMonitoring(detail.uloThread)
+      if (detail.uloThread) {
+        return fetchWorkflowUloThreadMonitoring(detail.uloThread)
+      }
+      if (detail.vendorConversationId) {
+        return fetchInboxConversationMonitoring(detail.vendorConversationId)
+      }
+      return null
     }
 
     void loadThread().then((result) => {
@@ -810,7 +1053,7 @@ export function WorkflowPipelineDetailPanel({
     return () => {
       cancelled = true
     }
-  }, [open, panelView, detail, threadSource])
+  }, [open, hasLinkedThread, detail, threadSource])
 
   const handleMoveOutAction = async (action: MoveOutAdminAction) => {
     if (!detail?.runId) return
@@ -901,12 +1144,7 @@ export function WorkflowPipelineDetailPanel({
 
   const canSeeThread = Boolean(detail?.uloThread)
   const canSeeVendorThread = Boolean(detail?.vendorConversationId)
-  const showingThread = panelView === 'thread'
   const canDeleteWorkOrder = Boolean(detail?.isMaintenanceWorkflow && detail.runId)
-  const vendorFromOverview = detail?.overviewFields.find((field) => field.label === 'Vendor')?.value
-  const vendorName =
-    (vendorFromOverview && vendorFromOverview !== '—' ? vendorFromOverview : null) ??
-    (detail?.uloThread?.kind === 'maintenance' ? detail.uloThread.vendorName : null)
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -926,36 +1164,7 @@ export function WorkflowPipelineDetailPanel({
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[#e5e7eb] bg-white px-6 py-4">
           <div className="min-w-0 flex-1">
-            {showingThread ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setPanelView('work_order')}
-                  className="sa-link inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                >
-                  <BackIcon />
-                  Back to task
-                </button>
-                <h2 id={threadTitleId} className="mt-3 text-[24px] font-semibold leading-8 tracking-[-0.3px] text-[#0a0a0a]">
-                  {threadSource === 'vendor'
-                    ? 'Vendor conversation'
-                    : detail?.uloThread?.kind === 'move_in'
-                    ? 'Move-in coordination'
-                    : detail?.uloThread?.kind === 'inspection'
-                      ? 'Conversational inspection'
-                      : 'Resident conversation'}
-                </h2>
-                <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                  {threadSource === 'vendor'
-                    ? `SMS thread between ${vendorName ?? 'vendor'} and Ulo`
-                    : detail?.uloThread?.kind === 'move_in'
-                    ? `Scheduled SMS coordination with ${detail?.resident?.name ?? 'resident'}`
-                    : detail?.uloThread?.kind === 'inspection'
-                      ? 'Guided SMS inspection — room by room, no portal forms'
-                      : `SMS thread between ${detail?.resident?.name ?? 'resident'} and Ulo`}
-                </p>
-              </>
-            ) : loading ? (
+            {loading ? (
               <p className="text-[13px] text-[#6a7282]">Loading workflow…</p>
             ) : !detail ? (
               <p className="text-[13px] text-[#6a7282]">This task is no longer on Active Tasks</p>
@@ -965,81 +1174,54 @@ export function WorkflowPipelineDetailPanel({
                   <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
                     {detail.workOrderRef}
                   </span>
-                  <span className={`inline-flex rounded-[6px] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${detail.categoryClassName}`}>
+                  <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
                     {detail.categoryLabel}
                   </span>
-                  {detail.priorityLabel && detail.priorityClassName ? (
-                    <span className={`inline-flex rounded-[6px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${detail.priorityClassName}`}>
-                      {detail.priorityLabel}
-                    </span>
-                  ) : null}
                 </div>
                 <h2 id={titleId} className="mt-3 text-[24px] font-semibold leading-8 tracking-[-0.3px] text-[#0a0a0a]">
                   {detail.title}
                 </h2>
-                {detail.locationLine ? (
-                  <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                    {detail.locationLine}
-                  </p>
-                ) : null}
-                <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">
-                  {detail.createdLine}
-                </p>
+                {(() => {
+                  const place = headerPlaceLabel(detail)
+                  const tenantName = detail.resident?.name?.trim() || null
+                  if (!place && !tenantName) return null
+                  return (
+                    <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] leading-5 text-[#6a7282]">
+                      {place ? (
+                        <span className="inline-flex min-w-0 items-center gap-1.5">
+                          <LocationIcon />
+                          <span className="min-w-0">{place}</span>
+                        </span>
+                      ) : null}
+                      {tenantName ? (
+                        <span className="inline-flex min-w-0 items-center gap-1.5">
+                          <TenantIcon />
+                          <span className="min-w-0">{tenantName}</span>
+                        </span>
+                      ) : null}
+                    </p>
+                  )
+                })()}
               </>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="sa-press rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-          >
-            <CloseIcon />
-          </button>
+          {detail?.priorityLabel && detail.priorityClassName ? (
+            <span
+              className={`inline-flex shrink-0 rounded-[6px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${detail.priorityClassName}`}
+            >
+              {detail.priorityLabel}
+            </span>
+          ) : null}
         </div>
 
         <div
           className={
-            showingThread
+            !loading && detail && detailTab === 'messages'
               ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-6 py-5'
               : 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'
           }
         >
-          {showingThread ? (
-            threadLoading ? (
-              <div className="flex h-40 items-center justify-center">
-                <p className="text-[13px] text-[#6a7282]">Loading conversation…</p>
-              </div>
-            ) : threadError ? (
-              <div className="flex h-40 items-center justify-center">
-                <p className="text-[13px] text-[#6a7282]">{threadError}</p>
-              </div>
-            ) : threadDetail ? (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-                <ConversationMonitoringBody
-                  detail={threadDetail}
-                  titleId={threadTitleId}
-                  embedded
-                  onEstimateDecided={() => {
-                    const reloadId =
-                      threadSource === 'vendor'
-                        ? detail?.vendorConversationId
-                        : detail?.conversationId
-                    if (reloadId) {
-                      void fetchInboxConversationMonitoring(reloadId).then((result) => {
-                        if (result) setThreadDetail(result)
-                      })
-                    } else if (detail?.uloThread) {
-                      void fetchWorkflowUloThreadMonitoring(detail.uloThread).then((result) => {
-                        if (result) setThreadDetail(result)
-                      })
-                    }
-                    onWorkflowUpdated?.()
-                  }}
-                />
-              </div>
-            ) : null
-          ) : loading ? (
+          {loading ? (
             <div className="flex h-40 items-center justify-center">
               <p className="text-[13px] text-[#6a7282]">Loading workflow details…</p>
             </div>
@@ -1057,61 +1239,283 @@ export function WorkflowPipelineDetailPanel({
               </button>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
+            <div
+              className={
+                detailTab === 'messages'
+                  ? 'flex min-h-0 flex-1 flex-col gap-4 overflow-hidden'
+                  : 'flex flex-col gap-4'
+              }
+            >
               {stageMove.error && detail.isMaintenanceWorkflow ? (
                 <div className="rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b52a00]">
                   {stageMove.error}
                 </div>
               ) : null}
-              <WorkflowProgressStepper
-                key={detail.runId}
-                steps={detail.progressSteps}
-                caption={detail.progressCaption}
-                title={
-                  detail.isMaintenanceWorkflow
-                    ? 'Repair progress'
-                    : detail.isMoveOutWorkflow
-                      ? 'Move-out progress'
-                      : 'Workflow progress'
-                }
-                nextAction={detail.progressNextAction}
-                changeStage={
-                  detail.isMaintenanceWorkflow && canOverrideStage && stageMoveCard
-                    ? {
-                        current: stageMoveCard.stage,
-                        busy: stageMove.busy || vendorSaving,
-                        options: WORKFLOW_KANBAN_STAGES.map((stage) => {
-                          const gate =
-                            stage.id === stageMoveCard.stage
-                              ? null
-                              : stageMove.gateFor(stageMoveCard, stage.id)
-                          const blocked =
-                            gate != null &&
-                            (gate.kind === 'blocked' || gate.kind === 'not_draggable')
-                          return {
-                            id: stage.id,
-                            label: stage.label,
-                            disabled: blocked,
-                            reason: blocked ? gate.reason : undefined,
-                          }
-                        }),
-                        onChange: (to) => {
-                          void handleStageOverride(to)
-                        },
-                      }
-                    : null
-                }
-                activity={
-                  detail.isMaintenanceWorkflow
-                    ? {
-                        vendorName: detail.activityVendorName,
-                        vendorStatus: detail.activityVendorStatus,
-                        timeline: detail.activityTimeline,
-                      }
-                    : null
-                }
-              />
 
+              {needsVisitNotConfirmedBanner(detail) && detail.maintenanceRequestId ? (
+                <section
+                  id="set-visit-time"
+                  className="sa-enter shrink-0 scroll-mt-4 overflow-hidden rounded-[10px]"
+                  style={{ backgroundColor: '#E6E9F2' }}
+                  aria-label="Visit not confirmed"
+                >
+                  <div className="flex items-stretch gap-3 pl-5">
+                    <div className="flex min-w-0 flex-1 flex-col justify-center py-4 pr-2">
+                      <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                        Visit not confirmed
+                      </h3>
+                      <p className="mt-1 text-[13px] leading-5 text-[#364153]">
+                        {detail.assignedVendorName?.trim()
+                          ? `${detail.assignedVendorName.trim()} accepted the job. A visit time is needed to keep this repair moving.`
+                          : 'The vendor accepted the job. A visit time is needed to keep this repair moving.'}
+                      </p>
+                      {visitError ? (
+                        <p className="mt-2 text-[13px] text-[#b52a00]">{visitError}</p>
+                      ) : null}
+                      {visitSaved ? (
+                        <p className="mt-2 text-[13px] text-[#059669]">{visitSaved}</p>
+                      ) : null}
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label className="flex min-w-0 flex-1 flex-col gap-1 text-[12px] font-medium text-[#364153]">
+                          Date
+                          <input
+                            type="date"
+                            aria-label="Visit date"
+                            className={selectClassName}
+                            value={visitDate}
+                            disabled={visitSaving}
+                            onChange={(e) => setVisitDate(e.target.value)}
+                          />
+                        </label>
+                        <label className="flex min-w-0 flex-1 flex-col gap-1 text-[12px] font-medium text-[#364153]">
+                          Window
+                          <input
+                            type="text"
+                            aria-label="Visit window"
+                            placeholder="4–5pm"
+                            className={selectClassName}
+                            value={visitWindow}
+                            disabled={visitSaving}
+                            onChange={(e) => setVisitWindow(e.target.value)}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={visitSaving || !visitDate || !visitWindow.trim()}
+                          onClick={() => {
+                            const ticketId = detail.maintenanceRequestId
+                            if (!ticketId) return
+                            setVisitSaving(true)
+                            setVisitError(null)
+                            setVisitSaved(null)
+                            void postAdminSetVisitTime({
+                              ticketId,
+                              visitDate,
+                              windowText: visitWindow,
+                            })
+                              .then((saved) => {
+                                setVisitSaved(`Visit saved for ${saved.scheduledWindowText}.`)
+                                onWorkflowUpdated?.()
+                              })
+                              .catch((err: unknown) => {
+                                setVisitError(
+                                  err instanceof Error
+                                    ? err.message
+                                    : 'Could not set the visit time.',
+                                )
+                              })
+                              .finally(() => setVisitSaving(false))
+                          }}
+                          className="sa-press inline-flex cursor-pointer items-center rounded-[8px] bg-[#187960] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#146650] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                        >
+                          {visitSaving ? 'Saving…' : 'Set visit time'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="relative hidden w-[7.5rem] shrink-0 self-end sm:block sm:w-[8.5rem]">
+                      <img
+                        src={scheduleBannerArt}
+                        alt=""
+                        className="pointer-events-none h-auto w-full select-none object-contain object-bottom"
+                      />
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+
+              <div className="shrink-0">
+                <WorkflowProgressStepper
+                  key={detail.runId}
+                  steps={detail.progressSteps}
+                  caption={detail.progressCaption}
+                  title={
+                    detail.isMaintenanceWorkflow
+                      ? 'Repair progress'
+                      : detail.isMoveOutWorkflow
+                        ? 'Move-out progress'
+                        : 'Workflow progress'
+                  }
+                  nextAction={detail.progressNextAction}
+                  changeStage={
+                    detail.isMaintenanceWorkflow && canOverrideStage && stageMoveCard
+                      ? {
+                          current: stageMoveCard.stage,
+                          busy: stageMove.busy || vendorSaving,
+                          options: WORKFLOW_KANBAN_STAGES.map((stage) => {
+                            const gate =
+                              stage.id === stageMoveCard.stage
+                                ? null
+                                : stageMove.gateFor(stageMoveCard, stage.id)
+                            const blocked =
+                              gate != null &&
+                              (gate.kind === 'blocked' || gate.kind === 'not_draggable')
+                            return {
+                              id: stage.id,
+                              label: stage.label,
+                              disabled: blocked,
+                              reason: blocked ? gate.reason : undefined,
+                            }
+                          }),
+                          onChange: (to) => {
+                            void handleStageOverride(to)
+                          },
+                        }
+                      : null
+                  }
+                />
+              </div>
+
+              <nav className="min-w-0 shrink-0" aria-label="Work order sections">
+                <div
+                  className="flex w-full items-end justify-start gap-5 border-b border-[#e5e7eb]"
+                  role="tablist"
+                  aria-label="Work order sections"
+                >
+                  {WORK_ORDER_DETAIL_TABS.map((tab) => {
+                    const selected = detailTab === tab.id
+                    const tabCount =
+                      tab.id === 'activity'
+                        ? detail.activityTimeline.filter(isVisibleSlaTimelineEntry).length
+                        : tab.id === 'messages' && threadDetail
+                          ? threadDetail.transcript.filter((item) => item.type === 'message').length
+                          : null
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={selected}
+                        onClick={() => setDetailTab(tab.id)}
+                        className={[
+                          'sa-press -mb-px shrink-0 whitespace-nowrap border-b-2 px-0 pb-2.5 pt-1 text-[13px] font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2',
+                          selected
+                            ? 'border-[#186179] text-[#186179]'
+                            : 'border-transparent text-[#6a7282] hover:text-[#186179]',
+                        ].join(' ')}
+                      >
+                        {tab.label}
+                        {tabCount != null ? (
+                          <span className="ml-1.5 tabular-nums text-[12px] font-semibold opacity-70">
+                            {tabCount}
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                </div>
+              </nav>
+
+              {detailTab === 'activity' ? (
+                <WorkOrderActivityPanel
+                  vendorName={detail.activityVendorName}
+                  vendorStatus={detail.activityVendorStatus}
+                  timeline={detail.activityTimeline}
+                />
+              ) : null}
+
+              {detailTab === 'messages' ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  {canSeeThread && canSeeVendorThread ? (
+                    <div className="mb-3 flex shrink-0">
+                      <div
+                        className="flex rounded-[10px] border border-[#e5e7eb] bg-[#f3f4f6] p-0.5"
+                        role="tablist"
+                        aria-label="Conversation"
+                      >
+                        {(
+                          [
+                            { id: 'resident' as const, label: 'Resident' },
+                            { id: 'vendor' as const, label: 'Vendor' },
+                          ] as const
+                        ).map((option) => {
+                          const selected = threadSource === option.id
+                          return (
+                            <button
+                              key={option.id}
+                              type="button"
+                              role="tab"
+                              aria-selected={selected}
+                              onClick={() => setThreadSource(option.id)}
+                              className={[
+                                'sa-pill min-w-[88px] flex-1 rounded-[8px] px-3 py-1.5 text-[12px] font-semibold leading-4 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+                                selected
+                                  ? 'bg-white text-[#0a0a0a] shadow-[0px_1px_2px_rgba(0,0,0,0.06)]'
+                                  : 'text-[#6a7282] hover:text-[#364153]',
+                              ].join(' ')}
+                            >
+                              {option.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                  {threadLoading ? (
+                    <div className="flex h-40 items-center justify-center">
+                      <p className="text-[13px] text-[#6a7282]">Loading conversation…</p>
+                    </div>
+                  ) : threadError ? (
+                    <div className="flex h-40 items-center justify-center">
+                      <p className="text-[13px] text-[#6a7282]">{threadError}</p>
+                    </div>
+                  ) : threadDetail ? (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                      <ConversationMonitoringBody
+                        detail={threadDetail}
+                        titleId={threadTitleId}
+                        embedded
+                        onEstimateDecided={() => {
+                          const reloadId =
+                            threadSource === 'vendor'
+                              ? detail.vendorConversationId
+                              : detail.conversationId
+                          if (reloadId) {
+                            void fetchInboxConversationMonitoring(reloadId).then((result) => {
+                              if (result) setThreadDetail(result)
+                            })
+                          } else if (detail.uloThread) {
+                            void fetchWorkflowUloThreadMonitoring(detail.uloThread).then(
+                              (result) => {
+                                if (result) setThreadDetail(result)
+                              },
+                            )
+                          }
+                          onWorkflowUpdated?.()
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                      <p className="text-[13px] leading-5 text-[#6a7282]">
+                        No conversation is linked to this work order yet.
+                      </p>
+                    </section>
+                  )}
+                </div>
+              ) : null}
+
+              {detailTab === 'details' ? (
+                <>
               {detail.isMoveOutWorkflow ? (
                 <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
                   <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Admin actions</h3>
@@ -1174,8 +1578,13 @@ export function WorkflowPipelineDetailPanel({
                 </section>
               ) : null}
 
-              {detail.isMaintenanceWorkflow && detail.maintenanceRequestId ? (
-                <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+              {detail.isMaintenanceWorkflow &&
+              detail.maintenanceRequestId &&
+              !needsVisitNotConfirmedBanner(detail) ? (
+                <section
+                  id="set-visit-time"
+                  className="scroll-mt-4 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+                >
                   <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Set visit time</h3>
                   <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
                     Save a time you already agreed. Ulo texts the vendor once and stops asking about this visit.
@@ -1233,7 +1642,7 @@ export function WorkflowPipelineDetailPanel({
                           })
                           .finally(() => setVisitSaving(false))
                       }}
-                      className="sa-press inline-flex cursor-pointer items-center rounded-[8px] bg-[#0d0f11] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                      className="sa-press inline-flex cursor-pointer items-center rounded-[8px] bg-[#187960] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#146650] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
                     >
                       {visitSaving ? 'Saving…' : 'Set visit time'}
                     </button>
@@ -1242,172 +1651,206 @@ export function WorkflowPipelineDetailPanel({
               ) : null}
 
               <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-                <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Overview</h3>
-                <p className="mt-3 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
-                  {detail.description}
-                </p>
-                {detail.statusContext ? (
-                  <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">{detail.statusContext}</p>
-                ) : null}
-                {quickFixTip ? (
-                  <div className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
-                    {selfFixFacts?.result === 'not_fixed' ? (
-                      <p className="text-[14px] leading-5 text-[#364153]">
-                        Tenant tried: {selfFixTipById(selfFixFacts.tip)?.label ?? quickFixTip.label} — didn't work
-                      </p>
-                    ) : (
-                      <>
-                        <h4 className="text-[14px] font-semibold text-[#0a0a0a]">Quick fix to try</h4>
-                        <ol className="mt-2 list-decimal space-y-1 pl-5 text-[14px] leading-5 text-[#364153]">
-                          {quickFixTip.steps.map((step) => (
-                            <li key={step}>{step}</li>
-                          ))}
-                        </ol>
-                        {markFixedError ? (
-                          <p className="mt-2 text-[13px] text-[#b52a00]">{markFixedError}</p>
-                        ) : null}
-                        <button
-                          type="button"
-                          disabled={markingFixed}
-                          onClick={markQuickFixDone}
-                          className="sa-press mt-3 inline-flex cursor-pointer items-center rounded-[8px] bg-[#0d0f11] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
-                        >
-                          {markingFixed ? 'Saving…' : 'Mark fixed'}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : null}
-                <div className="mt-5 border-t border-[#f3f4f6] pt-5">
-                  {stageMove.error || vendorSaveError ? (
-                    <div className="mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b52a00]">
-                      {vendorSaveError || stageMove.error}
-                    </div>
-                  ) : null}
-                  <FieldGrid
-                    fields={detail.overviewFields}
-                    overrides={{
-                      ...(canOverrideStage && stageMoveCard
-                        ? {
-                            Status: {
-                              control: (
-                                <select
-                                  aria-label="Override work order stage"
-                                  className={selectClassName}
-                                  disabled={stageMove.busy || vendorSaving}
-                                  value={stageMoveCard.stage}
-                                  onChange={(e) => {
-                                    void handleStageOverride(
-                                      e.target.value as WorkflowKanbanStageId,
-                                    )
-                                  }}
-                                >
-                                  {WORKFLOW_KANBAN_STAGES.map((stage) => {
-                                    const gate =
-                                      stage.id === stageMoveCard.stage
-                                        ? null
-                                        : stageMove.gateFor(stageMoveCard, stage.id)
-                                    const blocked =
-                                      gate != null &&
-                                      (gate.kind === 'blocked' || gate.kind === 'not_draggable')
-                                    return (
-                                      <option
-                                        key={stage.id}
-                                        value={stage.id}
-                                        disabled={blocked}
-                                        title={blocked ? gate.reason : undefined}
-                                      >
-                                        {stage.label}
-                                      </option>
-                                    )
-                                  })}
-                                </select>
-                              ),
-                            },
-                          }
-                        : {}),
-                      ...(canOverrideVendor
-                        ? {
-                            Vendor: {
-                              control: (
-                                <select
-                                  aria-label="Override assigned vendor"
-                                  className={selectClassName}
-                                  disabled={stageMove.busy || vendorSaving}
-                                  value={
-                                    currentVendorName && currentVendorName !== '—'
-                                      ? currentVendorName
-                                      : ''
-                                  }
-                                  onChange={(e) => {
-                                    void handleVendorOverride(e.target.value)
-                                  }}
-                                >
-                                  <option value="" disabled={Boolean(currentVendorName && currentVendorName !== '—')}>
-                                    Select a vendor…
-                                  </option>
-                                  {vendorSelectOptions.map((name) => (
-                                    <option key={name} value={name}>
-                                      {name}
-                                    </option>
-                                  ))}
-                                </select>
-                              ),
-                            },
-                          }
-                        : {}),
-                    }}
-                  />
-                </div>
-                {detail.maintenanceDetails.length > 0 ? (
-                  <div className="mt-5 border-t border-[#f3f4f6] pt-5">
-                    <p className="mb-4 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
-                      Maintenance Details
-                    </p>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-                      {detail.maintenanceDetails.slice(0, 3).map((field) => (
-                        <div key={field.label}>
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                            {field.label}
-                          </p>
-                          <p className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">{field.value}</p>
-                        </div>
-                      ))}
-                      <div className="flex min-w-0 flex-col gap-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                          Actions
+                <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Issue details</h3>
+                {(() => {
+                  const repairScope = detail.maintenanceDetails.find(
+                    (field) => field.label === 'Repair Scope',
+                  )
+                  const issueLocation = detail.maintenanceDetails.find(
+                    (field) => field.label === 'Location',
+                  )
+                  const sideFields = [repairScope, issueLocation].filter(
+                    (field): field is NonNullable<typeof field> => Boolean(field),
+                  )
+                  return (
+                    <div
+                      className={[
+                        'mt-3 grid grid-cols-1 gap-4',
+                        sideFields.length > 0 ? 'sm:grid-cols-[minmax(0,1fr)_11rem]' : '',
+                      ].join(' ')}
+                    >
+                      <div className="min-w-0">
+                        <p className="whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
+                          {detail.description}
                         </p>
-                        {canSeeThread ? (
-                          <button
-                            type="button"
-                            onClick={() => openThread('resident')}
-                            className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                          >
-                            <ThreadIcon />
-                            See thread
-                          </button>
+                        {detail.statusContext ? (
+                          <div className="mt-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-3.5 py-3">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#a16207]">
+                              Next step
+                            </p>
+                            <p className="mt-1 text-[13px] leading-5 text-[#713f12]">
+                              {detail.statusContext}
+                            </p>
+                          </div>
                         ) : null}
-                        {canSeeVendorThread ? (
-                          <button
-                            type="button"
-                            onClick={() => openThread('vendor')}
-                            className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                          >
-                            <ThreadIcon />
-                            See vendor thread
-                          </button>
+                        {quickFixTip ? (
+                          <div className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+                            {selfFixFacts?.result === 'not_fixed' ? (
+                              <p className="text-[14px] leading-5 text-[#364153]">
+                                Tenant tried:{' '}
+                                {selfFixTipById(selfFixFacts.tip)?.label ?? quickFixTip.label} — didn't
+                                work
+                              </p>
+                            ) : (
+                              <>
+                                <h4 className="text-[14px] font-semibold text-[#0a0a0a]">
+                                  Quick fix to try
+                                </h4>
+                                <ol className="mt-2 list-decimal space-y-1 pl-5 text-[14px] leading-5 text-[#364153]">
+                                  {quickFixTip.steps.map((step) => (
+                                    <li key={step}>{step}</li>
+                                  ))}
+                                </ol>
+                                {markFixedError ? (
+                                  <p className="mt-2 text-[13px] text-[#b52a00]">{markFixedError}</p>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  disabled={markingFixed}
+                                  onClick={markQuickFixDone}
+                                  className="sa-press mt-3 inline-flex cursor-pointer items-center rounded-[8px] bg-[#0d0f11] px-3 py-2 text-[12px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                                >
+                                  {markingFixed ? 'Saving…' : 'Mark fixed'}
+                                </button>
+                              </>
+                            )}
+                          </div>
                         ) : null}
-                        <button
-                          type="button"
-                          className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                        >
-                          <MailIcon />
-                          Email
-                        </button>
                       </div>
+                      {sideFields.length > 0 ? (
+                        <aside className="flex min-w-0 flex-col gap-4 sm:border-l sm:border-[#f3f4f6] sm:pl-4">
+                          {sideFields.map((field) => (
+                            <div key={field.label}>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+                                {field.label}
+                              </p>
+                              {field.label === 'Repair Scope' && field.value !== '—' ? (
+                                <span className="mt-1 inline-flex max-w-full rounded-[6px] border border-[#e5e7eb] bg-[#f3f4f6] px-2 py-0.5 text-[12px] font-semibold leading-4 text-[#364153]">
+                                  {field.value}
+                                </span>
+                              ) : (
+                                <p className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                                  {field.value}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </aside>
+                      ) : null}
                     </div>
-                  </div>
-                ) : null}
+                  )
+                })()}
+                {(() => {
+                  const issueOverviewFields = detail.overviewFields.filter(
+                    (field) =>
+                      field.label !== 'Resident' &&
+                      field.label !== 'Property' &&
+                      field.label !== 'Unit' &&
+                      field.label !== 'Visit' &&
+                      field.label !== 'Expected Completion' &&
+                      field.label !== 'Estimated Cost',
+                  )
+                  if (issueOverviewFields.length === 0 && !stageMove.error && !vendorSaveError) {
+                    return null
+                  }
+                  return (
+                    <div className="mt-5 border-t border-[#f3f4f6] pt-5">
+                      {stageMove.error || vendorSaveError ? (
+                        <div className="mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b52a00]">
+                          {vendorSaveError || stageMove.error}
+                        </div>
+                      ) : null}
+                      {issueOverviewFields.length > 0 ? (
+                        <FieldGrid
+                          fields={issueOverviewFields}
+                          overrides={{
+                            ...(canOverrideStage && stageMoveCard
+                              ? {
+                                  Status: {
+                                    control: (
+                                      <div className="relative">
+                                        <select
+                                          aria-label="Override work order stage"
+                                          className={dropdownSelectClassName}
+                                          disabled={stageMove.busy || vendorSaving}
+                                          value={stageMoveCard.stage}
+                                          onChange={(e) => {
+                                            void handleStageOverride(
+                                              e.target.value as WorkflowKanbanStageId,
+                                            )
+                                          }}
+                                        >
+                                          {WORKFLOW_KANBAN_STAGES.map((stage) => {
+                                            const gate =
+                                              stage.id === stageMoveCard.stage
+                                                ? null
+                                                : stageMove.gateFor(stageMoveCard, stage.id)
+                                            const blocked =
+                                              gate != null &&
+                                              (gate.kind === 'blocked' ||
+                                                gate.kind === 'not_draggable')
+                                            return (
+                                              <option
+                                                key={stage.id}
+                                                value={stage.id}
+                                                disabled={blocked}
+                                                title={blocked ? gate.reason : undefined}
+                                              >
+                                                {stage.label}
+                                              </option>
+                                            )
+                                          })}
+                                        </select>
+                                        <SelectChevron />
+                                      </div>
+                                    ),
+                                  },
+                                }
+                              : {}),
+                            ...(canOverrideVendor
+                              ? {
+                                  Vendor: {
+                                    control: (
+                                      <div className="relative">
+                                        <select
+                                          aria-label="Override assigned vendor"
+                                          className={dropdownSelectClassName}
+                                          disabled={stageMove.busy || vendorSaving}
+                                          value={
+                                            currentVendorName && currentVendorName !== '—'
+                                              ? currentVendorName
+                                              : ''
+                                          }
+                                          onChange={(e) => {
+                                            void handleVendorOverride(e.target.value)
+                                          }}
+                                        >
+                                          <option
+                                            value=""
+                                            disabled={Boolean(
+                                              currentVendorName && currentVendorName !== '—',
+                                            )}
+                                          >
+                                            Select a vendor…
+                                          </option>
+                                          {vendorSelectOptions.map((name) => (
+                                            <option key={name} value={name}>
+                                              {name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <SelectChevron />
+                                      </div>
+                                    ),
+                                  },
+                                }
+                              : {}),
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                  )
+                })()}
                 {detail.invoiceSection ? (
                   <div className="mt-5 border-t border-[#f3f4f6] pt-5">
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -1522,54 +1965,200 @@ export function WorkflowPipelineDetailPanel({
                         fields={[
                           { label: 'Phone', value: detail.resident.phone },
                           { label: 'Email', value: detail.resident.email },
-                          { label: 'Move-In', value: detail.resident.moveIn },
-                          { label: 'Preferred', value: detail.resident.preferred },
-                          { label: 'Emergency Contact', value: detail.resident.emergencyContact },
                         ]}
+                        overrides={{
+                          Phone: {
+                            control: (
+                              <ContactFieldValue kind="phone" value={detail.resident.phone} />
+                            ),
+                          },
+                          Email: {
+                            control: (
+                              <ContactFieldValue kind="email" value={detail.resident.email} />
+                            ),
+                          },
+                        }}
                       />
+                      {detail.conversationId || detail.uloThread ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setThreadSource('resident')
+                            setDetailTab('messages')
+                          }}
+                          className="sa-press mt-4 inline-flex w-full items-center justify-center rounded-[8px] border border-[#70ABC5] bg-[#70ABC5]/15 px-3 py-2.5 text-[13px] font-medium text-[#186179] outline-none hover:bg-[#70ABC5]/25 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        >
+                          See thread
+                        </button>
+                      ) : null}
                     </div>
                   </section>
                 ) : null}
 
-                <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-                  <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Property</h3>
-                  <div className="mt-5">
-                    <FieldGrid
-                      columns={2}
-                      fields={[
-                        { label: 'Address', value: detail.property.address },
-                        { label: 'Unit', value: detail.property.unit },
-                        { label: 'Manager', value: detail.property.manager },
-                        ...(detail.property.accessRows.length === 0
-                          ? [
-                              { label: 'Access', value: detail.property.access },
-                              { label: 'Entry Code', value: detail.property.entryCode },
-                            ]
-                          : []),
-                      ]}
-                    />
-                    {detail.property.accessRows.length > 0 ? (
-                      <div className="mt-5 border-t border-[#f3f4f6] pt-5">
-                        <p className="mb-4 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
-                          Property access
-                        </p>
-                        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                          {detail.property.accessRows.map((row) => (
-                            <div key={row.label} className="min-w-0">
-                              <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                                {row.label}
-                              </dt>
-                              <dd className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">
-                                {row.value}
-                              </dd>
-                            </div>
-                          ))}
-                        </dl>
+                {detail.vendor ? (
+                  <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                    <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Vendor</h3>
+                    <div className="mt-4 flex items-center gap-3">
+                      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[#dbeafe] text-[13px] font-semibold text-[#1447e6]">
+                        {detail.vendor.initials}
+                      </span>
+                      <div>
+                        {detail.vendor.id ? (
+                          <Link
+                            to={vendorDetailPath(detail.vendor.id)}
+                            state={{ from: `${location.pathname}${location.search}` }}
+                            className="sa-link text-[15px] font-semibold leading-5 text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                          >
+                            {detail.vendor.name}
+                          </Link>
+                        ) : (
+                          <p className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">
+                            {detail.vendor.name}
+                          </p>
+                        )}
+                        {detail.vendor.statusLine ? (
+                          <p className="text-[12px] leading-4 text-[#6a7282]">
+                            {detail.vendor.statusLine}
+                          </p>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </div>
-                </section>
+                    </div>
+                    <div className="mt-5">
+                      <FieldGrid
+                        columns={2}
+                        fields={[
+                          { label: 'Phone', value: detail.vendor.phone },
+                          { label: 'Email', value: detail.vendor.email },
+                        ]}
+                        overrides={{
+                          Phone: {
+                            control: (
+                              <ContactFieldValue kind="phone" value={detail.vendor.phone} />
+                            ),
+                          },
+                          Email: {
+                            control: (
+                              <ContactFieldValue kind="email" value={detail.vendor.email} />
+                            ),
+                          },
+                        }}
+                      />
+                      {detail.vendorConversationId ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setThreadSource('vendor')
+                            setDetailTab('messages')
+                          }}
+                          className="sa-press mt-4 inline-flex w-full items-center justify-center rounded-[8px] border border-[#70ABC5] bg-[#70ABC5]/15 px-3 py-2.5 text-[13px] font-medium text-[#186179] outline-none hover:bg-[#70ABC5]/25 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        >
+                          See thread
+                        </button>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : (
+                  <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                    <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Vendor</h3>
+                    <p className="mt-4 text-[13px] leading-5 text-[#6a7282]">
+                      No vendor assigned yet.
+                    </p>
+                  </section>
+                )}
               </div>
+
+              <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                    Property access
+                  </h3>
+                  {detail.property.id ||
+                  (detail.property.building && detail.property.building !== '—') ? (
+                    <Link
+                      to={propertyAccessEditPath(
+                        detail.property.id || detail.property.building,
+                      )}
+                      state={{ from: `${location.pathname}${location.search}` }}
+                      className="sa-link shrink-0 text-[13px] font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                    >
+                      Edit property access
+                    </Link>
+                  ) : null}
+                </div>
+                <div className="mt-5">
+                  <FieldGrid
+                    columns={5}
+                    fields={[
+                      { label: 'Address', value: detail.property.address },
+                      { label: 'Unit', value: detail.property.unit },
+                      { label: 'Manager', value: detail.property.manager },
+                      { label: 'Access', value: detail.property.access },
+                      { label: 'Entry Code', value: detail.property.entryCode },
+                    ]}
+                    overrides={{
+                      Address: {
+                        control: (
+                          <PropertyAccessFieldValue
+                            kind="address"
+                            value={detail.property.address}
+                          />
+                        ),
+                      },
+                      Unit: {
+                        control: (
+                          <PropertyAccessFieldValue kind="unit" value={detail.property.unit} />
+                        ),
+                      },
+                      Manager: {
+                        control: (
+                          <PropertyAccessFieldValue
+                            kind="manager"
+                            value={detail.property.manager}
+                          />
+                        ),
+                      },
+                      Access: {
+                        control: (
+                          <PropertyAccessFieldValue
+                            kind="access"
+                            value={detail.property.access}
+                          />
+                        ),
+                      },
+                      'Entry Code': {
+                        control: (
+                          <PropertyAccessFieldValue
+                            kind="entry"
+                            value={detail.property.entryCode}
+                          />
+                        ),
+                      },
+                    }}
+                  />
+                </div>
+              </section>
+
+              <section
+                className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+                aria-label="Repair timeline"
+              >
+                <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                  Repair timeline
+                </h3>
+                <div className="mt-5">
+                  <FieldGrid
+                    columns={3}
+                    fields={[
+                      { label: 'Date reported', value: detail.reportedDateLabel },
+                      {
+                        label: 'Estimated completion',
+                        value: detail.estimatedCompletionLabel,
+                      },
+                      { label: 'Estimated cost', value: detail.estimatedCostLabel },
+                    ]}
+                  />
+                </div>
+              </section>
 
               <WorkOrderPhotosSection
                 title="Photos & videos from conversation"
@@ -1581,11 +2170,13 @@ export function WorkflowPipelineDetailPanel({
                 subtitle="Uploaded by the vendor when closing out the job"
                 attachments={detail.vendorAttachments ?? []}
               />
+                </>
+              ) : null}
             </div>
           )}
         </div>
 
-        {canDeleteWorkOrder && !showingThread && !loading && detail ? (
+        {canDeleteWorkOrder && !loading && detail ? (
           <div className="shrink-0 border-t border-[#e5e7eb] bg-white px-6 py-4">
             <button
               type="button"

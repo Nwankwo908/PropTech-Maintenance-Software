@@ -14,6 +14,7 @@ import {
   vendorInviteFailureUserMessage,
 } from "../_shared/vendor_verification/deliverVendorInvite.ts"
 import { sendVendorOnboardingOverrideActivatedSms } from "../_shared/sms/vendorOnboardingOverrideSms.ts"
+import { sendVendorInsuranceRequestSms } from "../_shared/sms/vendorInsuranceRequestSms.ts"
 import { dispatchUnassignedTicketsAfterOverride } from "../_shared/vendorOnboardingOverrideDispatch.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -41,6 +42,7 @@ serve(async (req) => {
     landlordId?: string
     vendorId?: string | null
     ticketId?: string
+    itemId?: string
     businessName?: string
     contactName?: string
     vendorFirstName?: string
@@ -215,6 +217,37 @@ serve(async (req) => {
       ok: true,
       sms,
       assignedCount: dispatched.assignedCount,
+    })
+  }
+  if (
+    action === "request_updated_insurance" ||
+    action === "request_verification_update"
+  ) {
+    const vendorId =
+      typeof body.vendorId === "string" && body.vendorId.trim()
+        ? body.vendorId.trim()
+        : ""
+    if (!vendorId) {
+      return jsonResponse({ error: "Provide a vendor to notify." }, 400)
+    }
+    const itemId =
+      typeof body.itemId === "string" && body.itemId.trim()
+        ? body.itemId.trim()
+        : action === "request_updated_insurance"
+          ? "coi_coverage"
+          : "coi_coverage"
+    const supabase = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const result = await sendVendorInsuranceRequestSms(supabase, {
+      landlordId,
+      vendorId,
+      itemId,
+    })
+    return jsonResponse({
+      ok: result.sms === "sent",
+      sms: result.sms,
+      error: result.error ?? null,
     })
   }
 

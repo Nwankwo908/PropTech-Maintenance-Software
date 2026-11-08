@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import needsYourResponseIcon from '@/assets/try-demo/Needs your response.svg'
+import unreadMessagesIcon from '@/assets/try-demo/Unread messages.svg'
+import failedDeliveriesIcon from '@/assets/try-demo/Failed deliveries.svg'
+import responseRateIcon from '@/assets/try-demo/Response rate.svg'
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
@@ -18,10 +22,23 @@ import {
   computeCommunicationInboxKpis,
 } from '@/lib/communicationInboxKpis'
 import {
+  compactVendorName,
+  conciseTopicSentence,
+  isCompletedWorkOrderStatus,
+  isGeneralistOfferedPestWork,
+  offeredVendorNameFromAsk,
+  replyToMessageIdFromPayload,
+  unansweredLandlordTopics,
+  workOrderIdFromMessagePayload,
+} from '@/lib/communicationNeedsResponse'
+import { isGeneralistTrade } from '@/lib/vendorTrades'
+import { postSummarizeLandlordResponseTopics } from '@/api/summarizeLandlordResponseTopics'
+import {
   inboxParticipantKind,
   inboxPhoneDigits,
 } from '@/lib/communicationInboxKind'
 import {
+  conversationShowsResidentRepairRating,
   formatResidentFeedbackPreview,
   isResidentFeedbackAskBody,
   isTenantOnboardingInvite,
@@ -73,8 +90,19 @@ type Conversation = {
   preview: string
   status: string
   unread: boolean
+  /** Texts from Ulo on this thread that the landlord did not answer. */
+  unansweredLandlordMessages: number
   lastActivity: number
   threadLane: LimitedAlphaMessageLane
+}
+
+type WaitingResponseTopic = {
+  key: string
+  conversationId: string
+  messageId: string
+  createdAtMs: number
+  source: string
+  summary: string
 }
 
 type CommMetrics = {
@@ -207,42 +235,85 @@ function KpiCard({
   label,
   value,
   title,
+  icon,
+  selected = false,
+  onSelect,
 }: {
   label: string
   value: string
   title?: string
+  icon?: string
+  selected?: boolean
+  /** Omit when the card is a readout and must not filter the list. */
+  onSelect?: () => void
 }) {
-  return (
-    <div
-      className="sa-enter-scale flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e5e7eb] bg-white px-5 py-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
-      title={title}
-    >
+  const className = [
+    'sa-enter-scale flex min-w-0 items-center gap-2 rounded-[10px] border px-3 py-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4',
+    onSelect
+      ? 'cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#101828]/20'
+      : '',
+    selected
+      ? 'border-[#186179] bg-[#f9fafb]'
+      : 'border-[#e5e7eb] bg-white',
+    onSelect && !selected ? 'hover:bg-[#f9fafb]' : '',
+  ].join(' ')
+  const body = (
+    <>
+      {icon ? (
+        <span
+          className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+          aria-hidden
+        >
+          <img src={icon} alt="" className="size-[1.15rem] object-contain" />
+        </span>
+      ) : null}
       <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
-      <p className="shrink-0 whitespace-nowrap text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums">
+      <p className="shrink-0 whitespace-nowrap text-[22px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[28px]">
         {value}
       </p>
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        className="ml-auto size-4 shrink-0 text-[#6a7282]"
-        aria-hidden
-      >
-        <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </div>
+      {onSelect ? (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          className="ml-auto size-4 shrink-0 text-[#6a7282]"
+          aria-hidden
+        >
+          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </>
+  )
+  if (!onSelect) {
+    return (
+      <div className={className} title={title}>
+        {body}
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={className}
+      title={title}
+    >
+      {body}
+    </button>
   )
 }
 
-function KpiCardSkeleton() {
+function KpiCardSkeleton({ icon = false, chevron = true }: { icon?: boolean; chevron?: boolean }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e5e7eb] bg-white px-5 py-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="flex min-w-0 items-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4">
+      {icon ? <div className="size-8 shrink-0 animate-pulse rounded-[8px] bg-[#f3f4f6]" /> : null}
       <div className="h-4 w-28 animate-pulse rounded bg-[#f3f4f6]" />
       <div className="h-7 w-10 animate-pulse rounded bg-[#f3f4f6]" />
-      <div className="ml-auto size-4 shrink-0 animate-pulse rounded bg-[#f3f4f6]" />
+      {chevron ? <div className="ml-auto size-4 shrink-0 animate-pulse rounded bg-[#f3f4f6]" /> : null}
     </div>
   )
 }
@@ -283,6 +354,47 @@ function parseParticipantFilter(raw: string | null | undefined): ParticipantFilt
 
 function parseMessageLane(raw: string | null | undefined): LimitedAlphaMessageLane {
   return raw?.trim() === 'onboarding' ? 'onboarding' : 'request'
+}
+
+type MessageMetricFilter = 'needs' | 'unread' | 'failed'
+
+function parseMessageMetricFilter(raw: string | null | undefined): MessageMetricFilter | null {
+  const value = raw?.trim()
+  if (value === 'needs' || value === 'unread' || value === 'failed') {
+    return value
+  }
+  return null
+}
+
+const MESSAGE_METRIC_FILTER_LABELS: Record<MessageMetricFilter, string> = {
+  needs: 'Needs your response',
+  unread: 'Unread Messages',
+  failed: 'Failed Deliveries',
+}
+
+function MessageMetricFilterChip({
+  filter,
+  onClear,
+}: {
+  filter: MessageMetricFilter
+  onClear: () => void
+}) {
+  const label = MESSAGE_METRIC_FILTER_LABELS[filter]
+  return (
+    <span className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f3f4f6] pl-3 pr-1 text-[12px] font-medium text-[#364153]">
+      {label}
+      <button
+        type="button"
+        aria-label={`Remove ${label} filter`}
+        onClick={onClear}
+        className="inline-flex size-6 cursor-pointer items-center justify-center rounded-full text-[#6a7282] outline-none hover:bg-[#e5e7eb] hover:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#186179]"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-3.5" aria-hidden>
+          <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+        </svg>
+      </button>
+    </span>
+  )
 }
 
 function conversationMatchesParticipantFilters(
@@ -472,14 +584,9 @@ function ConversationListRow({
           </p>
         </div>
 
-        <div className="flex shrink-0 flex-col items-end gap-1 pl-2">
-          <span className="text-[12px] leading-4 text-[#6a7282]">
-            {formatRelativeTime(c.lastActivity)}
-          </span>
-          {c.status ? (
-            <span className="text-[12px] leading-4 text-[#6a7282]">{c.status}</span>
-          ) : null}
-        </div>
+        <span className="shrink-0 pl-2 text-[12px] leading-4 text-[#6a7282]">
+          {formatRelativeTime(c.lastActivity)}
+        </span>
       </div>
     </div>
   )
@@ -492,6 +599,8 @@ function MessageLaneTabList({
   onboardingCount,
   participantFilter,
   onParticipantFilterChange,
+  metricFilter,
+  onClearMetricFilter,
   trailing,
 }: {
   active: LimitedAlphaMessageLane
@@ -500,10 +609,12 @@ function MessageLaneTabList({
   onboardingCount: number
   participantFilter: ParticipantFilterKey
   onParticipantFilterChange: (value: ParticipantFilterKey) => void
+  metricFilter: MessageMetricFilter | null
+  onClearMetricFilter: () => void
   trailing?: ReactNode
 }) {
   const tabs: { id: LimitedAlphaMessageLane; label: string; count: number }[] = [
-    { id: 'request', label: 'Requests', count: requestCount },
+    { id: 'request', label: 'Maintenance requests', count: requestCount },
     { id: 'onboarding', label: 'Onboarding', count: onboardingCount },
   ]
   return (
@@ -545,6 +656,9 @@ function MessageLaneTabList({
         })}
       </div>
       <div className="flex shrink-0 items-center gap-2 pb-2">
+        {metricFilter ? (
+          <MessageMetricFilterChip filter={metricFilter} onClear={onClearMetricFilter} />
+        ) : null}
         <ParticipantFilterChip
           value={participantFilter}
           onChange={onParticipantFilterChange}
@@ -558,12 +672,43 @@ function MessageLaneTabList({
 export function AdminCommunicationDashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [conversations, setConversations] = useState<Conversation[]>([])
+  const [responseTopics, setResponseTopics] = useState<WaitingResponseTopic[]>([])
   const [metrics, setMetrics] = useState<CommMetrics | null>(null)
+  const [metricThreadIds, setMetricThreadIds] = useState<{
+    failed: Set<string>
+  }>({ failed: new Set() })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const participantFilter = parseParticipantFilter(searchParams.get('who'))
   const messageLaneTab = parseMessageLane(searchParams.get('lane'))
+  const metricFilter = parseMessageMetricFilter(searchParams.get('metric'))
+  const responseTopicFingerprint = responseTopics.map((topic) => topic.source).join('\n')
+  useEffect(() => {
+    if (metricFilter !== 'needs' || !responseTopicFingerprint) return
+    const sources = responseTopicFingerprint.split('\n')
+    let cancelled = false
+    void postSummarizeLandlordResponseTopics(sources)
+      .then((summaries) => {
+        if (cancelled || summaries.length !== sources.length) return
+        setResponseTopics((current) => {
+          if (current.map((topic) => topic.source).join('\n') !== responseTopicFingerprint) {
+            return current
+          }
+          return current.map((topic, index) => ({
+            ...topic,
+            summary: summaries[index]?.trim() || topic.summary,
+          }))
+        })
+      })
+      .catch(() => {
+        /* Keep the local one-sentence version when the function is not deployed. */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [metricFilter, responseTopicFingerprint])
   const monitoringConversationId = searchParams.get('thread')?.trim() || null
+  const focusMessageId = searchParams.get('msg')?.trim() || null
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteSaving, setDeleteSaving] = useState(false)
@@ -594,11 +739,34 @@ export function AdminCommunicationDashboard() {
     [searchParams, setSearchParams],
   )
 
+  const clearMetricFilter = useCallback(() => {
+    if (!metricFilter) return
+    setSearchParams(
+      mutateSearchParams(searchParams, (next) => {
+        next.delete('metric')
+      }),
+      { replace: true },
+    )
+  }, [metricFilter, searchParams, setSearchParams])
+
+  const toggleMetricFilter = useCallback(
+    (value: MessageMetricFilter) => {
+      setSearchParams(
+        mutateSearchParams(searchParams, (next) => {
+          writeStringParam(next, 'metric', metricFilter === value ? '' : value, '')
+        }),
+        { replace: true },
+      )
+    },
+    [metricFilter, searchParams, setSearchParams],
+  )
+
   const closeMonitoring = useCallback(() => {
     if (!searchParams.get('thread')) return
     setSearchParams(
       mutateSearchParams(searchParams, (next) => {
         next.delete('thread')
+        next.delete('msg')
       }),
       { replace: true },
     )
@@ -626,7 +794,11 @@ export function AdminCommunicationDashboard() {
       setLoading(true)
       setError(null)
       setMetrics(null)
+      setMetricThreadIds({ failed: new Set() })
+      setResponseTopics([])
       const landlordId = getActiveLandlordId()
+      const loadStartedAt =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
 
       const session = await getAdminSession()
       if (cancelled) return
@@ -641,6 +813,15 @@ export function AdminCommunicationDashboard() {
       const dashboardSync = await ensureOnboardingDashboardMatchesPortfolio(landlordId)
       if (cancelled) return
       const allowImportedOperations = dashboardSync.allowImportedOperations
+
+      // Start work-order inbox enrichment in parallel with the SMS list path.
+      const workOrderInboxPromise = allowImportedOperations
+        ? fetchCommunicationWorkOrderInboxRows().catch(() => [] as Awaited<
+            ReturnType<typeof fetchCommunicationWorkOrderInboxRows>
+          >)
+        : Promise.resolve(
+            [] as Awaited<ReturnType<typeof fetchCommunicationWorkOrderInboxRows>>,
+          )
 
       // KPI metrics — open/unread/failed still use landlord-scoped conversation
       // rows; Response rate is a DB aggregate (not the capped message sample).
@@ -699,33 +880,54 @@ export function AdminCommunicationDashboard() {
           }
         }
 
+        const kpis = computeCommunicationInboxKpis({
+          conversations,
+          messages,
+          nowMs: now,
+          responseRate: responseRateKpi?.responseRate ?? null,
+          responseRateDelta: responseRateKpi?.responseRateDelta ?? null,
+          isUnread: ({ conversationId, lastActivityMs, activityLooksUnread }) =>
+            isCommunicationConversationUnread({
+              landlordId,
+              conversationId,
+              lastActivityMs,
+              activityLooksUnread,
+            }),
+        })
+        setMetricThreadIds({
+          failed: new Set(kpis.failedDeliveryThreadIds),
+        })
         setMetrics({
-          ...computeCommunicationInboxKpis({
-            conversations,
-            messages,
-            nowMs: now,
-            responseRate: responseRateKpi?.responseRate ?? null,
-            responseRateDelta: responseRateKpi?.responseRateDelta ?? null,
-            isUnread: ({ conversationId, lastActivityMs, activityLooksUnread }) =>
-              isCommunicationConversationUnread({
-                landlordId,
-                conversationId,
-                lastActivityMs,
-                activityLooksUnread,
-              }),
-          }),
+          needsYourResponse: kpis.needsYourResponse,
+          unreadMessages: kpis.unreadMessages,
+          failedDeliveries: kpis.failedDeliveries,
+          responseRate: kpis.responseRate,
+          needsYourResponseDelta: kpis.needsYourResponseDelta,
+          unreadDelta: kpis.unreadDelta,
+          failedDelta: kpis.failedDelta,
+          responseRateDelta: kpis.responseRateDelta,
           lastUpdated: new Date(),
         })
       })()
 
-      const { data: convRows, error: convError } = await supabase
-        .from('sms_conversations')
-        .select(
-          'id, conversation_type, status, external_phone_number, unit_id, resident_id, vendor_id, maintenance_request_id, updated_at, created_at',
-        )
-        .eq('landlord_id', landlordId)
-        .order('updated_at', { ascending: false })
-        .limit(50)
+      const conversationColumns =
+        'id, conversation_type, status, external_phone_number, unit_id, resident_id, vendor_id, maintenance_request_id, updated_at, created_at'
+      const [{ data: convRows, error: convError }, { data: landlordConvRows, error: landlordConvError }] =
+        await Promise.all([
+          supabase
+            .from('sms_conversations')
+            .select(conversationColumns)
+            .eq('landlord_id', landlordId)
+            .order('updated_at', { ascending: false })
+            .limit(50),
+          supabase
+            .from('sms_conversations')
+            .select(conversationColumns)
+            .eq('landlord_id', landlordId)
+            .eq('conversation_type', 'landlord_update')
+            .order('updated_at', { ascending: false })
+            .limit(10),
+        ])
 
       if (cancelled) return
 
@@ -735,13 +937,25 @@ export function AdminCommunicationDashboard() {
         setLoading(false)
         return
       }
+      if (landlordConvError) {
+        console.error('[admin communication] landlord thread fetch failed', landlordConvError.message)
+      }
 
-      const rows = ((convRows ?? []).filter((row) =>
+      const mergedConvRows = [...((convRows ?? []) as Record<string, unknown>[])]
+      const seenConversationIds = new Set(mergedConvRows.map((row) => asString(row.id)))
+      for (const row of (landlordConvRows ?? []) as Record<string, unknown>[]) {
+        const id = asString(row.id)
+        if (!id || seenConversationIds.has(id)) continue
+        mergedConvRows.push(row)
+        seenConversationIds.add(id)
+      }
+
+      const rows = mergedConvRows.filter((row) =>
         isCommunicationInboxConversationType(
-          asString((row as Record<string, unknown>).conversation_type),
-          { includeLandlordUpdate },
+          asString(row.conversation_type),
+          { includeLandlordUpdate: true },
         ),
-      ) as Record<string, unknown>[])
+      )
 
       // Fail-closed for guided + always load roster so orphan SMS threads can link by phone.
       const [portfolioResidents, portfolioVendors, portfolioUnits, landlordRow] = await Promise.all([
@@ -879,8 +1093,12 @@ export function AdminCommunicationDashboard() {
       const ticketIds = [
         ...new Set(scopedRows.map((r) => asString(r.maintenance_request_id)).filter(Boolean)),
       ]
+      const landlordThreadIds = scopedRows
+        .filter((row) => asString(row.conversation_type) === 'landlord_update')
+        .map((row) => asString(row.id))
+        .filter(Boolean)
 
-      const [messagesResult, residentsResult, vendorsResult, unitsResult, feedbackResult, feedbackRequestResult] =
+      const [messagesResult, residentsResult, vendorsResult, unitsResult, feedbackResult, feedbackRequestResult, landlordMessagesResult] =
         await Promise.allSettled([
           conversationIds.length
             ? supabase
@@ -900,7 +1118,7 @@ export function AdminCommunicationDashboard() {
             : Promise.resolve({ data: [], error: null }),
           supabase
             .from('vendors')
-            .select('id, name, phone')
+            .select('id, name, phone, category')
             .eq('landlord_id', landlordId)
             .limit(500),
           unitIds.length
@@ -926,6 +1144,15 @@ export function AdminCommunicationDashboard() {
                 .eq('rater_type', 'resident')
                 .eq('status', 'open')
                 .in('maintenance_request_id', ticketIds)
+            : Promise.resolve({ data: [], error: null }),
+          landlordThreadIds.length
+            ? supabase
+                .from('sms_messages')
+                .select('id, conversation_id, direction, body, created_at, raw_payload')
+                .eq('landlord_id', landlordId)
+                .in('conversation_id', landlordThreadIds)
+                .order('created_at', { ascending: true })
+                .limit(2000)
             : Promise.resolve({ data: [], error: null }),
         ])
 
@@ -962,6 +1189,110 @@ export function AdminCommunicationDashboard() {
           })
         }
       }
+
+      const landlordTicketByThread = new Map<string, string>()
+      for (const row of scopedRows) {
+        if (asString(row.conversation_type) !== 'landlord_update') continue
+        const id = asString(row.id)
+        const ticketId = asString(row.maintenance_request_id)
+        if (id && ticketId) landlordTicketByThread.set(id, ticketId)
+      }
+
+      const unansweredByLandlordThread = new Map<string, number>()
+      const waitingTopics: WaitingResponseTopic[] = []
+      if (landlordMessagesResult.status === 'fulfilled' && !landlordMessagesResult.value.error) {
+        const landlordMessageRows = (landlordMessagesResult.value.data ?? []) as Record<string, unknown>[]
+        const workOrderIds = new Set(landlordTicketByThread.values())
+        for (const raw of landlordMessageRows) {
+          const ticketId = workOrderIdFromMessagePayload(raw.raw_payload)
+          if (ticketId) workOrderIds.add(ticketId)
+        }
+        const completedWorkOrderIds = new Set<string>()
+        const issueCategoryByWorkOrder = new Map<string, string>()
+        if (workOrderIds.size > 0) {
+          const { data: workOrders } = await supabase
+            .from('maintenance_requests')
+            .select('id, vendor_work_status, issue_category')
+            .eq('landlord_id', landlordId)
+            .in('id', [...workOrderIds])
+          if (cancelled) return
+          for (const workOrder of (workOrders ?? []) as Record<string, unknown>[]) {
+            const id = asString(workOrder.id)
+            if (!id) continue
+            issueCategoryByWorkOrder.set(id, asString(workOrder.issue_category))
+            if (isCompletedWorkOrderStatus(asString(workOrder.vendor_work_status))) {
+              completedWorkOrderIds.add(id)
+            }
+          }
+        }
+        const generalistVendorNames = new Set<string>()
+        const specialistVendorNames = new Set<string>()
+        if (vendorsResult.status === 'fulfilled' && !vendorsResult.value.error) {
+          for (const vendor of (vendorsResult.value.data ?? []) as Record<string, unknown>[]) {
+            const compact = compactVendorName(asString(vendor.name))
+            if (!compact) continue
+            if (isGeneralistTrade(asString(vendor.category) || null)) generalistVendorNames.add(compact)
+            else specialistVendorNames.add(compact)
+          }
+        }
+        const byThread = new Map<
+          string,
+          {
+            id: string
+            direction: string
+            createdAtMs: number
+            text: string
+            replyToMessageId?: string
+            workOrderCompleted?: boolean
+            generalistPestOffer?: boolean
+          }[]
+        >()
+        for (const raw of landlordMessageRows) {
+          const convId = asString(raw.conversation_id)
+          if (!convId) continue
+          const text = asString(raw.body)
+          const workOrderId =
+            workOrderIdFromMessagePayload(raw.raw_payload) || landlordTicketByThread.get(convId) || ''
+          const offeredName = offeredVendorNameFromAsk(text)
+          const offeredCompact = offeredName ? compactVendorName(offeredName) : ''
+          const vendorFound = Boolean(
+            offeredCompact &&
+              (generalistVendorNames.has(offeredCompact) || specialistVendorNames.has(offeredCompact)),
+          )
+          const bucket = byThread.get(convId) ?? []
+          bucket.push({
+            id: asString(raw.id),
+            direction: asString(raw.direction),
+            createdAtMs: new Date(asString(raw.created_at)).getTime(),
+            text,
+            replyToMessageId: replyToMessageIdFromPayload(raw.raw_payload),
+            workOrderCompleted: Boolean(workOrderId && completedWorkOrderIds.has(workOrderId)),
+            generalistPestOffer: isGeneralistOfferedPestWork({
+              text,
+              vendorFound: vendorFound && !specialistVendorNames.has(offeredCompact),
+              vendorCategory: generalistVendorNames.has(offeredCompact) ? 'general' : null,
+              issueCategory: workOrderId ? issueCategoryByWorkOrder.get(workOrderId) : null,
+            }),
+          })
+          byThread.set(convId, bucket)
+        }
+        for (const [convId, threadMessages] of byThread) {
+          const topics = unansweredLandlordTopics(threadMessages)
+          unansweredByLandlordThread.set(convId, topics.length)
+          for (const topic of topics) {
+            waitingTopics.push({
+              key: `${convId}:${topic.messageId || topic.createdAtMs}:${waitingTopics.length}`,
+              conversationId: convId,
+              messageId: topic.messageId,
+              createdAtMs: topic.createdAtMs,
+              source: topic.text,
+              summary: conciseTopicSentence(topic.text),
+            })
+          }
+        }
+      }
+      waitingTopics.sort((a, b) => a.createdAtMs - b.createdAtMs)
+      setResponseTopics(waitingTopics)
 
       const residentById = new Map<string, { name: string; unit: string; building: string }>()
       if (residentsResult.status === 'fulfilled' && !residentsResult.value.error) {
@@ -1072,8 +1403,19 @@ export function AdminCommunicationDashboard() {
                 .join(' · ')
 
         const latest = latestMessageByConversation.get(id)
-        const residentRating = ticketId ? ratingByTicketId.get(ticketId) ?? null : null
-        const awaitingRating = Boolean(ticketId && awaitingRatingTicketIds.has(ticketId))
+        // Resident repair ratings belong on the tenant SMS thread only. Vendor /
+        // landlord threads often share the same ticket id and must not show
+        // "Waiting for the tenant to rate…" as if that ask were on their thread.
+        const showResidentRating =
+          kind === 'tenant' &&
+          conversationShowsResidentRepairRating(asString(r.conversation_type))
+        const residentRating =
+          showResidentRating && ticketId
+            ? ratingByTicketId.get(ticketId) ?? null
+            : null
+        const awaitingRating = Boolean(
+          showResidentRating && ticketId && awaitingRatingTicketIds.has(ticketId),
+        )
         // Empty SMS shells (no messages) show "No messages yet" and crowd the
         // tip top-5 — hide them unless we have feedback/rating context to show.
         if (!latest && residentRating == null && !awaitingRating) return []
@@ -1094,13 +1436,20 @@ export function AdminCommunicationDashboard() {
             (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status)))
 
         let preview = inboxPreviewForSmsMessage(latest?.body ?? '', latest?.mediaUrls)
-        if (residentRating != null) {
+        if (showResidentRating && residentRating != null) {
           preview = formatResidentFeedbackPreview(residentRating)
-        } else if (awaitingRating || (latest?.body && isResidentFeedbackAskBody(latest.body))) {
+        } else if (
+          showResidentRating &&
+          (awaitingRating || (latest?.body && isResidentFeedbackAskBody(latest.body)))
+        ) {
           preview = latest?.body && isResidentFeedbackAskBody(latest.body)
             ? latest.body
             : 'Waiting for the tenant to rate their repair (1–5).'
-        } else if (latest?.body && parseResidentFeedbackRatingBody(latest.body) != null) {
+        } else if (
+          showResidentRating &&
+          latest?.body &&
+          parseResidentFeedbackRatingBody(latest.body) != null
+        ) {
           preview = formatResidentFeedbackPreview(
             parseResidentFeedbackRatingBody(latest.body) as number,
           )
@@ -1120,6 +1469,7 @@ export function AdminCommunicationDashboard() {
               lastActivityMs: lastActivity,
               activityLooksUnread,
             }),
+            unansweredLandlordMessages: unansweredByLandlordThread.get(id) ?? 0,
             lastActivity,
             threadLane: classifyLimitedAlphaMessageLane({
               hasMaintenanceRequest: Boolean(ticketId),
@@ -1131,9 +1481,7 @@ export function AdminCommunicationDashboard() {
       })
 
       // Guided onboarding: never merge synthetic workflow / leftover import threads.
-      const workOrderInboxRows = allowImportedOperations
-        ? await fetchCommunicationWorkOrderInboxRows().catch(() => [])
-        : []
+      const workOrderInboxRows = await workOrderInboxPromise
       if (cancelled) return
 
       const existingIds = new Set(mapped.map((entry) => entry.id))
@@ -1152,6 +1500,7 @@ export function AdminCommunicationDashboard() {
           preview: workOrder.preview,
           status: workOrder.status,
           unread: false,
+          unansweredLandlordMessages: 0,
           lastActivity: workOrder.lastActivity,
           threadLane: classifyLimitedAlphaMessageLane({
             hasMaintenanceRequest: false,
@@ -1179,6 +1528,7 @@ export function AdminCommunicationDashboard() {
             activityLooksUnread:
               /submitted|finished the vendor verification|form submitted/i.test(setup.preview),
           }),
+          unansweredLandlordMessages: 0,
           lastActivity: setup.lastActivityMs,
           threadLane: classifyLimitedAlphaMessageLane({
             hasMaintenanceRequest: false,
@@ -1192,6 +1542,13 @@ export function AdminCommunicationDashboard() {
 
       setConversations(mapped)
       setLoading(false)
+      if (import.meta.env.DEV) {
+        const elapsedMs =
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartedAt
+        console.info(
+          `[messages] inbox hydrate ${Math.round(elapsedMs)}ms threads=${mapped.length}`,
+        )
+      }
     }
 
     void load()
@@ -1200,12 +1557,14 @@ export function AdminCommunicationDashboard() {
     }
   }, [])
 
-  function openConversation(conversationId: string) {
+  function openConversation(conversationId: string, messageId?: string) {
+    const threadId = conversationId.trim()
+    if (!threadId) return
     const landlordId = getActiveLandlordId()
     setConversations((prev) => {
-      const row = prev.find((entry) => entry.id === conversationId)
+      const row = prev.find((entry) => entry.id === threadId)
       const readAt = Math.max(Date.now(), row?.lastActivity ?? 0)
-      markCommunicationConversationRead(landlordId, conversationId, readAt)
+      markCommunicationConversationRead(landlordId, threadId, readAt)
       const wasUnread = Boolean(row?.unread)
       if (wasUnread) {
         setMetrics((metricsPrev) =>
@@ -1218,13 +1577,18 @@ export function AdminCommunicationDashboard() {
         )
       }
       return prev.map((entry) =>
-        entry.id === conversationId ? { ...entry, unread: false } : entry,
+        entry.id === threadId ? { ...entry, unread: false } : entry,
       )
     })
-    if (searchParams.get('thread')?.trim() === conversationId) return
+    const nextMessageId = messageId?.trim() || ''
+    const sameThread = searchParams.get('thread')?.trim() === threadId
+    const sameMessage = (searchParams.get('msg')?.trim() || '') === nextMessageId
+    if (sameThread && sameMessage) return
     setSearchParams(
       mutateSearchParams(searchParams, (next) => {
-        next.set('thread', conversationId)
+        next.set('thread', threadId)
+        if (nextMessageId) next.set('msg', nextMessageId)
+        else next.delete('msg')
       }),
       { replace: false },
     )
@@ -1276,6 +1640,20 @@ export function AdminCommunicationDashboard() {
   const laneThreads =
     messageLaneTab === 'onboarding' ? onboardingThreads : requestThreads
   const visibleThreads = splitOnboardingFromRequests ? laneThreads : filtered
+  const unreadThreadCount = visibleThreads.filter((conversation) => conversation.unread).length
+  const needsYourResponseCount = conversations.reduce(
+    (sum, conversation) => sum + conversation.unansweredLandlordMessages,
+    0,
+  )
+  const shownThreads =
+    metricFilter === 'needs'
+      ? filtered.filter((conversation) => conversation.unansweredLandlordMessages > 0)
+      : metricFilter
+        ? visibleThreads.filter((conversation) => {
+            if (metricFilter === 'unread') return conversation.unread
+            return metricThreadIds.failed.has(conversation.id)
+          })
+        : visibleThreads
   function toggleConversationSelected(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -1289,12 +1667,12 @@ export function AdminCommunicationDashboard() {
     setSelectedIds((prev) => {
       const next = new Set(prev)
       const allOn =
-        visibleThreads.length > 0 &&
-        visibleThreads.every((conversation) => next.has(conversation.id))
+        shownThreads.length > 0 &&
+        shownThreads.every((conversation) => next.has(conversation.id))
       if (allOn) {
-        for (const conversation of visibleThreads) next.delete(conversation.id)
+        for (const conversation of shownThreads) next.delete(conversation.id)
       } else {
-        for (const conversation of visibleThreads) next.add(conversation.id)
+        for (const conversation of shownThreads) next.add(conversation.id)
       }
       return next
     })
@@ -1344,10 +1722,10 @@ export function AdminCommunicationDashboard() {
   const selectedCount = selectedIds.size
   const allFilteredSelected =
     (filtered.length > 0 && filtered.every((conversation) => selectedIds.has(conversation.id))) ||
-    (visibleThreads.length > 0 &&
-      visibleThreads.every((conversation) => selectedIds.has(conversation.id)))
+    (shownThreads.length > 0 &&
+      shownThreads.every((conversation) => selectedIds.has(conversation.id)))
   const someFilteredSelected =
-    visibleThreads.some((conversation) => selectedIds.has(conversation.id)) &&
+    shownThreads.some((conversation) => selectedIds.has(conversation.id)) &&
     !allFilteredSelected
 
   return (
@@ -1413,45 +1791,53 @@ export function AdminCommunicationDashboard() {
         id={TRY_DEMO_SPOTLIGHT_MESSAGES_KPI_ID}
         data-try-demo-spotlight-cluster="1"
         data-try-demo-messages-ready={loading ? '0' : '1'}
-        data-try-demo-messages-rows={loading ? '0' : String(Math.min(5, visibleThreads.length))}
+        data-try-demo-messages-rows={loading ? '0' : String(Math.min(5, shownThreads.length))}
       >
         <div className="py-6">
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
             Messages
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            {splitOnboardingFromRequests
-              ? 'Switch between maintenance requests and onboarding texts.'
-              : 'See all resident and vendor conversations in one place.'}
+            Review conversations and handle anything that needs your response.
           </p>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-4">
-          {metrics == null ? (
+        <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+          {metrics == null || loading ? (
             <>
-              <KpiCardSkeleton />
-              <KpiCardSkeleton />
-              <KpiCardSkeleton />
-              <KpiCardSkeleton />
+              <KpiCardSkeleton icon />
+              <KpiCardSkeleton icon />
+              <KpiCardSkeleton icon />
+              <KpiCardSkeleton icon chevron={false} />
             </>
           ) : (
             <>
               <KpiCard
                 label="Needs your response"
-                value={String(metrics.needsYourResponse)}
-                title="A tenant or vendor wrote last, and neither you nor Ulo has replied for 4 hours."
+                value={String(needsYourResponseCount)}
+                icon={needsYourResponseIcon}
+                selected={metricFilter === 'needs'}
+                onSelect={() => toggleMetricFilter('needs')}
+                title="Each text from Ulo that asked for a reply and did not get one. A notice does not count."
               />
               <KpiCard
                 label="Unread Messages"
-                value={String(metrics.unreadMessages)}
+                value={String(unreadThreadCount)}
+                icon={unreadMessagesIcon}
+                selected={metricFilter === 'unread'}
+                onSelect={() => toggleMetricFilter('unread')}
               />
               <KpiCard
                 label="Failed Deliveries"
                 value={String(metrics.failedDeliveries)}
+                icon={failedDeliveriesIcon}
+                selected={metricFilter === 'failed'}
+                onSelect={() => toggleMetricFilter('failed')}
               />
               <KpiCard
                 label="Response Rate"
                 value={metrics.responseRate == null ? '—' : `${metrics.responseRate}%`}
+                icon={responseRateIcon}
                 title={MESSAGE_RESPONSE_RATE_TOOLTIP}
               />
             </>
@@ -1472,7 +1858,7 @@ export function AdminCommunicationDashboard() {
         <section
           className={[
             'sa-surface flex min-w-0 flex-col border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
-            !loading && visibleThreads.length > 5
+            !loading && shownThreads.length > 5
               ? 'rounded-t-[10px] rounded-b-none border-b-0'
               : 'rounded-[10px]',
           ].join(' ')}
@@ -1485,6 +1871,8 @@ export function AdminCommunicationDashboard() {
               onboardingCount={onboardingThreads.length}
               participantFilter={participantFilter}
               onParticipantFilterChange={setParticipantFilter}
+              metricFilter={metricFilter}
+              onClearMetricFilter={clearMetricFilter}
               trailing={
                 selectedCount > 0 ? (
                   <>
@@ -1514,6 +1902,9 @@ export function AdminCommunicationDashboard() {
             />
           ) : (
             <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-3">
+              {metricFilter ? (
+                <MessageMetricFilterChip filter={metricFilter} onClear={clearMetricFilter} />
+              ) : null}
               <ParticipantFilterChip
                 value={participantFilter}
                 onChange={setParticipantFilter}
@@ -1544,22 +1935,44 @@ export function AdminCommunicationDashboard() {
               ) : null}
             </div>
           )}
-          <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-2.5">
-            <div className="flex size-9 items-center justify-center">
-              <TableCheckbox
-                aria-label="Select all visible conversations"
-                disabled={loading || visibleThreads.length === 0}
-                checked={allFilteredSelected}
-                indeterminate={someFilteredSelected}
-                onChange={toggleAllFilteredSelected}
-              />
+          {metricFilter === 'needs' ? null : (
+            <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-2.5">
+              <div className="flex size-9 items-center justify-center">
+                <TableCheckbox
+                  aria-label="Select all visible conversations"
+                  disabled={loading || shownThreads.length === 0}
+                  checked={allFilteredSelected}
+                  indeterminate={someFilteredSelected}
+                  onChange={toggleAllFilteredSelected}
+                />
+              </div>
+              <span className="text-[12px] font-medium text-[#6a7282]">Select all</span>
             </div>
-            <span className="text-[12px] font-medium text-[#6a7282]">Select all</span>
-          </div>
+          )}
 
           <div className="divide-y divide-[#f3f4f6]">
             {loading ? (
               <p className="px-6 py-10 text-center text-[13px] text-[#6a7282]">Loading…</p>
+            ) : metricFilter === 'needs' ? (
+              responseTopics.length === 0 ? (
+                <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
+                  Nothing is waiting for a reply.
+                </p>
+              ) : (
+                <ol className="list-none">
+                  {responseTopics.map((topic) => (
+                    <li key={topic.key} className="border-b border-[#f3f4f6] last:border-b-0">
+                      <button
+                        type="button"
+                        onClick={() => openConversation(topic.conversationId, topic.messageId)}
+                        className="sa-press w-full px-6 py-3.5 text-left text-[14px] leading-5 text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5]"
+                      >
+                        {topic.summary}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )
             ) : filtered.length === 0 ? (
               <div className="px-6 py-12 text-center">
                 <p className="text-[14px] font-medium text-[#0a0a0a]">
@@ -1581,8 +1994,12 @@ export function AdminCommunicationDashboard() {
                   ? 'No onboarding threads.'
                   : 'No maintenance request threads.'}
               </p>
+            ) : shownThreads.length === 0 ? (
+              <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
+                No threads in this list match that metric.
+              </p>
             ) : (
-              visibleThreads.slice(0, 5).map((c, index) => (
+              shownThreads.slice(0, 5).map((c, index) => (
                 <ConversationListRow
                   key={c.id}
                   conversation={c}
@@ -1597,10 +2014,10 @@ export function AdminCommunicationDashboard() {
         </section>
       </div>
 
-      {!loading && visibleThreads.length > 5 ? (
+      {!loading && metricFilter !== 'needs' && shownThreads.length > 5 ? (
         <div className="sa-surface -mt-px flex min-w-0 flex-col rounded-b-[10px] rounded-t-none border border-t-0 border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <div className="divide-y divide-[#f3f4f6]">
-            {visibleThreads.slice(5).map((c, index) => (
+            {shownThreads.slice(5).map((c, index) => (
               <ConversationListRow
                 key={c.id}
                 conversation={c}
@@ -1617,6 +2034,7 @@ export function AdminCommunicationDashboard() {
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}
         headingName={monitoringHeadingName}
+        focusMessageId={focusMessageId}
         onClose={closeMonitoring}
       />
     </main>

@@ -42,6 +42,25 @@ export function residentOccupancyLabel(status: string | null | undefined): strin
   )
 }
 
+/** Pill + dot colors for resident lease / occupancy chips. */
+export function residentOccupancyChipVisualClasses(status: ResidentOccupancyStatus): {
+  pill: string
+  dot: string
+} {
+  switch (status) {
+    case 'active':
+      return { pill: 'bg-[#dcfce7] text-[#008236]', dot: 'bg-[#22c55e]' }
+    case 'pending':
+      return { pill: 'bg-[#fef9c3] text-[#92400e]', dot: 'bg-[#d97706]' }
+    case 'suspended':
+      return { pill: 'bg-[#ffedd5] text-[#9a3412]', dot: 'bg-[#ea580c]' }
+    case 'past_resident':
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+    default:
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+  }
+}
+
 export function residentOccupancyOccupiesUnit(status: string | null | undefined): boolean {
   return UNIT_OCCUPYING_STATUSES.has(normalizeResidentOccupancyStatus(status))
 }

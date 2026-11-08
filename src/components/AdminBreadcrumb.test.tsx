@@ -1,36 +1,11 @@
 /** @vitest-environment jsdom */
 import { useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, useSearchParams } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AdminBreadcrumb } from '@/components/AdminBreadcrumb'
-import { AdminNotificationSettings } from '@/components/AdminNotificationSettings'
 import { propertyDetailPath } from '@/lib/propertyRoutes'
 import { workOrdersBreadcrumbItems } from '@/lib/workOrdersBreadcrumb'
-
-vi.mock('@/lib/notificationSettings', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/notificationSettings')>()
-  return {
-    ...actual,
-    loadNotificationSettingsForAccount: vi.fn(async () => actual.DEFAULT_NOTIFICATION_SETTINGS),
-  }
-})
-
-vi.mock('@/lib/landlordAccountProfile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/landlordAccountProfile')>()
-  return {
-    ...actual,
-    fetchLandlordAccountProfile: vi.fn(async () => actual.EMPTY_LANDLORD_ACCOUNT_PROFILE),
-  }
-})
-
-vi.mock('@/lib/organizationSettings', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/organizationSettings')>()
-  return {
-    ...actual,
-    loadOrganizationSettings: vi.fn(async () => actual.DEFAULT_ORGANIZATION_SETTINGS),
-  }
-})
 
 afterEach(() => {
   cleanup()
@@ -159,39 +134,5 @@ describe('work order breadcrumbs', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Work Orders' }))
     expect(screen.getByText('Work Orders').getAttribute('aria-current')).toBe('page')
     expect(screen.queryByText(/MNT-CB6CEBA1781C/)).toBeNull()
-  })
-})
-
-describe('AdminNotificationSettings breadcrumb', () => {
-  it('keeps the settings trail, separators, and current-page color', async () => {
-    render(
-      <MemoryRouter>
-        <AdminNotificationSettings />
-      </MemoryRouter>,
-    )
-
-    const nav = await waitFor(() => screen.getByRole('navigation', { name: 'Breadcrumb' }))
-    expect(nav.className).toContain('flex flex-wrap items-center gap-2')
-    expect(nav.className).toContain('text-[14px]')
-    expect(nav.className).toContain('tracking-[-0.1504px]')
-    expect(nav.className).toContain('text-[#6a7282]')
-
-    const settings = within(nav).getByRole('link', { name: '← Settings' })
-    expect(settings.getAttribute('href')).toBe('/admin/settings')
-    expect(settings.className).toContain('sa-link')
-    expect(settings.className).toContain('font-medium')
-    expect(settings.className).toContain('hover:text-[#101828]')
-
-    const operations = within(nav).getByText('Operations')
-    expect(operations.className).toContain('font-medium')
-    expect(operations.className).toContain('text-[#6a7282]')
-    expect(operations.getAttribute('aria-current')).toBeNull()
-
-    const current = within(nav).getByText('Notifications')
-    expect(current.getAttribute('aria-current')).toBe('page')
-    expect(current.className).toContain('text-[#101828]')
-    expect(current.tagName).toBe('SPAN')
-    expect(nav.querySelectorAll('[aria-hidden]')).toHaveLength(2)
-    expect(nav.textContent).toBe('← Settings/Operations/Notifications')
   })
 })

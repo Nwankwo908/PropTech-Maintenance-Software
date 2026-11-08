@@ -15,6 +15,7 @@ import {
   datesInRange,
   mergeResidentCalendarEvents,
   RESIDENT_CALENDAR_PAGE_SIZE,
+  resolveResidentCalendarRentDueDay,
   stripStartIncludingRentReminders,
   todayIsoDate,
   toIsoDate,
@@ -121,12 +122,14 @@ export function ResidentLeaseCalendar({
   const today = todayIsoDate()
   const [windowStart, setWindowStart] = useState<string | null>(null)
   const rentReminderCadence = organization?.rentReminderCadence || DEFAULT_RENT_REMINDER_CADENCE
-  const orgRentDueDay = Number.parseInt(
+  const orgRentDueDayParsed = Number.parseInt(
     normalizeRentDueDaySetting(organization?.rentDueDay),
     10,
   )
-  const resolvedRentDueDay =
-    rentDueDay ?? (Number.isFinite(orgRentDueDay) ? orgRentDueDay : null)
+  const resolvedRentDueDay = resolveResidentCalendarRentDueDay(
+    rentDueDay,
+    Number.isFinite(orgRentDueDayParsed) ? orgRentDueDayParsed : null,
+  )
 
   const allEvents = useMemo(
     () =>
@@ -137,6 +140,9 @@ export function ResidentLeaseCalendar({
             leaseEndDate,
             rentDueDay: resolvedRentDueDay,
             rentReminderCadence,
+            // Automatic reminders only — do not show scheduled send chips while
+            // rent reminder outreach stays disabled on the resident profile.
+            includeRentReminders: false,
           }),
           onboarding
             ? buildTenantOnboardingCalendarEvents(onboarding)

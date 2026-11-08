@@ -41,7 +41,7 @@ export function MyPropertiesAcrossAdmin({
       headerAction={
         <button
           type="button"
-          className="admin-quiet-text-action sa-link relative z-10"
+          className="admin-quiet-text-action setup-portfolio-text sa-link relative z-10"
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()

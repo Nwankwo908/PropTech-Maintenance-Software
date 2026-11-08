@@ -19,6 +19,8 @@ import {
 import { isVendorPricingConfirmedByAdmin } from '@/lib/vendorPricingConfirmation'
 import { respondToEstimate } from '@/api/maintenanceEstimate'
 import sendIcon from '@/assets/noun-send.png'
+import replyIcon from '@/assets/try-demo/noun_Reply_8450299.svg'
+import { ThreeDotMenu } from '@/components/ThreeDotMenu'
 import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
 import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -121,6 +123,8 @@ type ConversationMonitoringModalProps = {
   overlayClassName?: string
   /** Messages list participant label — rail title when thread context lacks a name. */
   headingName?: string | null
+  /** Scroll the open transcript to this sms_messages id. */
+  focusMessageId?: string | null
 }
 
 function SuggestedMessagesChevron({ expanded }: { expanded: boolean }) {
@@ -363,18 +367,26 @@ function TranscriptMedia({
 function TranscriptMessage({
   item,
   tenantInitials,
+  highlighted = false,
+  onReply,
 }: {
   item: Extract<MonitoringTranscriptItem, { type: 'message' }>
   tenantInitials: string
+  highlighted?: boolean
+  onReply?: () => void
 }) {
   const isUlo = item.sender === 'ulo'
   const timeLabel = formatMonitoringTime(item.timestampMs)
   const media = item.media ?? []
   const hasBody = Boolean(item.body.trim())
+  const mark = highlighted ? 'rounded-[12px] bg-[#faf5ff] ring-2 ring-[#611879] ring-offset-2' : ''
 
   if (isUlo) {
     return (
-      <div className="flex gap-2.5">
+      <div
+        data-message-id={item.messageId || undefined}
+        className={['flex gap-2.5', mark].filter(Boolean).join(' ')}
+      >
         <UloAvatar size="sm" />
         <div className="min-w-0 max-w-[85%]">
           <p className="mb-1 text-[11px] leading-4 text-[#6a7282]">
@@ -388,13 +400,33 @@ function TranscriptMessage({
             ) : null}
             <TranscriptMedia media={media} align="left" />
           </div>
+          {onReply ? (
+            <div className="mt-1.5 flex items-center gap-0.5">
+              <button
+                type="button"
+                aria-label="Reply to message"
+                onClick={onReply}
+                className="sa-press inline-flex size-7 items-center justify-center rounded-[8px] text-[#6a7282] hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+              >
+                <img src={replyIcon} alt="" aria-hidden className="size-4 object-cover object-top" />
+              </button>
+              <ThreeDotMenu
+                ariaLabel="Message actions"
+                floatMenu
+                items={[{ id: 'reply', label: 'Reply to message', onSelect: onReply }]}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-row-reverse gap-2.5">
+    <div
+      data-message-id={item.messageId || undefined}
+      className={['flex flex-row-reverse gap-2.5', mark].filter(Boolean).join(' ')}
+    >
       <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-[#dbeafe] text-[12px] font-semibold text-[#1447e6]">
         {tenantInitials}
       </span>
@@ -425,9 +457,13 @@ function isVendorSetupFollowUpItem(item: MonitoringTranscriptItem): boolean {
 function TranscriptItemList({
   items,
   keyPrefix,
+  focusMessageId = null,
+  onReplyToMessage,
 }: {
   items: MonitoringTranscriptItem[]
   keyPrefix: string
+  focusMessageId?: string | null
+  onReplyToMessage?: (message: { messageId: string; body: string }) => void
 }) {
   if (!items.length) return null
 
@@ -445,6 +481,15 @@ function TranscriptItemList({
             key={`${keyPrefix}-msg-${index}`}
             item={item}
             tenantInitials={monitoringInitials(item.senderName)}
+            highlighted={Boolean(item.messageId && item.messageId === focusMessageId)}
+            onReply={
+              item.sender === 'ulo' &&
+              item.body.trim() &&
+              item.body !== 'No messages in this thread yet.' &&
+              onReplyToMessage
+                ? () => onReplyToMessage({ messageId: item.messageId ?? '', body: item.body })
+                : undefined
+            }
           />
         )
       })}
@@ -462,7 +507,6 @@ export function ConversationMonitoringBody({
   composeDraft = '',
   onComposeDraftChange,
   onSendCompose,
-  onSendAndReturn,
   sendingCompose = false,
   composeError = null,
   onEstimateDecided,
@@ -477,6 +521,7 @@ export function ConversationMonitoringBody({
   hourlyRateConfirmDisabled = false,
   vendorOutreachChannel,
   onVendorOutreachChannelChange,
+  focusMessageId = null,
 }: {
   detail: ConversationMonitoringDetail
   titleId: string
@@ -486,9 +531,7 @@ export function ConversationMonitoringBody({
   releasingTakeover?: boolean
   composeDraft?: string
   onComposeDraftChange?: (value: string) => void
-  onSendCompose?: () => void
-  /** Send, then hand the thread back to Ulo so it answers the reply. */
-  onSendAndReturn?: () => void
+  onSendCompose?: (replyToMessageId?: string) => void
   sendingCompose?: boolean
   composeError?: string | null
   onEstimateDecided?: () => void
@@ -503,20 +546,50 @@ export function ConversationMonitoringBody({
   hourlyRateConfirmDisabled?: boolean
   vendorOutreachChannel?: VendorOutreachChannel
   onVendorOutreachChannelChange?: (channel: VendorOutreachChannel) => void
+  focusMessageId?: string | null
 }) {
   const location = useLocation()
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
+  const composeInputRef = useRef<HTMLInputElement>(null)
+  const pendingReplyFocus = useRef(false)
+  const [replySelection, setReplySelection] = useState<{
+    messageId: string
+    body: string
+  } | null>(null)
   const [estimateActing, setEstimateActing] = useState<'approve' | 'reject' | null>(null)
   const [estimateActionError, setEstimateActionError] = useState<string | null>(null)
   const [estimateResolved, setEstimateResolved] = useState<'approved' | 'rejected' | null>(
     null,
   )
 
+  function beginReplyToMessage(message: { messageId: string; body: string }) {
+    const text = message.body.replace(/\s+/g, ' ').trim()
+    if (text) setReplySelection({ messageId: message.messageId.trim(), body: text })
+    if (detail.adminTakeoverActive) {
+      composeInputRef.current?.focus()
+      return
+    }
+    if (detail.canTakeOver) {
+      pendingReplyFocus.current = true
+      onTakeOver?.(detail.conversationId)
+    }
+  }
+
+  useEffect(() => {
+    if (!detail.adminTakeoverActive || !pendingReplyFocus.current) return
+    pendingReplyFocus.current = false
+    composeInputRef.current?.focus()
+  }, [detail.adminTakeoverActive])
+
   useEffect(() => {
     setEstimateActing(null)
     setEstimateActionError(null)
     setEstimateResolved(null)
   }, [detail.conversationId, detail.pendingEstimateDecision?.estimateId])
+
+  useEffect(() => {
+    setReplySelection(null)
+  }, [detail.conversationId])
 
   const channelViews = detail.vendorOutreachChannels
   const activeChannel = vendorOutreachChannel ?? 'sms'
@@ -567,22 +640,33 @@ export function ConversationMonitoringBody({
   const useUnifiedScroll = embedded || Boolean(channelViews)
 
   useEffect(() => {
-    const jumpToLatest = () => {
+    const jump = () => {
       const el = transcriptScrollRef.current
       if (!el) return
+      if (focusMessageId) {
+        const target = el.querySelector(
+          `[data-message-id="${CSS.escape(focusMessageId)}"]`,
+        )
+        if (target instanceof HTMLElement) {
+          const elRect = el.getBoundingClientRect()
+          const targetRect = target.getBoundingClientRect()
+          el.scrollTop += targetRect.top - elRect.top - el.clientHeight / 2 + targetRect.height / 2
+          return
+        }
+      }
       el.scrollTop = el.scrollHeight
     }
     // Wait for layout after thread paint (and rail enter animation ~280ms).
     const frame = window.requestAnimationFrame(() => {
-      jumpToLatest()
-      window.requestAnimationFrame(jumpToLatest)
+      jump()
+      window.requestAnimationFrame(jump)
     })
-    const timeout = window.setTimeout(jumpToLatest, 320)
+    const timeout = window.setTimeout(jump, 320)
     return () => {
       window.cancelAnimationFrame(frame)
       window.clearTimeout(timeout)
     }
-  }, [detail.conversationId, useUnifiedScroll, vendorOutreachChannel])
+  }, [detail.conversationId, detail.transcript.length, focusMessageId, useUnifiedScroll, vendorOutreachChannel])
 
   const summaryBlock = (
     <div className={`border-b border-[#e5e7eb] bg-[#fafafa] px-6 py-4 ${embedded ? 'shrink-0' : 'shrink-0'}`}>
@@ -605,7 +689,11 @@ export function ConversationMonitoringBody({
   const followUpBlock =
     followUpTranscript.length > 0 ? (
       <div className={useUnifiedScroll ? 'px-6 pb-5 pt-4' : 'border-t border-[#e5e7eb] px-6 py-4'}>
-        <TranscriptItemList items={followUpTranscript} keyPrefix="follow-up" />
+        <TranscriptItemList
+          items={followUpTranscript}
+          keyPrefix="follow-up"
+          onReplyToMessage={beginReplyToMessage}
+        />
       </div>
     ) : null
 
@@ -614,7 +702,12 @@ export function ConversationMonitoringBody({
       ref={useUnifiedScroll ? undefined : transcriptScrollRef}
       className={useUnifiedScroll ? 'px-6 py-5' : 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'}
     >
-      <TranscriptItemList items={threadTranscript} keyPrefix="thread" />
+      <TranscriptItemList
+        items={threadTranscript}
+        keyPrefix="thread"
+        focusMessageId={focusMessageId}
+        onReplyToMessage={beginReplyToMessage}
+      />
     </div>
   )
 
@@ -672,6 +765,17 @@ export function ConversationMonitoringBody({
       {scrollableContent}
 
       <footer className="flex shrink-0 flex-col gap-3 border-t border-[#e5e7eb] px-6 py-4">
+        {replySelection ? (
+          <div>
+            <div className="rounded-[12px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+              <p className="line-clamp-4 text-[13px] leading-5 text-[#364153]">{replySelection.body}</p>
+            </div>
+            <p className="mt-1.5 flex items-center gap-1.5 text-[12px] leading-4 text-[#6a7282]">
+              <img src={replyIcon} alt="" aria-hidden className="size-3.5 object-cover object-top" />
+              Selection
+            </p>
+          </div>
+        ) : null}
         {showNegotiationFooter ? (
           <div className="space-y-4 rounded-[12px] border border-[#e5e7eb] bg-[#fafafa] p-4">
             {suggestedMessages.length ? (
@@ -813,12 +917,13 @@ export function ConversationMonitoringBody({
           <div className="space-y-3">
             <div className="flex h-9 min-w-[200px] items-center gap-1 rounded-[10px] border border-[#e5e7eb] bg-white pl-3 pr-1.5">
               <input
+                ref={composeInputRef}
                 type="text"
                 value={composeDraft}
                 onChange={(event) => onComposeDraftChange?.(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && composeDraft.trim()) {
-                    onSendCompose?.()
+                    onSendCompose?.(replySelection?.messageId)
                   }
                 }}
                 placeholder="Text the resident or vendor…"
@@ -827,7 +932,7 @@ export function ConversationMonitoringBody({
               <button
                 type="button"
                 disabled={sendingCompose || !composeDraft.trim()}
-                onClick={() => onSendCompose?.()}
+                onClick={() => onSendCompose?.(replySelection?.messageId)}
                 aria-label={sendingCompose ? 'Sending message' : 'Send message'}
                 className="sa-press inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-transparent outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
               >
@@ -838,20 +943,7 @@ export function ConversationMonitoringBody({
                 )}
               </button>
             </div>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              Ulo is paused on this thread. Replies come to you until you return it to Ulo.
-            </p>
             <div className="flex flex-wrap items-center gap-2">
-              {onSendAndReturn ? (
-                <button
-                  type="button"
-                  disabled={sendingCompose || releasingTakeover || !composeDraft.trim()}
-                  onClick={() => onSendAndReturn()}
-                  className="sa-press inline-flex items-center gap-2 rounded-full bg-[#186179] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#145066] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
-                >
-                  {sendingCompose ? 'Sending…' : 'Send & return to Ulo'}
-                </button>
-              ) : null}
               <button
                 type="button"
                 disabled={releasingTakeover}
@@ -896,6 +988,7 @@ type ConversationMonitoringPanelProps = {
   embedded?: boolean
   /** Messages list participant label — used when SMS context has no resolved name. */
   headingName?: string | null
+  focusMessageId?: string | null
 }
 
 /** Inline conversation monitoring content — used in modals and embedded rails. */
@@ -906,6 +999,7 @@ export function ConversationMonitoringPanel({
   refreshKey = 0,
   embedded = false,
   headingName = null,
+  focusMessageId = null,
 }: ConversationMonitoringPanelProps) {
   const titleId = useId()
   const [detail, setDetail] = useState<ConversationMonitoringDetail | null>(null)
@@ -967,22 +1061,28 @@ export function ConversationMonitoringPanel({
         setError(null)
       }
 
-      const result = await fetchInboxConversationMonitoring(conversationId)
+      try {
+        const result = await fetchInboxConversationMonitoring(conversationId)
 
-      if (options.showLoading) {
-        setLoading(false)
-      }
+        if (!result) {
+          if (options.showLoading) {
+            setDetail(null)
+            setError('Could not load this conversation.')
+          }
+          return
+        }
 
-      if (!result) {
+        setDetail(applyMonitoringHeadingName(result, headingName))
+        setError(null)
+      } catch (err) {
+        console.error('[conversation monitoring] load failed', err)
         if (options.showLoading) {
           setDetail(null)
           setError('Could not load this conversation.')
         }
-        return
+      } finally {
+        if (options.showLoading) setLoading(false)
       }
-
-      setDetail(applyMonitoringHeadingName(result, headingName))
-      setError(null)
     },
     [conversationId, headingName],
   )
@@ -1093,32 +1193,15 @@ export function ConversationMonitoringPanel({
     }
   }
 
-  async function handleSendAndReturn() {
-    const trimmed = composeDraft.trim()
-    if (!trimmed || sendingCompose || releasingTakeover || !conversationId) return
-    setComposeError(null)
-    setSendingCompose(true)
-    try {
-      await sendConversationSms(conversationId, trimmed)
-      setComposeDraft('')
-      await releaseConversationTakeover(conversationId)
-      await loadConversation({ showLoading: false })
-    } catch (err) {
-      setComposeError(getErrorMessage(err, 'Could not send and return this conversation to Ulo.'))
-      await loadConversation({ showLoading: false })
-    } finally {
-      setSendingCompose(false)
-    }
-  }
-
-  async function handleSendCompose() {
+  async function handleSendCompose(replyToMessageId?: string) {
     const trimmed = composeDraft.trim()
     if (!trimmed || sendingCompose || !conversationId) return
     setComposeError(null)
     setSendingCompose(true)
     try {
-      await sendConversationSms(conversationId, trimmed)
-      setComposeDraft('')
+      await sendConversationSms(conversationId, trimmed, {
+        replyToMessageId: replyToMessageId?.trim() || undefined,
+      })
       await loadConversation({ showLoading: false })
     } catch (err) {
       setComposeError(getErrorMessage(err, 'Could not send this message.'))
@@ -1158,7 +1241,6 @@ export function ConversationMonitoringPanel({
         composeDraft={composeDraft}
         onComposeDraftChange={setComposeDraft}
         onSendCompose={() => void handleSendCompose()}
-        onSendAndReturn={() => void handleSendAndReturn()}
         sendingCompose={sendingCompose}
         composeError={composeError}
         onEstimateDecided={() => void loadConversation({ showLoading: false })}
@@ -1179,6 +1261,7 @@ export function ConversationMonitoringPanel({
         onVendorOutreachChannelChange={
           isVendorSetupThread ? setVendorOutreachChannel : undefined
         }
+        focusMessageId={focusMessageId}
       />
     </div>
   )
@@ -1192,6 +1275,7 @@ export function ConversationMonitoringModal({
   onTakeOver,
   overlayClassName = 'z-50',
   headingName = null,
+  focusMessageId = null,
 }: ConversationMonitoringModalProps) {
   const [renderOpen, setRenderOpen] = useState(false)
   const [entered, setEntered] = useState(false)
@@ -1258,6 +1342,7 @@ export function ConversationMonitoringModal({
           onTakeOver={onTakeOver}
           active={open}
           headingName={headingName}
+          focusMessageId={focusMessageId}
         />
       </div>
     </div>

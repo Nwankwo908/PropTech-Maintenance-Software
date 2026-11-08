@@ -12,7 +12,10 @@ import {
 import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
-import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
+import {
+  summarizeWorkOrderCardBlurb,
+  summarizeWorkOrderCardDetail,
+} from '@/lib/workOrderCardSummary'
 import {
   isMaintenanceAdminVendorEscalationReason,
   isStalePendingAcceptNeedsAdminVendor,
@@ -103,6 +106,20 @@ export type WorkflowKanbanCard = {
   stageMoveTicketIds: string[]
   assignedVendorId: string | null
   assignedVendorName: string | null
+  /** Linked ticket vendor work status for Active Tasks KPI buckets. */
+  vendorWorkStatus: string | null
+  /** Linked ticket SLA / response-time due timestamp. */
+  dueAt: string | null
+  /** Linked ticket visit window start. */
+  scheduledAt: string | null
+  /** When the resident confirmed the visit window. */
+  scheduleConfirmedAt: string | null
+  /** Linked ticket urgency for Active Tasks filters. */
+  urgency: string | null
+  /** Property id when known (Active Tasks property filter). */
+  propertyId: string | null
+  /** Property / building label for Active Tasks property filter. */
+  propertyLabel: string | null
   /** Present when this card represents an inspection_report visit group. */
   inspectionReportId?: string | null
   inspectionProgress?: { complete: number; total: number } | null
@@ -164,7 +181,7 @@ export function cardHasAssignedVendorForStageMove(card: {
 
 /** User-facing helper copy for the workflow pipeline (Operations / Active Tasks). */
 export const WORKFLOW_PIPELINE_PAGE_SUBTITLE =
-  'See everything Ulo is actively coordinating, from maintenance to inspections, move ins, move outs, and lease renewals, all in one place.'
+  'Track work Ulo is coordinating across your portfolio.'
 
 export const WORKFLOW_PIPELINE_SECTION_HELPER =
   'Each card is one workflow run. Open work orders live on the Work Orders page; maintenance orders Ulo is moving forward also appear here under Maintenance.'
@@ -735,7 +752,16 @@ export function buildWorkflowKanbanCard(
 
   const maintenanceBlurb =
     !groupItems && !isStandaloneInspectionNotice && derivedCategory === 'maintenance'
-      ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
+      ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory, {
+          issueHeadline: row.issueHeadline,
+        })
+      : null
+
+  const maintenanceDetail =
+    !groupItems && !isStandaloneInspectionNotice && derivedCategory === 'maintenance'
+      ? summarizeWorkOrderCardDetail(row.issueDescription, row.issueCategory) ||
+        row.issueLocationDetail?.trim() ||
+        null
       : null
 
   const title = groupItems
@@ -802,8 +828,8 @@ export function buildWorkflowKanbanCard(
       ? `${progress!.complete} of ${progress!.total} complete`
       : isStandaloneInspectionNotice
         ? (row.issueDescription?.split('\n')[0]?.trim() || 'Prepare for inspection')
-        : // Maintenance blurb is the title; avoid duplicating it under the chips.
-          null,
+        : // Title is the issue noun-phrase; summary carries location + reported detail.
+          maintenanceDetail,
     stage,
     critical:
       workflowEscalated ||
@@ -826,6 +852,17 @@ export function buildWorkflowKanbanCard(
         : null
       : row.assignedVendorId?.trim() || null,
     assignedVendorName: null,
+    vendorWorkStatus: groupItems
+      ? groupItems.find((item) => item.ticketId === visitPrimaryTicketId)?.vendorWorkStatus ??
+        groupItems[0]?.vendorWorkStatus ??
+        null
+      : row.vendorWorkStatus ?? null,
+    dueAt: row.dueAt ?? null,
+    scheduledAt: row.scheduledAt ?? null,
+    scheduleConfirmedAt: row.scheduleConfirmedAt ?? null,
+    urgency: row.urgency?.trim().toLowerCase() || null,
+    propertyId: row.propertyId?.trim() || null,
+    propertyLabel: row.propertyLabel?.trim() || null,
     inspectionReportId: groupItems ? row.inspectionReportId : null,
     inspectionProgress: progress,
     inspectionChecklist: groupItems

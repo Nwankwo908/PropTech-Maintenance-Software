@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { AdminBreadcrumb } from '@/components/AdminBreadcrumb'
 import {
   CRITICAL_SAFETY_ALERTS,
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -451,16 +450,8 @@ export function AdminNotificationSettings() {
         targetRef={testDeliveryGuideTargetRef}
         message={SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE}
       />
-      <div className="py-6">
-        <AdminBreadcrumb
-          items={[
-            { label: '← Settings', to: '/admin/settings' },
-            { label: 'Operations' },
-            { label: 'Notifications' },
-          ]}
-        />
-
-        <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
               Notifications

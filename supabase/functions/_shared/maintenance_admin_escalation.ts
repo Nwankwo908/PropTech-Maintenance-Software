@@ -1,3 +1,5 @@
+import { loadRepairAttentionPolicy, loadRepairAttentionContact, manualRepairAttentionSms } from "./maintenanceAttentionPolicy.ts"
+import { shouldSuppressAutomationForManualOverride, clearManualStageOverrideForTicket } from "./workflowStageMove/manualStageOverride.ts"
 /**
  * Escalate maintenance to admin when no roster vendor is available
  * (submit with empty roster, SLA expired, or vendor declined).
@@ -124,9 +126,6 @@ export async function escalateMaintenanceNeedsVendor(
   const landlordId = ticket.landlord_id?.trim()
   if (!landlordId) return { nearbyOptionCount: 0, attention: null }
 
-  const { shouldSuppressAutomationForManualOverride } = await import(
-    "./workflowStageMove/manualStageOverride.ts"
-  )
   if (
     await shouldSuppressAutomationForManualOverride(supabase, {
       ticketId: ticket.id,
@@ -168,6 +167,14 @@ export async function escalateMaintenanceNeedsVendor(
     }
   }
 
+  const { data: ticketRow, error: ticketError } = await supabase
+    .from("maintenance_requests")
+    .select("unit, description, issue_category, issue_headline, vendor_notify_error, created_at, urgency, priority, severity, property_id, resident_request_ref, resident_name, entry_ok_if_absent")
+    .eq("id", ticket.id).eq("landlord_id", landlordId).maybeSingle()
+  if (ticketError || !ticketRow) throw Error("Maintenance escalation ticket unavailable")
+  const policy = await loadRepairAttentionPolicy(supabase, landlordId, ticketRow)
+  const contact = policy.emergency ? undefined : await loadRepairAttentionContact(supabase, landlordId, ticketRow)
+
   const { data: run } = await supabase
     .from("workflow_runs")
     .select("id, status, template_id")
@@ -205,21 +212,11 @@ export async function escalateMaintenanceNeedsVendor(
   })
 
   try {
-    const { data: ticketRow } = await supabase
-      .from("maintenance_requests")
-      .select(
-        "unit, building, description, issue_category, issue_headline, created_at, urgency, priority, property_id, resident_request_ref",
-      )
-      .eq("id", ticket.id)
-      .maybeSingle()
     const unit =
       typeof ticketRow?.unit === "string" && ticketRow.unit.trim()
         ? ticketRow.unit.trim()
         : ""
-    const building =
-      typeof ticketRow?.building === "string" && ticketRow.building.trim()
-        ? ticketRow.building.trim()
-        : ""
+    const building = ""
     const description =
       typeof ticketRow?.description === "string" ? ticketRow.description : ""
     const issueCategory =
@@ -281,7 +278,7 @@ export async function escalateMaintenanceNeedsVendor(
     let nextSteps: string[] = []
     let choiceReplyHint: string | null = null
     let vendorChoice: AwaitingVendorChoice | null = null
-    try {
+    if (policy.searchExternalVendors) try {
       const discovered = await discoverExternalVendorsForTicket(supabase, ticket.id, {
         limit: 3,
       })
@@ -337,6 +334,9 @@ export async function escalateMaintenanceNeedsVendor(
     } else if (opts.escalationReason === "sla_expired_no_vendor") {
       headline = "The vendor did not respond in time"
       whyLine = ""
+    } else if (policy.manualArrangement) {
+      headline = "Please arrange a vendor for this repair"
+      whyLine = "Roster vendor options require landlord approval."
     } else {
       headline = "No preferred vendor matched this request"
       whyLine = ""
@@ -345,6 +345,15 @@ export async function escalateMaintenanceNeedsVendor(
     const attention = await notifyLandlordNeedsAttention(supabase, {
       landlordId,
       kind: "assign_vendor",
+      handoffContact: contact,
+      smsBody: policy.manualArrangement ? manualRepairAttentionSms({
+        residentName: ticketRow.resident_name,
+        repair: repairSentence,
+        requestRef,
+        category: issueCategory,
+        entryOkIfAbsent: ticketRow.entry_ok_if_absent,
+        noRosterCandidates: ticketRow.vendor_notify_error === "No matching active roster vendor",
+      }) : undefined,
       headline,
       detail: repairSentence,
       locationLine,
@@ -356,7 +365,6 @@ export async function escalateMaintenanceNeedsVendor(
       idempotencyKey: `assign_vendor:${ticket.id}:${opts.escalationReason}`,
       maintenanceRequestId: ticket.id,
       workflowRunId: run?.id ?? null,
-      omitWorkOrderRef: true,
     })
     return { nearbyOptionCount: nextSteps.length, attention }
   } catch (e) {
@@ -474,9 +482,7 @@ export async function resumeMaintenanceWorkflowAfterVendorAccepted(
   ticketId: string,
 ): Promise<void> {
   try {
-    const { clearManualStageOverrideForTicket } = await import(
-      "./workflowStageMove/manualStageOverride.ts"
-    )
+
     await clearManualStageOverrideForTicket(supabase, {
       ticketId,
       reason: "vendor_accepted",

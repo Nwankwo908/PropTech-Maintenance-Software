@@ -67,7 +67,8 @@ export type LateRentAccountReview = {
   riskClassName: string
   locationLabel: string
   communicationPrefLabel: string
-  nextReminderLabel: string | null
+  /** Last automatic rent reminder sent (date + time). Null when none sent yet. */
+  lastReminderLabel: string | null
   balanceDueLabel: string
   daysOverdue: number
   daysOverdueLabel: string
@@ -252,8 +253,29 @@ function buildRiskInsight(
   }
 }
 
-function buildNextReminderLabel(row: AdminRentCollectionRow): string | null {
+function latestReminderSentAt(row: AdminRentCollectionRow): string | null {
+  let latestMs = Number.NaN
+  for (const event of row.timeline ?? []) {
+    if (event.eventType !== 'rent.reminder_sent') continue
+    const ms = new Date(event.createdAt).getTime()
+    if (!Number.isFinite(ms)) continue
+    if (!Number.isFinite(latestMs) || ms > latestMs) latestMs = ms
+  }
+  if (Number.isFinite(latestMs)) return new Date(latestMs).toISOString()
+  if (row.reminderSent || row.reminderSmsSent || row.reminderEmailSent) {
+    const fallback = (row.lastEventAt ?? '').trim()
+    if (fallback) return fallback
+  }
+  return null
+}
+
+/** Automatic reminders only — show when the last one went out, not a next-send schedule. */
+function buildLastReminderLabel(row: AdminRentCollectionRow): string | null {
   if (isLateRentChargeSettled(row)) return null
+  const sentAt = latestReminderSentAt(row)
+  if (!sentAt) return null
+  const when = new Date(sentAt)
+  if (!Number.isFinite(when.getTime())) return null
   const channel =
     row.reminderSmsSent && row.reminderEmailSent
       ? 'SMS + email'
@@ -262,18 +284,19 @@ function buildNextReminderLabel(row: AdminRentCollectionRow): string | null {
         : row.reminderEmailSent
           ? 'Email'
           : 'SMS'
-  const anchor = row.lastEventAt ? new Date(row.lastEventAt) : new Date()
-  const next = new Date(anchor)
-  next.setDate(next.getDate() + 1)
-  next.setHours(9, 0, 0, 0)
   const dayLabel =
-    next.toDateString() === new Date().toDateString()
+    when.toDateString() === new Date().toDateString()
       ? 'Today'
-      : next.toDateString() === new Date(Date.now() + 86_400_000).toDateString()
-        ? 'Tomorrow'
-        : next.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-  const timeLabel = next.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  return `Next reminder · ${dayLabel} · ${timeLabel} (${channel})`
+      : when.toLocaleDateString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        })
+  const timeLabel = when.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  return `Last reminder · ${dayLabel} · ${timeLabel} (${channel})`
 }
 
 function resolveLeaseStatusLabel(status: string | null | undefined): string {
@@ -359,7 +382,7 @@ export function buildLateRentAccountReview(
     riskClassName: riskBadge.className,
     locationLabel,
     communicationPrefLabel: 'Prefers Both',
-    nextReminderLabel: buildNextReminderLabel(row),
+    lastReminderLabel: buildLastReminderLabel(row),
     balanceDueLabel: formatCurrency(balanceDue > 0 ? balanceDue : row.amountDue),
     daysOverdue,
     daysOverdueLabel: String(daysOverdue),

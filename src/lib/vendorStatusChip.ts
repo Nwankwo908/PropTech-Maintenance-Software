@@ -32,7 +32,7 @@ export const VENDOR_STATUS_MEANINGS: Record<
   { label: string; detail: string; className: string }
 > = {
   not_started: {
-    label: 'Not activated',
+    label: 'Not accepting new work',
     detail: 'Verification invite has not been sent yet.',
     className: 'bg-[#f3f4f6] text-[#6a7282]',
   },
@@ -47,7 +47,7 @@ export const VENDOR_STATUS_MEANINGS: Record<
     className: 'bg-[#e0e7ff] text-[#3730a3]',
   },
   active: {
-    label: 'Active',
+    label: 'Accepting new work',
     detail: 'All requirements met. Enters matching queue. Only matchable state.',
     className: 'bg-[#dbfce7] text-[#008236]',
   },

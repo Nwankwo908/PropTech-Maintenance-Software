@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import calendarIcon from '@/assets/calendar.png'
+import leaseStatusIcon from '@/assets/landing/Lease status.svg'
+import monthlyRentIcon from '@/assets/landing/Monthly rent.svg'
+import outstandingBalanceIcon from '@/assets/landing/Outstanding balance.svg'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
   phoneChanged,
@@ -8,13 +12,11 @@ import {
   resendTenantActivationSms,
   sendTenantWelcomeSms,
 } from '@/api/tenantActivation'
-import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { ResidentLeaseCalendar } from '@/components/ResidentLeaseCalendar'
 import { SmartIntelligenceCard } from '@/components/SmartIntelligenceCard'
-import {
-  isLimitedAlpha1Landlord,
-  landlordUsesLimitedAlphaSurface,
-} from '@shared/landlordCapabilities'
+import { ResidentRentHistoryRail } from '@/components/ResidentRentHistoryRail'
+import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { ResidentOccupancyStatusChip } from '@/components/ResidentOccupancyStatusChip'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import { SendInviteInfoTip } from '@/components/onboarding/OnboardingSendSwitch'
@@ -41,6 +43,7 @@ import {
   displayResidentEmail,
   isPlaceholderResidentEmail,
   otherOccupantsOnSamePlace,
+  pickResidentProfileThreadId,
   residentEmailPatchForSave,
   residentPlaceLabel,
   type ResidentCommunicationItem,
@@ -80,10 +83,26 @@ import {
   fetchResidentMaintenanceCalendarEvents,
   fetchResidentOpenMaintenanceTickets,
 } from '@/lib/residentScheduledVisits'
-import { buildSmartIntelligence, type SmartInsight, type SmartIntelligenceTicket } from '@/lib/smartIntelligence'
+import { buildSmartIntelligence, type SmartIntelligenceTicket } from '@/lib/smartIntelligence'
 import { getErrorMessage, isUniqueViolation } from '@/lib/errorMessage'
 import { parseLeaseDateInput, parseRentDueDayInput } from '@/lib/onboarding'
-import { parseIsoDateOnly, type ResidentCalendarEvent } from '@/lib/residentLeaseCalendar'
+import { useLandlordWorkspace } from '@/context/LandlordWorkspaceContext'
+import { normalizeRentDueDaySetting } from '@/lib/organizationSettings'
+import {
+  formatDaysUntilNextResidentRentDueLabel,
+  formatLastRentReminderSentLabel,
+  parseIsoDateOnly,
+  type ResidentCalendarEvent,
+} from '@/lib/residentLeaseCalendar'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import {
+  buildResidentRentHistory,
+  formatResidentRentPaymentTypeLabel,
+  parseResidentRentPaymentType,
+  RESIDENT_RENT_PAYMENT_TYPES,
+  resolveResidentRentOwed,
+  type ResidentRentPaymentType,
+} from '@/lib/residentRentHistory'
 import {
   syncAssignedUnitOccupancyFromResidentStatus,
 } from '@/lib/unitActivation'
@@ -136,6 +155,7 @@ type LoadedResidentUser = {
   leaseEndDate: string | null
   rentDueDay: number | null
   monthlyRent: number | null
+  rentPaymentType: ResidentRentPaymentType | null
   maintenanceResponsibilitiesClause: string | null
   activationStatus: string | null
   smsConsentStatus: string | null
@@ -194,15 +214,6 @@ function PersonIcon() {
   )
 }
 
-function DocumentIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4 text-[#6a7282]">
-      <path d="M8 4h8l4 4v12H8V4z" strokeLinejoin="round" />
-      <path d="M16 4v4h4" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function ChatIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4 text-[#6a7282]">
@@ -243,10 +254,98 @@ function PawIcon() {
   )
 }
 
-function DollarIcon() {
+function ResidentKpiCard({
+  label,
+  value,
+  icon,
+  iconSrc,
+  title,
+  selected = false,
+  onSelect,
+}: {
+  label: string
+  value: ReactNode
+  icon?: ReactNode
+  iconSrc?: string
+  title?: string
+  selected?: boolean
+  onSelect?: () => void
+}) {
+  const className = [
+    'sa-enter-scale flex min-w-0 items-center gap-2 rounded-[10px] border px-3 py-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:gap-3 sm:px-5 sm:py-4',
+    onSelect
+      ? 'cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#101828]/20'
+      : '',
+    selected ? 'border-[#186179] bg-[#f9fafb]' : 'border-[#e5e7eb] bg-white',
+    onSelect && !selected ? 'hover:bg-[#f9fafb]' : '',
+  ].join(' ')
+  const valueIsText = typeof value === 'string' || typeof value === 'number'
+  const body = (
+    <>
+      <span
+        className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+        aria-hidden
+      >
+        {iconSrc ? (
+          <img src={iconSrc} alt="" className="size-[1.15rem] object-contain" />
+        ) : (
+          icon
+        )}
+      </span>
+      <p className="min-w-0 truncate whitespace-nowrap text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+        {label}
+      </p>
+      {valueIsText ? (
+        <p className="ml-auto min-w-0 max-w-[55%] truncate text-right text-[22px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[28px]">
+          {value}
+        </p>
+      ) : (
+        <div className="ml-auto flex min-w-0 max-w-[60%] shrink-0 justify-end">{value}</div>
+      )}
+      {onSelect ? (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          className="size-4 shrink-0 text-[#6a7282]"
+          aria-hidden
+        >
+          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </>
+  )
+  if (!onSelect) {
+    return (
+      <div className={className} title={title}>
+        {body}
+      </div>
+    )
+  }
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4 text-[#9ca3af]">
-      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round" />
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={className}
+      title={title}
+    >
+      {body}
+    </button>
+  )
+}
+
+function LeaseEditIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className="size-4" aria-hidden>
+      <path
+        d="M11.333 2A1.886 1.886 0 0 1 14 4.667l-9 9-3.667 1 1-3.667 9-9Z"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -255,22 +354,34 @@ function ProfileCard({
   title,
   icon,
   id,
+  onEdit,
   children,
 }: {
   title: string
-  icon: React.ReactNode
+  icon?: React.ReactNode
   id?: string
+  onEdit?: () => void
   children: ReactNode
 }) {
   return (
     <section
       id={id}
-      className="min-w-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+      className="group/profile-card relative min-w-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
     >
-      <div className="flex items-center gap-2">
-        {icon}
+      <div className="flex items-center gap-2 pr-8">
+        {icon ?? null}
         <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">{title}</h2>
       </div>
+      {onEdit ? (
+        <button
+          type="button"
+          aria-label={`Edit ${title}`}
+          onClick={onEdit}
+          className="sa-press absolute right-3 top-3 inline-flex size-8 items-center justify-center rounded-[8px] text-[#6a7282] opacity-0 transition-opacity duration-150 hover:bg-[#f3f4f6] hover:text-[#0a0a0a] group-hover/profile-card:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc] focus-visible:ring-offset-1"
+        >
+          <LeaseEditIcon />
+        </button>
+      ) : null}
       <div className="mt-4">{children}</div>
     </section>
   )
@@ -290,27 +401,37 @@ function FileGlyph() {
   )
 }
 
+function ThreadIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function ProfileContent({
   profile,
-  insights,
+  rentDueCountdownLabel,
+  rentPaymentType = null,
+  rentPaymentTypeSaving = false,
   leaseDocuments,
   documentPreviewError,
-  occupancySaving = false,
   limitedAlpha1 = false,
   operationsEvents = [],
   visitEvents = [],
   onboarding = null,
   occupantProfilePath,
   occupantProfileState,
-  onOccupancyChange,
+  onEditLease,
+  onRentPaymentTypeChange,
   onPreviewDocument,
-  onEditResident,
 }: {
   profile: ResidentProfileDetail
-  insights: SmartInsight[]
+  rentDueCountdownLabel: string
+  rentPaymentType?: ResidentRentPaymentType | null
+  rentPaymentTypeSaving?: boolean
   leaseDocuments: OrganizationDocument[]
   documentPreviewError: string | null
-  occupancySaving?: boolean
   limitedAlpha1?: boolean
   operationsEvents?: PropertyOperationsTimelineEvent[]
   visitEvents?: ResidentCalendarEvent[]
@@ -325,13 +446,18 @@ function ProfileContent({
   } | null
   occupantProfilePath?: (residentId: string) => string
   occupantProfileState?: { from: string }
-  onOccupancyChange?: (status: ResidentOccupancyStatus) => void
+  onEditLease?: () => void
+  onRentPaymentTypeChange?: (value: ResidentRentPaymentType | null) => void
   onPreviewDocument?: (document: OrganizationDocument) => void
-  onEditResident?: () => void
 }) {
+  const threadId = pickResidentProfileThreadId(profile.communications) ?? ''
+  const hasThread = Boolean(threadId)
+  const seeThreadClassName =
+    'sa-press inline-flex w-fit items-center justify-center gap-1.5 rounded-[10px] border px-3 py-2 text-[12px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2'
+
   return (
     <>
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-2">
         <ProfileCard title="Personal info" icon={<PersonIcon />}>
           <div className="flex flex-col gap-4">
             {!profile.phone && !profile.email && !profile.emergencyContact && profile.pets.length === 0 ? (
@@ -385,72 +511,31 @@ function ProfileContent({
               </>
             )}
 
-            <div className="border-t border-[#f3f4f6] pt-4">
-              <p className="text-[12px] leading-4 text-[#6a7282]">Documents</p>
-              {documentPreviewError ? (
-                <p className="mt-2 text-[13px] leading-5 text-[#b91c1c]">{documentPreviewError}</p>
-              ) : null}
-              {leaseDocuments.length === 0 ? (
-                <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">No lease documents on file.</p>
-              ) : (
-                <ul className="mt-2 flex flex-col">
-                  {leaseDocuments.map((document) => {
-                    const canPreview = Boolean(
-                      document.previewUrl || (document.storageBucket && document.storagePath),
-                    )
-                    return (
-                      <li key={document.id} className="flex min-w-0 items-start gap-2 py-2">
-                        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
-                          <FileGlyph />
-                        </span>
-                        <div className="min-w-0 flex-1 overflow-hidden">
-                          {canPreview && onPreviewDocument ? (
-                            <button
-                              type="button"
-                              className="sa-link block w-full text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline [overflow-wrap:anywhere]"
-                              onClick={() => onPreviewDocument(document)}
-                            >
-                              {document.name}
-                            </button>
-                          ) : (
-                            <p className="text-[14px] font-medium leading-5 text-[#0a0a0a] [overflow-wrap:anywhere]">
-                              {document.name}
-                            </p>
-                          )}
-                          <p className="text-[12px] leading-4 text-[#6a7282] [overflow-wrap:anywhere]">
-                            {document.meta}
-                            {canPreview && onPreviewDocument ? '' : ' · Preview unavailable'}
-                          </p>
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
+            {hasThread ? (
+              <Link
+                to={`/admin/communication?thread=${encodeURIComponent(threadId)}`}
+                className={`${seeThreadClassName} border-[#dbeafe] bg-[#eff6ff] text-[#1447e6] hover:bg-[#dbeafe]`}
+              >
+                <ThreadIcon />
+                See thread
+              </Link>
+            ) : (
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                title="No message thread for this resident yet"
+                className={`${seeThreadClassName} cursor-not-allowed border-[#e5e7eb] bg-[#f9fafb] text-[#9ca3af]`}
+              >
+                <ThreadIcon />
+                See thread
+              </button>
+            )}
           </div>
         </ProfileCard>
 
-        <ProfileCard id="resident-lease" title="Lease" icon={<DocumentIcon />}>
+        <ProfileCard id="resident-lease" title="Lease and rent" onEdit={onEditLease}>
           <div className="flex flex-col gap-4">
-            <div>
-              <p className="text-[12px] leading-4 text-[#6a7282]">Status</p>
-              {onOccupancyChange ? (
-                <div className="mt-1">
-                  <ResidentOccupancySelect
-                    value={profile.occupancyStatus}
-                    disabled={occupancySaving}
-                    onChange={onOccupancyChange}
-                    aria-label="Occupancy status"
-                    className="sa-surface h-9 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-1 pl-3 pr-9 text-[14px] font-semibold leading-5 text-[#0a0a0a] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                </div>
-              ) : (
-                <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                  {profile.leaseStatus}
-                </p>
-              )}
-            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-[12px] leading-4 text-[#6a7282]">Lease starts</p>
@@ -473,8 +558,84 @@ function ProfileContent({
               <div>
                 <p className="text-[12px] leading-4 text-[#6a7282]">Rent due</p>
                 <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                  {profile.rentDueDayLabel}
+                  {rentDueCountdownLabel}
                 </p>
+              </div>
+              <div>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Payment method</p>
+                {onRentPaymentTypeChange ? (
+                  <div className="relative mt-1">
+                    <select
+                      aria-label="Payment method"
+                      value={rentPaymentType ?? ''}
+                      disabled={rentPaymentTypeSaving}
+                      onChange={(event) => {
+                        const next = parseResidentRentPaymentType(event.target.value)
+                        onRentPaymentTypeChange(next)
+                      }}
+                      className="sa-surface h-9 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-1 pl-3 pr-9 text-[14px] font-semibold leading-5 text-[#0a0a0a] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="">Select payment method</option>
+                      {RESIDENT_RENT_PAYMENT_TYPES.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                        <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                    {formatResidentRentPaymentTypeLabel(rentPaymentType)}
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Lease document</p>
+                {documentPreviewError ? (
+                  <p className="mt-2 text-[13px] leading-5 text-[#b91c1c]">{documentPreviewError}</p>
+                ) : null}
+                {leaseDocuments.length === 0 ? (
+                  <p className="mt-2 text-[13px] leading-5 text-[#b91c1c]">No lease documents on file.</p>
+                ) : (
+                  <ul className="mt-1 flex flex-col">
+                    {leaseDocuments.map((document) => {
+                      const canPreview = Boolean(
+                        document.previewUrl || (document.storageBucket && document.storagePath),
+                      )
+                      return (
+                        <li key={document.id} className="flex min-w-0 items-start gap-2 py-1.5 first:pt-1">
+                          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
+                            <FileGlyph />
+                          </span>
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            {canPreview && onPreviewDocument ? (
+                              <button
+                                type="button"
+                                className="sa-link block w-full text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline [overflow-wrap:anywhere]"
+                                onClick={() => onPreviewDocument(document)}
+                              >
+                                {document.name}
+                              </button>
+                            ) : (
+                              <p className="text-[14px] font-medium leading-5 text-[#0a0a0a] [overflow-wrap:anywhere]">
+                                {document.name}
+                              </p>
+                            )}
+                            <p className="text-[12px] leading-4 text-[#6a7282] [overflow-wrap:anywhere]">
+                              {document.meta}
+                              {canPreview && onPreviewDocument ? '' : ' · Preview unavailable'}
+                            </p>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
           </div>
@@ -503,16 +664,6 @@ function ProfileContent({
             </div>
           ) : null}
 
-          <div className="mt-5 flex items-center justify-between border-t border-[#f3f4f6] pt-4">
-            <div className="flex items-center gap-2">
-              <DollarIcon />
-              <span className="text-[13px] font-medium text-[#364153]">Balance</span>
-            </div>
-            <span className="text-[22px] font-bold leading-7 tabular-nums text-[#0a0a0a]">
-              {profile.balanceLabel}
-            </span>
-          </div>
-
           {profile.otherOccupants.length > 0 ? (
             <div className="mt-4">
               <p className="text-[12px] leading-4 text-[#6a7282]">
@@ -537,11 +688,6 @@ function ProfileContent({
             </div>
           ) : null}
         </ProfileCard>
-
-        <SmartIntelligenceCard
-          insights={insights}
-          onEditResident={onEditResident}
-        />
       </div>
 
       <ResidentLeaseCalendar
@@ -593,6 +739,7 @@ export function AdminPropertyResidentDetailDashboard() {
   const { propertySlug, residentId } = useParams<{ propertySlug?: string; residentId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { organization } = useLandlordWorkspace()
   const [building, setBuilding] = useState<string | null>(null)
   const [propertyId, setPropertyId] = useState<string | null>(null)
 
@@ -607,9 +754,10 @@ export function AdminPropertyResidentDetailDashboard() {
   const actionsMenuRef = useRef<HTMLDivElement>(null)
   const deleteConfirmTitleId = useId()
   const [actionError, setActionError] = useState<string | null>(null)
-  const [occupancySaving, setOccupancySaving] = useState(false)
   const [resendingActivation, setResendingActivation] = useState(false)
+  const [rentPaymentTypeSaving, setRentPaymentTypeSaving] = useState(false)
   const [setupOutreachAckOpen, setSetupOutreachAckOpen] = useState(false)
+  const [rentHistoryOpen, setRentHistoryOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
@@ -663,13 +811,14 @@ export function AdminPropertyResidentDetailDashboard() {
       setVisitEvents([])
       setWorkflowData(null)
       setMaintenanceTickets([])
+      setRentHistoryOpen(false)
     }
     setError(null)
     setDocumentPreviewError(null)
 
     const landlordId = getActiveLandlordId()
     const userSelect =
-      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, rent_due_day, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at, last_activation_attempt_at, first_activation_attempt_at'
+      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, rent_due_day, rent_payment_type, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at, last_activation_attempt_at, first_activation_attempt_at'
 
     try {
       let userResult = await supabase
@@ -750,6 +899,9 @@ export function AdminPropertyResidentDetailDashboard() {
         leaseEndDate: asLeaseDate(raw.lease_end_date),
         rentDueDay: asRentDueDay(raw.rent_due_day),
         monthlyRent: monthlyRentRaw > 0 ? monthlyRentRaw : null,
+        rentPaymentType: parseResidentRentPaymentType(
+          typeof raw.rent_payment_type === 'string' ? raw.rent_payment_type : null,
+        ),
         maintenanceResponsibilitiesClause:
           asString(raw.maintenance_responsibilities_clause) || null,
         activationStatus: asString(raw.activation_status) || null,
@@ -836,31 +988,6 @@ export function AdminPropertyResidentDetailDashboard() {
         }
       }
 
-      const skipCommunicationHistory = landlordUsesLimitedAlphaSurface(landlordId)
-      const communications: ResidentCommunicationItem[] = skipCommunicationHistory
-        ? []
-        : await (async () => {
-            const { data: conversationRows, error: conversationsError } = await supabase
-              .from('sms_conversations')
-              .select('id, updated_at, conversation_type, status')
-              .eq('landlord_id', landlordId)
-              .eq('resident_id', loaded.id)
-              .order('updated_at', { ascending: false })
-              .limit(10)
-
-            if (conversationsError != null) return []
-            return ((conversationRows ?? []) as Record<string, unknown>[]).map((row) => {
-              const typeLabel = conversationTypeLabel(asString(row.conversation_type))
-              const statusLabel = conversationStatusLabel(asString(row.status) || 'open')
-              return {
-                id: asString(row.id),
-                preview: `${typeLabel} · ${statusLabel}`,
-                channel: typeLabel,
-                dateLabel: formatCommDate(asString(row.updated_at)),
-              }
-            })
-          })()
-
       if (profileIdRef.current !== loaded.id) return
 
       setBuilding(buildingName)
@@ -875,103 +1002,141 @@ export function AdminPropertyResidentDetailDashboard() {
               building: buildingName,
               buildingShort: residentPlaceLabel(buildingName),
               unitDisplay: propertyUnitColumnLabel(loaded.unit, resolvedPropertyType),
-              communications,
             }
           : current,
       )
 
       const lookupName = activeCanonicalProperty?.name ?? buildingName
-        let unitsQuery = supabase
-          .from('units')
-          .select('id, unit_label, building, property_id')
+      let unitsQuery = supabase
+        .from('units')
+        .select('id, unit_label, building, property_id')
+        .eq('landlord_id', landlordId)
+      if (resolvedPropertyId) {
+        unitsQuery = unitsQuery.eq('property_id', resolvedPropertyId)
+      }
+
+      const loadStartedAt =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+
+      const [
+        communicationsResult,
+        unitsResult,
+        residentsResult,
+        workflowDashboard,
+      ] = await Promise.all([
+        supabase
+          .from('sms_conversations')
+          .select('id, updated_at, conversation_type, status')
           .eq('landlord_id', landlordId)
-        if (resolvedPropertyId) {
-          unitsQuery = unitsQuery.eq('property_id', resolvedPropertyId)
-        }
-        const [unitsResult, residentsResult, workflowDashboard] = await Promise.all([
-          unitsQuery.limit(200),
-          supabase
-            .from('users')
-            .select('id, full_name, unit, building, status')
-            .eq('landlord_id', landlordId)
-            .neq('status', 'past_resident')
-            .limit(300),
-          fetchAdminWorkflowDashboard({ residentId: loaded.id }).catch(() => null),
-          loadResidentLeaseDocuments(
-            {
-              fullName: loaded.fullName,
-              unit: loaded.unit,
-              building: loaded.building,
-              phone: loaded.phone,
-              email: loaded.email,
-            },
-            landlordId,
-          )
-            .then((docs) => {
-              if (profileIdRef.current === loaded.id) setLeaseDocuments(docs)
+          .eq('resident_id', loaded.id)
+          .order('updated_at', { ascending: false })
+          .limit(10)
+          .then(({ data, error }) => {
+            if (error != null) {
+              console.warn('[resident-profile] conversations', error.message)
+              return [] as ResidentCommunicationItem[]
+            }
+            return ((data ?? []) as Record<string, unknown>[]).map((row) => {
+              const conversationType = asString(row.conversation_type)
+              const typeLabel = conversationTypeLabel(conversationType)
+              const statusLabel = conversationStatusLabel(asString(row.status) || 'open')
+              return {
+                id: asString(row.id),
+                preview: `${typeLabel} · ${statusLabel}`,
+                channel: typeLabel,
+                dateLabel: formatCommDate(asString(row.updated_at)),
+                conversationType,
+              } satisfies ResidentCommunicationItem
             })
-            .catch((documentError) => {
-              console.warn('[resident-profile] lease documents', documentError)
-              if (profileIdRef.current === loaded.id) setLeaseDocuments([])
-            }),
-        ])
-
-        if (profileIdRef.current !== loaded.id) return
-
-        const occupantRows = ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
-          id: asString(row.id),
-          fullName: asString(row.full_name),
-          unit: asString(row.unit),
-          building: asString(row.building) || null,
-          status: asString(row.status),
-        }))
-        const otherOccupants = otherOccupantsOnSamePlace({
-          residentId: loaded.id,
-          unit: loaded.unit,
-          building: buildingName || loaded.building,
-          residents: occupantRows,
-        })
-
-        if (workflowDashboard) {
-          setWorkflowData(workflowDashboard)
-        } else {
-          setWorkflowData(null)
-        }
-        setProfile((current) =>
-          current && current.id === loaded.id ? { ...current, otherOccupants } : current,
+          }),
+        unitsQuery.limit(200),
+        supabase
+          .from('users')
+          .select('id, full_name, unit, building, status')
+          .eq('landlord_id', landlordId)
+          .neq('status', 'past_resident')
+          .limit(300),
+        fetchAdminWorkflowDashboard({ residentId: loaded.id }).catch(() => null),
+        loadResidentLeaseDocuments(
+          {
+            fullName: loaded.fullName,
+            unit: loaded.unit,
+            building: loaded.building,
+            phone: loaded.phone,
+            email: loaded.email,
+          },
+          landlordId,
         )
+          .then((docs) => {
+            if (profileIdRef.current === loaded.id) setLeaseDocuments(docs)
+          })
+          .catch((documentError) => {
+            console.warn('[resident-profile] lease documents', documentError)
+            if (profileIdRef.current === loaded.id) setLeaseDocuments([])
+          }),
+      ])
 
-        const healthUnits = mapUnitsForPropertyHealth(
-          ((unitsResult.data ?? []) as Record<string, unknown>[]) ?? [],
-        )
-        const scopedUnits = activeCanonicalProperty
-          ? filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty)
-          : healthUnits.filter(
-              (unit) =>
-                normalizeBuildingKey(unit.building) === normalizeBuildingKey(loaded.building),
-            )
+      if (profileIdRef.current !== loaded.id) return
 
-        setBuildingUnits(
-          unitsResult.error
-            ? []
-            : scopedUnits.map((unit) => ({
-                id: unit.id,
-                unitLabel: unit.unitLabel,
-                building: unit.building || loaded.building,
-              })),
-        )
+      const communications = communicationsResult
+      const occupantRows = ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
+        id: asString(row.id),
+        fullName: asString(row.full_name),
+        unit: asString(row.unit),
+        building: asString(row.building) || null,
+        status: asString(row.status),
+      }))
+      const otherOccupants = otherOccupantsOnSamePlace({
+        residentId: loaded.id,
+        unit: loaded.unit,
+        building: buildingName || loaded.building,
+        residents: occupantRows,
+      })
 
-        const residentUnitId =
-          scopedUnits.find(
+      if (workflowDashboard) {
+        setWorkflowData(workflowDashboard)
+      } else {
+        setWorkflowData(null)
+      }
+      setProfile((current) =>
+        current && current.id === loaded.id
+          ? { ...current, communications, otherOccupants }
+          : current,
+      )
+
+      const healthUnits = mapUnitsForPropertyHealth(
+        ((unitsResult.data ?? []) as Record<string, unknown>[]) ?? [],
+      )
+      const scopedUnits = activeCanonicalProperty
+        ? filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty)
+        : healthUnits.filter(
             (unit) =>
-              normalizeUnitLabel(unit.unitLabel) === normalizeUnitLabel(loaded.unit),
-          )?.id ?? null
-        void fetchPropertyOperationsTimeline({
+              normalizeBuildingKey(unit.building) === normalizeBuildingKey(loaded.building),
+          )
+
+      setBuildingUnits(
+        unitsResult.error
+          ? []
+          : scopedUnits.map((unit) => ({
+              id: unit.id,
+              unitLabel: unit.unitLabel,
+              building: unit.building || loaded.building,
+            })),
+      )
+
+      const residentUnitId =
+        scopedUnits.find(
+          (unit) =>
+            normalizeUnitLabel(unit.unitLabel) === normalizeUnitLabel(loaded.unit),
+        )?.id ?? null
+
+      await Promise.all([
+        fetchPropertyOperationsTimeline({
           scope: residentUnitId
             ? { unitId: residentUnitId, residentId: loaded.id }
             : { residentId: loaded.id },
           landlordId,
-          limit: 500,
+          limit: 120,
         })
           .then((rows) => {
             if (profileIdRef.current === loaded.id) setOperationsEvents(rows)
@@ -979,8 +1144,8 @@ export function AdminPropertyResidentDetailDashboard() {
           .catch((timelineError) => {
             console.warn('[resident-profile] operations calendar', timelineError)
             if (profileIdRef.current === loaded.id) setOperationsEvents([])
-          })
-        void fetchResidentMaintenanceCalendarEvents({
+          }),
+        fetchResidentMaintenanceCalendarEvents({
           landlordId,
           residentId: loaded.id,
           residentName: loaded.fullName,
@@ -992,8 +1157,8 @@ export function AdminPropertyResidentDetailDashboard() {
           .catch((visitError) => {
             console.warn('[resident-profile] visit calendar', visitError)
             if (profileIdRef.current === loaded.id) setVisitEvents([])
-          })
-        void fetchResidentOpenMaintenanceTickets({
+          }),
+        fetchResidentOpenMaintenanceTickets({
           landlordId,
           residentId: loaded.id,
           residentName: loaded.fullName,
@@ -1005,29 +1170,39 @@ export function AdminPropertyResidentDetailDashboard() {
           .catch((ticketError) => {
             console.warn('[resident-profile] maintenance intelligence', ticketError)
             if (profileIdRef.current === loaded.id) setMaintenanceTickets([])
-          })
-        const scopedBuildingResidents = filterResidentsForPropertyScope(
-          residentsResult.error
-            ? []
-            : ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
-                id: asString(row.id),
-                fullName: 'Resident',
-                unit: asString(row.unit),
-                building: asString(row.building) || null,
-                status: asString(row.status).toLowerCase() || 'active',
-              })),
-          lookupName,
-          activeCanonicalProperty,
-          healthUnits,
+          }),
+      ])
+
+      const scopedBuildingResidents = filterResidentsForPropertyScope(
+        residentsResult.error
+          ? []
+          : ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
+              id: asString(row.id),
+              fullName: 'Resident',
+              unit: asString(row.unit),
+              building: asString(row.building) || null,
+              status: asString(row.status).toLowerCase() || 'active',
+            })),
+        lookupName,
+        activeCanonicalProperty,
+        healthUnits,
+      )
+      setBuildingResidents(
+        scopedBuildingResidents.map((row) => ({
+          id: row.id,
+          unit: row.unit,
+          building: row.building || loaded.building,
+          status: row.status,
+        })),
+      )
+
+      const elapsedMs =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartedAt
+      if (import.meta.env.DEV) {
+        console.info(
+          `[resident-profile] background hydrate ${Math.round(elapsedMs)}ms resident=${loaded.id}`,
         )
-        setBuildingResidents(
-          scopedBuildingResidents.map((row) => ({
-            id: row.id,
-            unit: row.unit,
-            building: row.building || loaded.building,
-            status: row.status,
-          })),
-        )
+      }
       })().catch((backgroundError) => {
         console.warn('[resident-profile] background', backgroundError)
       })
@@ -1298,45 +1473,6 @@ export function AdminPropertyResidentDetailDashboard() {
     await deleteResidentAccount()
   }
 
-  async function handleOccupancyChange(next: ResidentOccupancyStatus) {
-    if (!loadedUser || !supabase) return
-    if (next === loadedUser.status) return
-    setActionError(null)
-    setOccupancySaving(true)
-    const landlordId = getActiveLandlordId()
-    const assigned = loadedUser.unit.trim()
-      ? resolveInventoryUnitForResidentSave(buildingUnits, {
-          unit: loadedUser.unit,
-          building: loadedUser.building,
-        })
-      : null
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ status: next })
-      .eq('id', loadedUser.id)
-      .eq('landlord_id', landlordId)
-    if (updateError) {
-      setActionError(getErrorMessage(updateError, 'Could not update occupancy. Please try again.'))
-      setOccupancySaving(false)
-      return
-    }
-    const occupancyResult = await syncAssignedUnitOccupancyFromResidentStatus({
-      landlordId,
-      residentId: loadedUser.id,
-      unitId: assigned?.unitId ?? null,
-      unitLabel: assigned?.unitLabel ?? loadedUser.unit,
-      building: assigned?.building ?? loadedUser.building,
-      status: next,
-      residentName: loadedUser.fullName,
-      source: 'resident_profile',
-    })
-    setOccupancySaving(false)
-    if (!occupancyResult.ok) {
-      setActionError(occupancyResult.error)
-    }
-    await loadResident()
-  }
-
   const insights = useMemo(() => {
     if (!profile) return []
     return buildSmartIntelligence({
@@ -1354,9 +1490,43 @@ export function AdminPropertyResidentDetailDashboard() {
       propertyId,
       workflowData,
       tickets: maintenanceTickets,
-      communicationThreadId: profile.communications[0]?.id ?? null,
+      communicationThreadId: pickResidentProfileThreadId(profile.communications),
     })
   }, [profile, loadedUser, propertyId, workflowData, maintenanceTickets])
+
+  const rentHistoryItems = useMemo(() => {
+    if (!profile) return []
+    return buildResidentRentHistory({
+      residentId: profile.id,
+      workflowData,
+      operationsEvents,
+    })
+  }, [profile, workflowData, operationsEvents])
+
+  const rentOwed = useMemo(() => {
+    if (!profile) return { amount: 0, label: '$0', hasOpenRent: false }
+    return resolveResidentRentOwed({
+      residentId: profile.id,
+      balanceDue: profile.balanceDue,
+      monthlyRent: loadedUser?.monthlyRent ?? null,
+      workflowData,
+    })
+  }, [profile, loadedUser?.monthlyRent, workflowData])
+
+  const orgRentDueDay = useMemo(() => {
+    const parsed = Number.parseInt(normalizeRentDueDaySetting(organization?.rentDueDay), 10)
+    return Number.isFinite(parsed) ? parsed : null
+  }, [organization?.rentDueDay])
+
+  const rentDueCountdownLabel = useMemo(() => {
+    if (!profile) return '—'
+    return formatDaysUntilNextResidentRentDueLabel({
+      leaseStartDate: profile.leaseStartDate,
+      leaseEndDate: profile.leaseEndDate,
+      rentDueDay: profile.rentDueDay,
+      orgRentDueDay,
+    })
+  }, [profile, orgRentDueDay])
 
   const activationChip = loadedUser
     ? resolveTenantActivationChip({
@@ -1371,6 +1541,44 @@ export function AdminPropertyResidentDetailDashboard() {
   const retryOnboarding = Boolean(
     activationChip && activationChip.status !== 'not_started',
   )
+
+  async function handleRentPaymentTypeChange(next: ResidentRentPaymentType | null) {
+    if (!loadedUser || !supabase) return
+    if (next === loadedUser.rentPaymentType) return
+    setActionError(null)
+    setRentPaymentTypeSaving(true)
+    const landlordId = getActiveLandlordId()
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ rent_payment_type: next })
+      .eq('id', loadedUser.id)
+      .eq('landlord_id', landlordId)
+    if (updateError) {
+      setActionError(
+        getErrorMessage(updateError, 'Could not update payment method. Please try again.'),
+      )
+      setRentPaymentTypeSaving(false)
+      return
+    }
+    setLoadedUser((current) =>
+      current && current.id === loadedUser.id ? { ...current, rentPaymentType: next } : current,
+    )
+    setRentPaymentTypeSaving(false)
+    void recordActivityLog({
+      landlordId,
+      eventType: 'resident.rent_payment_type_updated',
+      source: 'dashboard',
+      actorType: 'landlord',
+      residentId: loadedUser.id,
+      propertyId,
+      metadata: {
+        message: next
+          ? `Payment method set to ${formatResidentRentPaymentTypeLabel(next)}.`
+          : 'Payment method cleared.',
+        rent_payment_type: next,
+      },
+    }).catch(() => {})
+  }
 
   async function handleStartOnboarding() {
     if (!loadedUser || !activationChip || !canSendOnboardingSms) return
@@ -1452,8 +1660,11 @@ export function AdminPropertyResidentDetailDashboard() {
                 <p className="mt-1 text-[14px] leading-5 text-[#6a7282]">
                   {[profile.buildingShort, profile.unitDisplay].filter(Boolean).join(' · ')}
                 </p>
-                {activationChip ? (
-                  <div className="mt-3 inline-flex items-center gap-1.5">
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {activationChip ? <TenantActivationStatusChip chip={activationChip} /> : null}
+                {activationChip && activationChip.status !== 'activated' ? (
+                  <div className="inline-flex items-center gap-1.5">
                     <button
                       type="button"
                       disabled={resendingActivation || !canSendOnboardingSms}
@@ -1469,9 +1680,6 @@ export function AdminPropertyResidentDetailDashboard() {
                     <SendInviteInfoTip variant="tenant" />
                   </div>
                 ) : null}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {activationChip ? <TenantActivationStatusChip chip={activationChip} /> : null}
                 <div ref={actionsMenuRef} className="relative">
                   <button
                     type="button"
@@ -1521,6 +1729,45 @@ export function AdminPropertyResidentDetailDashboard() {
               </div>
             </div>
 
+            <div className="mt-4">
+              <SmartIntelligenceCard
+                insights={insights}
+                lastRentReminderLabel={formatLastRentReminderSentLabel(operationsEvents)}
+                rentHistorySelected={rentHistoryOpen}
+                onViewRentHistory={() => setRentHistoryOpen(true)}
+                onEditResident={() => setEditOpen(true)}
+              />
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
+              <ResidentKpiCard
+                label="Outstanding balance"
+                value={rentOwed.label}
+                iconSrc={outstandingBalanceIcon}
+                title="Rent owed for this resident — open rent collection amount plus any remaining balance."
+                selected={rentHistoryOpen}
+                onSelect={() => setRentHistoryOpen(true)}
+              />
+              <ResidentKpiCard
+                label="Monthly rent"
+                value={profile.monthlyRentLabel}
+                iconSrc={monthlyRentIcon}
+                title="Monthly rent amount on the lease."
+              />
+              <ResidentKpiCard
+                label="Rent due"
+                value={rentDueCountdownLabel}
+                iconSrc={calendarIcon}
+                title="Days until the next rent due date on this resident’s calendar."
+              />
+              <ResidentKpiCard
+                label="Lease status"
+                value={<ResidentOccupancyStatusChip status={profile.occupancyStatus} />}
+                iconSrc={leaseStatusIcon}
+                title="Current occupancy / lease status."
+              />
+            </div>
+
             {actionError ? (
               <div className="mt-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
                 {actionError}
@@ -1530,10 +1777,11 @@ export function AdminPropertyResidentDetailDashboard() {
             <div className="mt-6">
               <ProfileContent
                 profile={profile}
-                insights={insights}
+                rentDueCountdownLabel={rentDueCountdownLabel}
+                rentPaymentType={loadedUser?.rentPaymentType ?? null}
+                rentPaymentTypeSaving={rentPaymentTypeSaving}
                 leaseDocuments={leaseDocuments}
                 documentPreviewError={documentPreviewError}
-                occupancySaving={occupancySaving}
                 limitedAlpha1={isLimitedAlpha1Landlord(getActiveLandlordId())}
                 operationsEvents={operationsEvents}
                 visitEvents={visitEvents}
@@ -1554,9 +1802,9 @@ export function AdminPropertyResidentDetailDashboard() {
                 occupantProfileState={{
                   from: '/admin/residents',
                 }}
-                onEditResident={() => setEditOpen(true)}
-                onOccupancyChange={(status) => {
-                  void handleOccupancyChange(status)
+                onEditLease={() => setEditOpen(true)}
+                onRentPaymentTypeChange={(value) => {
+                  void handleRentPaymentTypeChange(value)
                 }}
                 onPreviewDocument={(document) => {
                   void openOrganizationDocumentPreview(document).then((result) => {
@@ -1568,6 +1816,13 @@ export function AdminPropertyResidentDetailDashboard() {
           </>
         )}
       </div>
+
+      <ResidentRentHistoryRail
+        open={rentHistoryOpen}
+        residentName={profile?.name ?? 'Resident'}
+        items={rentHistoryItems}
+        onClose={() => setRentHistoryOpen(false)}
+      />
 
       <EditResidentModal
         row={editResidentRow}

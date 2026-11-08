@@ -1,3 +1,4 @@
+import { shouldSuppressAutomationForManualOverride } from "./workflowStageMove/manualStageOverride.ts"
 /**
  * When maintenance_requests.due_at passes, ask the landlord to confirm a replacement
  * vendor (YES / 1 / 2 / 3). Do not contact a vendor until they reply.
@@ -115,9 +116,6 @@ async function processSlaExpiredTicketRow(
     return { ticketId: ticket.id, outcome: "skipped", reason: "missing_landlord" }
   }
 
-  const { shouldSuppressAutomationForManualOverride } = await import(
-    "./workflowStageMove/manualStageOverride.ts"
-  )
   if (
     await shouldSuppressAutomationForManualOverride(supabase, {
       ticketId: ticket.id,

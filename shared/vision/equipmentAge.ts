@@ -62,7 +62,7 @@ export function ageYearsFromManufactureDate(
     return {
       value: null,
       confidence: 'low',
-      basis: `Manufacture year ${date.year} is visible, but the month is not, so age stays unknown.`,
+      basis: `Recorded manufacture year: ${date.year}. The month is unknown, so an exact age cannot be calculated.`,
     }
   }
   const years = now.getUTCFullYear() - date.year
@@ -71,7 +71,7 @@ export function ageYearsFromManufactureDate(
     return {
       value: null,
       confidence: 'low',
-      basis: `Manufacture month is ${monthName(date.month)} ${date.year}, but the day is not on the label. Age could be ${years - 1} or ${years} years as of ${asOf(now)}, so it stays unknown.`,
+      basis: `Manufacture month is ${monthName(date.month)} ${date.year}, but the day is unknown. Age could be ${years - 1} or ${years} years as of ${asOf(now)}, so it stays unknown.`,
     }
   }
   const value = nowMonth > date.month ? years : years - 1
@@ -105,6 +105,26 @@ function structuredDate(raw: unknown, now: Date): ManufactureDateParts | null {
   return { year, month }
 }
 
+/** Lennox standard serial: location (2), year (2), month letter, sequence (5/6).
+ * Source: Lennox Typical Serial Number Identification, publication 100118 p.4.
+ * Never decode a blocked, low-confidence or conflicting OCR candidate.
+ */
+function lennoxSerialDate(result: ApplianceVisionResult, now: Date): ManufactureDateParts | null {
+  const quality = result.labelReadability
+  const serial = result.identifiedItem.serialNumber ?? ''
+  if (!/^lennox$/i.test(result.identifiedItem.brand?.trim() ?? '') ||
+      !quality || quality.status !== 'readable' || quality.serialConfidence < 85 ||
+      quality.formatWarnings.length || quality.uncertainCharacters.some(c => c.field === 'serialNumber') ||
+      (quality.readings?.serialNumber && quality.readings.serialNumber !== serial)) return null
+  const match = serial.match(/^\d{2}(\d{2})([A-HJ-M])\d{5,6}$/)
+  if (!match) return null
+  const shortYear = Number(match[1])
+  const year = shortYear <= now.getUTCFullYear() % 100 ? 2000 + shortYear : 1900 + shortYear
+  const month = 'ABCDEFGHJKLM'.indexOf(match[2]) + 1
+  if (!validYear(year, now) || (year === now.getUTCFullYear() && month > now.getUTCMonth() + 1)) return null
+  return { year, month }
+}
+
 /**
  * Replace a model's age arithmetic when a manufacture date was actually read.
  * A serial-only estimate is left alone. An unclear date clears the guessed age.
@@ -118,7 +138,21 @@ export function applyEquipmentManufactureAge<T extends ApplianceVisionResult>(
     (result as T & { manufactureDate?: unknown }).manufactureDate,
     now,
   )
+  const originalBasis = sourceBasis || result.estimatedAge.basis || ''
+  const serialBased = /serial|date code|decoded/i.test(originalBasis)
   const fromText = printedDateFrom([sourceBasis, result.estimatedAge.basis || ''], now)
+  const serialDate = lennoxSerialDate(result, now)
+  if (serialDate) {
+    const conflicts = fromText === 'unclear' || [fromModel, fromText].some(date => date &&
+      ((date.year != null && date.year !== serialDate.year) || (date.month != null && date.month !== serialDate.month)))
+    if (conflicts) return { ...result, manufactureDate: { year: null, month: null }, estimatedAge: {
+      value: null, confidence: 'low', basis: 'The recorded manufacture date conflicts with the serial-number date; age remains unknown pending label review.',
+    } }
+    const age = ageYearsFromManufactureDate(serialDate, now)!
+    return { ...result, manufactureDate: serialDate, estimatedAge: { ...age,
+      basis: `Estimated from the Lennox serial number ${result.identifiedItem.serialNumber}: ${monthName(serialDate.month!)} ${serialDate.year}. ${age.value == null ? 'Exact age remains unknown.' : `About ${age.value} years old as of ${asOf(now)}.`} This date is decoded, not a separately printed manufacture date.`,
+    } }
+  }
   if (fromText === 'unclear') {
     return {
       ...result,
@@ -151,5 +185,5 @@ export function applyEquipmentManufactureAge<T extends ApplianceVisionResult>(
   if (!date) return result
   const age = ageYearsFromManufactureDate(date, now)
   if (!age) return result
-  return { ...result, estimatedAge: age }
+  return { ...result, estimatedAge: serialBased ? { ...age, basis: `Estimated from the serial number. ${age.basis} Original evidence: ${originalBasis}` } : age }
 }

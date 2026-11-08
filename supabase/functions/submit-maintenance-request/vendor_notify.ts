@@ -570,6 +570,7 @@ async function notifyChannelsForAssignment(
 export type VendorAssignSkipReason =
   | "no_vendor"
   | "ai_dispatch_disabled"
+  | "no_roster_candidates"
   | "assign_failed"
   | "ticket_missing"
   | "awaiting_landlord_choice"
@@ -797,13 +798,15 @@ export async function assignVendorAndNotify(
       // A retry while that ask is open must not send the ask again.
       if (holdRoutineOutreach) {
         if (!alreadyAwaitingChoice) {
-          await notifyLandlordVendorChoice(supabase, {
+          const asked = await notifyLandlordVendorChoice(supabase, {
             landlordId,
             ticketId: payload.ticketId,
             unit: payload.unit,
             issueCategory,
             options: decision.options,
+            issueHeadline: payload.issueHeadline,
           })
+          if (asked.sent < 1) return {assigned:false,vendorId:null,skipReason:"assign_failed"}
           await markAwaitingLandlordVendorChoice(supabase, payload.ticketId)
         }
         return {
@@ -820,6 +823,7 @@ export async function assignVendorAndNotify(
           unit: payload.unit,
           issueCategory,
           options: decision.options,
+          issueHeadline: payload.issueHeadline,
         })
         await markAwaitingLandlordVendorChoice(supabase, payload.ticketId)
         return {
@@ -854,6 +858,7 @@ export async function assignVendorAndNotify(
           unit: payload.unit,
           issueCategory,
           options: decision.options,
+          issueHeadline: payload.issueHeadline,
         })
         await markAwaitingLandlordVendorChoice(supabase, payload.ticketId)
         return {
@@ -879,10 +884,10 @@ export async function assignVendorAndNotify(
       await supabase
         .from("maintenance_requests")
         .update({
-          vendor_notify_error: "Awaiting landlord approval before vendor dispatch",
+          vendor_notify_error: "No matching active roster vendor",
         })
         .eq("id", payload.ticketId)
-      return { assigned: false, vendorId: null, skipReason: "ai_dispatch_disabled" }
+      return { assigned: false, vendorId: null, skipReason: "no_roster_candidates" }
     }
     if (!propertyHold.mayBook) {
       return { assigned: false, vendorId: null, skipReason: "address_unknown" }

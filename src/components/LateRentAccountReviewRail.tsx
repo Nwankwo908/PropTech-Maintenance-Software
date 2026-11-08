@@ -245,10 +245,10 @@ export function LateRentAccountReviewRail({
                     <ChatIcon />
                     {review.communicationPrefLabel}
                   </p>
-                  {review.nextReminderLabel ? (
+                  {review.lastReminderLabel ? (
                     <p className="flex items-center gap-1.5">
                       <ClockIcon />
-                      {review.nextReminderLabel}
+                      {review.lastReminderLabel}
                     </p>
                   ) : null}
                 </div>

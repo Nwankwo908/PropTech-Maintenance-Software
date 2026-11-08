@@ -70,6 +70,12 @@ function specificIssueNounPhrase(hay: string): string | null {
   if (/\bno\s*(?:ac|air\s*condition(?:ing|er)?|cooling)\b|\bac\s+(?:is\s+)?(?:out|broken|not\s+working)\b/i.test(hay)) {
     return 'no AC'
   }
+  if (
+    /\bbaseboard\s+heat(?:er|ing)?\b/i.test(hay) &&
+    /\b(leak|leaking|drip|rust(?:ed|y)?)\b/i.test(hay)
+  ) {
+    return 'a baseboard heater leak'
+  }
   if (/\bkitchen\s+sink\b/i.test(hay) && /\b(leak|leaking|drip)\b/i.test(hay)) {
     return 'a kitchen sink leak'
   }

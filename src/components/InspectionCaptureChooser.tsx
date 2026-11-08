@@ -2,12 +2,15 @@ type InspectionCaptureChooserProps = {
   onUseComputer: () => void
   onUsePhone: () => void
   onClose: () => void
+  /** When false, hide the phone / scan-QR handoff (already on mobile). */
+  showPhoneQr?: boolean
 }
 
 export function InspectionCaptureChooser({
   onUseComputer,
   onUsePhone,
   onClose,
+  showPhoneQr = true,
 }: InspectionCaptureChooserProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d0f11]/40 p-4">
@@ -36,21 +39,27 @@ export function InspectionCaptureChooser({
             onClick={onUseComputer}
             className="rounded-[10px] border border-[#e2e8f0] px-4 py-3 text-left hover:border-[#186179]"
           >
-            <p className="text-[14px] font-semibold text-[#0d0f11]">Use this computer</p>
+            <p className="text-[14px] font-semibold text-[#0d0f11]">
+              {showPhoneQr ? 'Use this computer' : 'Take photos here'}
+            </p>
             <p className="mt-0.5 text-[12px] text-[#64748b]">
-              Upload one or more photos from this computer.
+              {showPhoneQr
+                ? 'Upload one or more photos from this computer.'
+                : 'Use this phone’s camera to capture the appliance and label.'}
             </p>
           </button>
-          <button
-            type="button"
-            onClick={onUsePhone}
-            className="rounded-[10px] border border-[#e2e8f0] px-4 py-3 text-left hover:border-[#186179]"
-          >
-            <p className="text-[14px] font-semibold text-[#0d0f11]">Use your phone</p>
-            <p className="mt-0.5 text-[12px] text-[#64748b]">
-              Scan a QR code and send photos directly to this inspection.
-            </p>
-          </button>
+          {showPhoneQr ? (
+            <button
+              type="button"
+              onClick={onUsePhone}
+              className="rounded-[10px] border border-[#e2e8f0] px-4 py-3 text-left hover:border-[#186179]"
+            >
+              <p className="text-[14px] font-semibold text-[#0d0f11]">Use your phone</p>
+              <p className="mt-0.5 text-[12px] text-[#64748b]">
+                Scan a QR code and send photos directly to this inspection.
+              </p>
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

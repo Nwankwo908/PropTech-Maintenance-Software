@@ -27,6 +27,8 @@ import {
   vendorSourceLabel,
 } from '@/lib/vendorSource'
 import { fetchVendorScoresForLandlord, isAuthClockSkewMessage } from '@/lib/vendorScores'
+import { loadVendorResponseRatePercentForLandlord } from '@/lib/vendorAvgResponse'
+import { VendorAvgResponseInfoTip } from '@/components/VendorAvgResponseInfoTip'
 import { dedupeVendorsByName, duplicateVendorIdsToRemove } from '@/lib/vendorDedup'
 import { supabase } from '@/lib/supabase'
 import {
@@ -67,7 +69,7 @@ type VendorRow = {
   rating: number | null
   reviewCount: number
   completedJobs: number
-  avgResponseMinutes: number | null
+  avgResponseRatePercent: number | null
   active: boolean
   preferredEmergency: boolean
   rosterStatus: string | null
@@ -148,12 +150,9 @@ function formatRating(score: number | null, reviewCount: number): string {
   return `${score.toFixed(1)} (${reviewCount.toLocaleString()})`
 }
 
-function formatAvgResponse(minutes: number | null): string {
-  if (minutes == null) return '—'
-  if (minutes < 60) return `${Math.round(minutes)} min`
-  const hours = minutes / 60
-  if (hours < 24) return `${hours.toFixed(hours < 10 ? 1 : 0)} hr`
-  return `${Math.round(hours / 24)} d`
+function formatAvgResponseRate(percent: number | null): string {
+  if (percent == null) return '—'
+  return `${Math.round(percent)}%`
 }
 
 const VENDOR_RATING_INFO =
@@ -370,6 +369,14 @@ export function AdminVendorsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [scoresError, setScoresError] = useState<string | null>(null)
   const [addVendorOpen, setAddVendorOpen] = useState(false)
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return
+    setAddVendorOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('add')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
   const [editingVendor, setEditingVendor] = useState<VendorRow | null>(null)
   const [showAddVendorGuide, setShowAddVendorGuide] = useState(() =>
     isSetupSuccessCheckboxGuideActive(location.state, 'vendors'),
@@ -515,7 +522,6 @@ export function AdminVendorsDashboard() {
         rating: number | null
         reviewCount: number
         completedJobs: number
-        avgResponseMinutes: number | null
       }
     >()
 
@@ -532,7 +538,6 @@ export function AdminVendorsDashboard() {
           rating: asFiniteNumber(raw.vendor_score),
           reviewCount: asFiniteNumber(raw.review_count) ?? 0,
           completedJobs: asFiniteNumber(raw.completed_jobs) ?? 0,
-          avgResponseMinutes: asFiniteNumber(raw.avg_response_time),
         })
       }
     }
@@ -541,7 +546,7 @@ export function AdminVendorsDashboard() {
       setScoresError(scoresWarning)
     }
 
-    const rows: VendorRow[] = (
+    const baseRows: VendorRow[] = (
       (vendorsResult.data ?? []) as Record<string, unknown>[]
     ).map((raw) => {
       const id = asString(raw.id)
@@ -562,7 +567,7 @@ export function AdminVendorsDashboard() {
         rating: metrics?.rating ?? null,
         reviewCount: metrics?.reviewCount ?? 0,
         completedJobs: metrics?.completedJobs ?? 0,
-        avgResponseMinutes: metrics?.avgResponseMinutes ?? null,
+        avgResponseRatePercent: null,
         active: raw.active !== false,
         preferredEmergency: raw.preferred_emergency === true,
         rosterStatus: asString(raw.roster_status) || null,
@@ -572,6 +577,24 @@ export function AdminVendorsDashboard() {
         portalApiKey: asString(raw.portal_api_key) || null,
       }
     })
+
+    // Response rate: % of job-offer SMS asks answered with YES/NO.
+    let rows = baseRows
+    try {
+      const rateByVendor = await loadVendorResponseRatePercentForLandlord({
+        landlordId,
+        vendorIds: baseRows.map((row) => row.id).filter(Boolean),
+      })
+      if (rateByVendor.size > 0) {
+        rows = baseRows.map((row) => {
+          const rate = rateByVendor.get(row.id)
+          if (rate == null) return row
+          return { ...row, avgResponseRatePercent: rate }
+        })
+      }
+    } catch (avgError) {
+      console.warn('[AdminVendorsDashboard] avg response rate', avgError)
+    }
 
     const duplicateIds = duplicateVendorIdsToRemove(rows)
     if (duplicateIds.length > 0) {
@@ -1054,10 +1077,10 @@ export function AdminVendorsDashboard() {
         <td
           className={[
             'px-6 py-4 text-[14px] tabular-nums',
-            vendor.avgResponseMinutes == null ? 'text-[#6a7282]' : 'text-[#0a0a0a]',
+            vendor.avgResponseRatePercent == null ? 'text-[#6a7282]' : 'text-[#0a0a0a]',
           ].join(' ')}
         >
-          {formatAvgResponse(vendor.avgResponseMinutes)}
+          {formatAvgResponseRate(vendor.avgResponseRatePercent)}
         </td>
         <td className="px-6 py-4 align-middle">
           {(() => {
@@ -1296,7 +1319,12 @@ export function AdminVendorsDashboard() {
                   </span>
                 </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Avg. response</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">
+                  <span className="inline-flex items-center gap-1">
+                    Avg. response
+                    <VendorAvgResponseInfoTip align="right" />
+                  </span>
+                </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
               </tr>
             </thead>

@@ -3,6 +3,7 @@ import {
   displayResidentEmail,
   groupResidentsByLeasePlace,
   otherOccupantsOnSamePlace,
+  pickResidentProfileThreadId,
   residentEmailPatchForSave,
   residentPlaceLabel,
   buildResidentProfileDetail,
@@ -191,5 +192,20 @@ describe('buildResidentProfileDetail', () => {
     })
     expect(profile.rentDueDay).toBeNull()
     expect(profile.rentDueDayLabel).toBe('—')
+  })
+})
+
+describe('pickResidentProfileThreadId', () => {
+  it('prefers resident_intake over newer vendor threads', () => {
+    expect(
+      pickResidentProfileThreadId([
+        { id: 'vendor-1', preview: 'x', channel: 'Vendor message', dateLabel: 'Today', conversationType: 'vendor_alert' },
+        { id: 'intake-1', preview: 'y', channel: 'Resident message', dateLabel: 'Yesterday', conversationType: 'resident_intake' },
+      ]),
+    ).toBe('intake-1')
+  })
+
+  it('returns null when there are no conversations', () => {
+    expect(pickResidentProfileThreadId([])).toBeNull()
   })
 })

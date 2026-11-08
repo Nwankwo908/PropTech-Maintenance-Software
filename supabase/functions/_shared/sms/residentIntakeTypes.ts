@@ -102,6 +102,10 @@ export function shouldSendUrgencyAlert(
 }
 
 export type SmsIntakeState = {
+  awaiting_handoff_target?: import("./handoffContacts.ts").PendingHandoff | null
+  clarification_recovery_count?: number
+  clarification_recovery_at?: string
+
   step?: IntakeStep
   issue_type?: string
   /** Canonical vendor trade from unified classification pipeline. */
@@ -462,6 +466,14 @@ export function resolveRoomLabel(state: SmsIntakeState): string | null {
   if (stored) {
     const accepted = acceptLocationReply(stored)
     if (accepted) {
+      // A valid answer to the saved location question outranks a longer phrase
+      // inferred from the opening symptom (e.g. bedroom closet vs main bedroom).
+      if (/\b(?:which|where)\b/i.test(state.location_question ?? "")) {
+        if (/\bwhich bedroom\b/i.test(state.location_question ?? "") && /^bed\s?room$/i.test(accepted)) return null
+        const confirmed = interpretConfirmedLocation({problem, answer: stored, question: state.location_question})
+        if (confirmed.clarification) return null
+        if (confirmed.location) return confirmed.location
+      }
       const still = clarifyIssueLocation({
         text: `${problem} ${accepted}`,
         bedroomCount: state.property_bedroom_count,
@@ -487,7 +499,7 @@ export function issueSymptomPhrase(state: SmsIntakeState): string {
   const combined = `${state.initial_message ?? ""} ${state.description ?? ""}`
     .toLowerCase()
 
-  if (/\b(flood|flooding|flooded)\b/.test(combined)) return "the flooding"
+  if (hasUnnegatedFlooding(combined)) return "the flooding"
   if (/\b(leak|leaking|drip|dripping)\b/.test(combined)) return "the leak"
   if (/\b(clog|clogged|backup|backed up)\b/.test(combined)) return "the clog"
   if (/\b(no heat|no ac|no cooling|not heating|not cooling)\b/.test(combined)) {
@@ -901,6 +913,11 @@ export function headlineUpdateLine(
   })
 }
 
+function hasUnnegatedFlooding(text: string): boolean {
+  const affirmed = text.replace(/\b(?:no|not|isn['’]?t|wasn['’]?t|aren['’]?t|weren['’]?t)\s+(?:(?:any|actually|currently|a)\s+)?(?:flood|flooding|flooded)\b/gi, "");
+  return /\b(?:flood|flooding|flooded)\b/i.test(affirmed);
+}
+
 export function issueSummaryBullet(state: SmsIntakeState): string {
   const confirmedDetail = state.diagnostic_facts?.item_detail?.trim()
   if (confirmedDetail && confirmedDetail !== "not_sure") {
@@ -930,11 +947,11 @@ export function issueSummaryBullet(state: SmsIntakeState): string {
   if (/\b(?:ac|air condition)/.test(all) && /\b(?:warm|not cooling|running)\b/.test(all)) {
     return "Air conditioning is running but not cooling"
   }
-  if (/\b(ac|air condition|no cooling)/.test(all)) return "Air conditioning is not working"
+  if (/\b(?:ac\b|air condition|no cooling)/.test(all)) return "Air conditioning is not working"
   if (/\bno heat/.test(all)) return "No heat"
-  if (room && /\b(flood|flooding|flooded)\b/.test(all)) return `${room} flooding`
+  if (room && hasUnnegatedFlooding(all)) return `${room} flooding`
   if (/\bsink\b/.test(all) && (issue === "leak" || /\bleak/.test(all))) {
-    return `${place}sink leak`.trim()
+    return `${place}${/\bsink$/i.test(room || "") ? "leak" : "sink leak"}`.trim()
   }
   if (/\bfront door\b/.test(all) && /\block/.test(all)) return "Front door won't lock"
   if (/\broach/.test(all)) return room ? `${place}roach sighting`.trim() : "Roach sighting"
@@ -1146,6 +1163,11 @@ function activeSafetyText(state: SmsIntakeState): string {
 function safetyConfirmationSentence(note: string, authored: string): string | null {
   const trimmed = note.trim()
   if (!trimmed || trimmed === SYSTEM_SAFETY_NOTES.noneReported) return null
+  if (trimmed === SYSTEM_SAFETY_NOTES.overflowNo) {
+    return /\bdrip(?:ping)?\b/i.test(authored)
+      ? "Water is dripping; it isn't flooding."
+      : "Water is not overflowing."
+  }
   if (trimmed === SYSTEM_SAFETY_NOTES.heatIllness) {
     return statedWellnessSentence(authored)
   }
@@ -1422,6 +1444,26 @@ export function applySummaryCorrection(
   | { action: "update"; state: SmsIntakeState }
   | { action: "clarify"; state: SmsIntakeState; question: string }
   | { action: "none" } {
+  const locationChange = body.match(/\b(kitchen|bathroom|bedroom|garage|basement)(?:\s+(?:sink|faucet|toilet|light|window|door))?\s*,?\s+not\s+(?:the\s+)?(kitchen|bathroom|bedroom|garage|basement)\b/i)
+  if (locationChange && (/[?]/.test(body) || /\b(?:don't|do not)\s+(?:change|correct)\b/i.test(body) ||
+      !new RegExp(`\\b${locationChange[2]}\\b`, "i").test(state.room_or_area || ""))) return {action:"none"}
+  if (locationChange && /\b(?:correction|i meant|it['’]s|it is)\b/i.test(body) &&
+      !/[?]/.test(body) && !/\b(?:don't|do not)\s+(?:change|correct)\b/i.test(body) &&
+      !/\bnot\s+(?:the\s+)?$/i.test(body.slice(0, locationChange.index)) &&
+      locationChange[1].toLowerCase() !== locationChange[2].toLowerCase() &&
+      new RegExp(`\\b${locationChange[2]}\\b`, "i").test(state.room_or_area || "")) {
+    const room = locationChange[1].toLowerCase()
+    const oldRoom = new RegExp(`\\b${locationChange[2]}\\b`, "gi")
+    const next: SmsIntakeState = {
+      ...state,room_or_area:room,
+      initial_message:state.initial_message?.replace(oldRoom,room),
+      description:state.description?.replace(oldRoom,room),
+      sanitized_description:state.sanitized_description?.replace(oldRoom,room),
+      location_question:undefined,diagnostic_question:undefined,diagnostic_question_type:undefined,
+    }
+    next.acknowledged_headline = issueSummaryBullet(next)
+    return {action:"update",state:next}
+  }
   const bound = interpretBoundAnswer({
     answer: body,
     question: state.diagnostic_question,
@@ -1475,6 +1517,27 @@ export function confirmationClarification(state: SmsIntakeState): string | null 
   }).clarification
 }
 
+/** Compact only equivalent drip/flood sentences; never discard extra symptoms. */
+function concisePolishedIssue(polished: string, confirmedPlace: string | null): string {
+  let text = polished
+  const sentences = polished.replace(/[’]/g, "'").split(/(?<=[.!])\s+/)
+  if (sentences.length === 2) {
+    const first = sentences[0].match(/^((?:my|the|our) .+?\b(sink|faucet|pipe|shower|tub|toilet)) is leaking(?: underneath)?(?:,? but it (?:isn't|is not) flooding)?[.!]?$/i)
+    const second = sentences[1].match(/^It is (?:only |just )?dripping(?: underneath(?: the (sink|faucet|pipe|shower|tub|toilet))?)?(?: and (?:it )?is not flooding)?[.!]?$/i)
+    if (first && second && (!second[1] || first[2].toLowerCase() === second[1].toLowerCase()) &&
+        /\b(?:isn't|is not) flooding\b/i.test(sentences.join(" "))) {
+      text = `${first[1]} is dripping${/\bunderneath\b/i.test(polished) ? " underneath" : ""}; it isn't flooding.`
+    }
+  }
+  // Only expand an unqualified room using the already-confirmed location.
+  const room = confirmedPlace?.match(/\b(bathroom|bedroom|kitchen|garage|basement)$/i)?.[1]
+  if (room && confirmedPlace!.toLowerCase() !== room.toLowerCase() &&
+      !text.toLowerCase().includes(confirmedPlace!.toLowerCase())) {
+    text = text.replace(new RegExp(`\\b(my|the|our) ${room}\\b`, "i"), (_, article) => `${article} ${confirmedPlace}`)
+  }
+  return text
+}
+
 function confirmationIssueLine(state: SmsIntakeState): string {
   // A later "no water anywhere" answer outranks the opening "no hot water".
   const desc = state.description ?? state.initial_message ?? ""
@@ -1488,6 +1551,19 @@ function confirmationIssueLine(state: SmsIntakeState): string {
     answer: state.room_or_area,
     question: state.location_question,
   })
+  // Reuse the description already polished by the classification pipeline;
+  // never send confirmation from stale wording after a location/detail correction.
+  const polished = withoutConversationInstruction(state.sanitized_description).trim()
+  const locationRooms: string[] = (reading.location || state.room_or_area || "").toLowerCase().match(/\b(?:kitchen|bathroom|bedroom|garage|basement)\b/g) || []
+  const summaryRooms: string[] = polished?.toLowerCase().match(/\b(?:kitchen|bathroom|bedroom|garage|basement)\b/g) || []
+  const wrongRoom = locationRooms.length > 0 && summaryRooms.some(room => !locationRooms.includes(room))
+  const detail = state.diagnostic_facts?.item_detail?.trim()
+  const missingDetail = detail && detail !== "not_sure" && !polished?.toLowerCase().includes(detail.toLowerCase())
+  if (polished && polished.length <= 600 && !wrongRoom && !missingDetail &&
+      !/[?]|https?:|\b(?:reply|submit|approve|permission|may enter|can enter|do not enter|contacted|booked|dispatched)\b/i.test(polished) &&
+      !(hasUnnegatedFlooding(polished) && !hasUnnegatedFlooding(all))) {
+    return finishSentence(concisePolishedIssue(polished, reading.location || resolveRoomLabel(state)))
+  }
   return problemSentence(
     state.initial_message || state.description || "",
     reading.location,
@@ -1537,6 +1613,11 @@ export function buildConfirmationSummary(
     : resolveCategoryHandlingTip(tipInputFromIntakeState(state))
 
   const bullets: string[] = []
+  const confirmedPlace = resolveRoomLabel(state)
+  if (confirmedPlace && /\b(?:upstairs|downstairs|main|guest|primary|master|hall|first|second|third)\b/i.test(confirmedPlace) &&
+      !issueLines.join(" ").toLowerCase().includes(confirmedPlace.toLowerCase())) {
+    bullets.push(`• Location: ${confirmedPlace}.`)
+  }
 
   if (recurringPriorVisit) {
     const issue = confirmationIssueLine(state).replace(/\.$/, "")
@@ -1547,6 +1628,9 @@ export function buildConfirmationSummary(
   if (scope) bullets.push(`• ${scope}`)
 
   for (const line of confirmationDetailLines(state)) {
+    const issueText = issueLines.join(" ").replace(/[’]/g, "'")
+    if (line === "Water is dripping; it isn't flooding." &&
+        /\bdripping\b/i.test(issueText) && /\b(?:isn't|is not|not) flooding\b/i.test(issueText)) continue
     bullets.push(`• ${line}`)
   }
 

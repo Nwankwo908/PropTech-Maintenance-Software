@@ -1,5 +1,6 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
+import type { PropertyUnitField } from '@/lib/propertyUnitFields'
 
 const AMENITY_KEYS = [
   { id: 'parking', label: 'Parking' },
@@ -30,14 +31,9 @@ const selectTriggerClass =
 
 function IconBuildingHeader({ className = 'size-5 text-primary' }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 21V8l8-5 8 5v13M9 21v-6h6v6"
-        stroke="currentColor"
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg viewBox="0 0 19 16" fill="currentColor" className={className} aria-hidden>
+      <path d="M8.95111 11.8433L8.02222 11.8222C7.72667 11.8222 7.47333 11.6322 7.36778 11.3578C7.26222 11.0833 7.34667 10.7667 7.55778 10.5767L9.73222 8.61333V0.633333C9.73222 0.295556 9.45778 0 9.09889 0H0.633333C0.295556 0 0 0.274445 0 0.633333V14.7144C0 15.0522 0.274444 15.3478 0.633333 15.3478H3.54667V12.4767C3.54667 12.35 3.65222 12.2233 3.8 12.2233H5.99556C6.12222 12.2233 6.24889 12.3289 6.24889 12.4767V15.3267H9.07778C9.01444 15.1789 8.99333 15.0311 8.99333 14.8833V11.8433H8.95111ZM1.71 3.35667C1.71 3.25111 1.79444 3.16667 1.9 3.16667H3.86333C3.96889 3.16667 4.05333 3.25111 4.05333 3.35667V5.32C4.05333 5.42556 3.96889 5.51 3.86333 5.51H1.9C1.79444 5.51 1.71 5.42556 1.71 5.32V3.35667ZM4.09556 9.56333C4.09556 9.66889 4.01111 9.75333 3.90556 9.75333H1.94222C1.83667 9.75333 1.75222 9.66889 1.75222 9.56333V7.6C1.75222 7.49444 1.83667 7.41 1.94222 7.41H3.90556C4.01111 7.41 4.09556 7.49444 4.09556 7.6V9.56333ZM5.63667 3.33556C5.63667 3.23 5.72111 3.14556 5.82667 3.14556H7.81111C7.91667 3.14556 8.00111 3.23 8.00111 3.33556V5.29889C8.00111 5.40444 7.91667 5.48889 7.81111 5.48889H5.84778C5.74222 5.48889 5.65778 5.40444 5.65778 5.29889V3.33556H5.63667ZM5.86889 9.75333C5.76333 9.75333 5.67889 9.66889 5.67889 9.56333V7.6C5.67889 7.49444 5.76333 7.41 5.86889 7.41H7.83222C7.93778 7.41 8.02222 7.49444 8.02222 7.6V9.56333C8.02222 9.66889 7.93778 9.75333 7.83222 9.75333H5.86889Z" />
+      <path d="M17.4167 9.68999V6.83999H15.8544V8.25443L13.7856 6.35443C13.7222 6.2911 13.6378 6.26999 13.5533 6.26999C13.4689 6.26999 13.3844 6.2911 13.3211 6.35443L8.04333 11.1044L9.66889 11.1467V14.8833C9.66889 15.1155 9.85889 15.3055 10.0911 15.3055H12.4133V13.1733C12.4133 12.92 12.6244 12.7089 12.8778 12.7089H14.2711C14.5244 12.7089 14.7356 12.92 14.7356 13.1733V15.3055H17.0367C17.2689 15.3055 17.4589 15.1155 17.4589 14.8833V11.2311L19 11.1255L17.4167 9.68999ZM14.5456 10.2389C14.5456 10.4289 14.3978 10.5767 14.2078 10.5767H12.9411C12.7511 10.5767 12.6033 10.4289 12.6033 10.2389V9.9011C12.6033 9.7111 12.7511 9.56332 12.9411 9.56332H14.2078C14.3978 9.56332 14.5456 9.7111 14.5456 9.9011V10.2389Z" />
     </svg>
   )
 }
@@ -60,6 +56,13 @@ export type AddPropertyFormPayload = {
   totalUnits: string
   yearBuilt: string | null
   amenities: string[]
+  units?: PropertyUnitField[]
+}
+
+type UnitFieldState = {
+  key: string
+  id: string | null
+  label: string
 }
 
 type AddPropertyModalProps = {
@@ -91,6 +94,11 @@ function hydrateFromInitial(values: AddPropertyFormPayload | null | undefined) {
       string,
       boolean
     >,
+    units: (values?.units ?? []).map((unit, index) => ({
+      key: unit.id ?? `unit-${index}`,
+      id: unit.id,
+      label: unit.label,
+    })),
   }
 }
 
@@ -113,7 +121,22 @@ export function AddPropertyModal({
   const [yearBuilt, setYearBuilt] = useState('')
   const [amenities, setAmenities] = useState<Record<string, boolean>>({})
 
+  const [unitFields, setUnitFields] = useState<UnitFieldState[]>([])
+
+  const unitFieldError = useMemo(() => {
+    if (mode !== 'edit' || unitFields.length === 0) return null
+    const labels = unitFields.map((unit) => unit.label.trim().toLowerCase()).filter(Boolean)
+    if (new Set(labels).size !== labels.length) return 'Each unit needs its own name.'
+    return null
+  }, [mode, unitFields])
+
   const formValid = useMemo(() => {
+    const unitLabels = unitFields.map((unit) => unit.label.trim())
+    const unitsReady =
+      mode !== 'edit' ||
+      unitFields.length === 0 ||
+      (unitLabels.every((label) => label.length > 0) && !unitFieldError)
+    const unitCount = mode === 'edit' && unitFields.length > 0 ? unitFields.length : Number(totalUnits)
     return (
       propertyName.trim().length > 0 &&
       propertyType.trim().length > 0 &&
@@ -121,15 +144,15 @@ export function AddPropertyModal({
       city.trim().length > 0 &&
       state.trim().length > 0 &&
       zipCode.trim().length > 0 &&
-      totalUnits.trim().length > 0 &&
-      Number(totalUnits) > 0
+      unitCount > 0 &&
+      unitsReady
     )
-  }, [propertyName, propertyType, streetAddress, city, state, zipCode, totalUnits])
+  }, [propertyName, propertyType, streetAddress, city, state, zipCode, totalUnits, mode, unitFields, unitFieldError])
 
-  const [prevOpen, setPrevOpen] = useState(open)
-  if (open !== prevOpen) {
-    setPrevOpen(open)
+  const wasOpen = useRef(false)
+  useEffect(() => {
     if (!open) {
+      wasOpen.current = false
       setPropertyName('')
       setPropertyType('')
       setStreetAddress('')
@@ -139,19 +162,23 @@ export function AddPropertyModal({
       setTotalUnits('')
       setYearBuilt('')
       setAmenities({})
-    } else {
-      const next = hydrateFromInitial(initialValues)
-      setPropertyName(next.propertyName)
-      setPropertyType(next.propertyType)
-      setStreetAddress(next.streetAddress)
-      setCity(next.city)
-      setState(next.state)
-      setZipCode(next.zipCode)
-      setTotalUnits(next.totalUnits)
-      setYearBuilt(next.yearBuilt)
-      setAmenities(next.amenities)
+      setUnitFields([])
+      return
     }
-  }
+    if (wasOpen.current) return
+    wasOpen.current = true
+    const next = hydrateFromInitial(initialValues)
+    setPropertyName(next.propertyName)
+    setPropertyType(next.propertyType)
+    setStreetAddress(next.streetAddress)
+    setCity(next.city)
+    setState(next.state)
+    setZipCode(next.zipCode)
+    setTotalUnits(next.units.length > 0 ? String(next.units.length) : next.totalUnits)
+    setYearBuilt(next.yearBuilt)
+    setAmenities(next.amenities)
+    setUnitFields(next.units)
+  }, [open, initialValues])
 
   useEffect(() => {
     if (!open) return
@@ -166,9 +193,18 @@ export function AddPropertyModal({
     setAmenities((prev) => ({ ...prev, [id]: !prev[id] }))
   }
 
+  function commitUnitFields(next: UnitFieldState[]) {
+    setUnitFields(next)
+    if (next.length > 0) setTotalUnits(String(next.length))
+  }
+
   function submit() {
     if (!formValid) return
     const selected = AMENITY_KEYS.filter((a) => amenities[a.id]).map((a) => a.id)
+    const units =
+      mode === 'edit'
+        ? unitFields.map((unit) => ({ id: unit.id, label: unit.label.trim() }))
+        : undefined
     onSubmit({
       propertyName: propertyName.trim(),
       propertyType: propertyType.trim(),
@@ -176,11 +212,11 @@ export function AddPropertyModal({
       city: city.trim(),
       state: state.trim(),
       zipCode: zipCode.trim(),
-      totalUnits: totalUnits.trim(),
+      totalUnits: units && units.length > 0 ? String(units.length) : totalUnits.trim(),
       yearBuilt: yearBuilt.trim() || null,
       amenities: selected,
+      units,
     })
-    if (mode !== 'edit') onClose()
   }
 
   if (!open) return null
@@ -196,8 +232,8 @@ export function AddPropertyModal({
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6 pt-4 pb-[17px]">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
-              <IconBuildingHeader />
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#E0F2EF] text-[#101828]">
+              <IconBuildingHeader className="size-5" />
             </div>
             <div className="min-w-0">
               <h2
@@ -347,6 +383,7 @@ export function AddPropertyModal({
                     value={totalUnits}
                     onChange={(e) => setTotalUnits(e.target.value)}
                     placeholder="e.g., 50"
+                    readOnly={mode === 'edit' && unitFields.length > 0}
                     className={inputClass}
                   />
                 </div>
@@ -367,7 +404,63 @@ export function AddPropertyModal({
               </div>
             </section>
 
-            {mode === 'edit' ? null : (
+            {mode === 'edit' ? (
+              <section className="flex flex-col gap-3">
+                <h3 className={sectionTitleClass}>Units</h3>
+                <div className="flex flex-col gap-3">
+                  {unitFields.map((unit, index) => (
+                    <div key={unit.key} className="flex items-end gap-2">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <label htmlFor={`edit-prop-unit-${unit.key}`} className={`block ${labelClass}`}>
+                          Unit {index + 1}
+                        </label>
+                        <input
+                          id={`edit-prop-unit-${unit.key}`}
+                          type="text"
+                          value={unit.label}
+                          onChange={(e) =>
+                            commitUnitFields(
+                              unitFields.map((row) =>
+                                row.key === unit.key ? { ...row, label: e.target.value } : row,
+                              ),
+                            )
+                          }
+                          placeholder="e.g., A"
+                          className={inputClass}
+                        />
+                      </div>
+                      {unit.id == null ? (
+                        <button
+                          type="button"
+                          onClick={() => commitUnitFields(unitFields.filter((row) => row.key !== unit.key))}
+                          className="h-9 shrink-0 rounded-lg px-2 text-[14px] font-medium text-neutral outline-none hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                  {unitFieldError ? (
+                    <p className="text-[13px] text-[#b91c1c]" role="alert">
+                      {unitFieldError}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      commitUnitFields([
+                        ...unitFields,
+                        { key: `new-${unitFields.length}-${Date.now()}`, id: null, label: '' },
+                      ])
+                    }
+                    className="self-start text-[14px] font-medium text-[#186179] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#186179]"
+                  >
+                    Add unit
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
             <section className="flex flex-col gap-3">
               <h3 className={sectionTitleClass}>Amenities</h3>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -389,7 +482,6 @@ export function AddPropertyModal({
                 ))}
               </div>
             </section>
-            )}
           </div>
         </div>
 

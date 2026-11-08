@@ -35,6 +35,10 @@ export function withEquipmentBackup(
         : 'primary_request_failed'
       try {
         let second = await backup.analyzeImage(base64, hint, mime, context)
+        const firstView = first?.photoView
+        const secondView = second.photoView
+        const viewConflict = firstView?.confidence === 'high' && secondView?.confidence === 'high' &&
+          (firstView.equipment !== secondView.equipment || firstView.framing !== secondView.framing)
         attempts.push(...(second.extractionTrace?.attempts || []))
         const conflictingFields = (['modelNumber', 'serialNumber'] as const).filter((field) =>
           first?.identifiedItem[field] && second.identifiedItem[field] &&
@@ -84,6 +88,9 @@ export function withEquipmentBackup(
           !conflictingFields.length && first && needsLabelBackup(second, context?.purpose) &&
           score(first) > score(second)
         ) second = first
+        if (viewConflict) second = { ...second, photoView: {
+          equipment: 'unknown', framing: 'unknown', confidence: 'low',
+        } }
         return {
           ...guardEquipmentLabel(second),
           extractionTrace: {

@@ -20,6 +20,7 @@ import { HomeCheckRequestModal } from '@/components/HomeCheckRequestModal'
 import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
 import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
 import type { InspectionCapturePhoto } from '@/api/inspectionCapture'
+import { prefersDirectEquipmentCameraCapture } from '@/lib/inspectionCaptureStatus'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import {
   partitionPropertyIntelligenceFiles,
@@ -421,11 +422,20 @@ function ScopedApplianceInspectionUploader({
   }
 
   function openInspectionChooser() {
+    // Already on a phone — skip the desktop QR handoff and open the camera.
+    if (prefersDirectEquipmentCameraCapture()) {
+      cameraInputRef.current?.click()
+      return
+    }
     setChooserOpen(true)
   }
 
   function onUseThisComputer() {
     setChooserOpen(false)
+    if (prefersDirectEquipmentCameraCapture()) {
+      cameraInputRef.current?.click()
+      return
+    }
     inputRef.current?.click()
   }
 
@@ -653,7 +663,7 @@ function ScopedApplianceInspectionUploader({
             Appliance equipment upload
           </p>
           <p className="text-[12px] text-[#64748b]">
-            Connect your phone to upload two photos per appliance: one of the whole appliance and one close-up of the model and serial number label. Keep the label clear and avoid glare.
+            Upload two photos per appliance: one of the whole appliance and one close-up of the model and serial number label. Keep the label clear and avoid glare.
           </p>
           <p className="text-[12px] leading-[18px] text-[#64748b]">
             JPG
@@ -702,6 +712,7 @@ function ScopedApplianceInspectionUploader({
       {chooserOpen ? (
         <InspectionCaptureChooser
           onClose={() => setChooserOpen(false)}
+          showPhoneQr={!prefersDirectEquipmentCameraCapture()}
           onUseComputer={onUseThisComputer}
           onUsePhone={() => {
             setChooserOpen(false)
@@ -865,6 +876,14 @@ function ScopedApplianceInspectionUploader({
         equipmentRows={equipmentRows}
         equipmentCheckedIds={assetCheckedIds}
         onEquipmentCheckedIdsChange={setAssetCheckedIds}
+        onAssetsDeleted={async (ids) => {
+          const removed = new Set(ids)
+          setAssets(previous => previous.filter(asset => !removed.has(asset.id)))
+          setPhotos(previous => previous.filter(photo => !photo.unitAssetId || !removed.has(photo.unitAssetId)))
+          setAssetCheckedIds(previous => previous.filter(id => !removed.has(id)))
+          await refreshAssets()
+          notifyAssetRegistryChanged(building)
+        }}
       />
 
       {hasFollowUp ? (

@@ -6,9 +6,14 @@
 const FIX =
   /^(?:fixed|it(?:'| i)?s fixed|it is fixed|all fixed|resolved)[.!]?\s*$|\b(?:i |we )?(?:already )?(?:fixed|repaired) (?:it|this|that|the)\b|\b(?:is|was) fixed\b|\b(?:it(?:'| i)?s|it is) (?:fixed|working)(?: now)?\b|\b(?:the )?(?:problem|leak|issue) (?:stopped|is gone|is fixed)\b|\bno longer (?:an? )?(?:issue|problem|leaking|broken)\b|\bstopped leaking\b/i
 
+/** A correction or continuing hazard wins over an earlier “fixed”. */
+export function hasUnresolvedRepairEvidence(body: string): boolean {
+  return /\b(?:not|never|isn'?t|wasn'?t|is not|was not)\s+fixed\b|\b(?:still|keeps?|started)\b[^.!?]{0,45}\b(?:leaking|flooding|sparking|broken|water)\b|\b(?:leaking|sparking|broken)\s+again\b|\bwater\s+(?:is\s+)?(?:still\s+)?everywhere\b/i.test(body)
+}
+
 export function looksLikeTenantReportedFix(body: string): boolean {
   const text = body.trim()
-  if (!text || text.length > 240) return false
+  if (!text || text.length > 240 || hasUnresolvedRepairEvidence(text)) return false
   if (/\bcancel\b/i.test(text) && !/\bfixed\b/i.test(text)) return false
   return FIX.test(text)
 }

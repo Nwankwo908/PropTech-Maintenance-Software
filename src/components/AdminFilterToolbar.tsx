@@ -10,6 +10,8 @@ type AdminFilterToolbarProps<T extends string> = {
   activeFilters: Set<T>
   onToggle: (key: T) => void
   onClear: () => void
+  /** Optional search field on the same row as the filter control. */
+  search?: ReactNode
   /** Optional actions on the same row (e.g. bulk Delete). */
   trailing?: ReactNode
 }
@@ -20,17 +22,19 @@ export function AdminFilterToolbar<T extends string>({
   activeFilters,
   onToggle,
   onClear,
+  search,
   trailing,
 }: AdminFilterToolbarProps<T>) {
   return (
-    <div className="flex items-center gap-4 border-b border-[#e5e7eb] px-6 py-3">
+    <div className="flex flex-wrap items-center gap-3 border-b border-[#e5e7eb] px-6 py-3 sm:gap-4">
+      {search ? <div className="min-w-0 w-full flex-1 sm:min-w-[220px] sm:max-w-md">{search}</div> : null}
       <AdminActiveFilterChips
         options={options}
         activeFilters={activeFilters}
         onRemove={onToggle}
       />
       <AdminCheckboxFilterDropdown
-        className="min-w-[140px] flex-1"
+        className={search ? 'min-w-[140px] shrink-0' : 'min-w-[140px] flex-1'}
         options={options}
         activeFilters={activeFilters}
         onToggle={onToggle}

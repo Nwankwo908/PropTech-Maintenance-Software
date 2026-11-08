@@ -7,6 +7,7 @@ import {
   assessmentBrandModel,
   assessmentCategoryLabel,
   assessmentConditionLabel,
+  assessmentMadeDisplay,
   assessmentTableDescription,
   assessmentSerial,
 } from '@/lib/inspectionAssessmentTable'
@@ -28,14 +29,22 @@ const CONDITIONS: ConditionRating[] = ['good', 'fair', 'poor', 'unsafe']
 const CELL =
   'bg-transparent border-0 p-0 m-0 w-full min-w-0 outline-none focus:ring-0 appearance-none'
 
-function assetGridClass(selectable: boolean, extra = '') {
-  const columns = selectable
-    ? '[grid-template-columns:1.75rem_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)_minmax(0,0.7fr)_minmax(0,0.65fr)_minmax(0,0.85fr)]'
-    : '[grid-template-columns:minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.55fr)_minmax(0,0.7fr)_minmax(0,0.65fr)_minmax(0,0.85fr)]'
+function assetGridClass(selectable: boolean, showActionColumn: boolean, extra = '') {
+  const columns = !showActionColumn
+    ? selectable
+      ? '[grid-template-columns:1.75rem_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.7fr)_minmax(0,0.75fr)_minmax(0,0.65fr)]'
+      : '[grid-template-columns:minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.7fr)_minmax(0,0.75fr)_minmax(0,0.65fr)]'
+    : selectable
+    ? '[grid-template-columns:1.75rem_minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.7fr)_minmax(0,0.75fr)_minmax(0,0.65fr)_minmax(0,0.85fr)]'
+    : '[grid-template-columns:minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.7fr)_minmax(0,0.75fr)_minmax(0,0.65fr)_minmax(0,0.85fr)]'
   return `grid w-full min-w-0 items-center gap-x-2 gap-y-1 px-3 py-4 sm:gap-x-3 sm:px-4 ${columns} ${extra}`.trim()
 }
 
 export type InspectionAssessmentTableRow = {
+  /** Source Home Check timestamp; whole records supersede older snapshots. */
+  recordedAt?: string | null
+  previousSerial?: string
+  onReviewSerial?: () => void
   id: string
   result?: ApplianceVisionResult | null
   previewUrl?: string | null
@@ -48,10 +57,13 @@ export type InspectionAssessmentTableRow = {
   conditionLabel?: string
   actionLabel?: string
   descriptionExtra?: ReactNode
+  /** Replaces the Made cell (Home Check month/year editors). */
+  madeExtra?: ReactNode
 }
 
 type InspectionAssessmentTableProps = {
   rows: InspectionAssessmentTableRow[]
+  showActionColumn?: boolean
   selectedId?: string | null
   onSelectRow?: (id: string) => void
   onChangeRow?: (id: string, result: ApplianceVisionResult) => void
@@ -106,6 +118,7 @@ export function InspectionAssessmentTable({
   onChangeRow,
   checkedIds,
   onCheckedIdsChange,
+  showActionColumn = true,
 }: InspectionAssessmentTableProps) {
   if (rows.length === 0) return null
 
@@ -113,11 +126,12 @@ export function InspectionAssessmentTable({
   const checked = new Set(checkedIds ?? [])
   const allChecked = selectable && rows.length > 0 && rows.every((row) => checked.has(row.id))
   const someChecked = selectable && rows.some((row) => checked.has(row.id))
+  const hasEstimatedMade = rows.some(row => !row.madeExtra && row.result && assessmentMadeDisplay(row.result).estimated)
 
   return (
     <div className="w-full min-w-0 overflow-x-hidden pt-1">
       <div className="w-full min-w-0 rounded-[16px] border border-[#dce4e1] bg-white shadow-[0px_8px_24px_0px_rgba(18,53,42,0.07)]">
-        <div className={`${assetGridClass(selectable)} rounded-t-[16px] bg-[#eef3f1] text-[12px] font-semibold leading-snug text-[#68717a]`}>
+        <div className={`${assetGridClass(selectable, showActionColumn)} rounded-t-[16px] bg-[#eef3f1] text-[12px] font-semibold leading-snug text-[#68717a]`}>
           {selectable ? (
             <RowCheckbox
               checked={allChecked}
@@ -132,12 +146,14 @@ export function InspectionAssessmentTable({
           <p className="min-w-0 break-words">Brand / Model</p>
           <p className="min-w-0 break-words">Description</p>
           <p className="min-w-0 break-words text-right">Serial number</p>
+          <p className="min-w-0 break-words text-right">Made</p>
           <p className="min-w-0 break-words text-right">Condition</p>
-          <p className="min-w-0 break-words text-right">Action</p>
+          {showActionColumn ? <p className="min-w-0 break-words text-right">Action</p> : null}
         </div>
         {rows.map((row, index) => {
           const { result, editable, previewUrl, extracting, extractComplete } = row
           const serial = result ? assessmentSerial(result) : ''
+          const made = result ? assessmentMadeDisplay(result) : {label: '—', estimated: false}
           const missingSerial = !serial
           const labelEdit = Boolean(editable && row.labelFieldsOnly && onChangeRow && result)
           const fullEdit = Boolean(editable && !row.labelFieldsOnly && onChangeRow && result)
@@ -160,7 +176,7 @@ export function InspectionAssessmentTable({
                   onSelectRow?.(row.id)
                 }
               }}
-              className={`${assetGridClass(selectable)} text-[14px] leading-normal ${zebra} ${
+              className={`${assetGridClass(selectable, showActionColumn)} text-[14px] leading-normal ${zebra} ${
                 canSelect ? 'cursor-pointer' : ''
               } ${index === rows.length - 1 ? 'rounded-b-[16px]' : ''}`}
               aria-current={selectedId === row.id ? 'true' : undefined}
@@ -216,7 +232,7 @@ export function InspectionAssessmentTable({
                 ) : null}
               </div>
               {extracting ? (
-                <div className="col-span-5 flex min-w-0 items-center">
+                <div className={`${showActionColumn ? 'col-span-6' : 'col-span-5'} flex min-w-0 items-center`}>
                   <InspectionPhotoExtractProgress
                     photoId={row.id}
                     complete={Boolean(extractComplete)}
@@ -307,7 +323,7 @@ export function InspectionAssessmentTable({
                 )}
               </div>
               <div
-                className={`flex min-w-0 items-center justify-end overflow-hidden font-semibold ${
+                className={`flex min-w-0 flex-col items-end justify-center gap-1 overflow-hidden font-semibold ${
                   missingSerial ? 'text-[#a03e3e]' : 'text-[#1a1d20]'
                 }`}
               >
@@ -330,7 +346,25 @@ export function InspectionAssessmentTable({
                     }`}
                   />
                 ) : (
-                  <p className="min-w-0 break-all text-right">{missingSerial ? '-' : serial}</p>
+                  <p className="min-w-0 break-all text-right">{missingSerial ? row.previousSerial ?? '-' : serial}</p>
+                )}
+                {missingSerial && row.previousSerial ? <span className="text-right text-xs font-normal text-[#68717a]">Previously saved</span> : null}
+                {row.onReviewSerial ? (
+                  <button type="button" aria-label="Review serial number" onClick={event => { event.stopPropagation(); row.onReviewSerial?.() }} className="text-right text-[12px] font-normal text-[#186179] underline underline-offset-2">
+                    {result?.labelReadability && (result.labelReadability.retakeRequested || result.labelReadability.uncertainCharacters.length || result.labelReadability.formatWarnings.length)
+                      ? <EquipmentLabelNotice quality={result.labelReadability} compact /> : 'Review serial'}
+                  </button>
+                ) : <EquipmentLabelNotice quality={result?.labelReadability} compact />}
+              </div>
+              <div className="flex min-w-0 items-center justify-end overflow-hidden font-medium text-[#68717a]">
+                {row.madeExtra ? (
+                  <div className="min-w-0 text-right" onClick={(e) => e.stopPropagation()}>
+                    {row.madeExtra}
+                  </div>
+                ) : (
+                  <p className="min-w-0 break-words text-right" title={made.estimated ? 'Estimated manufacture year from photo analysis; not confirmed.' : undefined}>
+                    {made.label}
+                  </p>
                 )}
               </div>
               <div className="flex min-w-0 items-center justify-end overflow-hidden font-medium text-[#68717a]">
@@ -362,6 +396,7 @@ export function InspectionAssessmentTable({
                   </p>
                 )}
               </div>
+              {showActionColumn ? (
               <div className="flex min-w-0 items-center justify-end overflow-hidden font-medium text-[#68717a]">
                 <p
                   className={`min-w-0 break-words text-right ${
@@ -375,17 +410,15 @@ export function InspectionAssessmentTable({
                   {actionLabel}
                 </p>
               </div>
+              ) : null}
                 </>
               ) : null}
-              {result?.labelReadability && (
-                <div className="col-span-full">
-                  <EquipmentLabelNotice quality={result.labelReadability} />
-                </div>
-              )}
+
             </div>
           )
         })}
       </div>
+      {hasEstimatedMade ? <p className="mt-2 text-xs text-[#68717a]">* Estimated manufacture year from photo analysis; not confirmed.</p> : null}
     </div>
   )
 }

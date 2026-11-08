@@ -1,3 +1,4 @@
+import { createRequestReadCache, createSmsRequestTiming } from "../_shared/sms/requestReadCache.ts"
 /**
  * Twilio / Telnyx inbound SMS webhook → processInboundSms.
  * Redeploy when schedule confirm / vendor probe shared copy changes.
@@ -52,22 +53,28 @@ Deno.serve(async (req) => {
     return errorResponse("Server misconfigured", 500)
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey)
+  const timing = createSmsRequestTiming()
+  const reads = createRequestReadCache(supabaseUrl)
+  const supabase = createClient(supabaseUrl, serviceKey, {global:{fetch:reads.fetch}})
 
-  await ensureTwilioMessagingWebhooks().catch((err) => {
+  await timing.measure("webhook_config", () => ensureTwilioMessagingWebhooks()).catch((err) => {
     console.warn("[sms-inbound] twilio webhook ensure", err)
   })
 
+  let outcome = "error"
   try {
-    const inbound = await getSMSProvider().normalizeInboundWebhook(req, {
+    const inbound = await timing.measure("signature", () => getSMSProvider().normalizeInboundWebhook(req, {
       rawBody,
       signature,
       url,
-    })
+    }))
 
-    const result = await processInboundSms(supabase, inbound)
+    timing.checkpoint("setup_and_auth")
+    const result = await processInboundSms(supabase, inbound, timing)
 
+    outcome = "success"
     console.info("[sms-inbound] processed", {
+      traceId: timing.traceId,
       providerMessageSid: inbound.providerMessageSid,
       releasedPending: "releasedPending" in result && result.releasedPending === true,
       unmatchedSharedDid:
@@ -93,5 +100,8 @@ Deno.serve(async (req) => {
 
     console.error("[sms-inbound] unexpected error", err)
     return errorResponse(message, 500)
+  } finally {
+    timing.checkpoint("reply_and_ack")
+    console.info(JSON.stringify({...timing.snapshot(),outcome,reads:reads.stats}))
   }
 })

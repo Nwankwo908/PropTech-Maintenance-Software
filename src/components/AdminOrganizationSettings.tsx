@@ -1,5 +1,4 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
 import {
   COMMUNICATION_STYLE_OPTIONS,
   type CommunicationStyle,
@@ -400,15 +399,8 @@ export function AdminOrganizationSettings() {
 
   return (
     <>
-      <div className="py-6">
-        <Link
-          to="/admin/settings"
-          className="sa-link inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
-        >
-          <span aria-hidden>←</span>
-          Settings
-        </Link>
-        <h1 className="mt-4 text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
+        <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
           Organization
         </h1>
         <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">

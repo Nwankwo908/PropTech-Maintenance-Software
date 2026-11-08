@@ -56,7 +56,7 @@ Deno.test("a missing name leads with the property and unit", () => {
   assertEquals(notice.detail.includes("The repair is the kitchen sink"), true)
 })
 
-Deno.test("missing address, unit, repair, and window are left out", () => {
+Deno.test("a missing issue and property are stated", () => {
   const notice = buildTenantRescheduleLandlordNotice({
     vendorNotified: false,
     failureCode: "update_failed",
@@ -68,12 +68,18 @@ Deno.test("missing address, unit, repair, and window are left out", () => {
   assertEquals(notice.headline, "Alex Rivera asked to move a visit")
   assertEquals(text.includes(" at "), false)
   assertEquals(text.includes("Unit"), false)
+  assertEquals(text.includes("The request did not include a description."), true)
+  assertEquals(text.includes("The property address was not included."), true)
   assertEquals(text.includes("The repair is"), false)
   assertEquals(text.includes("The current visit"), false)
-  assertEquals(text.includes("asked for"), false)
+  assertEquals(text.includes("They asked for"), false)
   assertEquals(text.includes("another time"), false)
   assertEquals(text.includes("The vendor was not texted"), true)
-  assertEquals(notice.whyLine.includes("Alex Rivera can send the new day and time again"), true)
+  assertEquals(
+    notice.whyLine,
+    "Keep the original time, or contact the vendor about the time the resident asked for.",
+  )
+  assertEquals(text.includes("Open Ulo"), false)
   assertEquals(text.includes("check constraint"), false)
   assertEquals(text.includes("decision"), false)
 })
@@ -88,21 +94,26 @@ Deno.test("a missing vendor phone tells the landlord what to add", () => {
     preferredWindow: preferred,
   })
   assertEquals(notice.whyLine.includes("Add a phone number"), true)
-  assertEquals(notice.detail.includes(maple), false)
+  assertEquals(notice.detail.includes(maple), true)
   assertEquals(notice.headline.includes(maple), true)
   assertEquals(notice.detail.includes("The vendor was not texted"), true)
 })
 
-Deno.test("a failed vendor text gives one next action", () => {
+Deno.test("a failed vendor text names the two choices", () => {
   const notice = buildTenantRescheduleLandlordNotice({
     vendorNotified: false,
     failureCode: "send_failed",
     currentVisitLabel: current,
     preferredWindow: preferred,
   })
-  assertEquals(notice.whyLine.includes("Open the visit in Ulo"), true)
-  assertEquals(notice.whyLine.includes("the resident sends the time again"), true)
+  assertEquals(
+    notice.whyLine,
+    `Keep ${current}, or contact the vendor about ${preferred}.`,
+  )
+  assertEquals(notice.nextSteps, [])
   assertEquals(notice.detail.includes(current), true)
+  assertEquals(notice.detail.includes("The request did not include a description."), true)
+  assertEquals(notice.detail.includes("The property address was not included."), true)
 })
 
 Deno.test("account approval names the visit and how to reply", () => {

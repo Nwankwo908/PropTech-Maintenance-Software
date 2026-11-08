@@ -1,3 +1,4 @@
+import { readHomeCheckPhotoView } from '../../../../../shared/homeCheck.ts'
 import { INSPECTION_VISION_SYSTEM_PROMPT } from '../prompt.ts'
 import { normalizeApplianceVisionResult } from '../normalize.ts'
 import type { ApplianceVisionResult, EquipmentPhotoContext } from '../types.ts'
@@ -47,9 +48,10 @@ export function equipmentSystemPrompt(hint?: string, context?: EquipmentPhotoCon
 Photo purpose: ${
     context?.purpose || 'general'
   }. When two photos are supplied, use the close-up data plate for label text and the whole appliance for visible condition. Do not assume an unrelated label belongs to the appliance. If they conflict, request a retake.
+Also return photoView {equipment: water_heater / heating_system / other / unknown, framing: label_closeup / whole_appliance / unknown, confidence: high / low}. Classify the framing of the PRIMARY photo separately from whether label text is readable. A photo showing most of the appliance/cabinet/tank and its surroundings is whole_appliance EVEN IF its data plate is readable. A close-up dominated by a data plate or sticker, without most of the appliance, is label_closeup. Do not call a whole appliance a label just because you can read its sticker. For indoor furnaces, boilers, air handlers and attached indoor evaporator-coil components, use heating_system; outdoor cooling-only condensers are other. Use unknown/low when the actual system or framing cannot be established visually. Do not infer the view from an expected step or the set of other photos. The photoView values are routing labels only: identifiedItem.type must name the actual visible appliance or component, not copy a generic routing label. Identify an evaporator-coil/indoor-section label as that component when supported; its manufacture date and age do not establish the furnace manufacture date or age.
 Return labelReadability with status readable / uncertain / unreadable / not_visible, modelConfidence and serialConfidence (0–100), uncertainCharacters [{field: modelNumber or serialNumber, index: zero-based character index, alternatives: e.g. ["0","O"] or ["8","B"]}], readings {modelNumber,serialNumber}, retakeRequested, retakeMessage and formatWarnings.
 Copy only characters you can actually read. Keep ambiguous characters flagged; do not choose one just to fill a field. If the data plate is blurry, obscured or reflecting flash, omit unreadable model/serial numbers and request: "Label unreadable, please send a closer photo without flash." Never infer a model or serial from the appliance's appearance or a likely catalog match.
-For a whole-appliance photo without a visible label, use not_visible. If a manufacture month and year are printed, copy them into manufactureDate and quote that date in estimatedAge.basis. Leave month null when only a year is readable, and leave both null when the date is missing or unclear. Do not calculate estimatedAge.value. A visual guess is not a verified manufacture date.`
+For a whole-appliance photo without a visible label, use not_visible. If a manufacture month and year are printed, copy them into manufactureDate and quote that date in estimatedAge.basis. Leave month null when only a year is readable, and leave both null when the date is missing or unclear. Do not calculate estimatedAge.value. A visual guess is not a verified manufacture date. In estimatedAge.basis distinguish a date literally printed under MFG/DATE OF MANUFACTURE from a date decoded from a serial number. For a serial-derived date explicitly say "estimated from the serial number"; never say the decoded year is visible or printed. Standards/copyright dates do not establish manufacture dates. If the source is unclear, say so; never invent a source.`
 }
 
 export function equipmentResult(
@@ -73,7 +75,9 @@ export function equipmentResult(
     result.labelReadability.retakeRequested = false
     delete result.labelReadability.retakeMessage
   }
-  return applyEquipmentManufactureAge(result, new Date(), sourceBasis)
+  const aged = applyEquipmentManufactureAge(result, new Date(), sourceBasis)
+  const photoView = readHomeCheckPhotoView(input.photoView)
+  return photoView ? { ...aged, photoView } : aged
 }
 
 export async function equipmentFetch(

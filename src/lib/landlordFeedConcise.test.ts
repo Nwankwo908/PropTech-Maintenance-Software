@@ -96,22 +96,28 @@ describe('concise Activity Feed copy contract', () => {
 
   it('drops the waiting line — needs_you headlines already say the ask', () => {
     expect(
-      feedWaitingHint(
-        { eventType: 'landlord.attention_alert_sent', vendorName: null, residentName: null, metadata: null },
-        { awaitingLandlordChoiceAt: '2026-11-05T12:00:00.000Z' },
-      ),
+      feedWaitingHint({
+        eventType: 'landlord.attention_alert_sent',
+        vendorName: null,
+        residentName: null,
+        metadata: null,
+      }),
     ).toBeNull()
     expect(
-      feedWaitingHint(
-        { eventType: 'maintenance.spend_recorded', vendorName: 'Ecosafe', residentName: null, metadata: null },
-        { spendStatus: 'pending_approval', recognizedSpendAmount: 2300 },
-      ),
+      feedWaitingHint({
+        eventType: 'maintenance.spend_recorded',
+        vendorName: 'Ecosafe',
+        residentName: null,
+        metadata: null,
+      }),
     ).toBeNull()
     expect(
-      feedWaitingHint(
-        { eventType: 'vendor.alert_sent', vendorName: 'Ecosafe', residentName: null, metadata: null },
-        { vendorWorkStatus: 'pending_accept' },
-      ),
+      feedWaitingHint({
+        eventType: 'vendor.alert_sent',
+        vendorName: 'Ecosafe',
+        residentName: null,
+        metadata: null,
+      }),
     ).toBeNull()
   })
 

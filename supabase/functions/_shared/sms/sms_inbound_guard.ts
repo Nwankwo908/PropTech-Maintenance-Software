@@ -62,8 +62,8 @@ export function inboundHasContent(body: string, mediaUrls: unknown): boolean {
  * If a newer inbound arrived within the debounce window after this message,
  * skip processing this one — the newer webhook will handle the latest text.
  *
- * Photo-only MMS (empty Body + MediaUrl) must still process — intake treats
- * that as "Maintenance issue (photo attached)".
+ * Every MMS attachment must process, with or without a caption. Later messages
+ * cannot supersede it; only text-only messages use the debounce window.
  */
 export async function decideInboundDebounce(
   supabase: SupabaseClient,
@@ -86,6 +86,11 @@ export async function decideInboundDebounce(
   if (!inboundHasContent(body, self.media_urls)) {
     return { action: "skip", reason: "empty_message" }
   }
+
+  // A later SMS does not replace an attachment. Carrier-split batches may
+  // arrive milliseconds apart; dropping one here prevents the batch completing.
+  // Provider SID retries are deduplicated separately before this guard.
+  if (mediaUrlCount(self.media_urls) > 0) return { action: "process" }
 
   const selfAt = new Date(self.created_at as string).getTime()
   const horizon = new Date(selfAt + windowMs).toISOString()

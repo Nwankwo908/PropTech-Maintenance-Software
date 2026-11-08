@@ -351,7 +351,7 @@ export function PropertyHealthBuildingGrid({
                   b.status === 'unknown'
                     ? resolvePropertyHealthPendingMessage(b.pendingReason)
                     : showScore
-                      ? `${b.score} of 100 health`
+                      ? `${b.score}% property health`
                       : resolvePropertyHealthPendingMessage(b.pendingReason)
 
                 return (
@@ -418,8 +418,7 @@ export function PropertyHealthBuildingGrid({
                         <p className="tabular-nums">
                           {showScore ? (
                             <>
-                              <span className="font-semibold">{b.score}</span>
-                              <span className="text-[12px] text-[#6a7282]"> / 100</span>
+                              <span className="font-semibold">{b.score}%</span>
                             </>
                           ) : (
                             <span className="text-[#6a7282]">—</span>

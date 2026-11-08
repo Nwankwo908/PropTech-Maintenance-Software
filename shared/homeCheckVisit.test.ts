@@ -231,7 +231,11 @@ it.each(['tenant','landlord'] as const)('names the verified %s who coordinates a
 })
 
 it.each(['tenant_yes','vendor_yes'] as const)('sends photo-instruction expectations only to the vendor after %s',type=>{
- const result=reduceHomeCheckVisit({visit:{phase:'scheduling',awaiting:type==='tenant_yes'?'tenant_confirm':'vendor_confirm',accessCoordinator:'tenant',tenantReady:true,proposedWindow:'Wed 9–10:30am',visitAt:'2026-11-04T14:00:00Z'},event:{type,at:'2026-11-04T13:38:00Z',replyId:'confirm'},location:'200 Test Lane, Unit 1',vendorName:'Test Vendor'})
+ const event =
+  type === 'vendor_yes'
+   ? { type, at: '2026-11-04T13:38:00Z', replyId: 'confirm', tenantReady: true } as const
+   : { type, at: '2026-11-04T13:38:00Z', replyId: 'confirm' } as const
+ const result=reduceHomeCheckVisit({visit:{phase:'scheduling',awaiting:type==='tenant_yes'?'tenant_confirm':'vendor_confirm',accessCoordinator:'tenant',tenantReady:true,proposedWindow:'Wed 9–10:30am',visitAt:'2026-11-04T14:00:00Z'},event,location:'200 Test Lane, Unit 1',vendorName:'Test Vendor'})
  expect(result.messages.find(m=>m.to==='vendor')?.body).toContain('Photo instructions will arrive by text when it’s time for the visit.')
  const tenant=result.messages.find(m=>m.to==='tenant')?.body??''
  expect(tenant).toContain('Test Vendor will take four appliance photos.')

@@ -143,7 +143,11 @@ export async function classifyMaintenanceRequest(
   const semanticMatches = await semanticMatchDescription(sanitized || rawForPipeline, {
     skipEmbeddings: input.skipEmbeddings ?? input.skipLlm,
   })
-  const topSemantic = semanticMatches[0] ?? null
+  // A weak similarity on a fixture-free description must not invent a trade.
+  const candidateSemantic = semanticMatches[0] ?? null
+  const topSemantic = !topRule && !entities.affectedObject &&
+      (candidateSemantic?.score ?? 0) < 0.7
+    ? null : candidateSemantic
 
   const llm = input.skipLlm
     ? null
@@ -203,13 +207,13 @@ export async function classifyMaintenanceRequest(
     issueType = "leak"
   }
 
-  let emergencyType = entities.emergencyType
+  let emergencyType = extractEntities(rawForPipeline).emergencyType
   if (resolved.handled && resolved.emergency !== "none") {
     emergencyType = resolved.emergency
   }
 
   const urgency = resolveUrgencyPolicy({
-    text: sanitized || rawForPipeline,
+    text: rawForPipeline,
     outdoorTempF: input.outdoorTempF,
     durationHours: input.durationHours,
     emergencyType,

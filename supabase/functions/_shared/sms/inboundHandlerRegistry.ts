@@ -1,3 +1,4 @@
+import { tryPendingMaintenanceSummary } from "./pendingMaintenanceSummary.ts"
 import {
   hasQuestionReplyRef,
   parseQuestionReplyRef,
@@ -47,6 +48,10 @@ import {
   canHandleStaffReply,
   tryHandleStaffReplyInbound,
 } from "./staffReplyPending.ts"
+import {
+  canHandleSummaryClarification,
+  tryHandleSummaryClarificationInbound,
+} from "./summaryClarificationSms.ts"
 import {
   tryHandleTenantActivationReply,
   tryHandleTenantComplianceKeyword,
@@ -160,6 +165,38 @@ async function tryStaffReplyHandler(
   return {
     handled: true,
     workflowRoute: "staff_reply",
+    maintenanceRequestId: ctx.maintenanceRequestId,
+  }
+}
+
+async function trySummaryClarificationHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    !canHandleSummaryClarification({
+      identityType: ctx.identity.identity_type,
+      intakeState: conv?.intake_state,
+    })
+  ) {
+    return { handled: false }
+  }
+  const result = await tryHandleSummaryClarificationInbound({
+    supabase: ctx.supabase,
+    conversationId: ctx.conversationId,
+    landlordId: ctx.landlordId,
+    identityType: ctx.identity.identity_type,
+    body: ctx.inbound.body,
+    intakeState: conv?.intake_state,
+  })
+  if (!result.handled) return { handled: false }
+  return {
+    handled: true,
+    workflowRoute: result.workflowRoute ?? "summary_clarification",
     maintenanceRequestId: ctx.maintenanceRequestId,
   }
 }
@@ -997,6 +1034,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "intake_state.awaiting_pm_service on the landlord thread and the reply is YES HVAC",
   staff_reply:
     "intake_state.awaiting_staff_reply on a resident thread (property-team photo or information request within 24h; a question mark is not required). Emergencies fall through.",
+  summary_clarification:
+    "intake_state.awaiting_summary_clarification on a resident thread (one missing/conflicting fact). Emergencies fall through.",
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
@@ -1026,6 +1065,7 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "users.activation_status === waiting + YES or NO",
   tenant_activation_hold:
     "users.activation_status === waiting + any other inbound (park request, remind YES/NO)",
+  resident_summary_reprint: "Exact SUMMARY on a scoped resident awaiting_confirm intake with a matching draft/location/entry policy; legacy gaps fall through",
   resident_quiet_hours:
     "Resident identity + QUIET / QUIET OFF command (set quiet-hours window)",
   daily_priorities_ask:
@@ -1062,6 +1102,11 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "landlord_pick_batch", priority: 6, try: tryLandlordPickBatchHandler },
   { id: "pm_service_yes_hvac", priority: 7, try: tryPmServiceYesHvacHandler },
   { id: "staff_reply", priority: 9, try: tryStaffReplyHandler },
+  {
+    id: "summary_clarification",
+    priority: 9.5,
+    try: trySummaryClarificationHandler,
+  },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
   { id: "property_choice", priority: 20.5, try: tryPropertyChoiceHandler },
@@ -1122,6 +1167,7 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
     priority: 33,
     try: tryTenantActivationHoldHandler,
   },
+  { id: "resident_summary_reprint", priority: 34, try: tryPendingMaintenanceSummary },
   {
     id: "resident_quiet_hours",
     priority: 35,
@@ -1149,6 +1195,12 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "vendor_tenant_proxy", priority: 70, try: tryVendorTenantProxyHandler },
 ].sort((a, b) => a.priority - b.priority)
 
+async function invokeHandler(handler: InboundSmsHandler, ctx: InboundSmsHandlerContext): Promise<InboundSmsHandlerResult> {
+  return ctx.timing
+    ? ctx.timing.measure(`handler.${handler.id}`, () => handler.try(ctx))
+    : handler.try(ctx)
+}
+
 export async function tryInboundSmsHandlers(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
@@ -1163,7 +1215,7 @@ export async function tryInboundSmsHandlers(
             ? "schedule_confirm"
             : "estimate_decision")
       )!
-      const result = await handler.try(ctx)
+      const result = await invokeHandler(handler, ctx)
       if (result.handled) return result
     }
     return {
@@ -1202,7 +1254,7 @@ export async function tryInboundSmsHandlers(
   }
 
   for (const handler of INBOUND_SMS_HANDLERS) {
-    const result = await handler.try(ctx)
+    const result = await invokeHandler(handler, ctx)
     if (result.handled) return result
   }
   return { handled: false }

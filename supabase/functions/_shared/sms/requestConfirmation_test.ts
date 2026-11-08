@@ -148,3 +148,20 @@ Deno.test("the saved bathroom question can be read back from the thread", () => 
     "bedroom bathroom",
   )
 })
+
+Deno.test("closet confirmation drops routing labels, keeps confirmed room and entry denial", () => {
+  const initial_message="New separate repair QA repair: the bedroom closet door is off its track. Nobody is hurt. Do not enter unless someone is home"
+  const state={initial_message,description:initial_message,sanitized_description:"New separate repair: The bedroom closet door is off its track. Nobody is hurt. Do not enter unless someone is home.",room_or_area:"main bedroom",location_question:"Which bedroom is it in?",diagnostic_facts:{unit_entry:"No"},primary_category:"structural" as const,vendor_trade:"carpentry" as const}
+  const text=buildConfirmationSummary(state)
+  assertMatch(text,/The closet door in the main bedroom is off its track\./)
+  assertMatch(text,/Do not enter unless someone is home\./)
+  assertEquals(/new separate|QA repair|Until help arrives|unstable|put weight/i.test(text),false)
+})
+
+Deno.test("model-polished confirmation also strips new-repair labels",()=>{
+ const text=buildConfirmationSummary({initial_message:"New separate QA repair: the bedroom closet door is off its track.",sanitized_description:"New separate QA repair: The bedroom closet door is off its track.",room_or_area:"main bedroom",location_question:"Which bedroom is it in?",diagnostic_facts:{unit_entry:"No"}})
+ assertEquals(/new separate|QA repair/i.test(text),false)
+ assertMatch(text,/main bedroom/)
+ assertMatch(text,/off its track/)
+ assertMatch(text,/Do not enter unless someone is home/)
+})

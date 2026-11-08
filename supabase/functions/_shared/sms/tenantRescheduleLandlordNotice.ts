@@ -124,21 +124,44 @@ function headlineFor(input: TenantRescheduleNoticeInput): string {
 }
 
 function factSentences(input: TenantRescheduleNoticeInput): string[] {
-  const { name } = subjectPhrase(input)
+  const { name, place } = subjectPhrase(input)
   const lines: string[] = []
-  const issue = issueSentence(input.repairLabel)
-  if (issue) lines.push(issue)
+  lines.push(issueSentence(input.repairLabel) ?? "The request did not include a description.")
+  lines.push(place || "The property address was not included.")
   const current = clean(input.currentVisitLabel)
   if (current) lines.push(`The current visit is still ${current}`)
   const preferred = clean(input.preferredWindow)
   if (preferred) {
-    lines.push(name ? `They asked for ${preferred}` : `The requested time is ${preferred}`)
+    const sameDay = /later (?:on )?the same day|later that day/i.test(preferred)
+    lines.push(
+      sameDay
+        ? name
+          ? "They asked to come later the same day"
+          : "The request is to come later the same day"
+        : name
+          ? `They asked for ${preferred}`
+          : `The requested time is ${preferred}`,
+    )
   }
   return lines
 }
 
 function person(input: TenantRescheduleNoticeInput): string {
   return clean(input.residentName) || "The resident"
+}
+
+/** The two choices when Ulo could not text the vendor about the new time. */
+function visitDecisionLine(input: TenantRescheduleNoticeInput): string {
+  const current = clean(input.currentVisitLabel)
+  const preferred = clean(input.preferredWindow).replace(/[.]+$/, "")
+  const keep = current ? `Keep ${current}` : "Keep the original time"
+  const sameDay = /later (?:on )?the same day|later that day/i.test(preferred)
+  const change = sameDay
+    ? "contact the vendor about coming later that day"
+    : preferred
+      ? `contact the vendor about ${preferred}`
+      : "contact the vendor about the time the resident asked for"
+  return `${keep}, or ${change}.`
 }
 
 export function buildTenantRescheduleLandlordNotice(
@@ -182,9 +205,7 @@ export function buildTenantRescheduleLandlordNotice(
   const who = person(input)
   const whyLine = code === "no_vendor" || code === "no_vendor_phone"
     ? `Add a phone number for the vendor in Ulo. ${who} can send the new time again after that.`
-    : code === "send_failed"
-    ? `Open the visit in Ulo and contact the vendor, or wait until ${who === "The resident" ? "the resident" : who} sends the time again.`
-    : `No reply is needed. ${who} can send the new day and time again.`
+    : visitDecisionLine(input)
 
   return {
     outcome: "failed",
@@ -226,7 +247,7 @@ export async function loadTicketRescheduleFacts(
   }
   const { data: ticket } = await supabase
     .from("maintenance_requests")
-    .select("property_id, unit, description, issue_category, scheduled_window_text")
+    .select("property_id, unit, description, issue_category, issue_headline, scheduled_window_text")
     .eq("id", ticketId)
     .eq("landlord_id", landlordId)
     .maybeSingle()
@@ -259,7 +280,11 @@ export async function loadTicketRescheduleFacts(
     unitLabel: typeof ticket.unit === "string" ? ticket.unit : null,
     propertyType,
     repairLabel: firstRepairLine(
-      typeof ticket.description === "string" ? ticket.description : null,
+      typeof ticket.issue_headline === "string" && ticket.issue_headline.trim()
+        ? ticket.issue_headline
+        : typeof ticket.description === "string"
+          ? ticket.description
+          : null,
       typeof ticket.issue_category === "string" ? ticket.issue_category : null,
     ),
     scheduledWindowText: typeof ticket.scheduled_window_text === "string"

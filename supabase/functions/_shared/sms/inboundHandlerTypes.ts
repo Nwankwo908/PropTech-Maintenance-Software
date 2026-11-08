@@ -1,3 +1,4 @@
+import type { SmsRequestTiming } from "./requestReadCache.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { InboundSMSMessage } from "./types.ts"
 import type { SmsIdentityRow } from "./inbound_db.ts"
@@ -63,6 +64,8 @@ export type InboundSmsHandlerContext = {
   selfHealingPhase: SelfHealingPhase
   /** Skip YES activation-reply hijack during active maintenance intake. */
   activeMaintenanceIntake: boolean
+  /** Request-local, content-free stage timings. */
+  timing?: SmsRequestTiming
   /** After YES/NO, replay a parked request through the workflow engine. */
   resumeParkedOnboardingRequest?: boolean
 }

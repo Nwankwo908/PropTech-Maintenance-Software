@@ -155,7 +155,7 @@ export function resolveCategoryHandlingTip(
       return "Until help arrives: avoid adjusting the water heater yourself. Use cold water only if you need water."
     }
     if (/\bleak\b/.test(text)) {
-      return "Until help arrives: if you can safely reach the shutoff near the fixture, turn it off and keep towels down to limit damage."
+      return "Until help arrives: if it is safe, close the shutoff valve near the leaking fixture and place towels underneath to catch drips."
     }
     return "Until help arrives: avoid using the affected fixture if water keeps coming, and keep the area clear for the vendor."
   }
@@ -190,6 +190,12 @@ export function resolveCategoryHandlingTip(
   }
 
   if (key === "structural") {
+    // A simple off-track closet door is not evidence of unstable structure.
+    // Keep the structural warning when additional danger is actually reported.
+    if (/\bcloset door\b/.test(text) && /\boff(?: its| the)? track\b/.test(text) &&
+        !/\b(?:falling|fallen|hanging loose|unstable|collaps\w*|ceiling|beam|structural damage|injur\w*|trapped|blocked exit)\b/.test(text)) {
+      return null
+    }
     return "Until help arrives: stay clear of the damaged area and don't put weight on anything that looks unstable."
   }
 

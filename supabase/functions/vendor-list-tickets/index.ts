@@ -212,7 +212,7 @@ serve(async (req) => {
   const { data: rows, error: qErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, created_at, landlord_id, priority, urgency, resident_name, unit, description, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token",
+      "id, created_at, landlord_id, priority, urgency, resident_name, unit, description, issue_headline, location_detail, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token, access_instructions, entry_ok_if_absent, resident_availability_text",
     )
     .eq("assigned_vendor_id", vendor.id)
     .order("created_at", { ascending: false })

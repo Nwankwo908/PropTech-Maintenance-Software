@@ -18,6 +18,10 @@ import { isLandlordFacingMaintenanceRequest } from '@/lib/landlordWorkOrders'
 import { deleteLandlordBuildings } from '@/lib/onboarding'
 import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
+  persistPropertyTypeCorrections,
+  propertyTypeCorrectionsFromInventory,
+} from '@/lib/propertyInventoryType'
+import {
   buildPropertyHealthReport,
   computeOccupancyStats,
   countPortfolioBuildings,
@@ -290,7 +294,7 @@ function KpiCard({
             {value}
           </p>
         ) : null}
-        {delta != null ? (
+        {delta != null && delta !== 0 ? (
           <span
             className={[
               'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] leading-5 tracking-[-0.1504px]',
@@ -373,15 +377,67 @@ export function AdminPropertiesDashboard() {
     target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })
   }, [showPropertyCardGuide, loading])
 
+  const inventoryCorrections = useMemo(
+    () =>
+      propertyTypeCorrectionsFromInventory({
+        properties: canonicalProperties.map((property) => ({
+          id: property.id,
+          name: property.name,
+          streetAddress: property.streetAddress,
+          propertyType: property.propertyType,
+        })),
+        units: units.map((unit) => ({
+          propertyId: unit.propertyId,
+          building: unit.building,
+          unitLabel: unit.unitLabel,
+        })),
+        residents: residents.map((resident) => ({
+          building: resident.building,
+          unit: resident.unit,
+          status: resident.status,
+        })),
+      }),
+    [canonicalProperties, units, residents],
+  )
+
+  const correctedTypeById = useMemo(
+    () => new Map(inventoryCorrections.map((correction) => [correction.propertyId, correction.propertyType])),
+    [inventoryCorrections],
+  )
+
   const canonicalPropertiesForHealth = useMemo(
     (): PropertyHealthCanonicalProperty[] =>
       canonicalProperties.map((property) => ({
         id: property.id,
         name: property.name,
-        propertyType: property.propertyType,
+        propertyType: correctedTypeById.get(property.id) ?? property.propertyType,
       })),
-    [canonicalProperties],
+    [canonicalProperties, correctedTypeById],
   )
+
+  useEffect(() => {
+    if (inventoryCorrections.length === 0) return
+    let cancelled = false
+    void persistPropertyTypeCorrections(inventoryCorrections).then((updatedIds) => {
+      if (cancelled || updatedIds.length === 0) return
+      const byId = new Map(inventoryCorrections.map((correction) => [correction.propertyId, correction]))
+      setCanonicalProperties((prev) =>
+        prev.map((property) => {
+          if (!updatedIds.includes(property.id)) return property
+          const correction = byId.get(property.id)
+          if (!correction) return property
+          return {
+            ...property,
+            propertyType: correction.propertyType,
+            unitCount: correction.unitCount,
+          }
+        }),
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [inventoryCorrections])
 
   useEffect(() => {
     if (searchParams.get('add') !== '1') return
@@ -402,6 +458,8 @@ export function AdminPropertiesDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
+    const loadStartedAt =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
     await activateUnitsFromResidentAssignments({
       landlordId,
       source: 'property_sync',
@@ -561,7 +619,14 @@ export function AdminPropertiesDashboard() {
       setError(getErrorMessage(err, 'Could not load properties.'))
     } finally {
       window.clearTimeout(timeoutId)
-      if (!timedOut) setLoading(false)
+      if (!timedOut) {
+        setLoading(false)
+        if (import.meta.env.DEV) {
+          const elapsedMs =
+            (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartedAt
+          console.info(`[properties] list hydrate ${Math.round(elapsedMs)}ms`)
+        }
+      }
     }
   }, [])
 

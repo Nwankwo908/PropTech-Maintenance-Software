@@ -51,6 +51,21 @@ export function isUnmatchedApplianceRow(row: {
   return /do not match the selected/i.test(note)
 }
 
+/** Dates and age assessments belong to structured fields, not photo-condition prose. */
+function visualConditionDescription(text: string): string {
+  const ageClaim = /\b(?:age|aged|older|manufactur(?:ed|e)|built\s+in|made\s+(?:in\s+)?(?:\d{4}|January|February|March|April|May|June|July|August|September|October|November|December)|\d+(?:\.\d+)?[ -]years?(?:[ -]old|\s+of\s+age)|(?:design|service|useful)\s+life|life\s+expectancy|lifespan)\b/i
+  return text.split(/(?<=[.!?])\s+/).flatMap(sentence => {
+    if (!ageClaim.test(sentence)) return [sentence]
+    // Keep independent visible findings even when the AI combined them with
+    // an age claim in one sentence. Never derive a date from that prose.
+    return sentence.split(/[,;]\s*(?:(?:but|and|however)\s+)?|\s+(?:but|and|while|although)\s+(?=(?:it\b|the\b|has\b|lacks?\b|shows?\b|appears?\b|is\b|was\b|needs?\b|requires?\b|remains?\b))/i)
+      .filter(clause => !ageClaim.test(clause))
+      .map(clause => clause.trim().replace(/^[,;: .]+|[,;: ]+$/g, ''))
+      .filter(Boolean)
+      .map(clause => clause[0].toUpperCase() + clause.slice(1) + (/[.!?]$/.test(clause) ? '' : '.'))
+  }).join(' ')
+}
+
 /** Description cell text that is not already shown in category, condition, or age. */
 export function assessmentTableDescription(
   result: ApplianceVisionResult,
@@ -58,10 +73,12 @@ export function assessmentTableDescription(
 ): string {
   const type = result.identifiedItem.type.trim()
   const category = categoryLabel.trim()
-  const kept = assessmentDescription(result)
+  const kept = visualConditionDescription(assessmentDescription(result))
     .replace(/Visible condition unknown\.?/gi, '')
     .replace(/Age unknown\.?/gi, '')
     .replace(/About \d+ years \(estimate\)\.?/gi, '')
+    .replace(/Made(?:\s+in)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)?\s*\d{0,4}\.?/gi, '')
+    .replace(/Manufacture date unknown\.?/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
   if (!kept) return ''
@@ -73,6 +90,51 @@ export function assessmentTableDescription(
 
 export function assessmentSerial(result: ApplianceVisionResult): string {
   return result.identifiedItem.serialNumber?.trim() ?? ''
+}
+
+const MADE_MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const
+
+/** Property Intelligence “Made” column — month and/or year from the plate. */
+export function assessmentMadeLabel(
+  date?: { year?: number | null; month?: number | null } | null,
+): string {
+  const month =
+    typeof date?.month === 'number' && date.month >= 1 && date.month <= 12
+      ? MADE_MONTHS[date.month - 1]
+      : null
+  const year =
+    typeof date?.year === 'number' && date.year >= 1900 && date.year <= 2100
+      ? date.year
+      : null
+  if (month && year) return `${month} ${year}`
+  if (year) return String(year)
+  if (month) return month
+  return '—'
+}
+
+/** Keep a prose-derived year separate from the saved manufacture date. */
+export function assessmentMadeDisplay(result: ApplianceVisionResult): { label: string; estimated: boolean } {
+  const saved = assessmentMadeLabel(result.manufactureDate)
+  if (saved !== '—') return { label: saved, estimated: false }
+  const summary = result.condition.summary
+  const years = [...summary.matchAll(/\b(?:manufactured|manufacture\s+date|made|built)(?:\s+(?:in|is|was))?\s*:?\s*(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+)?(19\d{2}|20\d{2})\b/gi)]
+  // Conflicting or negated prose cannot supply even a display-only estimate.
+  if (/\b(?:not|never)\s+(?:manufactured|made|built)\b/i.test(summary)) return { label: saved, estimated: false }
+  const unique = [...new Set(years.map(match => Number(match[1])))].filter(year => year <= new Date().getUTCFullYear())
+  return unique.length === 1 ? { label: `${unique[0]}*`, estimated: true } : { label: saved, estimated: false }
 }
 
 const AGE_BAND_PERCENT: Record<ApplianceVisionResult['estimatedAge']['confidence'], number> = {
@@ -191,6 +253,22 @@ export function visionResultFromSavedInspectionAsset(asset: {
       serialNumber:
         typeof meta.serialNumber === 'string' ? meta.serialNumber : undefined,
     },
+    ...(meta.manufactureDate &&
+    typeof meta.manufactureDate === 'object' &&
+    meta.manufactureDate !== null
+      ? {
+          manufactureDate: {
+            year:
+              typeof (meta.manufactureDate as { year?: unknown }).year === 'number'
+                ? ((meta.manufactureDate as { year: number }).year)
+                : null,
+            month:
+              typeof (meta.manufactureDate as { month?: unknown }).month === 'number'
+                ? ((meta.manufactureDate as { month: number }).month)
+                : null,
+          },
+        }
+      : {}),
     estimatedAge: {
       value: null,
       confidence: 'medium',

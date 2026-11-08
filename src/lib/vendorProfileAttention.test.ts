@@ -120,6 +120,8 @@ describe('buildVendorProfileAttention', () => {
       ]),
     })
     expect(items[0]?.title).toBe('I recommend requesting general liability insurance')
+    expect(items[0]?.actionLabel).toBe('Request updated insurance')
+    expect(items[0]?.opensInsuranceRequest).toBe(true)
   })
 
   it('includes license/insurance coming due within 30 days', () => {
@@ -139,6 +141,9 @@ describe('buildVendorProfileAttention', () => {
     ])
     expect(items.every((item) => item.kind === 'compliance_soon')).toBe(true)
     expect(items.every((item) => item.title.startsWith('I recommend'))).toBe(true)
+    expect(items.find((item) => item.id === 'compliance_soon:coi')?.actionLabel).toBe(
+      'Request updated insurance',
+    )
   })
 
   it('includes pending estimate approval on open tickets', () => {

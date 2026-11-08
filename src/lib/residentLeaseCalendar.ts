@@ -73,16 +73,89 @@ function clampRentDueDay(value: number | null | undefined): number | null {
   return day
 }
 
+/** Resident day first, then org default — same resolution as ResidentLeaseCalendar. */
+export function resolveResidentCalendarRentDueDay(
+  rentDueDay: number | null | undefined,
+  orgRentDueDay?: number | null,
+): number | null {
+  return clampRentDueDay(rentDueDay) ?? clampRentDueDay(orgRentDueDay)
+}
+
+/** Calendar days until the next rent-due chip (same events as the resident strip). */
+export function daysUntilNextResidentRentDue(input: {
+  leaseStartDate?: string | null
+  leaseEndDate?: string | null
+  rentDueDay?: number | null
+  orgRentDueDay?: number | null
+  now?: Date
+}): number | null {
+  const now = input.now ?? new Date()
+  const today = todayIsoDate(now)
+  const events = buildResidentCalendarEvents({
+    leaseStartDate: input.leaseStartDate,
+    leaseEndDate: input.leaseEndDate,
+    rentDueDay: resolveResidentCalendarRentDueDay(input.rentDueDay, input.orgRentDueDay),
+    includeRentReminders: false,
+    now,
+  })
+  const nextDue = nextRentCalendarFocusDate(events, today)
+  if (!nextDue) return null
+  const start = new Date(`${today}T12:00:00`).getTime()
+  const end = new Date(`${nextDue}T12:00:00`).getTime()
+  return Math.round((end - start) / 86_400_000)
+}
+
+export function formatDaysUntilNextResidentRentDueLabel(input: {
+  leaseStartDate?: string | null
+  leaseEndDate?: string | null
+  rentDueDay?: number | null
+  orgRentDueDay?: number | null
+  now?: Date
+}): string {
+  const days = daysUntilNextResidentRentDue(input)
+  if (days == null) return '—'
+  if (days === 0) return 'Today'
+  if (days === 1) return '1 day'
+  return `${days} days`
+}
+
+/** Latest automatic rent reminder send from the operations timeline (date + time). */
+export function formatLastRentReminderSentLabel(
+  events: Array<{ eventType: string; createdAt: string }>,
+): string | null {
+  let latestMs = Number.NaN
+  for (const event of events) {
+    if (event.eventType !== 'rent.reminder_sent') continue
+    const ms = new Date(event.createdAt).getTime()
+    if (!Number.isFinite(ms)) continue
+    if (!Number.isFinite(latestMs) || ms > latestMs) latestMs = ms
+  }
+  if (!Number.isFinite(latestMs)) return null
+  const when = new Date(latestMs)
+  return when.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 /** Monthly rent due + reminders from lease start (or 12 months back) through lease end. */
 export function buildResidentCalendarEvents(input: {
   leaseStartDate?: string | null
   leaseEndDate?: string | null
   rentDueDay?: number | null
   rentReminderCadence?: string | null
+  /** When false, skip cadence rent-reminder chips (sending stays disabled). */
+  includeRentReminders?: boolean
   now?: Date
 }): ResidentCalendarEvent[] {
   const rentDueDay = clampRentDueDay(input.rentDueDay) ?? 1
-  const reminderDays = parseRentReminderCadenceDays(input.rentReminderCadence)
+  const reminderDays =
+    input.includeRentReminders === false
+      ? []
+      : parseRentReminderCadenceDays(input.rentReminderCadence)
   const events: ResidentCalendarEvent[] = []
   const todayIso = todayIsoDate(input.now)
   const thisMonth = {

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import type { ConnectedEmailProvider, ConnectedEmailSettings } from '@/lib/landlordSettings/types'
 import {
   EMAIL_AUTOMATION_TOGGLES,
@@ -201,16 +200,8 @@ export function AdminConnectedEmailSettings() {
 
   return (
     <>
-      <div className="py-6">
-        <Link
-          to="/admin/settings"
-          className="sa-link inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
-        >
-          <span aria-hidden>←</span>
-          Settings
-        </Link>
-
-        <div className="mt-4 max-w-3xl">
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
+        <div className="max-w-3xl">
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
             Connected Email
           </h1>

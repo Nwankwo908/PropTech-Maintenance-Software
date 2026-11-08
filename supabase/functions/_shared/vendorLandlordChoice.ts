@@ -27,6 +27,7 @@ import {
 import { UNKNOWN_CONTACT_INTAKE_KEY } from "./sms/unknownContactIntake.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
+import { landlordThreadCanSend } from "./sms/landlordAskHold.ts"
 import {
   appendLandlordAskTail,
   extractWorkOrderRefFromReply,
@@ -527,6 +528,7 @@ export function buildLandlordVendorChoiceSms(input: {
   selfFixLine?: string | null
   /** One line when a resident photo or video is on this text. */
   residentMediaLine?: string | null
+  entryOkIfAbsent?: boolean | null
 }): string {
   const available = input.reason === "availability"
   const rematch = rematchReasonLine(input.reason)
@@ -552,12 +554,17 @@ export function buildLandlordVendorChoiceSms(input: {
     lines.push("", rematch)
   }
 
+  if (input.entryOkIfAbsent === false) lines.push("", "Do not enter unless someone is home.")
+
   const anyEstimate = input.options.some((o) => Boolean(o.estimateNote?.trim()))
+  if (!available && input.options.every(o => !o.windowLabel?.trim() && !o.estimateNote?.trim())) {
+    lines.push("", "Availability and price still need confirmation.")
+  }
 
   if (input.options.length === 1) {
     const only = input.options[0]
     const name = vendorChoiceDisplayName(only?.name || "your vendor")
-    const verb = available ? "is available" : "can take this job"
+    const verb = available ? "is available" : "matches this repair"
     lines.push("", `${name} ${verb}.`)
     const window = only?.windowLabel?.trim()
     const estimate = only?.estimateNote?.trim()
@@ -1039,19 +1046,27 @@ export async function notifyLandlordVendorChoice(
     Array.isArray(params.visitItems) &&
     params.visitItems.length > 0
 
+  let entryOkIfAbsent: boolean | null = null
   let displayId: number | null = null
   if (!isVisit) {
     try {
       const { data: idRow } = await supabase
         .from("maintenance_requests")
-        .select("display_id, description, issue_headline")
+        .select("display_id, description, issue_headline, location_detail, entry_ok_if_absent")
         .eq("id", params.ticketId)
         .maybeSingle()
       displayId = typeof idRow?.display_id === "number" ? idRow.display_id : null
+      entryOkIfAbsent = typeof idRow?.entry_ok_if_absent === "boolean" ? idRow.entry_ok_if_absent : null
+      const savedHeadline = typeof idRow?.issue_headline === "string" ? idRow.issue_headline.trim() : ""
+      if (savedHeadline) {
+        const savedRoom = typeof idRow?.location_detail === "string" ? idRow.location_detail.trim() : ""
+        issueHeadline = savedRoom && !savedHeadline.toLowerCase().includes(savedRoom.toLowerCase())
+          ? `${savedHeadline} (${savedRoom})` : savedHeadline
+      }
       const urgentText = [idRow?.issue_headline, idRow?.description, issueHeadline]
         .filter(Boolean)
         .join("\n")
-      if (!isUrgentLandlordPick(urgentText)) {
+      if (params.reason && params.reason !== "assign" && !isUrgentLandlordPick(urgentText)) {
         const routed = await routeNonUrgentTicketIntoPickBatch(supabase, {
           landlordId: params.landlordId,
           ticketId: params.ticketId,
@@ -1115,6 +1130,7 @@ export async function notifyLandlordVendorChoice(
       locationLabel,
       displayId,
       selfFixLine,
+      entryOkIfAbsent,
     }
     smsBody = buildLandlordVendorChoiceSms({
       ...choiceSms,
