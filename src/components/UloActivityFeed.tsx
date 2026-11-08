@@ -11,6 +11,7 @@ import { feedRowA11yProps } from '@/lib/landlordFeedCopy'
 import {
   formatTimelineCategoryLabel,
   formatTimelineContextLine,
+  ticketIdFromGraphPayload,
   type PropertyOperationsTimelineEvent,
 } from '@/lib/propertyOperationsGraph'
 
@@ -55,6 +56,13 @@ function isUnitRegisteredFeedEvent(event: PropertyOperationsTimelineEvent): bool
   return event.eventType === 'unit.registered'
 }
 
+/** Ticket id for deep-links — column, payload, or nested legacy metadata. */
+export function feedEventTicketId(event: PropertyOperationsTimelineEvent): string | null {
+  const direct = event.maintenanceRequestId?.trim()
+  if (direct) return direct
+  return ticketIdFromGraphPayload(event.metadata)
+}
+
 export function feedEventOpenTarget(
   event: PropertyOperationsTimelineEvent,
   propertyIdByBuilding: Map<string, string>,
@@ -71,15 +79,44 @@ export function feedEventOpenTarget(
         : '/admin/properties',
     }
   }
+  // Prefer ticket deep-links: Active Tasks can resolve an open run, or fall back
+  // to the request page. Raw run ids often point at closed/cancelled runs and
+  // leave the right rail stuck on “Loading workflow…”.
+  const ticketId = feedEventTicketId(event)
+  if (ticketId) return { kind: 'ticket', ticketId }
   const runId = event.workflowRunId?.trim()
   if (!runId) return null
   return { kind: 'workflow', runId }
+}
+
+/** Split a feed label so WO-XXXX tokens can render as links. */
+export function splitFeedLabelForWorkOrderLinks(
+  label: string,
+): Array<{ text: string; workOrder: boolean }> {
+  const parts: Array<{ text: string; workOrder: boolean }> = []
+  const pattern = /\bWO-[A-Z0-9]{4,}\b/gi
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(label)) != null) {
+    if (match.index > lastIndex) {
+      parts.push({ text: label.slice(lastIndex, match.index), workOrder: false })
+    }
+    parts.push({ text: match[0], workOrder: true })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < label.length) {
+    parts.push({ text: label.slice(lastIndex), workOrder: false })
+  }
+  return parts.length ? parts : [{ text: label, workOrder: false }]
 }
 
 export function activityFeedNavigatePath(
   target: FeedTooltipDestination,
 ): string {
   if (target.kind === 'property') return target.path
+  if (target.kind === 'ticket') {
+    return `/admin/workflows?ticket=${encodeURIComponent(target.ticketId)}`
+  }
   return workflowOperationsPath(target.runId)
 }
 
@@ -170,6 +207,62 @@ function FeedEventInfo({
   )
 }
 
+function FeedLabelWithWorkOrderLinks({
+  label,
+  context,
+  target,
+  onOpen,
+}: {
+  label: string
+  context: string | null
+  target: FeedTooltipDestination | null
+  onOpen: (target: FeedTooltipDestination) => void
+}) {
+  const parts = splitFeedLabelForWorkOrderLinks(label)
+  const hasWoLink = Boolean(target && parts.some((part) => part.workOrder))
+
+  return (
+    <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+      {parts.map((part, index) =>
+        part.workOrder && target ? (
+          <button
+            key={`${part.text}-${index}`}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onOpen(target)
+            }}
+            className="sa-link font-semibold text-[#1447e6] underline decoration-[#1447e6]/40 underline-offset-2 outline-none hover:decoration-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+            aria-label={`Open work order ${part.text}`}
+          >
+            {part.text}
+          </button>
+        ) : (
+          <span key={`${part.text}-${index}`}>{part.text}</span>
+        ),
+      )}
+      {context ? <span className="text-[#6a7282]"> · {context}</span> : null}
+      {target && !hasWoLink ? (
+        <>
+          {' '}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onOpen(target)
+            }}
+            className="sa-link text-[13px] font-semibold text-[#1447e6] underline decoration-[#1447e6]/40 underline-offset-2 outline-none hover:decoration-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+          >
+            View
+          </button>
+        </>
+      ) : null}
+    </p>
+  )
+}
+
 export function UloActivityFeedList({
   events,
   loading,
@@ -223,10 +316,12 @@ export function UloActivityFeedList({
               ) : null}
             </div>
             <div className="min-w-0 flex-1 py-3">
-              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-                {event.label}
-                {context ? <span className="text-[#6a7282]"> · {context}</span> : null}
-              </p>
+              <FeedLabelWithWorkOrderLinks
+                label={event.label}
+                context={context}
+                target={target}
+                onOpen={onOpenTarget}
+              />
               <div className="mt-1 flex items-center gap-2">
                 <span
                   className={[
@@ -248,27 +343,11 @@ export function UloActivityFeedList({
           </>
         )
 
-        if (!showInfo && target) {
-          return (
-            <button
-              key={event.id}
-              type="button"
-              style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
-              className={`sa-enter sa-row flex min-w-0 w-full gap-3 text-left outline-none hover:bg-[#fafafa] ${pad}`}
-              title={spoken.title}
-              aria-label={spoken['aria-label']}
-              onClick={() => onOpenTarget(target)}
-            >
-              {row}
-            </button>
-          )
-        }
-
         return (
           <div
             key={event.id}
             style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
-            className={`sa-enter flex min-w-0 gap-3 ${pad}`}
+            className={`sa-enter flex min-w-0 gap-3 ${pad} ${target ? 'hover:bg-[#fafafa]' : ''}`}
             title={spoken.title}
             aria-label={spoken['aria-label']}
           >

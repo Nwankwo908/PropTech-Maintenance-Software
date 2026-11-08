@@ -17,7 +17,10 @@ export type LandlordFeedCopySource = {
   message?: string | null
   vendorName?: string | null
   building?: string | null
+  residentName?: string | null
   maintenanceRequestId?: string | null
+  /** Preferred visible issue name; WO stays in fullLabel when useful. */
+  issueHeadline?: string | null
   metadata?: Record<string, unknown> | null
 }
 
@@ -82,6 +85,36 @@ function workOrderRef(source: LandlordFeedCopySource): string | null {
   return null
 }
 
+/** Visible issue phrase for feed lines — headline first, WO only as last resort. */
+export function feedIssueLabel(source: LandlordFeedCopySource): string | null {
+  const headline =
+    (source.issueHeadline ?? '').trim() ||
+    metaString(source.metadata, 'issue_headline') ||
+    metaString(source.metadata, 'issue') ||
+    ''
+  if (headline) {
+    return headline.replace(/\s+/g, ' ').replace(/^the\s+/i, (m) => m.toLowerCase())
+  }
+  return workOrderRef(source)
+}
+
+/** Keep WO for tooltip/full when the visible line uses the issue headline. */
+export function feedIssueAndWorkOrder(source: LandlordFeedCopySource): {
+  issue: string | null
+  workOrderRef: string | null
+} {
+  const wo = workOrderRef(source)
+  const headline =
+    (source.issueHeadline ?? '').trim() ||
+    metaString(source.metadata, 'issue_headline') ||
+    metaString(source.metadata, 'issue') ||
+    ''
+  const issue = headline
+    ? headline.replace(/\s+/g, ' ').replace(/^The\s+/, 'the ')
+    : wo
+  return { issue, workOrderRef: wo }
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -99,31 +132,50 @@ export function feedPlaceFromSource(source: LandlordFeedCopySource): string | nu
 export function feedScopeFromSource(source: LandlordFeedCopySource): {
   workOrderRef: string | null
   place: string | null
+  issueHeadline: string | null
 } {
+  const { issue, workOrderRef: wo } = feedIssueAndWorkOrder(source)
   return {
-    workOrderRef: workOrderRef(source),
+    workOrderRef: wo,
     place: feedPlaceFromSource(source),
+    issueHeadline: issue && issue !== wo ? issue : source.issueHeadline?.trim() || null,
   }
 }
 
 /**
- * Ensure every activity-feed line names the work order and property when known.
- * Never collapses away those tokens when the line has to be shortened.
+ * Ensure every activity-feed line names the issue (or WO) and property when known.
+ * Place may stay on the grey context line when dropped from the main sentence.
  */
 export function withFeedScope(
   line: FeedLine,
-  input: { workOrderRef?: string | null; place?: string | null },
+  input: {
+    workOrderRef?: string | null
+    place?: string | null
+    issueHeadline?: string | null
+  },
 ): FeedLine {
+  const issue = (input.issueHeadline ?? '').trim() || null
   const wo = (input.workOrderRef ?? '').trim() || null
+  const subject = issue || wo
   const place = compactAttentionPlace(input.place)
-  if (!wo && !place) return line
+  if (!subject && !place) return line
 
-  const hasWo = Boolean(wo) && new RegExp(`\\b${escapeRegExp(wo!)}\\b`, 'i').test(line.full)
+  const hasSubject =
+    Boolean(subject) && line.full.toLowerCase().includes(subject!.toLowerCase())
   const hasPlace = Boolean(place) && line.full.toLowerCase().includes(place!.toLowerCase())
-  if (hasWo && hasPlace) return line
+  if (hasSubject && hasPlace) {
+    // Prefer issue on the visible line; keep WO on full when both exist.
+    if (issue && wo && line.line.includes(wo) && !line.line.toLowerCase().includes(issue.toLowerCase())) {
+      const swappedLine = line.line.replace(new RegExp(escapeRegExp(wo), 'i'), issue)
+      const swappedFull = line.full.includes(wo) ? line.full : `${line.full} (${wo})`
+      const fitted = fitFeedLine(swappedLine, [], [issue, wo, place ?? ''])
+      return { line: fitted.line, full: swappedFull }
+    }
+    return line
+  }
 
   const scope = [
-    !hasWo && wo ? `for ${wo}` : null,
+    !hasSubject && subject ? `for ${subject}` : null,
     !hasPlace && place ? `at ${place}` : null,
   ]
     .filter(Boolean)
@@ -138,17 +190,26 @@ export function withFeedScope(
     return `${trimmed} ${scope}`
   }
 
-  const full = inject(line.full)
+  // Prefer the already-short visible line for the row; keep WO on full/tooltip only.
+  const visibleBase = inject(line.line)
+  const fullBase = inject(line.full)
+  const full =
+    issue && wo && !fullBase.includes(wo) ? `${fullBase} (${wo})` : fullBase
   const placeWords = place ? place.split(/\s+/).filter(Boolean) : []
-  const protectedTokens = [wo ?? '', ...placeWords, ...protectedTokensIn(full)]
+  const protectedTokens = [
+    subject ?? '',
+    issue ?? '',
+    wo ?? '',
+    ...placeWords,
+    ...protectedTokensIn(full),
+  ]
   const shorter = [
-    inject(line.line),
     inject(line.full.replace(/[;:] .+$/, '').trim()),
-    // Keep action stem + scope when the issue/detail has to drop.
-    `${line.full.split(/\s+/).slice(0, 5).join(' ')} ${scope}`.replace(/\s+/g, ' ').trim(),
+    `${line.line.split(/\s+/).slice(0, 5).join(' ')} ${scope}`.replace(/\s+/g, ' ').trim(),
     scope,
   ]
-  return fitFeedLine(full, shorter, protectedTokens)
+  const fitted = fitFeedLine(visibleBase, shorter, protectedTokens)
+  return { line: fitted.line, full }
 }
 
 function bareWord(word: string): string {
@@ -323,49 +384,104 @@ function cleanDetail(raw: string | null | undefined): string | null {
   return text
 }
 
+function issueSubject(input: {
+  issueHeadline?: string | null
+  workOrderRef?: string | null
+}): {
+  visible: string | null
+  fullSubject: string | null
+  wo: string | null
+  hasIssue: boolean
+} {
+  const wo = input.workOrderRef?.trim() || null
+  const issue = (input.issueHeadline ?? '').trim().replace(/\s+/g, ' ') || null
+  if (issue) {
+    return {
+      visible: issue,
+      fullSubject: wo ? `${issue} (${wo})` : issue,
+      wo,
+      hasIssue: true,
+    }
+  }
+  return { visible: wo, fullSubject: wo, wo, hasIssue: false }
+}
+
+/** Prefer issue on the visible line; keep WO on full/tooltip when present. */
+function withWorkOrderFull(line: FeedLine, wo: string | null): FeedLine {
+  if (!wo) return line
+  if (line.full.includes(wo)) return line
+  return { line: line.line, full: `${line.full} (${wo})` }
+}
+
 export function spendFeedLine(input: {
   amount: unknown
   workOrderRef?: string | null
+  issueHeadline?: string | null
   vendorName?: string | null
   trade?: string | null
 }): FeedLine | null {
   const amount = moneyLabel(input.amount)
   if (!amount) return null
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo } = issueSubject(input)
   const trade = tradeLabel(input.trade)
   const names = vendorLevels(input.vendorName)
   const vendor = names[0] ?? null
-  const withVendor = (name: string | null, includeTrade: boolean) => {
-    const on = wo ? ` on ${wo}` : ''
+  const withVendor = (name: string | null, includeTrade: boolean, subject: string | null) => {
+    const on = subject ? ` on ${subject}` : ''
     const what = includeTrade && trade ? ` ${trade}` : ''
     const who = name ? ` (${name})` : ''
     return `${amount} spent${on}${what}${who}`
   }
-  return fitFeedLine(
-    withVendor(vendor, true),
-    [withVendor(vendor, false), withVendor(null, false)],
-    [amount, wo ?? '', 'spent'],
+  return withWorkOrderFull(
+    fitFeedLine(
+      withVendor(vendor, true, visible),
+      [withVendor(vendor, false, visible), withVendor(null, false, visible), withVendor(null, false, null)],
+      [amount, visible ?? '', wo ?? '', 'spent'],
+    ),
+    wo,
   )
 }
 
 export function estimateApprovedFeedLine(input: {
   amount: unknown
   workOrderRef?: string | null
+  issueHeadline?: string | null
 }): FeedLine | null {
   const amount = moneyLabel(input.amount)
   if (!amount) return null
-  const wo = input.workOrderRef?.trim() || null
-  const base = wo ? `Approved ${amount} estimate for ${wo}` : `Approved ${amount} estimate`
-  return fitFeedLine(`${base}; confirming visit time with tenant`, [base], [amount, wo ?? '', 'approved'])
+  const { visible, wo } = issueSubject(input)
+  const baseVis = visible
+    ? `Approved ${amount} estimate for ${visible}`
+    : `Approved ${amount} estimate`
+  return withWorkOrderFull(
+    fitFeedLine(
+      `${baseVis}; confirming visit time with tenant`,
+      [baseVis],
+      [amount, visible ?? '', wo ?? '', 'approved'],
+    ),
+    wo,
+  )
 }
 
 export function vendorAlertFeedLine(input: {
   vendorName?: string | null
   workOrderRef?: string | null
+  issueHeadline?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo, hasIssue } = issueSubject(input)
   const names = vendorLevels(input.vendorName)
   const name = names[0] ?? 'the vendor'
+  if (hasIssue) {
+    const lineVis = `Sent ${name} the ${visible}`
+    return withWorkOrderFull(
+      fitFeedLine(
+        lineVis,
+        [`Sent the ${visible}`, `Sent a job to ${name}`],
+        [visible ?? '', wo ?? '', name, 'Sent'],
+      ),
+      wo,
+    )
+  }
   const line = wo ? `Sent ${wo} to ${name}` : `Sent a job to ${name}`
   return fitFeedLine(line, wo ? [`Sent ${wo}`] : ['Sent a job'], [wo ?? '', 'Sent'])
 }
@@ -373,9 +489,20 @@ export function vendorAlertFeedLine(input: {
 export function vendorAcceptedFeedLine(input: {
   vendorName?: string | null
   workOrderRef?: string | null
+  issueHeadline?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo, hasIssue } = issueSubject(input)
   const name = vendorLevels(input.vendorName)[0] ?? 'Vendor'
+  if (hasIssue) {
+    return withWorkOrderFull(
+      fitFeedLine(
+        `${name} accepted the ${visible}`,
+        [`${name} accepted the job`],
+        [visible ?? '', wo ?? '', 'accepted'],
+      ),
+      wo,
+    )
+  }
   const line = wo ? `${name} accepted ${wo}` : `${name} accepted the job`
   return fitFeedLine(line, [], [wo ?? '', 'accepted'])
 }
@@ -383,11 +510,20 @@ export function vendorAcceptedFeedLine(input: {
 export function vendorProposedFeedLine(input: {
   vendorName?: string | null
   workOrderRef?: string | null
+  issueHeadline?: string | null
   window?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo, hasIssue } = issueSubject(input)
   const name = vendorLevels(input.vendorName)[0] ?? 'Vendor'
   const window = compactWindow(input.window)
+  if (hasIssue) {
+    const withWindowVis = window ? `${name} proposed ${window} for the ${visible}` : null
+    const fallback = `${name} proposed a time for the ${visible}`
+    return withWorkOrderFull(
+      fitFeedLine(withWindowVis ?? fallback, [fallback], [visible ?? '', wo ?? '', 'proposed']),
+      wo,
+    )
+  }
   const withWindow = window
     ? wo
       ? `${name} proposed ${window} for ${wo}`
@@ -400,9 +536,21 @@ export function vendorProposedFeedLine(input: {
 export function vendorDeclinedFeedLine(input: {
   vendorName?: string | null
   workOrderRef?: string | null
+  issueHeadline?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo, hasIssue } = issueSubject(input)
   const name = vendorLevels(input.vendorName)[0] ?? 'Vendor'
+  if (hasIssue) {
+    const baseVis = `${name} declined the ${visible}`
+    return withWorkOrderFull(
+      fitFeedLine(
+        `${baseVis}; finding another vendor`,
+        [baseVis, `${name} declined the job`],
+        [visible ?? '', wo ?? '', 'declined'],
+      ),
+      wo,
+    )
+  }
   const base = wo ? `${name} declined ${wo}` : `${name} declined the job`
   return fitFeedLine(`${base}; finding another vendor`, [base], [wo ?? '', 'declined'])
 }
@@ -410,26 +558,45 @@ export function vendorDeclinedFeedLine(input: {
 export function vendorRepliedFeedLine(input: {
   vendorName?: string | null
   workOrderRef?: string | null
+  issueHeadline?: string | null
   quote?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo, hasIssue } = issueSubject(input)
   const name = vendorLevels(input.vendorName)[0] ?? 'Vendor'
   const quote = trimQuote(input.quote ?? '', 30)
-  const base = wo ? `${name} replied on ${wo}` : `${name} replied`
+  const base = hasIssue
+    ? `${name} replied on the ${visible}`
+    : wo
+      ? `${name} replied on ${wo}`
+      : `${name} replied`
   const quoted = (snippet: string) => (snippet ? `${base}: "${snippet}"` : base)
   const shorter = [18, 12, 8]
     .map((max) => trimQuote(quote, max))
     .filter((snippet) => snippet && snippet !== quote)
     .map(quoted)
-  return fitFeedLine(quoted(quote), [...shorter, base], [wo ?? '', 'replied'])
+  return withWorkOrderFull(
+    fitFeedLine(quoted(quote), [...shorter, base], [visible ?? '', wo ?? '', 'replied']),
+    hasIssue ? wo : null,
+  )
 }
 
 export function tenantConfirmedFeedLine(input: {
   workOrderRef?: string | null
+  issueHeadline?: string | null
   window?: string | null
+  residentName?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+  const { visible, wo, hasIssue } = issueSubject(input)
   const window = compactWindow(input.window)
+  if (hasIssue) {
+    const who = shortVendorName(input.residentName) || 'the tenant'
+    const withWindowVis = window ? `${who} confirmed ${window} for the ${visible}` : null
+    const fallback = `Confirmed the visit with ${who} for the ${visible}`
+    return withWorkOrderFull(
+      fitFeedLine(withWindowVis ?? fallback, [fallback], [visible ?? '', wo ?? '', 'confirmed']),
+      wo,
+    )
+  }
   const withWindow = window
     ? wo
       ? `Confirmed ${window} visit with the tenant for ${wo}`
@@ -441,8 +608,22 @@ export function tenantConfirmedFeedLine(input: {
   return fitFeedLine(withWindow ?? fallback, withWindow ? [fallback] : [], [wo ?? '', 'confirmed'])
 }
 
-export function windowPassedFeedLine(input: { workOrderRef?: string | null }): FeedLine {
-  const wo = input.workOrderRef?.trim() || null
+export function windowPassedFeedLine(input: {
+  workOrderRef?: string | null
+  issueHeadline?: string | null
+}): FeedLine {
+  const { visible, wo, hasIssue } = issueSubject(input)
+  if (hasIssue) {
+    const baseVis = `Stopped texts on the ${visible} after the visit window passed`
+    return withWorkOrderFull(
+      fitFeedLine(
+        `${baseVis}; no tenant confirmation`,
+        [baseVis],
+        [visible ?? '', wo ?? '', 'passed'],
+      ),
+      wo,
+    )
+  }
   const base = wo
     ? `Stopped texts on ${wo} after the visit window passed`
     : 'Stopped texts after the visit window passed'
@@ -451,10 +632,11 @@ export function windowPassedFeedLine(input: { workOrderRef?: string | null }): F
 
 export function closedFeedLine(input: {
   workOrderRef?: string | null
+  issueHeadline?: string | null
   reason?: string | null
   detail?: string | null
 }): FeedLine {
-  const wo = input.workOrderRef?.trim() || 'Work order'
+  const { visible, wo, hasIssue } = issueSubject(input)
   const reason = (input.reason ?? '').trim()
   const paren = reason.match(/\(([^)]+)\)/)?.[1] ?? null
   const detail = cleanDetail(input.detail) ?? cleanDetail(paren)
@@ -467,9 +649,18 @@ export function closedFeedLine(input: {
     const mapped = CLOSE_CLAUSES[reason.toLowerCase()]
     if (mapped) clause = mapped
   }
-  const line = `Closed ${wo}: ${clause}`
-  const plain = `Closed ${wo}: not a repair`
-  return fitFeedLine(line, clause === 'not a repair' ? [] : [plain], [wo === 'Work order' ? '' : wo, 'closed'])
+  if (hasIssue) {
+    const lineVis = `Closed the ${visible}: ${clause}`
+    const plain = `Closed the ${visible}: not a repair`
+    return withWorkOrderFull(
+      fitFeedLine(lineVis, clause === 'not a repair' ? [] : [plain], [visible ?? '', wo ?? '', 'closed']),
+      wo,
+    )
+  }
+  const subject = wo || 'Work order'
+  const line = `Closed ${subject}: ${clause}`
+  const plain = `Closed ${subject}: not a repair`
+  return fitFeedLine(line, clause === 'not a repair' ? [] : [plain], [wo ?? '', 'closed'])
 }
 
 export function equipmentFeedLine(input: {
@@ -708,6 +899,11 @@ function isCloseEvent(eventType: string): boolean {
 export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | null {
   const type = source.eventType.trim()
   const wo = workOrderRef(source)
+  const issueHeadline =
+    (source.issueHeadline ?? '').trim() ||
+    metaString(source.metadata, 'issue_headline') ||
+    metaString(source.metadata, 'issue') ||
+    null
   const vendor = source.vendorName ?? metaString(source.metadata, 'vendor_name')
   const meta = source.metadata
 
@@ -715,6 +911,7 @@ export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | nul
     return spendFeedLine({
       amount: meta?.total_cost ?? meta?.amount,
       workOrderRef: wo,
+      issueHeadline,
       vendorName: vendor,
       trade: metaString(meta, 'trade') ?? metaString(meta, 'issue_category') ?? metaString(meta, 'service'),
     })
@@ -723,43 +920,57 @@ export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | nul
     return estimateApprovedFeedLine({
       amount: meta?.total_cost ?? meta?.amount,
       workOrderRef: wo,
+      issueHeadline,
     })
   }
-  if (type === 'vendor.alert_sent') return vendorAlertFeedLine({ vendorName: vendor, workOrderRef: wo })
+  if (type === 'vendor.alert_sent') {
+    return vendorAlertFeedLine({ vendorName: vendor, workOrderRef: wo, issueHeadline })
+  }
   if (type === 'vendor.accepted' || (type === 'vendor.replied' && (metaString(meta, 'parsed_action') ?? '').toLowerCase() === 'accept')) {
-    return vendorAcceptedFeedLine({ vendorName: vendor, workOrderRef: wo })
+    return vendorAcceptedFeedLine({ vendorName: vendor, workOrderRef: wo, issueHeadline })
   }
   if (type === 'vendor.declined' || (type === 'vendor.replied' && (metaString(meta, 'parsed_action') ?? '').toLowerCase() === 'decline')) {
-    return vendorDeclinedFeedLine({ vendorName: vendor, workOrderRef: wo })
+    return vendorDeclinedFeedLine({ vendorName: vendor, workOrderRef: wo, issueHeadline })
   }
   if (type === 'vendor.replied') {
     const action = (metaString(meta, 'parsed_action') ?? '').toLowerCase()
     const preview = quoteFrom(source)
     const window = windowFrom(source) ?? (looksLikeVisitWindow(preview) ? preview : null)
     if (action === 'availability' || action === 'reschedule' || window) {
-      return vendorProposedFeedLine({ vendorName: vendor, workOrderRef: wo, window })
+      return vendorProposedFeedLine({ vendorName: vendor, workOrderRef: wo, issueHeadline, window })
     }
-    return vendorRepliedFeedLine({ vendorName: vendor, workOrderRef: wo, quote: preview })
+    return vendorRepliedFeedLine({ vendorName: vendor, workOrderRef: wo, issueHeadline, quote: preview })
   }
   if (
     type === 'maintenance.schedule_confirmed' ||
     type === 'maintenance.schedule_tenant_accepted' ||
     type === 'maintenance.resident_reschedule_confirmed'
   ) {
-    return tenantConfirmedFeedLine({ workOrderRef: wo, window: windowFrom(source) })
+    return tenantConfirmedFeedLine({
+      workOrderRef: wo,
+      issueHeadline,
+      window: windowFrom(source),
+      residentName: source.residentName,
+    })
   }
   if (type === 'maintenance.schedule_fsm_ttl_expired') {
     const effect = (metaString(meta, 'effect') ?? '').toLowerCase()
     const message = source.message ?? ''
     const past =
       effect === 'quiet_expire_past_window' || /past visit window|no vendor sms|closed quietly/i.test(message)
-    if (past) return windowPassedFeedLine({ workOrderRef: wo })
-    const base = wo ? `${wo} visit not confirmed` : 'Visit not confirmed'
-    return fitFeedLine(`${base}; vendor asked for another time`, [base], [wo ?? '', 'confirmed'])
+    if (past) return windowPassedFeedLine({ workOrderRef: wo, issueHeadline })
+    const subject = issueHeadline || wo
+    const base = subject
+      ? issueHeadline
+        ? `${issueHeadline} visit not confirmed`
+        : `${wo} visit not confirmed`
+      : 'Visit not confirmed'
+    return fitFeedLine(`${base}; vendor asked for another time`, [base], [issueHeadline ?? '', wo ?? '', 'confirmed'])
   }
   if (isCloseEvent(type)) {
     return closedFeedLine({
       workOrderRef: wo,
+      issueHeadline,
       reason: closeReason(source),
       detail: metaString(meta, 'detail') ?? metaString(meta, 'photo_detail'),
     })

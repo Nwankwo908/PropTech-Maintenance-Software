@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyFeedTicketEnrichment,
   categorizePropertyOperationsEvent,
   dedupePropertyOperationsEvents,
   formatTimelineContextLine,
   isLandlordFacingFeedEvent,
   selectLandlordFacingFeedEvents,
+  type FeedTicketEnrichment,
   type PropertyOperationsTimelineEvent,
 } from './propertyOperationsGraph'
 
@@ -155,6 +157,48 @@ describe('isLandlordFacingFeedEvent', () => {
         }),
       ),
     ).toBe(true)
+  })
+})
+
+describe('applyFeedTicketEnrichment', () => {
+  it('attaches issue headlines before landlord copy runs', () => {
+    const ticketId = '074b0000-0000-4000-8000-000000000001'
+    const tickets = new Map<string, FeedTicketEnrichment>([
+      [
+        ticketId,
+        {
+          issueHeadline: 'kitchen sink leak',
+          unitLabel: '1',
+          building: '14 Maple Ave',
+          propertyId: 'prop-1',
+          propertyType: 'multifamily',
+          awaitingLandlordChoiceAt: null,
+          vendorWorkStatus: 'accepted',
+          spendStatus: null,
+          scheduleConfirmedAt: null,
+          scheduledAt: null,
+          recognizedSpendAmount: null,
+        },
+      ],
+    ])
+    const enriched = applyFeedTicketEnrichment(
+      [
+        feedEvent({
+          id: 'accept',
+          eventType: 'vendor.accepted',
+          label: 'Vendor accepted the job',
+          maintenanceRequestId: ticketId,
+          vendorName: 'Ecosafe',
+          building: '14 Maple Ave',
+        }),
+      ],
+      tickets,
+    )
+    const selected = selectLandlordFacingFeedEvents(enriched, 5)
+    expect(selected[0]?.label).toMatch(/kitchen sink leak/i)
+    expect(selected[0]?.label).not.toMatch(/WO-074B/)
+    expect(selected[0]?.fullLabel).toMatch(/WO-074B/)
+    expect(selected[0]?.issueHeadline).toBe('kitchen sink leak')
   })
 })
 

@@ -62,12 +62,32 @@ export type PropertyOperationsTimelineEvent = {
   vendorName: string | null
   maintenanceRequestId: string | null
   workflowRunId: string | null
+  /** Linked ticket title for landlord feed lines (preferred over WO-XXXX). */
+  issueHeadline?: string | null
+  /** Property type for SFH unit-omit on the grey context line. */
+  propertyType?: string | null
+  /** Optional “Waiting on …” hint derived from ticket state. */
+  waitingHint?: string | null
   /** Setup-run stamp from metadata when present (isolates Overview during onboarding). */
   onboardingSessionId?: string | null
   /** Source payload kept for landlord copy. Not rendered on its own. */
   metadata?: Record<string, unknown> | null
   /** Full line before a window cut, for title and aria-label. */
   fullLabel?: string | null
+}
+
+export type FeedTicketEnrichment = {
+  issueHeadline: string | null
+  unitLabel: string | null
+  building: string | null
+  propertyId: string | null
+  propertyType: string | null
+  awaitingLandlordChoiceAt: string | null
+  vendorWorkStatus: string | null
+  spendStatus: string | null
+  scheduleConfirmedAt: string | null
+  scheduledAt: string | null
+  recognizedSpendAmount: number | null
 }
 
 export type PropertyOperationsTimelineScope =
@@ -951,6 +971,143 @@ export async function fetchPropertyOperationsTimeline(
   return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
+type MaintenanceTicketFeedRow = {
+  id: string
+  issue_headline: string | null
+  unit: string | null
+  unit_id: string | null
+  property_id: string | null
+  awaiting_landlord_choice_at: string | null
+  vendor_work_status: string | null
+  spend_status: string | null
+  schedule_confirmed_at: string | null
+  scheduled_at: string | null
+  recognized_spend_amount: number | string | null
+}
+
+type PropertyFeedRow = {
+  id: string
+  name: string | null
+  address: string | null
+  property_type: string | null
+}
+
+function asOptionalString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function asOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.replace(/[$,]/g, ''))
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+/** Batch-load ticket fields used by landlord feed copy, place, and waiting hints. */
+export async function enrichTicketsForFeed(
+  ticketIds: string[],
+): Promise<Map<string, FeedTicketEnrichment>> {
+  const out = new Map<string, FeedTicketEnrichment>()
+  const ids = [...new Set(ticketIds.map((id) => id.trim()).filter(Boolean))]
+  if (!supabase || ids.length === 0) return out
+
+  const { data, error } = await supabase
+    .from('maintenance_requests')
+    .select(
+      'id, issue_headline, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount',
+    )
+    .in('id', ids)
+
+  if (error) {
+    console.error('[propertyOperationsGraph] feed ticket enrich', error.message)
+    return out
+  }
+
+  const rows = (data ?? []) as MaintenanceTicketFeedRow[]
+  const propertyIds = [
+    ...new Set(
+      rows
+        .map((row) => asOptionalString(row.property_id))
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ]
+
+  const propertyById = new Map<string, PropertyFeedRow>()
+  if (propertyIds.length > 0) {
+    const { data: properties, error: propertyError } = await supabase
+      .from('properties')
+      .select('id, name, address, property_type')
+      .in('id', propertyIds)
+    if (propertyError) {
+      console.error('[propertyOperationsGraph] feed property enrich', propertyError.message)
+    } else {
+      for (const row of (properties ?? []) as PropertyFeedRow[]) {
+        propertyById.set(String(row.id), row)
+      }
+    }
+  }
+
+  for (const row of rows) {
+    const property = row.property_id ? propertyById.get(row.property_id) : undefined
+    const building =
+      asOptionalString(property?.name) ||
+      asOptionalString(property?.address) ||
+      null
+    out.set(String(row.id), {
+      issueHeadline: asOptionalString(row.issue_headline),
+      unitLabel: asOptionalString(row.unit),
+      building,
+      propertyId: asOptionalString(row.property_id),
+      propertyType: asOptionalString(property?.property_type),
+      awaitingLandlordChoiceAt: asOptionalString(row.awaiting_landlord_choice_at),
+      vendorWorkStatus: asOptionalString(row.vendor_work_status),
+      spendStatus: asOptionalString(row.spend_status),
+      scheduleConfirmedAt: asOptionalString(row.schedule_confirmed_at),
+      scheduledAt: asOptionalString(row.scheduled_at),
+      recognizedSpendAmount: asOptionalNumber(row.recognized_spend_amount),
+    })
+  }
+
+  return out
+}
+
+/** Attach ticket enrichments onto timeline events before landlord copy runs. */
+export function applyFeedTicketEnrichment(
+  events: PropertyOperationsTimelineEvent[],
+  tickets: Map<string, FeedTicketEnrichment>,
+): PropertyOperationsTimelineEvent[] {
+  if (tickets.size === 0) return events
+  return events.map((event) => {
+    const ticketId = event.maintenanceRequestId?.trim()
+    if (!ticketId) return event
+    const ticket = tickets.get(ticketId)
+    if (!ticket) return event
+    return {
+      ...event,
+      issueHeadline: event.issueHeadline?.trim() || ticket.issueHeadline,
+      propertyType: event.propertyType?.trim() || ticket.propertyType,
+      building: event.building?.trim() || ticket.building,
+      unitLabel: event.unitLabel?.trim() || ticket.unitLabel,
+      metadata: {
+        ...(event.metadata ?? {}),
+        ...(ticket.issueHeadline ? { issue_headline: ticket.issueHeadline } : {}),
+        _feed_ticket: {
+          awaitingLandlordChoiceAt: ticket.awaitingLandlordChoiceAt,
+          vendorWorkStatus: ticket.vendorWorkStatus,
+          spendStatus: ticket.spendStatus,
+          scheduleConfirmedAt: ticket.scheduleConfirmedAt,
+          scheduledAt: ticket.scheduledAt,
+          recognizedSpendAmount: ticket.recognizedSpendAmount,
+        },
+      },
+    }
+  })
+}
+
 export async function fetchRecentPropertyOperationsEvents(
   limit = 12,
 ): Promise<PropertyOperationsTimelineEvent[]> {
@@ -1017,17 +1174,20 @@ export async function fetchRecentPropertyOperationsEvents(
     upsertTimelineEvent(merged, mapOperationsGraphRow(row))
   }
 
+  const sorted = [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const ticketIds = sorted
+    .map((event) => event.maintenanceRequestId?.trim())
+    .filter((id): id is string => Boolean(id))
+  const tickets = await enrichTicketsForFeed(ticketIds)
+  const enriched = applyFeedTicketEnrichment(sorted, tickets)
+
   const localState = landlordId ? readLocalOnboardingState(landlordId) : null
   const session =
     localState?.onboardingStatus === 'in_progress'
       ? onboardingSessionFromState(localState)
       : null
 
-  return selectLandlordFacingFeedEvents(
-    [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    limit,
-    { onboardingSession: session },
-  )
+  return selectLandlordFacingFeedEvents(enriched, limit, { onboardingSession: session })
 }
 
 function contextPerson(event: PropertyOperationsTimelineEvent): string | null {

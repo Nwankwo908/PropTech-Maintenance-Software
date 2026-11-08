@@ -62,6 +62,27 @@ describe('landlord feed copy', () => {
       'Ecosafe accepted WO-074B',
     )
     expect(
+      vendorAcceptedFeedLine({
+        vendorName: 'Ecosafe',
+        workOrderRef: 'WO-074B',
+        issueHeadline: 'kitchen sink leak',
+      }).line,
+    ).toBe('Ecosafe accepted the kitchen sink leak')
+    expect(
+      vendorAcceptedFeedLine({
+        vendorName: 'Ecosafe',
+        workOrderRef: 'WO-074B',
+        issueHeadline: 'kitchen sink leak',
+      }).full,
+    ).toMatch(/WO-074B/)
+    expect(
+      vendorAlertFeedLine({
+        vendorName: 'Ecosafe',
+        workOrderRef: 'WO-074B',
+        issueHeadline: 'kitchen sink leak',
+      }).line,
+    ).toBe('Sent Ecosafe the kitchen sink leak')
+    expect(
       vendorProposedFeedLine({ vendorName: 'Ecosafe', workOrderRef: 'WO-074B', window: 'Thursday 9:00 am – 11:00 am' }).line,
     ).toBe('Ecosafe proposed Thu 9–11am for WO-074B')
     expect(vendorDeclinedFeedLine({ vendorName: 'Ecosafe', workOrderRef: 'WO-074B' }).line).toBe(
@@ -202,6 +223,26 @@ describe('landlord feed copy', () => {
         { workOrderRef: 'WO-074B', place: '14 Maple Ave' },
       ).full,
     ).toBe('Opened a work order for WO-074B at 14 Maple Ave')
+    expect(
+      withFeedScope(
+        { line: 'Opened a work order', full: 'Opened a work order' },
+        {
+          workOrderRef: 'WO-074B',
+          issueHeadline: 'kitchen sink leak',
+          place: '14 Maple Ave',
+        },
+      ).line,
+    ).toMatch(/kitchen sink leak/)
+    expect(
+      withFeedScope(
+        { line: 'Opened a work order', full: 'Opened a work order' },
+        {
+          workOrderRef: 'WO-074B',
+          issueHeadline: 'kitchen sink leak',
+          place: '14 Maple Ave',
+        },
+      ).full,
+    ).toMatch(/WO-074B/)
   })
 
   it('keeps long values inside the window without dropping the outcome', () => {
