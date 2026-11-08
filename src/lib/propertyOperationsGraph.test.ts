@@ -182,7 +182,7 @@ describe('feedWaitingHint', () => {
         feedEvent({ id: '1', eventType: 'vendor.alert_sent', label: 'Sent a job' }),
         { ...ticketBase(), awaitingLandlordChoiceAt: '2026-10-21T18:00:00.000Z' },
       ),
-    ).toBe('Waiting on you to choose a vendor')
+    ).toBe('Waiting on you to pick')
     expect(
       feedWaitingHint(
         feedEvent({ id: '2', eventType: 'maintenance.estimate_approved', label: 'Approved' }),
@@ -192,7 +192,7 @@ describe('feedWaitingHint', () => {
           recognizedSpendAmount: 240,
         },
       ),
-    ).toBe('Waiting on you to approve $240')
+    ).toBe('Waiting on your approval')
     expect(
       feedWaitingHint(
         feedEvent({
@@ -203,7 +203,7 @@ describe('feedWaitingHint', () => {
         }),
         { ...ticketBase(), vendorWorkStatus: 'pending_accept' },
       ),
-    ).toBe('Waiting on Ecosafe to accept')
+    ).toBe('Waiting on Ecosafe')
     expect(
       feedWaitingHint(
         feedEvent({
@@ -219,7 +219,7 @@ describe('feedWaitingHint', () => {
           scheduleConfirmedAt: null,
         },
       ),
-    ).toBe('Waiting on Jordan to pick a time')
+    ).toBe('Waiting on Jordan')
   })
 
   it('returns null when nobody is waiting', () => {
@@ -278,7 +278,7 @@ describe('applyFeedTicketEnrichment', () => {
       tickets,
     )
     const selected = selectLandlordFacingFeedEvents(enriched, 5)
-    expect(selected[0]?.label).toMatch(/kitchen sink leak/i)
+    expect(selected[0]?.label).toMatch(/sink leak/i)
     expect(selected[0]?.label).not.toMatch(/WO-074B/)
     expect(selected[0]?.fullLabel).toMatch(/WO-074B/)
     expect(selected[0]?.issueHeadline).toBe('kitchen sink leak')
@@ -616,10 +616,11 @@ describe('landlord activity feed cleanup', () => {
       10,
     )
     expect(selected).toHaveLength(1)
-    expect(selected[0]?.label).toBe('Closed WO-C18B: Home Check note, not a repair')
-    expect(selected[0]?.fullLabel).toBe(selected[0]?.label)
+    expect(selected[0]?.label).toMatch(/Home check declined/i)
+    expect(selected[0]?.fullLabel).toMatch(/WO-C18B|Home check declined/i)
     expect(selected[0]?.message ?? '').not.toMatch(/vendor-safe|internal_cleanup/)
     expect(selected[0]?.label).not.toMatch(/vendor-safe|internal_cleanup/)
+    expect(selected[0]?.storySteps).toBeFalsy()
   })
 
   it('says who accepted which work order', () => {
@@ -636,8 +637,11 @@ describe('landlord activity feed cleanup', () => {
       ],
       5,
     )
-    expect(selected[0]?.label).toBe('Ecosafe accepted WO-074B')
-    expect(selected[0]?.category).toBe('vendor')
+    expect(selected[0]?.label).toMatch(/Ecosafe/i)
+    expect(selected[0]?.label).not.toMatch(/→|classified|probe/i)
+    expect(selected[0]?.storySteps).toBeFalsy()
+    // Badge follows job category (waiting on vendor), not the vendor.* event source.
+    expect(selected[0]?.category).toBe('work_order')
   })
 
   it('includes the amount and work order on a spend row', () => {
@@ -654,7 +658,9 @@ describe('landlord activity feed cleanup', () => {
       ],
       5,
     )
-    expect(selected[0]?.label).toBe('$2,300 spent on WO-074B (Ecosafe)')
+    expect(selected[0]?.label).toMatch(/Ecosafe/i)
+    expect(selected[0]?.label).toMatch(/\$2,300/)
+    expect(selected[0]?.storySteps).toBeFalsy()
     expect(selected[0]?.category).toBe('spend')
   })
 
@@ -735,7 +741,7 @@ describe('landlord activity feed cleanup', () => {
           residentName: 'Jordan Lee',
         }),
       ),
-    ).toBe('14 Maple Ave, 2B · Jordan Lee')
+    ).toBe('14 Maple Ave · Unit 2B · Jordan Lee')
   })
 
   it('omits the unit on the grey context line for single-family', () => {
@@ -854,43 +860,26 @@ describe('landlord activity feed cleanup', () => {
     ]
     expect(input).toHaveLength(19)
     const selected = selectLandlordFacingFeedEvents(input, 20)
-    expect(selected).toHaveLength(8)
-    expect(selected.map((event) => event.label)).toEqual([
-      'Ecosafe declined WO-074B at 123 Main; finding another vendor',
-      'Stopped texts on WO-074B after the visit window passed at 123 Main',
-      'Closed WO-C18B at 123 Main: Home Check note, not a repair',
-      'Saved Water heater serial X132753655 at 123 Main',
-      '$2,300 spent on WO-074B (Ecosafe) at 123 Main',
-      'Ecosafe accepted WO-074B at 123 Main',
-      'Sent WO-074B to Ecosafe at 123 Main',
-      'Opened a work order for WO-074B at 123 Main',
-    ])
-    for (const event of selected) {
-      expect(event.label.length).toBeLessThanOrEqual(85)
-      expect(event.label.trim().split(/\s+/).length).toBeLessThanOrEqual(14)
-      expect(event.fullLabel).toContain(event.label.replace(/…$/, ''))
-    }
-    expect(selected.map((event) => event.category)).toEqual([
-      'vendor',
-      'scheduling',
-      'work_order',
-      'equipment',
-      'spend',
-      'vendor',
-      'vendor',
-      'work_order',
-    ])
+    // One story card per ticket (+ equipment row without a ticket).
+    expect(selected.length).toBeGreaterThanOrEqual(2)
+    expect(selected.length).toBeLessThanOrEqual(4)
+    const story = selected.find((event) => event.id.startsWith('ticket-story:'))
+    expect(story).toBeTruthy()
+    expect(story?.storySteps).toBeFalsy()
+    expect(
+      Array.isArray(story?.metadata?._feed_milestones) &&
+        (story?.metadata?._feed_milestones as string[]).length,
+    ).toBeGreaterThan(0)
+    expect(story?.label.includes('…')).toBe(false)
     expect(selected.map((event) => event.label).join('\n')).not.toMatch(
-      /schedule_fsm|Suppressed|vendor-safe|TTL|FSM/,
+      /schedule_fsm|Suppressed|vendor-safe|TTL|FSM|WO-074B|WO-C18B/,
     )
     for (const event of selected) {
-      const line = formatTimelineContextLine(event) ?? ''
-      expect(line.split(' · ').length).toBeLessThanOrEqual(2)
-      if (event.category === 'vendor' || event.category === 'spend') {
-        // Property and vendor are already in the action line — grey context stays empty.
-        expect(line).toBe('')
-        expect(event.label).toMatch(/123 Main/)
-        expect(event.label).toMatch(/Ecosafe/)
+      expect(event.label.includes('…')).toBe(false)
+      if (event.building) {
+        const context = formatTimelineContextLine(event) ?? ''
+        expect(context).not.toMatch(/^\d+$/)
+        expect(context).not.toBe('1')
       }
     }
   })

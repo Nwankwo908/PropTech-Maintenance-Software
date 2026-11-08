@@ -17,6 +17,7 @@ import {
   isPipelineOnlyLandlordFeedCopy,
   isVisibleLandlordTimelineDescription,
   landlordFeedHiddenEventTypes,
+  looksLikeDiagnosticLandlordFeedCopy,
 } from '@/lib/landlordFacingTimeline'
 import {
   fallbackFeedLine,
@@ -33,9 +34,19 @@ import {
 } from '@/lib/onboarding/session'
 import { supabase } from '@/lib/supabase'
 import {
-  formatBareUnitLabel,
+  formatUnitReference,
   shouldOmitUnitReference,
 } from '@shared/properties/unitLabelDisplay'
+import {
+  buildFeedFactSheet,
+  fallbackFeedCardCopy,
+  feedFactsHash,
+  nonJobFeedCardCopy,
+  type FeedCardCopyCache,
+  type FeedCardStatus,
+  type FeedFactSheet,
+  type FeedMilestoneEvent,
+} from '@shared/activityFeed/feedFactSheet'
 
 export type PropertyOperationsTimelineCategory =
   | 'spend'
@@ -73,6 +84,8 @@ export type PropertyOperationsTimelineEvent = {
   propertyType?: string | null
   /** Optional “Waiting on …” hint derived from ticket state. */
   waitingHint?: string | null
+  /** Oldest→newest short steps when this row is a per-ticket story card. */
+  storySteps?: string[] | null
   /** Setup-run stamp from metadata when present (isolates Overview during onboarding). */
   onboardingSessionId?: string | null
   /** Source payload kept for landlord copy. Not rendered on its own. */
@@ -93,6 +106,57 @@ export type FeedTicketEnrichment = {
   scheduleConfirmedAt: string | null
   scheduledAt: string | null
   recognizedSpendAmount: number | null
+  estimateAmount?: number | null
+  completedAt?: string | null
+  cancelledAt?: string | null
+  /** Cached AI/fallback card copy from maintenance_requests.feed_card_copy. */
+  feedCardCopy?: FeedCardCopyCache | null
+}
+
+function feedBadgeCategoryFromStatus(
+  status: FeedCardStatus,
+): PropertyOperationsTimelineCategory {
+  if (status === 'estimate_pending' || status === 'invoice_pending') return 'spend'
+  if (status === 'visit_scheduled') return 'scheduling'
+  return 'work_order'
+}
+
+function resolveFeedCardFromTicket(
+  event: PropertyOperationsTimelineEvent,
+  ticket?: FeedTicketEnrichment | null,
+  milestoneEvents: FeedMilestoneEvent[] = [],
+): { facts: FeedFactSheet; copy: { headline: string; status_line: string }; hash: string } {
+  const bits = ticket ?? feedTicketBitsFromMetadata(event.metadata)
+  const facts = buildFeedFactSheet(
+    {
+      issueHeadline: event.issueHeadline ?? bits?.issueHeadline,
+      building: event.building ?? bits?.building,
+      unitLabel: event.unitLabel ?? bits?.unitLabel,
+      propertyType: event.propertyType ?? bits?.propertyType,
+      vendorName: event.vendorName,
+      residentName: event.residentName,
+      awaitingLandlordChoiceAt: bits?.awaitingLandlordChoiceAt,
+      vendorWorkStatus: bits?.vendorWorkStatus,
+      spendStatus: bits?.spendStatus,
+      scheduleConfirmedAt: bits?.scheduleConfirmedAt,
+      scheduledAt: bits?.scheduledAt ?? event.scheduledAt,
+      recognizedSpendAmount: bits?.recognizedSpendAmount,
+      estimateAmount: bits?.estimateAmount,
+      completedAt: bits?.completedAt,
+      cancelledAt: bits?.cancelledAt,
+    },
+    milestoneEvents,
+  )
+  const hash = feedFactsHash(facts)
+  const cached = bits?.feedCardCopy
+  if (cached?.facts_hash === hash && cached.headline?.trim()) {
+    return {
+      facts,
+      copy: { headline: cached.headline, status_line: cached.status_line ?? '' },
+      hash,
+    }
+  }
+  return { facts, copy: fallbackFeedCardCopy(facts), hash }
 }
 
 export type PropertyOperationsTimelineScope =
@@ -227,6 +291,8 @@ export function categorizePropertyOperationsEvent(
   if (domain === 'move_out') return 'move_out'
   if (domain === 'maintenance' || domain === 'workflow') return 'work_order'
   if (domain === 'ask_ulo' || domain === 'document') return 'admin'
+  // Landlord attention alerts about a live job are work-order outcomes, not Admin.
+  if (type === 'landlord.attention_alert_sent' || domain === 'attention') return 'work_order'
 
   const systemSource = source === 'automation' || source === 'edge_function' || source === 'system'
   const landlordAction =
@@ -235,10 +301,9 @@ export function categorizePropertyOperationsEvent(
       domain === 'broadcast' ||
       domain === 'landlord' ||
       domain === 'unit' ||
-      domain === 'attention' ||
       domain === 'lease')
   if (landlordAction) return 'admin'
-  if (domain === 'broadcast' || domain === 'landlord' || domain === 'attention') return 'admin'
+  if (domain === 'broadcast' || domain === 'landlord') return 'admin'
   return 'work_order'
 }
 
@@ -539,7 +604,11 @@ function mergeTenantOnboardingGroup(
 }
 
 function isMergedLandlordFacingFeedCard(event: PropertyOperationsTimelineEvent): boolean {
-  return event.id.startsWith('tenant-onboarding:') || event.id.startsWith('consolidated:')
+  return (
+    event.id.startsWith('tenant-onboarding:') ||
+    event.id.startsWith('consolidated:') ||
+    event.id.startsWith('ticket-story:')
+  )
 }
 
 /**
@@ -557,6 +626,24 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   // Even if event_type is not a known pipeline id, Classified/Routed/Logged-only
   // copy must never surface on the landlord feed.
   if (isPipelineOnlyLandlordFeedCopy(event.label, event.message)) return false
+  // Hide diagnostic copy and raw dotted-name fallbacks with nothing better to show.
+  const label = event.label?.trim() || ''
+  const message = event.message?.trim() || ''
+  if (looksLikeDiagnosticLandlordFeedCopy(message) || looksLikeDiagnosticLandlordFeedCopy(label)) {
+    return false
+  }
+  if (
+    looksLikeRawEventTypeLabel(event.eventType, label) &&
+    !hasMappedEventTypeLabel(event.eventType)
+  ) {
+    if (
+      !message ||
+      !isVisibleLandlordTimelineDescription(message) ||
+      looksLikeRawEventTypeLabel(event.eventType, message)
+    ) {
+      return false
+    }
+  }
   if (!landlordHasPayments(getActiveLandlordId()) && isPaymentGraphEventType(event.eventType)) {
     return false
   }
@@ -569,6 +656,7 @@ function looksLikeRawEventTypeLabel(eventType: string, label: string): boolean {
 }
 
 const DEDUPE_WINDOW_MS = 5_000
+const NEAR_DUPLICATE_WINDOW_MS = 10 * 60_000
 const PAIR_WINDOW_MS = 60_000
 
 function eventTime(iso: string): number {
@@ -618,23 +706,63 @@ function preferRicherFeedEvent(
   }
 }
 
+function nearDuplicateMeaning(
+  a: PropertyOperationsTimelineEvent,
+  b: PropertyOperationsTimelineEvent,
+): boolean {
+  const labelA = normalizeFeedMessage(a.label || a.message)
+  const labelB = normalizeFeedMessage(b.label || b.message)
+  if (!labelA || !labelB) return false
+  if (labelA === labelB) return true
+  // Same ticket + same semantic family (response-time / accepted / capture ended).
+  const families: Array<{ re: RegExp; key: string }> = [
+    { re: /didn'?t reply|response time expired|no vendor reply|sla.?auto.?reassign/i, key: 'no_reply' },
+    { re: /\baccepted\b/i, key: 'accepted' },
+    { re: /finished .+photo|photo capture ended|equipment photo scan/i, key: 'capture_ended' },
+    { re: /started .+photo|photo capture started/i, key: 'capture_started' },
+  ]
+  for (const family of families) {
+    if (family.re.test(labelA) && family.re.test(labelB)) return true
+  }
+  return false
+}
+
 export function isDuplicateFeedEvent(
   a: PropertyOperationsTimelineEvent,
   b: PropertyOperationsTimelineEvent,
 ): boolean {
   if (a.id && a.id === b.id) return true
-  if (a.eventType !== b.eventType) return false
   if (a.workflowRunId && b.workflowRunId && a.workflowRunId !== b.workflowRunId) return false
   const ticketA = a.maintenanceRequestId ?? ''
   const ticketB = b.maintenanceRequestId ?? ''
   if (ticketA && ticketB && ticketA !== ticketB) return false
-  if (!withinWindow(a.createdAt, b.createdAt, DEDUPE_WINDOW_MS)) return false
-  const messageA = normalizeFeedMessage(a.message)
-  const messageB = normalizeFeedMessage(b.message)
-  if (messageA && messageB && messageA !== messageB && !messageA.startsWith(messageB) && !messageB.startsWith(messageA)) {
-    return false
+
+  if (a.eventType === b.eventType) {
+    if (!withinWindow(a.createdAt, b.createdAt, NEAR_DUPLICATE_WINDOW_MS)) return false
+    const messageA = normalizeFeedMessage(a.message)
+    const messageB = normalizeFeedMessage(b.message)
+    if (
+      messageA &&
+      messageB &&
+      messageA !== messageB &&
+      !messageA.startsWith(messageB) &&
+      !messageB.startsWith(messageA) &&
+      !nearDuplicateMeaning(a, b)
+    ) {
+      // Same type + ticket within 10m still collapses even when wording differs slightly.
+      if (ticketA && ticketB && withinWindow(a.createdAt, b.createdAt, NEAR_DUPLICATE_WINDOW_MS)) {
+        return true
+      }
+      if (!withinWindow(a.createdAt, b.createdAt, DEDUPE_WINDOW_MS)) return false
+    }
+    return true
   }
-  return true
+
+  // Near-duplicate meaning across different event types (same ticket, 10 minutes).
+  if (ticketA && ticketB && withinWindow(a.createdAt, b.createdAt, NEAR_DUPLICATE_WINDOW_MS)) {
+    return nearDuplicateMeaning(a, b)
+  }
+  return false
 }
 
 export function dedupePropertyOperationsEvents(
@@ -671,9 +799,66 @@ function isWorkOrderCloseEvent(eventType: string): boolean {
   )
 }
 
+function nonJobLandlordFeedLine(event: PropertyOperationsTimelineEvent): FeedLine | null {
+  const type = event.eventType.trim().toLowerCase()
+  const vendor = event.vendorName
+  const resident = event.residentName
+  const message = (event.message ?? event.label ?? '').trim()
+
+  if (type === 'vendor.onboarding_overridden' || /activated without verification/i.test(message)) {
+    const copy = nonJobFeedCardCopy({ kind: 'vendor_activated_without_docs', vendorName: vendor })
+    return { line: copy.headline, full: copy.headline }
+  }
+  if (
+    type === 'vendor.verification_verified' ||
+    type === 'vendor.activated' ||
+    type === 'vendor.onboarding_completed' ||
+    (/activated\b/i.test(message) && type.startsWith('vendor.') && !/without/i.test(message))
+  ) {
+    const copy = nonJobFeedCardCopy({ kind: 'vendor_activated', vendorName: vendor })
+    return { line: copy.headline, full: copy.headline }
+  }
+  if (
+    type === 'home_check.declined' ||
+    type === 'home_check.vendor_declined' ||
+    (/home check/i.test(message) && /declined/i.test(message))
+  ) {
+    const copy = nonJobFeedCardCopy({
+      kind: 'home_check_declined',
+      tenantName: resident ?? vendor,
+    })
+    return { line: copy.headline, full: copy.headline }
+  }
+  if (
+    /photo looked fine|no repair was opened|no issues/i.test(message) ||
+    (type.startsWith('inspection.') && /no issue/i.test(message))
+  ) {
+    const appliance =
+      (typeof event.metadata?.appliance_label === 'string' && event.metadata.appliance_label) ||
+      (typeof event.metadata?.appliance === 'string' && event.metadata.appliance) ||
+      'Photo'
+    const copy = nonJobFeedCardCopy({ kind: 'photo_no_issues', appliance })
+    return { line: copy.headline, full: copy.headline }
+  }
+  return null
+}
+
 function landlordFacingEventLabel(event: PropertyOperationsTimelineEvent): FeedLine {
   const scope = feedScopeFromSource(event)
   const scoped = (line: FeedLine) => withFeedScope(line, scope)
+
+  // Ticket story cards / enriched tickets: fact-sheet headline (cached AI or fallback).
+  if (event.maintenanceRequestId && event.metadata?._feed_card_headline) {
+    const headline = String(event.metadata._feed_card_headline)
+    const full =
+      typeof event.metadata._feed_card_full === 'string' && event.metadata._feed_card_full.trim()
+        ? String(event.metadata._feed_card_full)
+        : headline
+    return scoped({ line: headline, full })
+  }
+
+  const nonJob = nonJobLandlordFeedLine(event)
+  if (nonJob) return scoped(nonJob)
 
   const specific = landlordFeedLine(event)
   if (specific) return scoped(specific)
@@ -742,21 +927,44 @@ function applyLandlordFacingCopy(
   const metadata = { ...(event.metadata ?? {}) }
   delete metadata.reason
   delete metadata._paired_reason
-  const waitingHint =
-    event.waitingHint?.trim() ||
-    feedWaitingHint({ ...event, metadata }) ||
-    null
+  const badgeFromFacts =
+    typeof metadata._feed_badge_category === 'string'
+      ? (metadata._feed_badge_category as PropertyOperationsTimelineCategory)
+      : null
   return {
     ...event,
     label: copy.line,
     fullLabel: copy.full,
     message,
     metadata,
-    waitingHint,
+    // Waiting hints are attached once after copy, newest ticket row only.
+    waitingHint: null,
+    // Job cards: badge follows ticket category (spend / scheduling / work order),
+    // not whichever event happened to be newest.
     category: isMergedLandlordFacingFeedCard(event)
       ? event.category
-      : categorizePropertyOperationsEvent(event.eventType, event.eventSource),
+      : badgeFromFacts ??
+        categorizePropertyOperationsEvent(event.eventType, event.eventSource),
   }
+}
+
+/** Attach Waiting on… only on the newest row per work order (story card or lone row). */
+export function attachWaitingHintsOnce(
+  events: PropertyOperationsTimelineEvent[],
+): PropertyOperationsTimelineEvent[] {
+  const newestTicketSeen = new Set<string>()
+  return events.map((event) => {
+    const ticketId = event.maintenanceRequestId?.trim()
+    if (!ticketId) return { ...event, waitingHint: null }
+    if (newestTicketSeen.has(ticketId)) return { ...event, waitingHint: null }
+    newestTicketSeen.add(ticketId)
+    const fromFacts =
+      typeof event.metadata?._feed_status_line === 'string'
+        ? event.metadata._feed_status_line.trim()
+        : ''
+    const hint = fromFacts || feedWaitingHint(event)
+    return { ...event, waitingHint: hint || null }
+  })
 }
 
 /** Collapse setup/onboarding noise, then keep only landlord-facing outcome lines. */
@@ -781,10 +989,255 @@ export function selectLandlordFacingFeedEvents(
       )
     : events
 
-  return consolidateFeedEvents(mergePairedFeedStories(dedupePropertyOperationsEvents(scoped)))
-    .filter(isLandlordFacingFeedEvent)
-    .map(applyLandlordFacingCopy)
-    .slice(0, Math.max(limit, 0))
+  return attachWaitingHintsOnce(
+    consolidateFeedEvents(mergePairedFeedStories(dedupePropertyOperationsEvents(scoped)))
+      .filter(isLandlordFacingFeedEvent)
+      .map(applyLandlordFacingCopy),
+  ).slice(0, Math.max(limit, 0))
+}
+
+function storyStepLabel(event: PropertyOperationsTimelineEvent): string {
+  const vendor = shortVendorName(event.vendorName)
+  const type = event.eventType
+  const amount =
+    typeof event.metadata?.total_cost === 'number' || typeof event.metadata?.amount === 'number'
+      ? `$${Math.round(Number(event.metadata?.total_cost ?? event.metadata?.amount)).toLocaleString('en-US')}`
+      : null
+  if (type === 'vendor.alert_sent') return vendor ? `Sent to ${vendor}` : 'Sent to vendor'
+  if (type === 'vendor.accepted' || (type === 'vendor.replied' && /accept/i.test(String(event.metadata?.parsed_action ?? '')))) {
+    return 'Accepted'
+  }
+  if (type === 'vendor.declined' || (type === 'vendor.replied' && /decline/i.test(String(event.metadata?.parsed_action ?? '')))) {
+    return 'Declined'
+  }
+  if (
+    type === 'maintenance.sla_auto_reassigned' ||
+    type === 'maintenance.sla_expired_needs_vendor' ||
+    /didn'?t reply|no reply|response time expired/i.test(event.label || event.message || '')
+  ) {
+    return 'No reply'
+  }
+  if (type === 'landlord.attention_alert_sent') return 'Asked you'
+  if (type === 'maintenance.created' || type === 'maintenance.request_submitted') return 'Opened'
+  if (type === 'maintenance.completed') return 'Work done'
+  if (type === 'maintenance.estimate_approved') return amount ? `Estimate ${amount}` : 'Estimate ok'
+  if (type === 'maintenance.estimate_declined' || type === 'maintenance.estimate_rejected') {
+    return amount ? `Estimate ${amount}` : 'Estimate no'
+  }
+  if (type === 'maintenance.spend_recorded') return amount ? `Invoice ${amount}` : 'Invoice'
+  if (type.startsWith('inspection.capture')) return 'Scan'
+  if (type.includes('schedule')) return 'Visit set'
+  const mapped = hasMappedEventTypeLabel(type) ? formatEventTypeLabel(type) : null
+  if (mapped && !looksLikeRawEventTypeLabel(type, mapped)) {
+    return mapped.split(/\s+/).slice(0, 3).join(' ')
+  }
+  return (event.label || type).replace(/\s+/g, ' ').trim().split(/\s+/).slice(0, 3).join(' ')
+}
+
+/** Keep ≤3 trail steps (1–3 words each); collapse older history as "+N". */
+export function compactFeedTrailSteps(steps: string[]): string[] | null {
+  const cleaned = steps
+    .map((step) => step.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((step) => step.split(/\s+/).slice(0, 3).join(' '))
+  if (cleaned.length <= 1) return null
+  if (cleaned.length <= 3) return cleaned
+  const kept = cleaned.slice(0, 2)
+  const overflow = cleaned.length - kept.length
+  return [...kept, `+${overflow}`]
+}
+
+/** Infer live ticket fields from the event group when enrichment is thin (tests / offline). */
+function inferTicketBitsFromEventGroup(
+  group: PropertyOperationsTimelineEvent[],
+  base: FeedTicketEnrichment | null,
+): FeedTicketEnrichment {
+  const bits: FeedTicketEnrichment = {
+    issueHeadline: base?.issueHeadline ?? null,
+    unitLabel: base?.unitLabel ?? null,
+    building: base?.building ?? null,
+    propertyId: base?.propertyId ?? null,
+    propertyType: base?.propertyType ?? null,
+    awaitingLandlordChoiceAt: base?.awaitingLandlordChoiceAt ?? null,
+    vendorWorkStatus: base?.vendorWorkStatus ?? null,
+    spendStatus: base?.spendStatus ?? null,
+    scheduleConfirmedAt: base?.scheduleConfirmedAt ?? null,
+    scheduledAt: base?.scheduledAt ?? null,
+    recognizedSpendAmount: base?.recognizedSpendAmount ?? null,
+    estimateAmount: base?.estimateAmount ?? null,
+    completedAt: base?.completedAt ?? null,
+    cancelledAt: base?.cancelledAt ?? null,
+    feedCardCopy: base?.feedCardCopy ?? null,
+  }
+
+  for (const row of group) {
+    const type = row.eventType.trim().toLowerCase()
+    const meta = row.metadata ?? {}
+    const amount =
+      asOptionalNumber(meta.total_cost) ??
+      asOptionalNumber(meta.amount) ??
+      asOptionalNumber(meta.estimate_amount)
+    if (type.includes('spend') || type.includes('invoice')) {
+      bits.spendStatus = bits.spendStatus ?? 'invoice_pending'
+      if (amount != null) bits.recognizedSpendAmount = bits.recognizedSpendAmount ?? amount
+    }
+    if (type.includes('estimate') && (type.includes('pending') || type.includes('submitted'))) {
+      bits.spendStatus = bits.spendStatus ?? 'pending_approval'
+      if (amount != null) bits.estimateAmount = bits.estimateAmount ?? amount
+    }
+    if (type.includes('estimate') && (type.includes('declined') || type.includes('rejected'))) {
+      bits.spendStatus = bits.spendStatus ?? 'pending_approval'
+      if (amount != null) bits.estimateAmount = bits.estimateAmount ?? amount
+      bits.awaitingLandlordChoiceAt = bits.awaitingLandlordChoiceAt ?? row.createdAt
+    }
+    if (
+      type === 'vendor.accepted' ||
+      (type === 'vendor.replied' &&
+        String(meta.parsed_action ?? '').toLowerCase() === 'accept')
+    ) {
+      bits.vendorWorkStatus = bits.vendorWorkStatus ?? 'accepted'
+    }
+    if (
+      type === 'vendor.declined' ||
+      (type === 'vendor.replied' &&
+        String(meta.parsed_action ?? '').toLowerCase() === 'decline')
+    ) {
+      bits.vendorWorkStatus = bits.vendorWorkStatus ?? 'declined'
+      bits.awaitingLandlordChoiceAt = bits.awaitingLandlordChoiceAt ?? row.createdAt
+    }
+    if (
+      type === 'maintenance.sla_auto_reassigned' ||
+      type === 'maintenance.sla_expired_needs_vendor' ||
+      type === 'landlord.attention_alert_sent'
+    ) {
+      bits.awaitingLandlordChoiceAt = bits.awaitingLandlordChoiceAt ?? row.createdAt
+    }
+    if (type.includes('schedule') && type.includes('confirm')) {
+      bits.scheduleConfirmedAt = bits.scheduleConfirmedAt ?? row.createdAt
+      bits.scheduledAt = bits.scheduledAt ?? row.scheduledAt ?? row.createdAt
+    }
+    if (type.includes('completed')) {
+      bits.completedAt = bits.completedAt ?? row.createdAt
+    }
+    if (
+      type.includes('terminat') ||
+      type.includes('cancel') ||
+      type.includes('archiv')
+    ) {
+      bits.cancelledAt = bits.cancelledAt ?? row.createdAt
+    }
+    if (!bits.issueHeadline && row.issueHeadline) bits.issueHeadline = row.issueHeadline
+  }
+  return bits
+}
+
+function homeCheckDeclineCopy(
+  group: PropertyOperationsTimelineEvent[],
+): { headline: string; full: string } | null {
+  for (const row of group) {
+    const paired =
+      typeof row.metadata?._paired_reason === 'string' ? row.metadata._paired_reason : null
+    const reason =
+      paired ||
+      (typeof row.metadata?.reason === 'string' ? row.metadata.reason : null) ||
+      row.message ||
+      ''
+    if (/home check/i.test(reason)) {
+      const who =
+        row.residentName ||
+        row.vendorName ||
+        (reason.match(/by\s+([A-Z][a-z]+)/)?.[1] ?? null)
+      const copy = nonJobFeedCardCopy({
+        kind: 'home_check_declined',
+        tenantName: who,
+      })
+      // Prefer concise "Home check declined" when no clear person, matching prior template.
+      const headline = who ? copy.headline : 'Home check declined'
+      const wo =
+        row.maintenanceRequestId != null
+          ? `WO-${row.maintenanceRequestId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
+          : null
+      return { headline, full: wo ? `${headline} (${wo})` : headline }
+    }
+  }
+  return null
+}
+
+/** One Activity Feed card per work order: fact-sheet headline (no arrow trails). */
+export function groupTicketFeedStories(
+  events: PropertyOperationsTimelineEvent[],
+): PropertyOperationsTimelineEvent[] {
+  const passthrough: PropertyOperationsTimelineEvent[] = []
+  const byTicket = new Map<string, PropertyOperationsTimelineEvent[]>()
+
+  for (const event of events) {
+    const ticketId = event.maintenanceRequestId?.trim()
+    if (!ticketId || isMergedLandlordFacingFeedCard(event)) {
+      passthrough.push(event)
+      continue
+    }
+    const list = byTicket.get(ticketId) ?? []
+    list.push(event)
+    byTicket.set(ticketId, list)
+  }
+
+  const stories: PropertyOperationsTimelineEvent[] = []
+  for (const [ticketId, group] of byTicket) {
+    const newestFirst = [...group].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    const oldestFirst = [...newestFirst].reverse()
+    const latest = preferRicherFeedEvent(
+      newestFirst[0]!,
+      newestFirst.reduce((best, row) => preferRicherFeedEvent(best, row), newestFirst[0]!),
+    )
+    const milestoneEvents: FeedMilestoneEvent[] = oldestFirst.map((row) => ({
+      eventType: row.eventType,
+      label: row.label,
+      message: row.message,
+      vendorName: row.vendorName,
+      createdAt: row.createdAt,
+      metadata: row.metadata ?? null,
+    }))
+    const ticketBits = inferTicketBitsFromEventGroup(
+      oldestFirst,
+      feedTicketBitsFromMetadata(latest.metadata),
+    )
+    const homeCheck = homeCheckDeclineCopy(oldestFirst)
+    const { facts, copy } = resolveFeedCardFromTicket(latest, ticketBits, milestoneEvents)
+    const badge = homeCheck ? ('work_order' as const) : feedBadgeCategoryFromStatus(facts.status)
+    const headline = homeCheck?.headline ?? copy.headline
+    const statusLine = homeCheck ? '' : copy.status_line
+
+    stories.push({
+      ...latest,
+      id: group.length === 1 ? latest.id : `ticket-story:${ticketId}`,
+      eventType: newestFirst[0]!.eventType,
+      createdAt: newestFirst[0]!.createdAt,
+      // Trails removed from feed cards — milestones stay in View detail only.
+      storySteps: null,
+      category: badge,
+      building: latest.building ?? newestFirst.find((row) => row.building)?.building ?? null,
+      unitLabel: latest.unitLabel ?? newestFirst.find((row) => row.unitLabel)?.unitLabel ?? null,
+      propertyType:
+        latest.propertyType ?? newestFirst.find((row) => row.propertyType)?.propertyType ?? null,
+      issueHeadline:
+        latest.issueHeadline ?? newestFirst.find((row) => row.issueHeadline)?.issueHeadline ?? null,
+      vendorName: latest.vendorName ?? newestFirst.find((row) => row.vendorName)?.vendorName ?? null,
+      residentName:
+        latest.residentName ?? newestFirst.find((row) => row.residentName)?.residentName ?? null,
+      metadata: {
+        ...(latest.metadata ?? {}),
+        _story_event_ids: newestFirst.map((row) => row.id),
+        _feed_card_headline: headline,
+        _feed_status_line: statusLine,
+        _feed_milestones: facts.milestones,
+        _feed_badge_category: badge,
+        _feed_facts_issue: facts.issue,
+        ...(homeCheck ? { _feed_card_full: homeCheck.full } : {}),
+      },
+    })
+  }
+
+  return [...passthrough, ...stories].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 /** Collapse repetitive setup logs (e.g. onboarding registering many units). */
@@ -829,9 +1282,10 @@ export function consolidateFeedEvents(
     group.length > 1 ? [mergeTenantOnboardingGroup(group, nameByResident)] : group,
   )
 
-  return [...passthrough, ...consolidatedSetup, ...consolidatedOnboarding].sort((a, b) =>
+  const merged = [...passthrough, ...consolidatedSetup, ...consolidatedOnboarding].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   )
+  return groupTicketFeedStories(merged)
 }
 
 function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimelineEvent {
@@ -993,6 +1447,10 @@ type MaintenanceTicketFeedRow = {
   schedule_confirmed_at: string | null
   scheduled_at: string | null
   recognized_spend_amount: number | string | null
+  estimate_amount?: number | string | null
+  completed_at?: string | null
+  cancelled_at?: string | null
+  feed_card_copy?: FeedCardCopyCache | Record<string, unknown> | null
 }
 
 type PropertyFeedRow = {
@@ -1028,7 +1486,7 @@ export async function enrichTicketsForFeed(
   const { data, error } = await supabase
     .from('maintenance_requests')
     .select(
-      'id, issue_headline, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount',
+      'id, issue_headline, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount, estimate_amount, completed_at, cancelled_at, feed_card_copy',
     )
     .in('id', ids)
 
@@ -1067,6 +1525,10 @@ export async function enrichTicketsForFeed(
       asOptionalString(property?.name) ||
       asOptionalString(property?.address) ||
       null
+    const feedCardCopy =
+      row.feed_card_copy && typeof row.feed_card_copy === 'object' && !Array.isArray(row.feed_card_copy)
+        ? (row.feed_card_copy as FeedCardCopyCache)
+        : null
     out.set(String(row.id), {
       issueHeadline: asOptionalString(row.issue_headline),
       unitLabel: asOptionalString(row.unit),
@@ -1079,6 +1541,10 @@ export async function enrichTicketsForFeed(
       scheduleConfirmedAt: asOptionalString(row.schedule_confirmed_at),
       scheduledAt: asOptionalString(row.scheduled_at),
       recognizedSpendAmount: asOptionalNumber(row.recognized_spend_amount),
+      estimateAmount: asOptionalNumber(row.estimate_amount),
+      completedAt: asOptionalString(row.completed_at),
+      cancelledAt: asOptionalString(row.cancelled_at),
+      feedCardCopy,
     })
   }
 
@@ -1091,28 +1557,27 @@ function feedTicketBitsFromMetadata(
   const raw = metadata?._feed_ticket
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const row = raw as Record<string, unknown>
+  const feedCardCopy =
+    row.feedCardCopy && typeof row.feedCardCopy === 'object' && !Array.isArray(row.feedCardCopy)
+      ? (row.feedCardCopy as FeedCardCopyCache)
+      : null
   return {
-    issueHeadline: null,
-    unitLabel: null,
-    building: null,
+    issueHeadline: asOptionalString(row.issueHeadline),
+    unitLabel: asOptionalString(row.unitLabel),
+    building: asOptionalString(row.building),
     propertyId: null,
-    propertyType: null,
+    propertyType: asOptionalString(row.propertyType),
     awaitingLandlordChoiceAt: asOptionalString(row.awaitingLandlordChoiceAt),
     vendorWorkStatus: asOptionalString(row.vendorWorkStatus),
     spendStatus: asOptionalString(row.spendStatus),
     scheduleConfirmedAt: asOptionalString(row.scheduleConfirmedAt),
     scheduledAt: asOptionalString(row.scheduledAt),
     recognizedSpendAmount: asOptionalNumber(row.recognizedSpendAmount),
+    estimateAmount: asOptionalNumber(row.estimateAmount),
+    completedAt: asOptionalString(row.completedAt),
+    cancelledAt: asOptionalString(row.cancelledAt),
+    feedCardCopy,
   }
-}
-
-function moneyHint(amount: number | null): string | null {
-  if (amount == null || !Number.isFinite(amount)) return null
-  const cents = Math.round(amount * 100) / 100
-  if (Math.abs(cents - Math.round(cents)) < 0.001) {
-    return `$${Math.round(cents).toLocaleString('en-US')}`
-  }
-  return cents.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
 /**
@@ -1141,24 +1606,23 @@ export function feedWaitingHint(
   }
 
   if (bits.awaitingLandlordChoiceAt) {
-    return 'Waiting on you to choose a vendor'
+    return 'Waiting on you to pick'
   }
 
   const spend = (bits.spendStatus ?? '').trim().toLowerCase()
   if (spend === 'pending_approval') {
-    const amount = moneyHint(bits.recognizedSpendAmount)
-    return amount ? `Waiting on you to approve ${amount}` : 'Waiting on you to approve the estimate'
+    return 'Waiting on your approval'
   }
 
   const workStatus = (bits.vendorWorkStatus ?? '').trim().toLowerCase()
   if (workStatus === 'pending_accept') {
-    const vendor = shortVendorName(event.vendorName) || 'the vendor'
-    return `Waiting on ${vendor} to accept`
+    const vendor = shortVendorName(event.vendorName)
+    return vendor ? `Waiting on ${vendor}` : 'Waiting on vendor'
   }
 
   if (bits.scheduledAt && !bits.scheduleConfirmedAt) {
-    const resident = shortVendorName(event.residentName) || 'the resident'
-    return `Waiting on ${resident} to pick a time`
+    const resident = shortVendorName(event.residentName)
+    return resident ? `Waiting on ${resident}` : 'Waiting on tenant'
   }
 
   return null
@@ -1185,19 +1649,25 @@ export function applyFeedTicketEnrichment(
         ...(event.metadata ?? {}),
         ...(ticket.issueHeadline ? { issue_headline: ticket.issueHeadline } : {}),
         _feed_ticket: {
+          issueHeadline: ticket.issueHeadline,
+          unitLabel: ticket.unitLabel,
+          building: ticket.building,
+          propertyType: ticket.propertyType,
           awaitingLandlordChoiceAt: ticket.awaitingLandlordChoiceAt,
           vendorWorkStatus: ticket.vendorWorkStatus,
           spendStatus: ticket.spendStatus,
           scheduleConfirmedAt: ticket.scheduleConfirmedAt,
           scheduledAt: ticket.scheduledAt,
           recognizedSpendAmount: ticket.recognizedSpendAmount,
+          estimateAmount: ticket.estimateAmount ?? null,
+          completedAt: ticket.completedAt ?? null,
+          cancelledAt: ticket.cancelledAt ?? null,
+          feedCardCopy: ticket.feedCardCopy ?? null,
         },
       },
     }
-    return {
-      ...next,
-      waitingHint: feedWaitingHint(next, ticket),
-    }
+    // Waiting hints are applied once later (newest row / story card only).
+    return { ...next, waitingHint: null }
   })
 }
 
@@ -1287,6 +1757,11 @@ function contextPerson(event: PropertyOperationsTimelineEvent): string | null {
   const vendor = event.vendorName?.trim() || null
   const resident = event.residentName?.trim() || null
   const type = event.eventType
+  // Job cards keep place = property (+ unit). Vendor/resident names belong in the
+  // headline or Waiting line — not bolted onto the grey context row.
+  if (event.category === 'work_order' || event.category === 'scheduling') {
+    return resident
+  }
   const aboutVendor =
     event.category === 'vendor' ||
     event.category === 'spend' ||
@@ -1298,7 +1773,7 @@ function contextPerson(event: PropertyOperationsTimelineEvent): string | null {
   return resident ?? vendor
 }
 
-/** Grey context place: "Property, Unit" when both exist; SFH / Home sentinel omits unit. */
+/** Grey context place: "Property, Unit X" when both exist; SFH / Home sentinel omits unit. */
 export function formatTimelinePlace(
   event: Pick<PropertyOperationsTimelineEvent, 'building' | 'unitLabel' | 'propertyType'>,
 ): string | null {
@@ -1308,13 +1783,13 @@ export function formatTimelinePlace(
     unitLabel: unitRaw,
     propertyType: event.propertyType,
   })
-  const unit = omitUnit ? null : formatBareUnitLabel(unitRaw, event.propertyType) || unitRaw
-  if (building && unit) {
-    const unitAlreadyInBuilding = building.toLowerCase().includes(unit.toLowerCase())
-    if (unitAlreadyInBuilding) return building
-    return `${building}, ${unit}`
-  }
-  return building ?? (omitUnit ? null : unit)
+  // Never show a bare unit number without a property.
+  if (!building) return null
+  if (omitUnit) return building
+  const unitRef = formatUnitReference(unitRaw, event.propertyType)
+  if (!unitRef) return building
+  if (building.toLowerCase().includes(unitRef.toLowerCase())) return building
+  return `${building} · ${unitRef}`
 }
 
 export function formatTimelineContextLine(
@@ -1329,13 +1804,15 @@ export function formatTimelineContextLine(
     (label.includes(place!.toLowerCase()) ||
       Boolean(event.building?.trim() && label.includes(event.building.trim().toLowerCase())))
   const shownPlace = placeAlreadyInLabel ? null : place
-  if (shownPlace && person) {
-    const personAlreadyNamed = label.includes(person.toLowerCase())
+  if (person) {
+    const shortPerson = shortVendorName(person) || person
+    const personAlreadyNamed =
+      label.includes(person.toLowerCase()) || label.includes(shortPerson.toLowerCase())
     if (personAlreadyNamed) return shownPlace
-    return `${shownPlace} · ${person}`
+    if (shownPlace) return `${shownPlace} · ${person}`
+    return null
   }
-  if (person && label.includes(person.toLowerCase())) return shownPlace
-  return shownPlace ?? person
+  return shownPlace
 }
 
 export type TimelineResidentOption = {

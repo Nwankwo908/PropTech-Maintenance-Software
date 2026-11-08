@@ -40,6 +40,8 @@ export const HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES = new Set([
  */
 export const HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES = new Set([
   'rent.collection_cron_triggered',
+  // Staff digest SMS bookkeeping — not a landlord Activity Feed row.
+  'ops.needs_admin_vendor_digest',
 ])
 
 /**
@@ -50,7 +52,31 @@ export const HIDDEN_INTERNAL_NOTE_TIMELINE_EVENT_TYPES = new Set([
   'maintenance.terminate_reason_unmapped',
   // QR session open is setup noise; the finished capture row carries the outcome.
   'inspection.capture_session_started',
+  // Bookkeeping / diagnostic — not a property-team outcome.
+  'maintenance.open_asks_closed',
+  'maintenance.auto_reassign_loop_detected',
+  'ops.ticket_unit_fk_mismatch',
+  'rent.tenant_reply_while_paused',
+  // Internal classification / probe — never landlord-facing card copy.
+  'maintenance.classified',
+  'maintenance.vendor_availability_probed',
+  'vendor.availability_probed',
 ])
+
+/** Landlord-visible text that is still diagnostic / internal. */
+const HIDDEN_DIAGNOSTIC_COPY =
+  /\b(audit|\bfk\b|mismatch|auto-reassign|auto reassign|unit\/property|rent collection is paused|open asks closed|schedule tenant ask)\b/i
+
+/**
+ * True for diagnostic / ops-internal copy that must never appear on the landlord feed.
+ * Keep this keyword-based — do not treat every "maintenance …" label as diagnostic,
+ * because graph rows still carry formatEventTypeLabel fallbacks before copy rewrite.
+ */
+export function looksLikeDiagnosticLandlordFeedCopy(text: string | null | undefined): boolean {
+  const value = (text ?? '').trim()
+  if (!value) return false
+  return HIDDEN_DIAGNOSTIC_COPY.test(value)
+}
 
 /** Three or more snake_case segments, e.g. schedule_fsm_ttl_tenant_confirm. */
 const SNAKE_CASE_TOKEN = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/i
@@ -130,5 +156,6 @@ export function isVisibleLandlordTimelineDescription(description: string | null 
   if (!text) return true
   if (HIDDEN_PIPELINE_TIMELINE_LABELS.has(text.toLowerCase())) return false
   if (timelineDescriptionHasInternalToken(text)) return false
+  if (looksLikeDiagnosticLandlordFeedCopy(text)) return false
   return true
 }

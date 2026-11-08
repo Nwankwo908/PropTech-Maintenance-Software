@@ -6,6 +6,7 @@ import {
   LANDLORD_FEED_SENTENCE_EVENT_TYPES,
   landlordFeedCoverageGap,
 } from '@/lib/landlordFeedEventCoverage'
+import { looksLikeDiagnosticLandlordFeedCopy } from '@/lib/landlordFacingTimeline'
 
 describe('landlord feed event coverage', () => {
   it('requires every catalog entry to be hidden or sentenced', () => {
@@ -13,6 +14,19 @@ describe('landlord feed event coverage', () => {
       (type): type is string => Boolean(type),
     )
     expect(gaps, `Missing feed coverage for: ${gaps.join(', ')}`).toEqual([])
+  })
+
+  it('rejects raw event-name and diagnostic landlord-visible copy', () => {
+    const bad = [
+      'maintenance open asks closed',
+      'Unit/property FK audit found 0 ticket and 2 conversation mismatch(es)',
+      'Auto-reassign repeated the same outcome',
+      'Resident rent reply received while rent collection is paused.',
+    ]
+    for (const text of bad) {
+      expect(looksLikeDiagnosticLandlordFeedCopy(text), text).toBe(true)
+    }
+    expect(looksLikeDiagnosticLandlordFeedCopy('Ecosafe accepted the kitchen sink leak')).toBe(false)
   })
 
   it('keeps hidden and sentenced lists non-empty', () => {

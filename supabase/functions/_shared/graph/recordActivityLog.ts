@@ -11,6 +11,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { shouldRecordGraphEvent } from "../../../../shared/landlordCapabilities.ts"
+import { refreshFeedCardCopyForTicket } from "../activityFeed/writeFeedCardCopy.ts"
 
 export type ActivityLogSource =
   | "sms"
@@ -296,6 +297,17 @@ export async function recordActivityLog(
         pogError.message,
       )
     }
+  }
+
+  // Best-effort: refresh cached feed card copy when ticket status/milestones change.
+  const ticketId = params.maintenanceRequestId?.trim()
+  if (ticketId && !params.eventType.startsWith("workflow.")) {
+    void refreshFeedCardCopyForTicket(supabase, ticketId).catch((error) => {
+      console.warn(
+        "[recordActivityLog] feed_card_copy",
+        error instanceof Error ? error.message : String(error),
+      )
+    })
   }
 
   return eventId

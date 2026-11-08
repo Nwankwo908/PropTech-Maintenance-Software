@@ -42,6 +42,10 @@ export const LANDLORD_FEED_EVENT_CATALOG: readonly string[] = Array.from(
     'inspection.serial_read',
     'maintenance.sla_auto_reassigned',
     'sms.maintenance_cancelled',
+    'maintenance.open_asks_closed',
+    'maintenance.auto_reassign_loop_detected',
+    'ops.ticket_unit_fk_mismatch',
+    'rent.tenant_reply_while_paused',
   ]),
 ).sort()
 

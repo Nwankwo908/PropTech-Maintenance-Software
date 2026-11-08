@@ -8,6 +8,8 @@ export type ActivityFeedTooltipEvent = {
   building: string | null
   residentName: string | null
   vendorName: string | null
+  /** Full landlord-facing milestones for the View detail panel (not shown on the card). */
+  metadata?: Record<string, unknown> | null
 }
 
 export type FeedTooltipField = {
@@ -25,6 +27,8 @@ export type FeedTooltipCopy = {
 
 export type FeedTooltipDestination =
   | { kind: 'workflow'; runId: string }
+  /** Prefer when a maintenance ticket is known — Active Tasks resolves an open run or falls back to the request. */
+  | { kind: 'ticket'; ticketId: string }
   | { kind: 'property'; path: string }
 
 type EventCopyTemplate = {
@@ -282,14 +286,39 @@ const EVENT_COPY: Record<string, EventCopyTemplate> = {
     actionLabel: 'View workflow',
   },
   'tenant.onboarding_verification': {
-    title: 'Tenant onboarding',
+    title: 'Finished tenant text onboarding',
     summary: ({ resident, message }) => {
       if (message) return message
       return resident
-        ? `Ulo sent **${resident}** a welcome text to confirm they can get updates by SMS.`
-        : 'Ulo sent a welcome text so the resident can get updates by SMS.'
+        ? `Ulo sent **${resident}** a welcome text and finished SMS onboarding.`
+        : 'Ulo sent a welcome text and finished SMS onboarding.'
     },
     status: 'Onboarding',
+  },
+  'landlord.attention_alert_sent': {
+    title: 'Needs your attention',
+    summary: ({ message, location, resident, vendor }) => {
+      if (message) {
+        const where =
+          location && !message.toLowerCase().includes(location.toLowerCase())
+            ? ` at **${location}**`
+            : ''
+        const person =
+          resident && !message.toLowerCase().includes(resident.toLowerCase())
+            ? ` (**${resident}**)`
+            : vendor && !message.toLowerCase().includes(vendor.toLowerCase())
+              ? ` (**${vendor}**)`
+              : ''
+        const body = `${message}${where}${person}`
+        return body.endsWith('.') ? body : `${body}.`
+      }
+      if (location) {
+        return `Ulo texted you that something needs a decision at **${location}**.`
+      }
+      return 'Ulo texted you that something needs a decision in Needs Your Attention.'
+    },
+    status: 'Needs attention',
+    actionLabel: 'Click to view work order',
   },
 }
 
@@ -307,6 +336,7 @@ function defaultActionLabel(
 ): string | null {
   if (!destination) return null
   if (destination.kind === 'property') return 'View property'
+  if (destination.kind === 'ticket') return 'Click to view work order'
   if (event.eventType.startsWith('rent.')) return 'Review payment'
   if (event.eventType.includes('lease_renewal') || event.eventType.startsWith('lease.')) {
     return 'Review renewal'
@@ -328,6 +358,7 @@ function defaultActionLabel(
 function buildFields(
   ctx: FeedCopyContext,
   status: string | null,
+  milestones: string[] = [],
 ): FeedTooltipField[] {
   const fields: FeedTooltipField[] = []
   if (ctx.building) fields.push({ label: 'Property', value: ctx.building })
@@ -335,7 +366,18 @@ function buildFields(
   if (ctx.vendor) fields.push({ label: 'Vendor', value: ctx.vendor })
   if (ctx.resident) fields.push({ label: 'Resident', value: ctx.resident })
   if (status) fields.push({ label: 'Status', value: status })
+  if (milestones.length) {
+    fields.push({ label: 'History', value: milestones.join(' · ') })
+  }
   return fields
+}
+
+function milestonesFromEvent(event: ActivityFeedTooltipEvent): string[] {
+  const raw = event.metadata?._feed_milestones
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((step): step is string => typeof step === 'string' && Boolean(step.trim()))
+    .map((step) => step.trim())
 }
 
 export function buildActivityFeedTooltipCopy(
@@ -355,7 +397,7 @@ export function buildActivityFeedTooltipCopy(
   return {
     title,
     summary,
-    fields: buildFields(ctx, status),
+    fields: buildFields(ctx, status, milestonesFromEvent(event)),
     actionLabel,
   }
 }
