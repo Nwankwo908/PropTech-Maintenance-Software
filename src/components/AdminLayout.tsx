@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { AdminBreadcrumb } from '@/components/AdminBreadcrumb'
+import { adminPageBreadcrumbItems } from '@/lib/adminPageBreadcrumb'
 import { useAdminScrollRestoration } from '@/hooks/useAdminScrollRestoration'
-import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
 import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
 import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
 import { AskUloPanel } from '@/components/AskUloPanel'
@@ -120,24 +121,16 @@ function AdminHeaderActions({
   showSignOut = true,
   compact = false,
   showProfileAvatar = false,
-  /** Only one header instance may own the Try Demo Activity tip host (desktop). */
-  tryDemoSpotlightHost = false,
 }: {
   onNavigate?: () => void
   showSignOut?: boolean
   compact?: boolean
   showProfileAvatar?: boolean
-  tryDemoSpotlightHost?: boolean
 }) {
   const { profile, hideProfile } = useSidebarAdminProfile()
 
   return (
     <div className={['flex shrink-0 items-center', compact ? 'gap-4' : 'gap-2'].join(' ')}>
-      <AdminUloNotificationsBell
-        compact={compact}
-        onNavigate={onNavigate}
-        tryDemoSpotlightHost={tryDemoSpotlightHost}
-      />
       {showProfileAvatar && !hideProfile && profile ? (
         <AdminProfileAvatar profile={profile} compact={compact} />
       ) : null}
@@ -280,10 +273,21 @@ function AdminTopBar() {
             </select>
           </label>
         ) : null}
-        <AdminHeaderActions tryDemoSpotlightHost />
+        <AdminHeaderActions />
         </div>
       </div>
     </header>
+  )
+}
+
+function AdminShellBreadcrumb() {
+  const { pathname } = useLocation()
+  const items = adminPageBreadcrumbItems(pathname)
+  if (items.length === 0) return null
+  return (
+    <div className="px-4 pt-6 sm:px-6 lg:px-8">
+      <AdminBreadcrumb collapseOnMobile items={items} />
+    </div>
   )
 }
 
@@ -344,6 +348,7 @@ function AdminMainContent() {
         // Ask Ulo open state and the overlay ever got out of sync.
         aria-hidden={open && !docked}
       >
+        <AdminShellBreadcrumb />
         <Outlet />
       </div>
       {open ? (
@@ -374,6 +379,9 @@ function AdminMobileNavDrawer({
   open: boolean
   onClose: () => void
 }) {
+  const [mobileNavScrolling, setMobileNavScrolling] = useState(false)
+  const mobileNavScrollHideTimerRef = useRef<number | null>(null)
+
   useEffect(() => {
     if (!open) return
     function onKey(event: KeyboardEvent) {
@@ -387,6 +395,25 @@ function AdminMobileNavDrawer({
       window.removeEventListener('keydown', onKey)
     }
   }, [open, onClose])
+
+  useEffect(() => {
+    return () => {
+      if (mobileNavScrollHideTimerRef.current != null) {
+        window.clearTimeout(mobileNavScrollHideTimerRef.current)
+      }
+    }
+  }, [])
+
+  const onMobileNavScroll = () => {
+    setMobileNavScrolling(true)
+    if (mobileNavScrollHideTimerRef.current != null) {
+      window.clearTimeout(mobileNavScrollHideTimerRef.current)
+    }
+    mobileNavScrollHideTimerRef.current = window.setTimeout(() => {
+      setMobileNavScrolling(false)
+      mobileNavScrollHideTimerRef.current = null
+    }, 700)
+  }
 
   if (!open || typeof document === 'undefined') return null
 
@@ -414,7 +441,11 @@ function AdminMobileNavDrawer({
             <IconClose className="size-4" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div
+          className="admin-nav-rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          data-scrolling={mobileNavScrolling ? '' : undefined}
+          onScroll={onMobileNavScroll}
+        >
           <AdminSidebarContent hideBrand onNavigate={onClose} />
         </div>
         <div className="shrink-0 border-t border-[#e5e7eb] p-4">

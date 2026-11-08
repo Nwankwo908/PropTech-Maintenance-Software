@@ -2160,6 +2160,36 @@ html[data-try-demo-tip-motion='hold'] [data-admin-scroll-root] {
   }
 }
 
+/* Nav rail: hide scrollbar until the user is actively scrolling. */
+.admin-nav-rail-scroll:not([data-scrolling]) {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.admin-nav-rail-scroll:not([data-scrolling])::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.admin-nav-rail-scroll[data-scrolling] {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5dc transparent;
+}
+
+.admin-nav-rail-scroll[data-scrolling]::-webkit-scrollbar {
+  width: 6px;
+}
+
+.admin-nav-rail-scroll[data-scrolling]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-nav-rail-scroll[data-scrolling]::-webkit-scrollbar-thumb {
+  background-color: #d1d5dc;
+  border-radius: 999px;
+}
+
 .sa-enter {
   animation: sa-enter var(--sa-duration) var(--sa-ease);
 }

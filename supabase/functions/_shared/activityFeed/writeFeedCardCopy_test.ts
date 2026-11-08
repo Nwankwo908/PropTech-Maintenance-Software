@@ -63,8 +63,8 @@ Deno.test("writeFeedCardCopy accepts valid AI output", async () => {
             {
               message: {
                 content: JSON.stringify({
-                  headline: "Pick vendor: Freezer seal",
-                  status_line: "Waiting on you to pick",
+                  headline: "Pick a vendor for the freezer seal",
+                  status_line: "",
                 }),
               },
             },
@@ -74,7 +74,47 @@ Deno.test("writeFeedCardCopy accepts valid AI output", async () => {
       ),
   })
   assertEquals(copy.source, "ai")
-  assertMatch(copy.headline, /Freezer seal/i)
+  assertMatch(copy.headline, /Pick a vendor for the freezer seal/i)
+  assertEquals(copy.status_line, "")
+})
+
+Deno.test("writeFeedCardCopy rejects Repair issue and initials-only vendor", async () => {
+  const ticket = {
+    issueHeadline: "Broken freezer door seal",
+    vendorName: "NTA Services LLC",
+    awaitingLandlordChoiceAt: "2026-11-03T12:00:00.000Z",
+    building: "78 Maple Ave",
+    unitLabel: "1",
+  }
+  const facts = buildFeedFactSheet(ticket, [])
+  assertEquals(validateFeedCardCopy({ headline: "NTA finished: Repair", status_line: "" }, facts).ok, false)
+  assertEquals(
+    validateFeedCardCopy({ headline: "Pick a vendor for the freezer seal", status_line: "" }, facts).ok,
+    true,
+  )
+  const repairCopy = await writeFeedCardCopy({
+    ticket,
+    openaiKey: "test-key",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  headline: "Pick vendor: Repair",
+                  status_line: "",
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+  })
+  assertEquals(repairCopy.source, "fallback")
+  assertMatch(repairCopy.headline, /Pick a vendor for the /i)
+  assertEquals(/\bRepair\b/.test(repairCopy.headline), false)
 })
 
 Deno.test("writeFeedCardCopy reuses cache when facts_hash matches", async () => {

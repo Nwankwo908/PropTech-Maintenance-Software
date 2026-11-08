@@ -1,3 +1,8 @@
+import {
+  nonJobFeedCardCopy,
+  shortTenantForFacts,
+  vendorDisplayName,
+} from '@shared/activityFeed/feedFactSheet'
 import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
 
 /** Visible feed headlines stay bite-size: actor + verb + object. */
@@ -27,8 +32,6 @@ export type LandlordFeedCopySource = {
   metadata?: Record<string, unknown> | null
 }
 
-const GENERIC_VENDOR_WORDS = new Set(['the', 'a', 'abc'])
-
 const CLOSE_CLAUSES: Record<string, string> = {
   'archived from the workflow pipeline': 'property team closed it',
   'archived by the property team': 'property team closed it',
@@ -51,12 +54,9 @@ export function feedLineFits(line: string): boolean {
   return trimmed.length <= FEED_LINE_MAX_CHARS && feedLineWordCount(trimmed) <= FEED_LINE_MAX_WORDS
 }
 
+/** Display vendor business name (no legal suffix; never initials-only). */
 export function shortVendorName(name: string | null | undefined): string | null {
-  const words = (name ?? '').trim().split(/\s+/).filter(Boolean)
-  if (!words.length) return null
-  const first = words[0]!
-  if (GENERIC_VENDOR_WORDS.has(first.toLowerCase()) && words[1]) return `${first} ${words[1]}`
-  return first
+  return vendorDisplayName(name)
 }
 
 export function feedRowA11yProps(full: string): { title: string; 'aria-label': string } {
@@ -339,9 +339,8 @@ export function fitFeedLine(full: string, shorter: string[], _protectedTokens: s
 }
 
 function vendorLevels(name: string | null | undefined): string[] {
-  const full = (name ?? '').trim()
-  const short = shortVendorName(full)
-  return uniqueLines([short ?? '', full ? full.split(/\s+/)[0]! : ''].filter(Boolean))
+  const short = shortVendorName(name)
+  return short ? [short] : []
 }
 
 export function trimQuote(text: string, maxChars: number): string {
@@ -600,7 +599,7 @@ export function tenantConfirmedFeedLine(input: {
 }): FeedLine {
   const { wo } = issueSubject(input)
   const window = compactWindow(input.window)
-  const who = shortVendorName(input.residentName) || 'Tenant'
+  const who = shortTenantForFacts(input.residentName) || 'Tenant'
   const long = window ? `${who} confirmed ${window}` : `${who} confirmed visit`
   return withWorkOrderFull(
     fitFeedLine(long, [`${who} confirmed`, 'Visit confirmed'], [who, window ?? '', wo ?? '']),
@@ -624,12 +623,17 @@ export function closedFeedLine(input: {
   issueHeadline?: string | null
   reason?: string | null
   detail?: string | null
+  vendorName?: string | null
 }): FeedLine {
   const { visible, wo } = issueSubject(input)
   const reason = (input.reason ?? '').trim()
   if (/home check/i.test(reason)) {
+    const copy = nonJobFeedCardCopy({
+      kind: 'home_check_declined',
+      vendorName: input.vendorName,
+    })
     return withWorkOrderFull(
-      fitFeedLine('Home check declined', ['Home check closed', 'Closed'], [wo ?? '', 'closed']),
+      fitFeedLine(copy.headline, [copy.headline], [wo ?? '', 'closed']),
       wo,
     )
   }
@@ -733,8 +737,14 @@ export function softRewriteFeedLine(text: string): string {
   )
   line = line.replace(/\bTexted (\d+) requests that need a decision\.?/i, 'Needs your decision')
   line = line.replace(/^Phone photo capture started for this inspection\.?$/i, 'Scan started')
-  line = line.replace(/^Phone photo capture ended\.?$/i, 'Scan finished')
-  line = line.replace(/^Finished phone photo capture\.?$/i, 'Scan finished')
+  line = line.replace(
+    /^Phone photo capture ended\.?$/i,
+    'Ulo checked the equipment scan: no issues',
+  )
+  line = line.replace(
+    /^Finished phone photo capture\.?$/i,
+    'Ulo checked the equipment scan: no issues',
+  )
   // Drop bolted " for …" tails that old assembly added.
   line = line.replace(/\.\s+for\s+.+$/i, '.')
   return line.replace(/\s+/g, ' ').trim()
@@ -749,13 +759,10 @@ export function inspectionCaptureFeedLine(input: {
 }): FeedLine {
   // Place stays on the second line.
   if (input.phase === 'started') {
-    return fitFeedLine('Scan started', ['Scan started'], ['scan'])
+    return fitFeedLine('Ulo started the equipment scan', ['Scan started'], ['scan'])
   }
-  const outcome = (input.outcome ?? '').trim().toLowerCase()
-  if (/no issue|looked fine|no repair/i.test(outcome)) {
-    return fitFeedLine('Photo: no issues', ['Scan finished', 'No issues'], ['scan'])
-  }
-  return fitFeedLine('Scan finished', ['Scan finished'], ['scan'])
+  const copy = nonJobFeedCardCopy({ kind: 'equipment_scan_ok' })
+  return fitFeedLine(copy.headline, [copy.headline], ['scan'])
 }
 
 /**
@@ -777,7 +784,14 @@ export function attentionAlertFeedLine(input: {
   const detail = (input.detail ?? '').trim().replace(/\s+/g, ' ')
   const message = softRewriteFeedLine((input.message ?? '').trim())
   const kind = (input.kind ?? '').trim().toLowerCase()
-  const issue = shortIssuePhrase(detail || headline) || 'repair'
+  const issue = shortIssuePhrase(detail || headline)
+  if (!issue || /^(repair|they asked for|asked for)$/i.test(issue)) {
+    // Empty template vars — hide rather than "Needs you: they asked for".
+    if (!kind || kind === 'workflow_escalated' || /asked for/i.test(`${headline} ${detail}`)) {
+      return null
+    }
+  }
+  const issueLabel = issue && !/^(repair)$/i.test(issue) ? issue : null
 
   const noPreferred = kind === 'assign_vendor' && /\bno preferred vendor\b/i.test(headline)
   const vendorUnavailable =
@@ -787,24 +801,30 @@ export function attentionAlertFeedLine(input: {
 
   let full: string
   let shorter: string[] = []
-  if (noPreferred) {
-    full = urgent ? `⚠ ${issue}: no vendor yet` : `Pick vendor: ${issue}`
-    shorter = [full, `Pick vendor: ${issue}`, 'Pick vendor']
-  } else if (vendorUnavailable) {
-    full = `Pick another vendor: ${issue}`
-    shorter = [full, 'Pick another vendor']
-  } else if (kind === 'assign_vendor') {
-    full = urgent ? `⚠ ${issue}: no vendor yet` : `Pick vendor: ${issue}`
-    shorter = [full, 'Pick vendor']
-  } else if (headline || detail) {
-    full = `${action}: ${issue}`
+  if (noPreferred && issueLabel) {
+    full = urgent
+      ? `⚠ Pick a vendor for the ${issueLabel.toLowerCase()}`
+      : `Pick a vendor for the ${issueLabel.toLowerCase()}`
+    shorter = [full, 'Pick a vendor']
+  } else if (vendorUnavailable && issueLabel) {
+    full = `Pick a vendor for the ${issueLabel.toLowerCase()}`
+    shorter = [full, 'Pick a vendor']
+  } else if (kind === 'assign_vendor' && issueLabel) {
+    full = urgent
+      ? `⚠ Pick a vendor for the ${issueLabel.toLowerCase()}`
+      : `Pick a vendor for the ${issueLabel.toLowerCase()}`
+    shorter = [full, 'Pick a vendor']
+  } else if (issueLabel && (headline || detail) && action !== 'Needs you') {
+    full = `${action}: ${issueLabel}`
     shorter = [full, action]
-  } else if (message) {
+  } else if (message && !/they asked for/i.test(message)) {
     full = message
     shorter = [message, action]
+  } else if (issueLabel) {
+    full = `Review the ${issueLabel.toLowerCase()}`
+    shorter = [full, 'Review']
   } else {
-    full = action
-    shorter = [action]
+    return null
   }
 
   // Place stays on the second line — never fold it into the headline.
@@ -857,7 +877,7 @@ function isCloseEvent(eventType: string): boolean {
 }
 
 function personName(raw: string | null | undefined, fallback: string): string {
-  return shortVendorName(raw) || (raw ?? '').trim() || fallback
+  return shortTenantForFacts(raw) || (raw ?? '').trim() || fallback
 }
 
 export function openedWorkOrderFeedLine(input: {
@@ -867,7 +887,7 @@ export function openedWorkOrderFeedLine(input: {
   submitted?: boolean
 }): FeedLine {
   const { visible, wo } = issueSubject(input)
-  const who = shortVendorName(input.residentName)
+  const who = shortTenantForFacts(input.residentName)
   const issue = theIssue(visible)
   if (input.submitted) {
     const full = who ? `${who} reported: ${issue}` : `Reported: ${issue}`
@@ -1215,6 +1235,7 @@ export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | nul
       issueHeadline,
       reason: closeReason(source),
       detail: metaString(meta, 'detail') ?? metaString(meta, 'photo_detail'),
+      vendorName: source.vendorName,
     })
   }
   if (type === 'inspection.serial_read' || type === 'inspection.serial_retake_needed') {

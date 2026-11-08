@@ -209,12 +209,10 @@ function FeedEventInfo({
 
 function FeedLabelWithWorkOrderLinks({
   label,
-  context,
   target,
   onOpen,
 }: {
   label: string
-  context: string | null
   target: FeedTooltipDestination | null
   onOpen: (target: FeedTooltipDestination) => void
 }) {
@@ -242,7 +240,6 @@ function FeedLabelWithWorkOrderLinks({
           <span key={`${part.text}-${index}`}>{part.text}</span>
         ),
       )}
-      {context ? <span className="text-[#6a7282]"> · {context}</span> : null}
       {target && !hasWoLink ? (
         <>
           {' '}
@@ -318,14 +315,11 @@ export function UloActivityFeedList({
             <div className="min-w-0 flex-1 py-3">
               <FeedLabelWithWorkOrderLinks
                 label={event.label}
-                context={context}
                 target={target}
                 onOpen={onOpenTarget}
               />
-              {event.waitingHint?.trim() ? (
-                <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
-                  {event.waitingHint.trim()}
-                </p>
+              {context ? (
+                <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{context}</p>
               ) : null}
               <div className="mt-1 flex items-center gap-2">
                 <span

@@ -12,7 +12,7 @@
   .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #6a7282; margin: 0 0 12px; }
   .row { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f3f4f6; }
   .row:last-child { border-bottom: 0; }
-  .time { width: 64px; flex-shrink: 0; font-size: 11px; color: #6a7282; }
+  .time { width: 72px; flex-shrink: 0; font-size: 11px; color: #6a7282; }
   .body { min-width: 0; flex: 1; }
   .label { font-size: 14px; font-weight: 600; line-height: 1.3; }
   .trail { margin-top: 4px; font-size: 12px; color: #6a7282; }
@@ -21,55 +21,35 @@
   .badge { display: inline-block; margin-top: 6px; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .wo { background: #f3e8ff; color: #7c3aed; }
   .spend { background: #fef9c2; color: #a65f00; }
+  .vendor { background: #e0f2fe; color: #0369a1; }
   .bad .label { color: #9a3412; }
 </style>
 </head>
 <body>
-  <h1>Activity Feed cards — disposable fixtures</h1>
+  <h1>Activity Feed — disposable fixtures (voice / names / issues)</h1>
   <div class="grid">
     <section class="panel" id="before">
       <h2>Before</h2>
       <div class="row bad">
-        <div class="time">2 hr ago</div>
+        <div class="time">3 days ago</div>
         <div class="body">
-          <div class="label">MAINTENANCE CLASSIFIED</div>
-          <div class="trail">maintenance vendor availability probed: caught fire → Sent to handyman services by → unit ecosafe pest</div>
-          <div class="place">78 Maple Ave · Unit 1</div>
-          <span class="badge wo">Automation</span>
-        </div>
-      </div>
-      <div class="row bad">
-        <div class="time">3 hr ago</div>
-        <div class="body">
-          <div class="label">maintenance vendor availability probed: caught fire</div>
-          <div class="trail">Opened → Classified → they asked for</div>
-          <div class="place">12 Oak St</div>
-          <span class="badge wo">Vendor</span>
-        </div>
-      </div>
-      <div class="row bad">
-        <div class="time">yesterday</div>
-        <div class="body">
-          <div class="label">home check vendor declined</div>
-          <div class="trail">Opened → Probe → Declined</div>
-          <div class="place">78 Maple Ave</div>
-          <span class="badge wo">Admin</span>
-        </div>
-      </div>
-    </section>
-    <section class="panel" id="after">
-      <h2>After</h2>
-      <div class="row">
-        <div class="time">2 hr ago</div>
-        <div class="body">
-          <div class="label">Pick vendor: Freezer seal</div>
+          <div class="label">Pick vendor: Repair</div>
           <div class="wait">Waiting on you to pick</div>
+          <div class="place">12 Oak St</div>
+          <span class="badge wo">Work order</span>
+        </div>
+      </div>
+      <div class="row bad">
+        <div class="time">1 day ago</div>
+        <div class="body">
+          <div class="label">NTA finished: Repair</div>
+          <div class="trail">Opened → Classified → Sent</div>
           <div class="place">78 Maple Ave · Unit 1</div>
           <span class="badge wo">Work order</span>
         </div>
       </div>
-      <div class="row">
-        <div class="time">3 hr ago</div>
+      <div class="row bad">
+        <div class="time">6 hr ago</div>
         <div class="body">
           <div class="label">Manny's $2 estimate</div>
           <div class="wait">Waiting on your approval</div>
@@ -77,30 +57,91 @@
           <span class="badge spend">Spend</span>
         </div>
       </div>
-      <div class="row">
-        <div class="time">4 hr ago</div>
-        <div class="body">
-          <div class="label">Ecosafe invoice: $2,300</div>
-          <div class="wait">Waiting on your approval</div>
-          <div class="place">78 Maple Ave · Unit 1</div>
-          <span class="badge spend">Spend</span>
-        </div>
-      </div>
-      <div class="row">
+      <div class="row bad">
         <div class="time">5 hr ago</div>
         <div class="body">
-          <div class="label">⚠ Dryer fire: no vendor yet</div>
-          <div class="wait">Waiting on you to pick</div>
+          <div class="label">Needs you: they asked for</div>
+          <div class="place">78 Maple Ave · Unit 1</div>
+          <span class="badge wo">Work order</span>
+        </div>
+      </div>
+      <div class="row bad">
+        <div class="time">4 hr ago</div>
+        <div class="body">
+          <div class="label">78 Maple Ave is a multifamily property. Units 1–4 are listed.</div>
+          <span class="badge wo">Admin</span>
+        </div>
+      </div>
+      <div class="row bad">
+        <div class="time">3 hr ago</div>
+        <div class="body">
+          <div class="label">Verification invite sent to NTA Services LLC via SMS.</div>
+          <span class="badge vendor">Vendor</span>
+        </div>
+      </div>
+      <div class="row bad">
+        <div class="time">2 hr ago</div>
+        <div class="body">
+          <div class="label">Scan finished</div>
+          <span class="badge wo">Equipment</span>
+        </div>
+      </div>
+    </section>
+    <section class="panel" id="after">
+      <h2>After</h2>
+      <div class="row">
+        <div class="time">3 days ago</div>
+        <div class="body">
+          <div class="label">⚠ Pick a vendor for the dryer fire</div>
           <div class="place">12 Oak St</div>
           <span class="badge wo">Work order</span>
         </div>
       </div>
       <div class="row">
-        <div class="time">yesterday</div>
+        <div class="time">1 day ago</div>
         <div class="body">
-          <div class="label">Home check declined by Ivan</div>
-          <div class="place">78 Maple Ave</div>
+          <div class="label">Ulo finished the freezer seal with NTA Services</div>
+          <div class="place">78 Maple Ave · Unit 1</div>
           <span class="badge wo">Work order</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="time">6 hr ago</div>
+        <div class="body">
+          <div class="label">Pick a vendor for the heater leak</div>
+          <div class="place">78 Maple Ave · Unit 1</div>
+          <span class="badge wo">Work order</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="time">5 hr ago</div>
+        <div class="body">
+          <div class="label">Approve Ecosafe Pest Management's $385 estimate</div>
+          <div class="place">78 Maple Ave · Unit 2</div>
+          <span class="badge spend">Spend</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="time">4 hr ago</div>
+        <div class="body">
+          <div class="label">Approve Ecosafe Pest Management's $285 invoice</div>
+          <div class="place">78 Maple Ave · Unit 2</div>
+          <span class="badge spend">Spend</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="time">3 hr ago</div>
+        <div class="body">
+          <div class="label">Ulo invited NTA Services to verify</div>
+          <span class="badge vendor">Vendor</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="time">2 hr ago</div>
+        <div class="body">
+          <div class="label">Ulo checked the equipment scan: no issues</div>
+          <div class="place">78 Maple Ave</div>
+          <span class="badge wo">Equipment</span>
         </div>
       </div>
     </section>

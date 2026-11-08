@@ -49,11 +49,12 @@ function expectFits(line: FeedLine, tokens: string[], opts?: { allowOverBudget?:
 }
 
 describe('landlord feed copy', () => {
-  it('uses the short company name', () => {
-    expect(shortVendorName('Ecosafe Pest Management LLC')).toBe('Ecosafe')
-    expect(shortVendorName('The Plumbing Company')).toBe('The Plumbing')
-    expect(shortVendorName('A Plus Drain')).toBe('A Plus')
-    expect(shortVendorName('ABC Pest Control')).toBe('ABC Pest')
+  it('uses the full business name without legal suffixes', () => {
+    expect(shortVendorName('Ecosafe Pest Management LLC')).toBe('Ecosafe Pest Management')
+    expect(shortVendorName('The Plumbing Company')).toBe('The Plumbing Company')
+    expect(shortVendorName('A Plus Drain')).toBe('A Plus Drain')
+    expect(shortVendorName('ABC Pest Control')).toBe('ABC Pest Control')
+    expect(shortVendorName('NTA')).toBeNull()
   })
 
   it('matches the visible templates', () => {
@@ -106,12 +107,20 @@ describe('landlord feed copy', () => {
       'Tenant confirmed Fri 4–5pm',
     )
     expect(windowPassedFeedLine({ workOrderRef: 'WO-074B' }).line).toBe('Visit window passed')
-    expect(closedFeedLine({ workOrderRef: 'WO-C18B', reason: 'Home Check note was opened as a repair by mistake' }).line).toBe(
-      'Home check declined',
-    )
-    expect(closedFeedLine({ workOrderRef: 'WO-69C8', reason: 'Home Check photo (ajar panel)' }).line).toBe(
-      'Home check declined',
-    )
+    expect(
+      closedFeedLine({
+        workOrderRef: 'WO-C18B',
+        reason: 'Home Check note was opened as a repair by mistake',
+        vendorName: 'Ivan Handyman LLC',
+      }).line,
+    ).toBe('Ivan Handyman declined the home check')
+    expect(
+      closedFeedLine({
+        workOrderRef: 'WO-69C8',
+        reason: 'Home Check photo (ajar panel)',
+        vendorName: 'Ivan Handyman',
+      }).line,
+    ).toBe('Ivan Handyman declined the home check')
     expect(equipmentFeedLine({ appliance: 'Water heater', serial: 'X132753655' })?.line).toBe(
       'Saved Water heater serial X132753655',
     )
@@ -123,7 +132,7 @@ describe('landlord feed copy', () => {
         workOrderRef: 'WO-A1B2',
         place: '14 Maple Ave, Unit 1, reported 2h ago',
       })?.line,
-    ).toBe('Pick vendor: kitchen faucet')
+    ).toBe('Pick a vendor for the kitchen faucet')
     expect(
       attentionAlertFeedLine({
         kind: 'assign_vendor',
@@ -150,7 +159,7 @@ describe('landlord feed copy', () => {
         workOrderRef: 'WO-C2C7',
         place: '100 Disposable Test Lane',
       })?.line,
-    ).toBe('Pick another vendor: freezer seal')
+    ).toBe('Pick a vendor for the freezer seal')
     expect(
       attentionAlertFeedLine({
         kind: 'assign_vendor',
@@ -170,10 +179,12 @@ describe('landlord feed copy', () => {
         workOrderRef: 'WO-A1B2',
         place: '14 Maple Ave',
       })?.line,
-    ).toBe('Pick vendor: kitchen faucet')
+    ).toBe('Pick a vendor for the kitchen faucet')
     expect(softRewriteFeedLine('Noted Ecosafe accepted WO-074B')).toBe('Ecosafe accepted WO-074B')
     expect(softRewriteFeedLine('Landlord attention alert sent')).toBe('Needs you')
-    expect(softRewriteFeedLine('Phone photo capture ended.')).toBe('Scan finished')
+    expect(softRewriteFeedLine('Phone photo capture ended.')).toBe(
+      'Ulo checked the equipment scan: no issues',
+    )
     expect(softRewriteFeedLine('Phone photo capture started for this inspection.')).toBe('Scan started')
     expect(
       inspectionCaptureFeedLine({
@@ -181,14 +192,14 @@ describe('landlord feed copy', () => {
         place: '14 Maple Ave',
         photoCount: 3,
       }).line,
-    ).toBe('Scan finished')
+    ).toBe('Ulo checked the equipment scan: no issues')
     expect(
       landlordFeedLine({
         eventType: 'inspection.capture_session_ended',
         building: null,
         metadata: { building: '14 Maple Ave', photo_count: 1 },
       })?.line,
-    ).toBe('Scan finished')
+    ).toBe('Ulo checked the equipment scan: no issues')
     expect(
       landlordFeedLine({
         eventType: 'landlord.attention_alert_sent',

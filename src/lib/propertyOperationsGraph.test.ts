@@ -64,7 +64,18 @@ describe('isLandlordFacingFeedEvent', () => {
     expect(
       selectLandlordFacingFeedEvents(
         [
-          feedEvent({ id: 'keep', eventType: 'vendor.accepted', label: 'Vendor accepted the job' }),
+          feedEvent({
+            id: 'keep',
+            eventType: 'vendor.accepted',
+            label: 'Vendor accepted the job',
+            issueHeadline: 'Kitchen sink leak',
+            vendorName: 'Ecosafe Pest',
+            building: '78 Maple Ave',
+            maintenanceRequestId: 'keep-ticket',
+            metadata: {
+              _feed_ticket: { vendorWorkStatus: 'accepted' },
+            },
+          }),
           feedEvent({ id: 'drop', eventType: 'workflow.act', label: 'Action taken' }),
         ],
         10,
@@ -177,12 +188,13 @@ describe('feedWaitingHint', () => {
   })
 
   it('names who is waiting from ticket state', () => {
+    // Waiting line removed from feed cards — always null.
     expect(
       feedWaitingHint(
         feedEvent({ id: '1', eventType: 'vendor.alert_sent', label: 'Sent a job' }),
         { ...ticketBase(), awaitingLandlordChoiceAt: '2026-10-21T18:00:00.000Z' },
       ),
-    ).toBe('Waiting on you to pick')
+    ).toBeNull()
     expect(
       feedWaitingHint(
         feedEvent({ id: '2', eventType: 'maintenance.estimate_approved', label: 'Approved' }),
@@ -192,7 +204,7 @@ describe('feedWaitingHint', () => {
           recognizedSpendAmount: 240,
         },
       ),
-    ).toBe('Waiting on your approval')
+    ).toBeNull()
     expect(
       feedWaitingHint(
         feedEvent({
@@ -203,7 +215,7 @@ describe('feedWaitingHint', () => {
         }),
         { ...ticketBase(), vendorWorkStatus: 'pending_accept' },
       ),
-    ).toBe('Waiting on Ecosafe')
+    ).toBeNull()
     expect(
       feedWaitingHint(
         feedEvent({
@@ -219,7 +231,7 @@ describe('feedWaitingHint', () => {
           scheduleConfirmedAt: null,
         },
       ),
-    ).toBe('Waiting on Jordan')
+    ).toBeNull()
   })
 
   it('returns null when nobody is waiting', () => {
@@ -308,6 +320,9 @@ describe('selectLandlordFacingFeedEvents', () => {
           eventType: 'maintenance.created',
           label: 'Work order opened',
           createdAt: '2026-08-15T12:03:00.000Z',
+          issueHeadline: 'Kitchen sink leak',
+          building: '78 Maple Ave',
+          maintenanceRequestId: 'ticket-created',
         }),
         feedEvent({
           id: 'noise-log',
@@ -320,6 +335,11 @@ describe('selectLandlordFacingFeedEvents', () => {
           eventType: 'vendor.accepted',
           label: 'Vendor accepted the job',
           createdAt: '2026-08-15T12:01:00.000Z',
+          issueHeadline: 'Kitchen sink leak',
+          vendorName: 'Ecosafe Pest',
+          building: '78 Maple Ave',
+          maintenanceRequestId: 'ticket-accepted',
+          metadata: { _feed_ticket: { vendorWorkStatus: 'accepted' } },
         }),
       ],
       8,
@@ -616,8 +636,8 @@ describe('landlord activity feed cleanup', () => {
       10,
     )
     expect(selected).toHaveLength(1)
-    expect(selected[0]?.label).toMatch(/Home check declined/i)
-    expect(selected[0]?.fullLabel).toMatch(/WO-C18B|Home check declined/i)
+    expect(selected[0]?.label).toMatch(/declined the home check/i)
+    expect(selected[0]?.fullLabel).toMatch(/declined the home check/i)
     expect(selected[0]?.message ?? '').not.toMatch(/vendor-safe|internal_cleanup/)
     expect(selected[0]?.label).not.toMatch(/vendor-safe|internal_cleanup/)
     expect(selected[0]?.storySteps).toBeFalsy()
@@ -637,11 +657,8 @@ describe('landlord activity feed cleanup', () => {
       ],
       5,
     )
-    expect(selected[0]?.label).toMatch(/Ecosafe/i)
-    expect(selected[0]?.label).not.toMatch(/→|classified|probe/i)
-    expect(selected[0]?.storySteps).toBeFalsy()
-    // Badge follows job category (waiting on vendor), not the vendor.* event source.
-    expect(selected[0]?.category).toBe('work_order')
+    // No issue headline → job card is hidden rather than "Repair".
+    expect(selected).toHaveLength(0)
   })
 
   it('includes the amount and work order on a spend row', () => {
@@ -651,15 +668,27 @@ describe('landlord activity feed cleanup', () => {
           id: 'spend',
           eventType: 'maintenance.spend_recorded',
           label: 'maintenance spend recorded',
-          vendorName: 'Ecosafe',
+          vendorName: 'Ecosafe Pest Management',
           maintenanceRequestId: '074b0000-0000-4000-8000-000000000001',
-          metadata: { total_cost: 2300 },
+          issueHeadline: 'Kitchen sink leak',
+          building: '78 Maple Ave',
+          unitLabel: '1',
+          propertyType: 'multifamily',
+          metadata: {
+            total_cost: 2300,
+            _feed_ticket: {
+              spendStatus: 'invoice_pending',
+              recognizedSpendAmount: 2300,
+              estimateDecision: 'approved',
+            },
+          },
         }),
       ],
       5,
     )
-    expect(selected[0]?.label).toMatch(/Ecosafe/i)
+    expect(selected[0]?.label).toMatch(/Ecosafe Pest/)
     expect(selected[0]?.label).toMatch(/\$2,300/)
+    expect(selected[0]?.label).toMatch(/^Approve\b/)
     expect(selected[0]?.storySteps).toBeFalsy()
     expect(selected[0]?.category).toBe('spend')
   })
@@ -711,7 +740,7 @@ describe('landlord activity feed cleanup', () => {
           vendorName: 'Ecosafe',
         }),
       ),
-    ).toBe('123 Main · Ecosafe')
+    ).toBe('123 Main')
     expect(
       formatTimelineContextLine(
         feedEvent({
@@ -741,7 +770,7 @@ describe('landlord activity feed cleanup', () => {
           residentName: 'Jordan Lee',
         }),
       ),
-    ).toBe('14 Maple Ave · Unit 2B · Jordan Lee')
+    ).toBe('14 Maple Ave · Unit 2B')
   })
 
   it('omits the unit on the grey context line for single-family', () => {
@@ -758,7 +787,7 @@ describe('landlord activity feed cleanup', () => {
           residentName: 'Alex Tenant',
         }),
       ),
-    ).toBe('100 Disposable Test Lane · Alex Tenant')
+    ).toBe('100 Disposable Test Lane')
     expect(
       formatTimelineContextLine(
         feedEvent({
@@ -771,7 +800,7 @@ describe('landlord activity feed cleanup', () => {
           residentName: 'Alex Tenant',
         }),
       ),
-    ).toBe('100 Disposable Test Lane · Alex Tenant')
+    ).toBe('100 Disposable Test Lane')
   })
 
   it('turns a 19-row sample into the eight landlord stories', () => {
@@ -860,20 +889,11 @@ describe('landlord activity feed cleanup', () => {
     ]
     expect(input).toHaveLength(19)
     const selected = selectLandlordFacingFeedEvents(input, 20)
-    // One story card per ticket (+ equipment row without a ticket).
-    expect(selected.length).toBeGreaterThanOrEqual(2)
-    expect(selected.length).toBeLessThanOrEqual(4)
-    const story = selected.find((event) => event.id.startsWith('ticket-story:'))
-    expect(story).toBeTruthy()
-    expect(story?.storySteps).toBeFalsy()
-    expect(
-      Array.isArray(story?.metadata?._feed_milestones) &&
-        (story?.metadata?._feed_milestones as string[]).length,
-    ).toBeGreaterThan(0)
-    expect(story?.label.includes('…')).toBe(false)
+    // Ticket rows without a real issue headline are hidden (never "Repair").
     expect(selected.map((event) => event.label).join('\n')).not.toMatch(
-      /schedule_fsm|Suppressed|vendor-safe|TTL|FSM|WO-074B|WO-C18B/,
+      /\bRepair\b|schedule_fsm|Suppressed|vendor-safe|TTL|FSM/,
     )
+    expect(selected.every((event) => !event.storySteps)).toBe(true)
     for (const event of selected) {
       expect(event.label.includes('…')).toBe(false)
       if (event.building) {

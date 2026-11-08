@@ -42,12 +42,15 @@ function envKey(name: string): string {
 
 const SYSTEM_PROMPT =
   "You write one Activity Feed card for a landlord in Ulo (property management). " +
-  "Input is a JSON fact sheet. Output JSON only: {\"headline\":\"...\",\"status_line\":\"...\"}. " +
-  "Rules: plain friendly English; headline ≤8 words; status_line ≤6 words (or empty). " +
+  "Input is a JSON fact sheet with kind ulo_did or needs_you. " +
+  "Output JSON only: {\"headline\":\"...\",\"status_line\":\"\"}. " +
+  "Rules: plain friendly English. status_line MUST be empty. " +
+  "If kind is ulo_did: past tense starting with \"Ulo\" (Ulo sent… / Ulo confirmed… / Ulo finished…). " +
+  "If kind is needs_you: imperative (Pick a vendor for… / Approve… / Review…). " +
   "Use ONLY names, amounts, and places from the facts — never invent. " +
-  "No jargon (workflow, probe, classified, batch, reassigned). No arrows. " +
-  "Lead with what the landlord needs to know. If safety is true, say so plainly. " +
-  "status_line should start with \"Waiting on\" when waiting_on is you/vendor/tenant; else empty."
+  "Use the full vendor name from facts.vendor (never initials-only). " +
+  "Never use \"Repair\" or \"update\" as the issue. No jargon (workflow, probe, classified, batch). No arrows. " +
+  "If safety is true, lead with ⚠ and name the hazard."
 
 /**
  * Build (or reuse cached) feed card copy for a work order.
@@ -63,7 +66,10 @@ export async function writeFeedCardCopy(
     return cached
   }
 
-  const fallback = fallbackFeedCardCopy(facts)
+  const fallback = fallbackFeedCardCopy(facts) ?? {
+    headline: facts.kind === "needs_you" ? "Review this request" : "Ulo updated this request",
+    status_line: "",
+  }
   const base: FeedCardCopyCache = {
     ...fallback,
     facts_hash: hash,
@@ -71,6 +77,7 @@ export async function writeFeedCardCopy(
     updated_at: new Date().toISOString(),
   }
 
+  if (!facts.issue) return base
   if (options.skipLlm) return base
 
   const apiKey = (options.openaiKey ?? envKey("OPENAI_API_KEY")).trim()
@@ -82,10 +89,11 @@ export async function writeFeedCardCopy(
       userPrompt:
         `Fact sheet:\n${JSON.stringify(facts, null, 2)}\n\n` +
         `Examples:\n` +
-        `{"headline":"Pick another vendor: freezer seal","status_line":"Waiting on you to pick"}\n` +
-        `{"headline":"Manny's $2 estimate declined","status_line":"Waiting on you to pick"}\n` +
-        `{"headline":"Ecosafe invoice: $2,300","status_line":"Waiting on your approval"}\n` +
-        `{"headline":"⚠ Dryer fire: no vendor yet","status_line":"Waiting on you to pick"}\n` +
+        `{"headline":"Pick a vendor for the freezer seal","status_line":""}\n` +
+        `{"headline":"Approve Manny Plumber's $2 estimate","status_line":""}\n` +
+        `{"headline":"Approve Ecosafe Pest's $2,300 invoice","status_line":""}\n` +
+        `{"headline":"⚠ Pick a vendor for the dryer fire","status_line":""}\n` +
+        `{"headline":"Ulo sent the freezer seal to NTA Services","status_line":""}\n` +
         `Return JSON only.`,
       openaiKey: apiKey,
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,

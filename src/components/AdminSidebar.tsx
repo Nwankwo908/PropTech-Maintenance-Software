@@ -1,5 +1,5 @@
 import { NavLink, useSearchParams } from 'react-router-dom'
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import residentsIcon from '@/assets/Residents.svg'
 import graphIcon from '@/assets/graph.svg'
 import settingIcon from '@/assets/Setting.svg'
@@ -9,6 +9,7 @@ import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
 import webSectionIcon from '@/assets/noun-web-section.png'
 import { AskUloConversationSidebar } from '@/components/AskUloConversationSidebar'
 import { useAskUlo, withAskUloSearch } from '@/components/AskUloContext'
+import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
 import {
   dismissTryDemoAttentionGuide,
   isTryDemoAskUloShellSyncStep,
@@ -120,7 +121,7 @@ function SidebarChromeGlyph({ src }: { src: string }) {
 function NavCountBadge({ count }: { count: number }) {
   if (count <= 0) return null
   return (
-    <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#101828] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
+    <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#DA4951] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
       {count}
     </span>
   )
@@ -206,6 +207,9 @@ export function AdminSidebarContent({
   /** Remounts shine text so hover / focus replay the sweep (load uses CSS delay). */
   const [portfolioShineKey, setPortfolioShineKey] = useState(0)
   const [portfolioShineImmediate, setPortfolioShineImmediate] = useState(false)
+  /** Scrollbar only while the nav rail is actively scrolling. */
+  const [navScrolling, setNavScrolling] = useState(false)
+  const navScrollHideTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     const onPoint = (event: Event) => {
@@ -215,6 +219,25 @@ export function AdminSidebarContent({
     window.addEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
     return () => window.removeEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
   }, [])
+
+  useEffect(() => {
+    return () => {
+      if (navScrollHideTimerRef.current != null) {
+        window.clearTimeout(navScrollHideTimerRef.current)
+      }
+    }
+  }, [])
+
+  const onNavScroll = () => {
+    setNavScrolling(true)
+    if (navScrollHideTimerRef.current != null) {
+      window.clearTimeout(navScrollHideTimerRef.current)
+    }
+    navScrollHideTimerRef.current = window.setTimeout(() => {
+      setNavScrolling(false)
+      navScrollHideTimerRef.current = null
+    }, 700)
+  }
 
   const replayPortfolioShine = () => {
     setPortfolioShineImmediate(true)
@@ -425,8 +448,10 @@ export function AdminSidebarContent({
       ) : null}
 
       <nav
-        className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain ${navPad}`}
+        className={`admin-nav-rail-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain ${navPad}`}
         aria-label="Admin"
+        data-scrolling={navScrolling ? '' : undefined}
+        onScroll={onNavScroll}
       >
         <div className={`flex flex-col ${isCollapsedRail ? 'gap-2' : 'gap-4'}`}>
           {primaryGroups.map((group) => (
@@ -448,6 +473,13 @@ export function AdminSidebarContent({
             ].join(' ')}
           >
             {renderNavLink(settingsItem)}
+            <AdminUloNotificationsBell
+              navRow
+              compact={isCollapsedRail}
+              onNavigate={onNavigate}
+              tryDemoSpotlightHost={Boolean(forRail)}
+              menuAlign="start"
+            />
             {renderSetupPortfolioHint(settingsItem)}
           </div>
         ) : null}

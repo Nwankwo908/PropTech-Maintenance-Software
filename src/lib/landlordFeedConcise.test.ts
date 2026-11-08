@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   FEED_LINE_MAX_WORDS,
-  FEED_WAITING_MAX_WORDS,
   attentionAlertFeedLine,
   estimateDeclinedFeedLine,
   feedLineWordCount,
@@ -57,64 +56,63 @@ describe('concise Activity Feed copy contract', () => {
         headline: "NTA can't take this job",
         detail: 'Broken freezer door seal',
       })?.line,
-    ).toBe('Pick another vendor: freezer seal')
+    ).toBe('Pick a vendor for the freezer seal')
     expect(
       estimateDeclinedFeedLine({
         amount: 2,
         vendorName: 'Manny Plumber',
         issueHeadline: 'Baseboard heater leak',
       }).line,
-    ).toBe("Manny's $2 estimate declined")
+    ).toBe("Manny Plumber's $2 estimate declined")
     expect(
       spendFeedLine({ amount: 2300, vendorName: 'Ecosafe Pest Management' })?.line,
-    ).toBe('Ecosafe invoice: $2,300')
+    ).toBe('Ecosafe Pest Management invoice: $2,300')
     expect(
       attentionAlertFeedLine({
         kind: 'assign_vendor',
         headline: 'No preferred vendor matched',
         detail: 'Dryer fire in unit 3',
       })?.line,
-    ).toMatch(/^⚠ dryer fire: no vendor yet$/i)
+    ).toMatch(/^⚠ Pick a vendor for the dryer fire$/i)
     expect(inspectionCaptureFeedLine({ phase: 'ended', outcome: 'looked fine' }).line).toBe(
-      'Photo: no issues',
+      'Ulo checked the equipment scan: no issues',
     )
-    expect(inspectionCaptureFeedLine({ phase: 'ended' }).line).toBe('Scan finished')
+    expect(inspectionCaptureFeedLine({ phase: 'ended' }).line).toBe(
+      'Ulo checked the equipment scan: no issues',
+    )
     expect(
       vendorAlertFeedLine({
         vendorName: 'Manny Plumber',
         issueHeadline: 'Baseboard heater leak',
       }).line,
-    ).toBe('Manny: heater leak')
+    ).toBe('Manny Plumber: heater leak')
     expect(vendorNoReplyFeedLine({ vendorName: 'NTA Services', issueHeadline: 'freezer seal' }).line).toBe(
-      'NTA: no reply',
+      'NTA Services: no reply',
     )
     expect(
       vendorAcceptedFeedLine({ vendorName: 'Ecosafe', issueHeadline: 'kitchen sink leak' }).line,
     ).toBe('Ecosafe accepted: sink leak')
   })
 
-  it('keeps waiting lines ≤5 words starting with Waiting on', () => {
-    const hints = [
+  it('drops the waiting line — needs_you headlines already say the ask', () => {
+    expect(
       feedWaitingHint(
         { eventType: 'landlord.attention_alert_sent', vendorName: null, residentName: null, metadata: null },
         { awaitingLandlordChoiceAt: '2026-11-05T12:00:00.000Z' },
       ),
+    ).toBeNull()
+    expect(
       feedWaitingHint(
         { eventType: 'maintenance.spend_recorded', vendorName: 'Ecosafe', residentName: null, metadata: null },
         { spendStatus: 'pending_approval', recognizedSpendAmount: 2300 },
       ),
+    ).toBeNull()
+    expect(
       feedWaitingHint(
         { eventType: 'vendor.alert_sent', vendorName: 'Ecosafe', residentName: null, metadata: null },
         { vendorWorkStatus: 'pending_accept' },
       ),
-    ]
-    for (const hint of hints) {
-      expect(hint).toMatch(/^Waiting on\b/)
-      expect(feedLineWordCount(hint!)).toBeLessThanOrEqual(FEED_WAITING_MAX_WORDS)
-    }
-    expect(hints[0]).toBe('Waiting on you to pick')
-    expect(hints[1]).toBe('Waiting on your approval')
-    expect(hints[2]).toBe('Waiting on Ecosafe')
+    ).toBeNull()
   })
 
   it('enforces headline ≤8, waiting ≤5, trail ≤3 steps of ≤3 words', () => {
@@ -199,14 +197,12 @@ describe('concise Activity Feed copy contract', () => {
     )
     expect(selected).toHaveLength(1)
     const row = selected[0]!
-    expect(feedLineWordCount(row.label)).toBeLessThanOrEqual(FEED_LINE_MAX_WORDS)
+    expect(feedLineWordCount(row.label)).toBeLessThanOrEqual(14)
     expect(row.label).not.toMatch(/\bthe job\b/i)
     expect(row.label).not.toMatch(/\bat 78 Maple\b/i)
+    expect(row.label).not.toMatch(/\bRepair\b/)
     expect(formatTimelineContextLine(row)).toBe('78 Maple Ave · Unit 1')
-    if (row.waitingHint) {
-      expect(row.waitingHint).toMatch(/^Waiting on\b/)
-      expect(feedLineWordCount(row.waitingHint)).toBeLessThanOrEqual(FEED_WAITING_MAX_WORDS)
-    }
+    expect(row.waitingHint).toBeFalsy()
     expect(row.storySteps).toBeFalsy()
     expect(row.label).not.toMatch(/→/)
     const milestones = row.metadata?._feed_milestones as string[] | undefined

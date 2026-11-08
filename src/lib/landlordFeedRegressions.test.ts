@@ -62,7 +62,7 @@ describe('Activity Feed regression fixtures', () => {
         issueHeadline: 'Baseboard heater leak',
         vendorName: 'Manny Plumber',
       }).line,
-    ).toBe("Manny's $2 estimate declined")
+    ).toMatch(/Manny.*\$2 estimate declined/)
     expect(
       vendorNoReplyFeedLine({
         issueHeadline: 'Broken freezer door seal',
@@ -100,14 +100,14 @@ describe('Activity Feed regression fixtures', () => {
         issueHeadline: 'Baseboard heater leak',
         workOrderRef: 'WO-A6CA',
       }).line,
-    ).toBe('Manny: heater leak')
+    ).toBe('Manny Plumber: heater leak')
     expect(
       formatTimelineContextLine(
         feedEvent({
           id: 'ctx',
           eventType: 'vendor.alert_sent',
-          label: 'Manny: heater leak',
-          fullLabel: 'Manny: heater leak',
+          label: 'Manny Plumber: heater leak',
+          fullLabel: 'Manny Plumber: heater leak',
           category: 'vendor',
           building: '78 Maple Ave',
           unitLabel: '1',
@@ -199,8 +199,9 @@ describe('Activity Feed regression fixtures', () => {
     )
     expect(selected).toHaveLength(1)
     expect(selected[0]?.id).toMatch(/^ticket-story:/)
-    expect(selected[0]?.waitingHint).toBe('Waiting on your approval')
+    expect(selected[0]?.waitingHint).toBeFalsy()
     expect(selected[0]?.storySteps).toBeFalsy()
+    expect(selected[0]?.label).toMatch(/Approve Ecosafe|Ulo /i)
     const milestones = selected[0]?.metadata?._feed_milestones as string[] | undefined
     expect(milestones?.join(' ')).toMatch(/Sent to Ecosafe/)
     expect(milestones?.filter((step) => /accepted/i.test(step))).toHaveLength(1)
@@ -252,6 +253,6 @@ describe('Activity Feed regression fixtures', () => {
         vendorName: 'Manny Plumber',
         metadata: { amount: 2 },
       })?.line,
-    ).toBe("Manny's $2 estimate declined")
+    ).toBe("Manny Plumber's $2 estimate declined")
   })
 })

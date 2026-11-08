@@ -41,7 +41,11 @@ import {
   buildFeedFactSheet,
   fallbackFeedCardCopy,
   feedFactsHash,
+  looksLikeEmptyTemplateFeedCopy,
+  looksLikePropertyInventoryNoise,
   nonJobFeedCardCopy,
+  rescheduleNeedsYouCopy,
+  shouldHideFeedFactSheet,
   type FeedCardCopyCache,
   type FeedCardStatus,
   type FeedFactSheet,
@@ -107,6 +111,9 @@ export type FeedTicketEnrichment = {
   scheduledAt: string | null
   recognizedSpendAmount: number | null
   estimateAmount?: number | null
+  estimateDecision?: 'pending_approval' | 'approved' | 'rejected' | 'superseded' | null
+  descriptionSummary?: string | null
+  trade?: string | null
   completedAt?: string | null
   cancelledAt?: string | null
   /** Cached AI/fallback card copy from maintenance_requests.feed_card_copy. */
@@ -125,11 +132,18 @@ function resolveFeedCardFromTicket(
   event: PropertyOperationsTimelineEvent,
   ticket?: FeedTicketEnrichment | null,
   milestoneEvents: FeedMilestoneEvent[] = [],
-): { facts: FeedFactSheet; copy: { headline: string; status_line: string }; hash: string } {
+): {
+  facts: FeedFactSheet
+  copy: { headline: string; status_line: string } | null
+  hash: string
+  hide: boolean
+} {
   const bits = ticket ?? feedTicketBitsFromMetadata(event.metadata)
   const facts = buildFeedFactSheet(
     {
       issueHeadline: event.issueHeadline ?? bits?.issueHeadline,
+      descriptionSummary: bits?.descriptionSummary,
+      trade: bits?.trade,
       building: event.building ?? bits?.building,
       unitLabel: event.unitLabel ?? bits?.unitLabel,
       propertyType: event.propertyType ?? bits?.propertyType,
@@ -138,6 +152,7 @@ function resolveFeedCardFromTicket(
       awaitingLandlordChoiceAt: bits?.awaitingLandlordChoiceAt,
       vendorWorkStatus: bits?.vendorWorkStatus,
       spendStatus: bits?.spendStatus,
+      estimateDecision: bits?.estimateDecision,
       scheduleConfirmedAt: bits?.scheduleConfirmedAt,
       scheduledAt: bits?.scheduledAt ?? event.scheduledAt,
       recognizedSpendAmount: bits?.recognizedSpendAmount,
@@ -148,15 +163,19 @@ function resolveFeedCardFromTicket(
     milestoneEvents,
   )
   const hash = feedFactsHash(facts)
+  if (shouldHideFeedFactSheet(facts)) {
+    return { facts, copy: null, hash, hide: true }
+  }
   const cached = bits?.feedCardCopy
   if (cached?.facts_hash === hash && cached.headline?.trim()) {
     return {
       facts,
-      copy: { headline: cached.headline, status_line: cached.status_line ?? '' },
+      copy: { headline: cached.headline, status_line: '' },
       hash,
+      hide: false,
     }
   }
-  return { facts, copy: fallbackFeedCardCopy(facts), hash }
+  return { facts, copy: fallbackFeedCardCopy(facts), hash, hide: false }
 }
 
 export type PropertyOperationsTimelineScope =
@@ -629,6 +648,11 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   // Hide diagnostic copy and raw dotted-name fallbacks with nothing better to show.
   const label = event.label?.trim() || ''
   const message = event.message?.trim() || ''
+  if (looksLikePropertyInventoryNoise(message) || looksLikePropertyInventoryNoise(label)) {
+    return false
+  }
+  // Empty-template / Repair labels are stripped after applyLandlordFacingCopy,
+  // once story cards have rewritten headlines from the fact sheet.
   if (looksLikeDiagnosticLandlordFeedCopy(message) || looksLikeDiagnosticLandlordFeedCopy(label)) {
     return false
   }
@@ -802,7 +826,6 @@ function isWorkOrderCloseEvent(eventType: string): boolean {
 function nonJobLandlordFeedLine(event: PropertyOperationsTimelineEvent): FeedLine | null {
   const type = event.eventType.trim().toLowerCase()
   const vendor = event.vendorName
-  const resident = event.residentName
   const message = (event.message ?? event.label ?? '').trim()
 
   if (type === 'vendor.onboarding_overridden' || /activated without verification/i.test(message)) {
@@ -810,9 +833,18 @@ function nonJobLandlordFeedLine(event: PropertyOperationsTimelineEvent): FeedLin
     return { line: copy.headline, full: copy.headline }
   }
   if (
+    type === 'vendor.verification_invite_sent' ||
+    type === 'vendor.invite_sent' ||
+    /verification invite sent/i.test(message)
+  ) {
+    const copy = nonJobFeedCardCopy({ kind: 'vendor_invited', vendorName: vendor })
+    return { line: copy.headline, full: copy.headline }
+  }
+  if (
     type === 'vendor.verification_verified' ||
     type === 'vendor.activated' ||
     type === 'vendor.onboarding_completed' ||
+    (/activation text sent/i.test(message) && type.startsWith('vendor.')) ||
     (/activated\b/i.test(message) && type.startsWith('vendor.') && !/without/i.test(message))
   ) {
     const copy = nonJobFeedCardCopy({ kind: 'vendor_activated', vendorName: vendor })
@@ -825,20 +857,31 @@ function nonJobLandlordFeedLine(event: PropertyOperationsTimelineEvent): FeedLin
   ) {
     const copy = nonJobFeedCardCopy({
       kind: 'home_check_declined',
-      tenantName: resident ?? vendor,
+      vendorName: vendor,
     })
     return { line: copy.headline, full: copy.headline }
   }
   if (
-    /photo looked fine|no repair was opened|no issues/i.test(message) ||
-    (type.startsWith('inspection.') && /no issue/i.test(message))
+    type === 'inspection.capture_session_ended' ||
+    /photo looked fine|no repair was opened|no issues|scan finished/i.test(message)
   ) {
-    const appliance =
-      (typeof event.metadata?.appliance_label === 'string' && event.metadata.appliance_label) ||
-      (typeof event.metadata?.appliance === 'string' && event.metadata.appliance) ||
-      'Photo'
-    const copy = nonJobFeedCardCopy({ kind: 'photo_no_issues', appliance })
+    const copy = nonJobFeedCardCopy({ kind: 'equipment_scan_ok' })
     return { line: copy.headline, full: copy.headline }
+  }
+  if (
+    type === 'landlord.attention_alert_sent' ||
+    /reschedule/i.test(type) ||
+    /asked to reschedule|they asked for/i.test(message)
+  ) {
+    const reschedule = rescheduleNeedsYouCopy({
+      residentName: event.residentName,
+      issueHeadline: event.issueHeadline,
+      vendorName: vendor,
+    })
+    if (reschedule) return { line: reschedule.headline, full: reschedule.headline }
+    if (/they asked for/i.test(message) || /Needs you:\s*they asked for/i.test(event.label)) {
+      return null
+    }
   }
   return null
 }
@@ -948,23 +991,11 @@ function applyLandlordFacingCopy(
   }
 }
 
-/** Attach Waiting on… only on the newest row per work order (story card or lone row). */
+/** Waiting line removed — needs_you / ulo_did headlines already carry the ask. */
 export function attachWaitingHintsOnce(
   events: PropertyOperationsTimelineEvent[],
 ): PropertyOperationsTimelineEvent[] {
-  const newestTicketSeen = new Set<string>()
-  return events.map((event) => {
-    const ticketId = event.maintenanceRequestId?.trim()
-    if (!ticketId) return { ...event, waitingHint: null }
-    if (newestTicketSeen.has(ticketId)) return { ...event, waitingHint: null }
-    newestTicketSeen.add(ticketId)
-    const fromFacts =
-      typeof event.metadata?._feed_status_line === 'string'
-        ? event.metadata._feed_status_line.trim()
-        : ''
-    const hint = fromFacts || feedWaitingHint(event)
-    return { ...event, waitingHint: hint || null }
-  })
+  return events.map((event) => ({ ...event, waitingHint: null }))
 }
 
 /** Collapse setup/onboarding noise, then keep only landlord-facing outcome lines. */
@@ -989,11 +1020,27 @@ export function selectLandlordFacingFeedEvents(
       )
     : events
 
-  return attachWaitingHintsOnce(
+  const rows = attachWaitingHintsOnce(
     consolidateFeedEvents(mergePairedFeedStories(dedupePropertyOperationsEvents(scoped)))
       .filter(isLandlordFacingFeedEvent)
-      .map(applyLandlordFacingCopy),
-  ).slice(0, Math.max(limit, 0))
+      .map(applyLandlordFacingCopy)
+      .filter(
+        (event) =>
+          !looksLikeEmptyTemplateFeedCopy(event.label) &&
+          !/\bRepair:\s*update\b/i.test(event.label || '') &&
+          !/\bPick vendor:\s*Repair\b/i.test(event.label || ''),
+      ),
+  )
+  return [...rows]
+    .sort((a, b) => {
+      const aSafety =
+        a.metadata?._feed_safety === true && a.metadata?._feed_open_needs_you === true ? 1 : 0
+      const bSafety =
+        b.metadata?._feed_safety === true && b.metadata?._feed_open_needs_you === true ? 1 : 0
+      if (aSafety !== bSafety) return bSafety - aSafety
+      return b.createdAt.localeCompare(a.createdAt)
+    })
+    .slice(0, Math.max(limit, 0))
 }
 
 function storyStepLabel(event: PropertyOperationsTimelineEvent): string {
@@ -1082,13 +1129,18 @@ function inferTicketBitsFromEventGroup(
       if (amount != null) bits.recognizedSpendAmount = bits.recognizedSpendAmount ?? amount
     }
     if (type.includes('estimate') && (type.includes('pending') || type.includes('submitted'))) {
-      bits.spendStatus = bits.spendStatus ?? 'pending_approval'
+      bits.estimateDecision = bits.estimateDecision ?? 'pending_approval'
       if (amount != null) bits.estimateAmount = bits.estimateAmount ?? amount
     }
     if (type.includes('estimate') && (type.includes('declined') || type.includes('rejected'))) {
-      bits.spendStatus = bits.spendStatus ?? 'pending_approval'
+      // Current estimate is rejected — landlord needs a new vendor, not approval.
+      bits.estimateDecision = 'rejected'
       if (amount != null) bits.estimateAmount = bits.estimateAmount ?? amount
       bits.awaitingLandlordChoiceAt = bits.awaitingLandlordChoiceAt ?? row.createdAt
+    }
+    if (type.includes('estimate') && type.includes('approved')) {
+      bits.estimateDecision = bits.estimateDecision === 'rejected' ? bits.estimateDecision : 'approved'
+      if (amount != null) bits.estimateAmount = bits.estimateAmount ?? amount
     }
     if (
       type === 'vendor.accepted' ||
@@ -1143,21 +1195,11 @@ function homeCheckDeclineCopy(
       row.message ||
       ''
     if (/home check/i.test(reason)) {
-      const who =
-        row.residentName ||
-        row.vendorName ||
-        (reason.match(/by\s+([A-Z][a-z]+)/)?.[1] ?? null)
       const copy = nonJobFeedCardCopy({
         kind: 'home_check_declined',
-        tenantName: who,
+        vendorName: row.vendorName,
       })
-      // Prefer concise "Home check declined" when no clear person, matching prior template.
-      const headline = who ? copy.headline : 'Home check declined'
-      const wo =
-        row.maintenanceRequestId != null
-          ? `WO-${row.maintenanceRequestId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
-          : null
-      return { headline, full: wo ? `${headline} (${wo})` : headline }
+      return { headline: copy.headline, full: copy.headline }
     }
   }
   return null
@@ -1202,10 +1244,13 @@ export function groupTicketFeedStories(
       feedTicketBitsFromMetadata(latest.metadata),
     )
     const homeCheck = homeCheckDeclineCopy(oldestFirst)
-    const { facts, copy } = resolveFeedCardFromTicket(latest, ticketBits, milestoneEvents)
+    const { facts, copy, hide } = resolveFeedCardFromTicket(latest, ticketBits, milestoneEvents)
+    if (!homeCheck && (hide || !copy?.headline)) {
+      continue
+    }
     const badge = homeCheck ? ('work_order' as const) : feedBadgeCategoryFromStatus(facts.status)
-    const headline = homeCheck?.headline ?? copy.headline
-    const statusLine = homeCheck ? '' : copy.status_line
+    const headline = homeCheck?.headline ?? copy!.headline
+    if (looksLikeEmptyTemplateFeedCopy(headline)) continue
 
     stories.push({
       ...latest,
@@ -1228,16 +1273,26 @@ export function groupTicketFeedStories(
         ...(latest.metadata ?? {}),
         _story_event_ids: newestFirst.map((row) => row.id),
         _feed_card_headline: headline,
-        _feed_status_line: statusLine,
+        _feed_status_line: '',
         _feed_milestones: facts.milestones,
         _feed_badge_category: badge,
         _feed_facts_issue: facts.issue,
+        _feed_kind: facts.kind,
+        _feed_safety: facts.safety,
+        _feed_open_needs_you: facts.kind === 'needs_you' && facts.status !== 'done',
         ...(homeCheck ? { _feed_card_full: homeCheck.full } : {}),
       },
     })
   }
 
-  return [...passthrough, ...stories].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return [...passthrough, ...stories].sort((a, b) => {
+    const aSafety =
+      a.metadata?._feed_safety === true && a.metadata?._feed_open_needs_you === true ? 1 : 0
+    const bSafety =
+      b.metadata?._feed_safety === true && b.metadata?._feed_open_needs_you === true ? 1 : 0
+    if (aSafety !== bSafety) return bSafety - aSafety
+    return b.createdAt.localeCompare(a.createdAt)
+  })
 }
 
 /** Collapse repetitive setup logs (e.g. onboarding registering many units). */
@@ -1438,6 +1493,8 @@ export async function fetchPropertyOperationsTimeline(
 type MaintenanceTicketFeedRow = {
   id: string
   issue_headline: string | null
+  description?: string | null
+  issue_category?: string | null
   unit: string | null
   unit_id: string | null
   property_id: string | null
@@ -1451,6 +1508,13 @@ type MaintenanceTicketFeedRow = {
   completed_at?: string | null
   cancelled_at?: string | null
   feed_card_copy?: FeedCardCopyCache | Record<string, unknown> | null
+}
+
+type EstimateFeedRow = {
+  maintenance_request_id: string
+  status: string | null
+  total_cost: number | string | null
+  created_at: string | null
 }
 
 type PropertyFeedRow = {
@@ -1486,7 +1550,7 @@ export async function enrichTicketsForFeed(
   const { data, error } = await supabase
     .from('maintenance_requests')
     .select(
-      'id, issue_headline, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount, estimate_amount, completed_at, cancelled_at, feed_card_copy',
+      'id, issue_headline, description, issue_category, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount, estimate_amount, completed_at, cancelled_at, feed_card_copy',
     )
     .in('id', ids)
 
@@ -1519,6 +1583,37 @@ export async function enrichTicketsForFeed(
     }
   }
 
+  // Latest estimate record per ticket — source of truth for estimate pending vs rejected.
+  const estimateByTicket = new Map<
+    string,
+    { decision: FeedTicketEnrichment['estimateDecision']; amount: number | null }
+  >()
+  const { data: estimates, error: estimateError } = await supabase
+    .from('maintenance_estimates')
+    .select('maintenance_request_id, status, total_cost, created_at')
+    .in('maintenance_request_id', ids)
+    .order('created_at', { ascending: false })
+  if (estimateError) {
+    console.error('[propertyOperationsGraph] feed estimate enrich', estimateError.message)
+  } else {
+    for (const row of (estimates ?? []) as EstimateFeedRow[]) {
+      const ticketId = String(row.maintenance_request_id)
+      if (estimateByTicket.has(ticketId)) continue
+      const status = asOptionalString(row.status)
+      const decision =
+        status === 'pending_approval' ||
+        status === 'approved' ||
+        status === 'rejected' ||
+        status === 'superseded'
+          ? status
+          : null
+      estimateByTicket.set(ticketId, {
+        decision,
+        amount: asOptionalNumber(row.total_cost),
+      })
+    }
+  }
+
   for (const row of rows) {
     const property = row.property_id ? propertyById.get(row.property_id) : undefined
     const building =
@@ -1529,8 +1624,11 @@ export async function enrichTicketsForFeed(
       row.feed_card_copy && typeof row.feed_card_copy === 'object' && !Array.isArray(row.feed_card_copy)
         ? (row.feed_card_copy as FeedCardCopyCache)
         : null
+    const estimate = estimateByTicket.get(String(row.id))
     out.set(String(row.id), {
       issueHeadline: asOptionalString(row.issue_headline),
+      descriptionSummary: asOptionalString(row.description),
+      trade: asOptionalString(row.issue_category),
       unitLabel: asOptionalString(row.unit),
       building,
       propertyId: asOptionalString(row.property_id),
@@ -1538,10 +1636,11 @@ export async function enrichTicketsForFeed(
       awaitingLandlordChoiceAt: asOptionalString(row.awaiting_landlord_choice_at),
       vendorWorkStatus: asOptionalString(row.vendor_work_status),
       spendStatus: asOptionalString(row.spend_status),
+      estimateDecision: estimate?.decision ?? null,
       scheduleConfirmedAt: asOptionalString(row.schedule_confirmed_at),
       scheduledAt: asOptionalString(row.scheduled_at),
       recognizedSpendAmount: asOptionalNumber(row.recognized_spend_amount),
-      estimateAmount: asOptionalNumber(row.estimate_amount),
+      estimateAmount: estimate?.amount ?? asOptionalNumber(row.estimate_amount),
       completedAt: asOptionalString(row.completed_at),
       cancelledAt: asOptionalString(row.cancelled_at),
       feedCardCopy,
@@ -1561,8 +1660,18 @@ function feedTicketBitsFromMetadata(
     row.feedCardCopy && typeof row.feedCardCopy === 'object' && !Array.isArray(row.feedCardCopy)
       ? (row.feedCardCopy as FeedCardCopyCache)
       : null
+  const estimateDecisionRaw = asOptionalString(row.estimateDecision)
+  const estimateDecision =
+    estimateDecisionRaw === 'pending_approval' ||
+    estimateDecisionRaw === 'approved' ||
+    estimateDecisionRaw === 'rejected' ||
+    estimateDecisionRaw === 'superseded'
+      ? estimateDecisionRaw
+      : null
   return {
     issueHeadline: asOptionalString(row.issueHeadline),
+    descriptionSummary: asOptionalString(row.descriptionSummary),
+    trade: asOptionalString(row.trade),
     unitLabel: asOptionalString(row.unitLabel),
     building: asOptionalString(row.building),
     propertyId: null,
@@ -1570,6 +1679,7 @@ function feedTicketBitsFromMetadata(
     awaitingLandlordChoiceAt: asOptionalString(row.awaitingLandlordChoiceAt),
     vendorWorkStatus: asOptionalString(row.vendorWorkStatus),
     spendStatus: asOptionalString(row.spendStatus),
+    estimateDecision,
     scheduleConfirmedAt: asOptionalString(row.scheduleConfirmedAt),
     scheduledAt: asOptionalString(row.scheduledAt),
     recognizedSpendAmount: asOptionalNumber(row.recognizedSpendAmount),
@@ -1584,47 +1694,14 @@ function feedTicketBitsFromMetadata(
  * Thin “Waiting on …” subtitle from live ticket state.
  * Only when someone is clearly blocked; null otherwise.
  */
+/** @deprecated Waiting line removed from feed cards — always null. */
 export function feedWaitingHint(
-  event: Pick<
+  _event: Pick<
     PropertyOperationsTimelineEvent,
     'eventType' | 'vendorName' | 'residentName' | 'metadata'
   >,
-  ticket?: FeedTicketEnrichment | null,
+  _ticket?: FeedTicketEnrichment | null,
 ): string | null {
-  const bits = ticket ?? feedTicketBitsFromMetadata(event.metadata)
-  if (!bits) return null
-
-  const type = event.eventType.trim().toLowerCase()
-  if (
-    type.includes('completed') ||
-    type.includes('cancelled') ||
-    type.includes('terminated') ||
-    type.includes('archived') ||
-    type === 'vendor.declined'
-  ) {
-    return null
-  }
-
-  if (bits.awaitingLandlordChoiceAt) {
-    return 'Waiting on you to pick'
-  }
-
-  const spend = (bits.spendStatus ?? '').trim().toLowerCase()
-  if (spend === 'pending_approval') {
-    return 'Waiting on your approval'
-  }
-
-  const workStatus = (bits.vendorWorkStatus ?? '').trim().toLowerCase()
-  if (workStatus === 'pending_accept') {
-    const vendor = shortVendorName(event.vendorName)
-    return vendor ? `Waiting on ${vendor}` : 'Waiting on vendor'
-  }
-
-  if (bits.scheduledAt && !bits.scheduleConfirmedAt) {
-    const resident = shortVendorName(event.residentName)
-    return resident ? `Waiting on ${resident}` : 'Waiting on tenant'
-  }
-
   return null
 }
 
@@ -1650,12 +1727,15 @@ export function applyFeedTicketEnrichment(
         ...(ticket.issueHeadline ? { issue_headline: ticket.issueHeadline } : {}),
         _feed_ticket: {
           issueHeadline: ticket.issueHeadline,
+          descriptionSummary: ticket.descriptionSummary ?? null,
+          trade: ticket.trade ?? null,
           unitLabel: ticket.unitLabel,
           building: ticket.building,
           propertyType: ticket.propertyType,
           awaitingLandlordChoiceAt: ticket.awaitingLandlordChoiceAt,
           vendorWorkStatus: ticket.vendorWorkStatus,
           spendStatus: ticket.spendStatus,
+          estimateDecision: ticket.estimateDecision ?? null,
           scheduleConfirmedAt: ticket.scheduleConfirmedAt,
           scheduledAt: ticket.scheduledAt,
           recognizedSpendAmount: ticket.recognizedSpendAmount,
@@ -1795,24 +1875,17 @@ export function formatTimelinePlace(
 export function formatTimelineContextLine(
   event: PropertyOperationsTimelineEvent,
 ): string | null {
+  // Job-related rows: always show property · unit on the second line.
+  if (event.maintenanceRequestId || event.metadata?._feed_facts_issue) {
+    return formatTimelinePlace(event)
+  }
   const place = formatTimelinePlace(event)
-  const person = contextPerson(event)
   const label = (event.fullLabel ?? event.label ?? '').toLowerCase()
-  // Attention / action lines often already include the street — don't repeat it.
   const placeAlreadyInLabel =
     Boolean(place) &&
     (label.includes(place!.toLowerCase()) ||
       Boolean(event.building?.trim() && label.includes(event.building.trim().toLowerCase())))
-  const shownPlace = placeAlreadyInLabel ? null : place
-  if (person) {
-    const shortPerson = shortVendorName(person) || person
-    const personAlreadyNamed =
-      label.includes(person.toLowerCase()) || label.includes(shortPerson.toLowerCase())
-    if (personAlreadyNamed) return shownPlace
-    if (shownPlace) return `${shownPlace} · ${person}`
-    return null
-  }
-  return shownPlace
+  return placeAlreadyInLabel ? null : place
 }
 
 export type TimelineResidentOption = {
