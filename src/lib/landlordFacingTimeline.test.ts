@@ -5,6 +5,7 @@ import {
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
   isHiddenInternalNoteTimelineEventType,
+  isPipelineOnlyLandlordFeedCopy,
   isVisibleLandlordTimelineDescription,
   landlordFeedHiddenEventTypes,
 } from './landlordFacingTimeline'
@@ -45,11 +46,22 @@ describe('landlordFacingTimeline', () => {
   it('lists every hidden feed event type for query filters', () => {
     const hidden = landlordFeedHiddenEventTypes()
     expect(hidden).toContain('workflow.act')
+    expect(hidden).toContain('workflow.classify')
+    expect(hidden).toContain('workflow.route')
+    expect(hidden).toContain('workflow.trigger')
+    expect(hidden).toContain('workflow.log')
     expect(hidden).toContain('sms.delivered')
     expect(hidden).toContain('rent.collection_cron_triggered')
     expect(hidden).toContain('tenant.activation_admin_alert_sent')
     expect(hidden).not.toContain('workflow.escalate')
     expect(hidden).not.toContain('rent.reminder_sent')
+  })
+
+  it('treats Classified/Routed/Logged-only copy as pipeline plumbing', () => {
+    expect(isPipelineOnlyLandlordFeedCopy('Action taken', null)).toBe(true)
+    expect(isPipelineOnlyLandlordFeedCopy('Classified', 'Routed')).toBe(true)
+    expect(isPipelineOnlyLandlordFeedCopy('Action taken', 'Opened a work order')).toBe(false)
+    expect(isPipelineOnlyLandlordFeedCopy('Vendor accepted the job', null)).toBe(false)
   })
 
   it('hides plumbing labels on Timeline copy', () => {
@@ -67,6 +79,8 @@ describe('landlordFacingTimeline', () => {
     ).toBe(false)
     expect(isHiddenInternalNoteTimelineEventType('automation.message_suppressed')).toBe(true)
     expect(isHiddenInternalNoteTimelineEventType('maintenance.terminate_reason_unmapped')).toBe(true)
+    expect(isHiddenInternalNoteTimelineEventType('inspection.capture_session_started')).toBe(true)
+    expect(isHiddenInternalNoteTimelineEventType('inspection.capture_session_ended')).toBe(false)
     expect(isHiddenInternalNoteTimelineEventType('maintenance.created')).toBe(false)
   })
 })

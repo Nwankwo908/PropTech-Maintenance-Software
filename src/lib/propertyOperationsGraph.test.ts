@@ -42,6 +42,31 @@ describe('isLandlordFacingFeedEvent', () => {
         feedEvent({ id: '3', eventType: 'workflow.trigger', label: 'Workflow started' }),
       ),
     ).toBe(false)
+    expect(
+      isLandlordFacingFeedEvent(
+        feedEvent({ id: '3b', eventType: 'workflow.classify', label: 'Classified' }),
+      ),
+    ).toBe(false)
+    expect(
+      isLandlordFacingFeedEvent(feedEvent({ id: '3c', eventType: 'workflow.route', label: 'Routed' })),
+    ).toBe(false)
+  })
+
+  it('hides rows that only carry pipeline labels even under another event type', () => {
+    expect(
+      isLandlordFacingFeedEvent(
+        feedEvent({ id: 'pipe-label', eventType: 'maintenance.created', label: 'Action taken' }),
+      ),
+    ).toBe(false)
+    expect(
+      selectLandlordFacingFeedEvents(
+        [
+          feedEvent({ id: 'keep', eventType: 'vendor.accepted', label: 'Vendor accepted the job' }),
+          feedEvent({ id: 'drop', eventType: 'workflow.act', label: 'Action taken' }),
+        ],
+        10,
+      ).map((row) => row.id),
+    ).toEqual(['keep'])
   })
 
   it('hides raw SMS delivery and receive receipts', () => {
@@ -217,7 +242,7 @@ describe('selectLandlordFacingFeedEvents', () => {
 
     expect(collapsed).toHaveLength(1)
     expect(collapsed[0]?.eventType).toBe('tenant.onboarding_verification')
-    expect(collapsed[0]?.label).toBe('Tenant onboarding verification')
+    expect(collapsed[0]?.label).toBe('Finished text onboarding for Saad Iqbal')
     expect(collapsed[0]?.message).toContain('welcome text sent')
     expect(collapsed[0]?.message).toContain('opted in')
 
@@ -464,7 +489,7 @@ describe('landlord activity feed cleanup', () => {
       10,
     )
     expect(selected).toHaveLength(1)
-    expect(selected[0]?.label).toBe('WO-C18B closed: Home Check note, not a repair')
+    expect(selected[0]?.label).toBe('Closed WO-C18B: Home Check note, not a repair')
     expect(selected[0]?.fullLabel).toBe(selected[0]?.label)
     expect(selected[0]?.message ?? '').not.toMatch(/vendor-safe|internal_cleanup/)
     expect(selected[0]?.label).not.toMatch(/vendor-safe|internal_cleanup/)
@@ -643,14 +668,14 @@ describe('landlord activity feed cleanup', () => {
     const selected = selectLandlordFacingFeedEvents(input, 20)
     expect(selected).toHaveLength(8)
     expect(selected.map((event) => event.label)).toEqual([
-      'Ecosafe declined WO-074B; finding another vendor',
-      'WO-074B visit window passed without tenant confirmation; no texts sent',
-      'WO-C18B closed: Home Check note, not a repair',
-      'Water heater serial X132753655 recorded',
-      '$2,300 spent on WO-074B (Ecosafe)',
-      'Ecosafe accepted WO-074B',
-      'Sent WO-074B to Ecosafe',
-      'Work order opened',
+      'Ecosafe declined WO-074B at 123 Main; finding another vendor',
+      'Stopped texts on WO-074B after the visit window passed at 123 Main',
+      'Closed WO-C18B at 123 Main: Home Check note, not a repair',
+      'Saved Water heater serial X132753655 at 123 Main',
+      '$2,300 spent on WO-074B (Ecosafe) at 123 Main',
+      'Ecosafe accepted WO-074B at 123 Main',
+      'Sent WO-074B to Ecosafe at 123 Main',
+      'Opened a work order for WO-074B at 123 Main',
     ])
     for (const event of selected) {
       expect(event.label.length).toBeLessThanOrEqual(85)
@@ -674,7 +699,9 @@ describe('landlord activity feed cleanup', () => {
       const line = formatTimelineContextLine(event) ?? ''
       expect(line.split(' · ').length).toBeLessThanOrEqual(2)
       if (event.category === 'vendor' || event.category === 'spend') {
-        expect(line).toBe('123 Main · Ecosafe')
+        // Property is already in the action line — context keeps the vendor only.
+        expect(line).toBe('Ecosafe')
+        expect(event.label).toMatch(/123 Main/)
       }
     }
   })

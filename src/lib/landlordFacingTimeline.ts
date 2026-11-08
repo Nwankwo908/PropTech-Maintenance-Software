@@ -48,18 +48,33 @@ export const HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES = new Set([
 export const HIDDEN_INTERNAL_NOTE_TIMELINE_EVENT_TYPES = new Set([
   'automation.message_suppressed',
   'maintenance.terminate_reason_unmapped',
+  // QR session open is setup noise; the finished capture row carries the outcome.
+  'inspection.capture_session_started',
 ])
 
 /** Three or more snake_case segments, e.g. schedule_fsm_ttl_tenant_confirm. */
 const SNAKE_CASE_TOKEN = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/i
 
-const HIDDEN_PIPELINE_TIMELINE_LABELS = new Set([
+/** Exact landlord-facing labels that are engine plumbing, not outcomes. */
+export const HIDDEN_PIPELINE_TIMELINE_LABELS = new Set([
   'logged',
   'action taken',
   'workflow started',
   'classified',
   'routed',
 ])
+
+/** True when the only copy on a feed row is pipeline plumbing. */
+export function isPipelineOnlyLandlordFeedCopy(
+  label: string | null | undefined,
+  message?: string | null,
+): boolean {
+  const labelText = (label ?? '').trim()
+  const messageText = (message ?? '').trim()
+  const labelHidden = !labelText || !isVisibleLandlordTimelineDescription(labelText)
+  if (!messageText) return labelHidden
+  return labelHidden && !isVisibleLandlordTimelineDescription(messageText)
+}
 
 export function isHiddenPipelineTimelineEventType(eventType: string | null | undefined): boolean {
   return HIDDEN_PIPELINE_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())

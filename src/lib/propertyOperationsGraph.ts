@@ -14,10 +14,17 @@ import {
   isHiddenOpsHeartbeatTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
+  isPipelineOnlyLandlordFeedCopy,
   isVisibleLandlordTimelineDescription,
   landlordFeedHiddenEventTypes,
 } from '@/lib/landlordFacingTimeline'
-import { fallbackFeedLine, landlordFeedLine, type FeedLine } from '@/lib/landlordFeedCopy'
+import {
+  fallbackFeedLine,
+  feedScopeFromSource,
+  landlordFeedLine,
+  withFeedScope,
+  type FeedLine,
+} from '@/lib/landlordFeedCopy'
 import { readLocalOnboardingState } from '@/lib/onboarding/draftStorage'
 import {
   isEventInOnboardingSession,
@@ -228,6 +235,15 @@ function readPayloadMessage(payload: Record<string, unknown> | null | undefined)
     }
   }
 
+  // Older landlord.attention_alert_sent rows stored copy under headline/detail only.
+  const headline = typeof payload.headline === 'string' ? payload.headline.trim() : ''
+  const detail = typeof payload.detail === 'string' ? payload.detail.trim() : ''
+  if (headline && detail && !headline.toLowerCase().includes(detail.toLowerCase())) {
+    return `${headline} · ${detail}`
+  }
+  if (headline) return headline
+  if (detail) return detail
+
   return null
 }
 
@@ -280,6 +296,24 @@ function eventDedupeKey(event: Pick<
   ].join('|')
 }
 
+const TICKET_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Ticket id from graph payload / nested legacy metadata. */
+export function ticketIdFromGraphPayload(
+  payload: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!payload) return null
+  for (const key of ['maintenance_request_id', 'draft_ticket_id', 'ticket_id']) {
+    const value = payload[key]
+    if (typeof value === 'string' && TICKET_UUID.test(value.trim())) return value.trim()
+  }
+  const nested = payload.legacy_metadata
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return ticketIdFromGraphPayload(nested as Record<string, unknown>)
+  }
+  return null
+}
+
 function mapEnrichedGraphRow(row: EnrichedGraphRow): PropertyOperationsTimelineEvent {
   const payload = row.event_payload ?? {}
 
@@ -297,10 +331,7 @@ function mapEnrichedGraphRow(row: EnrichedGraphRow): PropertyOperationsTimelineE
     residentId: row.resident_id,
     residentName: row.resident_name,
     vendorName: row.vendor_name ?? readMetadataString(payload, 'vendor_name'),
-    maintenanceRequestId:
-      typeof payload.maintenance_request_id === 'string'
-        ? payload.maintenance_request_id
-        : null,
+    maintenanceRequestId: ticketIdFromGraphPayload(payload),
     workflowRunId: row.workflow_run_id,
     onboardingSessionId: readMetadataString(payload, 'onboarding_session_id'),
     metadata: payload,
@@ -324,10 +355,7 @@ function mapLegacyBridgeRow(row: LegacyGraphRow): PropertyOperationsTimelineEven
     residentId: row.resident_id,
     residentName: readMetadataString(payload, 'resident_name'),
     vendorName: readMetadataString(payload, 'vendor_name'),
-    maintenanceRequestId:
-      typeof payload.maintenance_request_id === 'string'
-        ? payload.maintenance_request_id
-        : null,
+    maintenanceRequestId: ticketIdFromGraphPayload(payload),
     workflowRunId: row.workflow_run_id,
     onboardingSessionId: readMetadataString(payload, 'onboarding_session_id'),
     metadata: payload,
@@ -358,10 +386,10 @@ function consolidationGroupKey(event: PropertyOperationsTimelineEvent): string |
 
 function consolidatedSetupLabel(eventType: string, count: number): string {
   if (eventType === 'unit.registered') {
-    return count === 1 ? 'Unit registered' : `${count} units registered`
+    return count === 1 ? 'Registered a unit' : `Registered ${count} units`
   }
   if (eventType === 'tenant.sms_registered') {
-    return count === 1 ? 'Resident SMS linked' : `${count} residents linked for SMS`
+    return count === 1 ? 'Linked a resident for SMS' : `Linked ${count} residents for SMS`
   }
   const base = formatEventTypeLabel(eventType)
   return count === 1 ? base : `${count} × ${base}`
@@ -376,9 +404,9 @@ function mergeSetupEventGroup(group: PropertyOperationsTimelineEvent[]): Propert
   let message = latest.message
   if (count > 1) {
     if (latest.eventType === 'tenant.sms_registered') {
-      message = `${count} residents linked for SMS${building ? ` at ${building}` : ''}.`
+      message = `Linked ${count} residents for SMS${building ? ` at ${building}` : ''}.`
     } else {
-      message = `${count} units linked to Ulo SMS${building ? ` at ${building}` : ''}.`
+      message = `Registered ${count} units${building ? ` at ${building}` : ''}.`
     }
   }
 
@@ -452,7 +480,13 @@ function mergeTenantOnboardingGroup(
   const failed =
     types.has('tenant.activation_sms_failed') || types.has('sms.delivery_failed')
 
-  const label = 'Tenant onboarding verification'
+  const who = residentName ?? 'Resident'
+  const activated = types.has('tenant.activation_completed') || optedIn
+  const label = failed && !activated
+    ? `Tried to start text onboarding for ${who}`
+    : activated
+      ? `Finished text onboarding for ${who}`
+      : `Started text onboarding for ${who}`
 
   const steps: string[] = []
   if (sent) steps.push('welcome text sent')
@@ -463,7 +497,6 @@ function mergeTenantOnboardingGroup(
   if (optedOut) steps.push('opted out')
   if (failed) steps.push('a delivery attempt failed')
 
-  const who = residentName ?? 'Resident'
   const message = steps.length ? `${who}: ${steps.join(' → ')}.` : latest.message
 
   return {
@@ -485,8 +518,9 @@ function isMergedLandlordFacingFeedCard(event: PropertyOperationsTimelineEvent):
 }
 
 /**
- * Overview (and other landlord feeds) should show what happened — a work order
- * opened, a vendor accepted, a welcome text sent — not engine/SMS plumbing.
+ * Overview (and other landlord feeds) should show what Ulo did for the property
+ * team — opened a work order, sent a welcome text, asked them to pick a vendor —
+ * not engine/SMS plumbing.
  */
 export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent): boolean {
   if (isMergedLandlordFacingFeedCard(event)) return true
@@ -495,12 +529,9 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   if (isHiddenActivationAlertTimelineEventType(event.eventType)) return false
   if (isHiddenOpsHeartbeatTimelineEventType(event.eventType)) return false
   if (isHiddenInternalNoteTimelineEventType(event.eventType)) return false
-  if (
-    !isVisibleLandlordTimelineDescription(event.label) &&
-    (!event.message || !isVisibleLandlordTimelineDescription(event.message))
-  ) {
-    return false
-  }
+  // Even if event_type is not a known pipeline id, Classified/Routed/Logged-only
+  // copy must never surface on the landlord feed.
+  if (isPipelineOnlyLandlordFeedCopy(event.label, event.message)) return false
   if (!landlordHasPayments(getActiveLandlordId()) && isPaymentGraphEventType(event.eventType)) {
     return false
   }
@@ -534,7 +565,7 @@ function feedRichness(event: PropertyOperationsTimelineEvent): number {
   if (event.unitLabel) score += 2
   if (event.residentName) score += 2
   if (event.vendorName) score += 2
-  if (event.maintenanceRequestId) score += 1
+  if (event.maintenanceRequestId) score += 6
   if (event.message) score += 1
   if (event.metadata && Object.keys(event.metadata).length > 0) score += 1
   return score
@@ -616,22 +647,35 @@ function isWorkOrderCloseEvent(eventType: string): boolean {
 }
 
 function landlordFacingEventLabel(event: PropertyOperationsTimelineEvent): FeedLine {
+  const scope = feedScopeFromSource(event)
+  const scoped = (line: FeedLine) => withFeedScope(line, scope)
+
   const specific = landlordFeedLine(event)
-  if (specific) return specific
-  if (hasMappedEventTypeLabel(event.eventType) || isMergedLandlordFacingFeedCard(event)) {
-    return { line: event.label, full: event.label }
+  if (specific) return scoped(specific)
+
+  // Consolidated / onboarding cards already chose an action label — keep it,
+  // but still attach property when known.
+  if (isMergedLandlordFacingFeedCard(event)) {
+    return scoped({ line: event.label, full: event.label })
   }
+
+  // Prefer stored action copy over a generic event-type label whenever we have it.
   const message = event.message?.trim()
   if (
     message &&
     message.length >= 12 &&
     /[A-Za-z]/.test(message) &&
-    looksLikeRawEventTypeLabel(event.eventType, event.label) &&
-    isVisibleLandlordTimelineDescription(message)
+    isVisibleLandlordTimelineDescription(message) &&
+    !looksLikeRawEventTypeLabel(event.eventType, message)
   ) {
-    return fallbackFeedLine(message, event.building)
+    return scoped(fallbackFeedLine(message, event.building))
   }
-  return fallbackFeedLine(event.label, event.building)
+
+  if (hasMappedEventTypeLabel(event.eventType)) {
+    const mapped = formatEventTypeLabel(event.eventType)
+    return scoped({ line: mapped, full: mapped })
+  }
+  return scoped(fallbackFeedLine(event.label, event.building))
 }
 
 function mergePairedFeedStories(
@@ -661,10 +705,15 @@ function applyLandlordFacingCopy(
   event: PropertyOperationsTimelineEvent,
 ): PropertyOperationsTimelineEvent {
   const copy = landlordFacingEventLabel(event)
+  // Keep landlord-facing action copy for tooltips even when the row label is a fit/cut version.
   const message =
-    event.message && isVisibleLandlordTimelineDescription(event.message) && copy.line === event.label
-      ? event.message
-      : null
+    event.eventType === 'landlord.attention_alert_sent' &&
+    copy.full &&
+    isVisibleLandlordTimelineDescription(copy.full)
+      ? copy.full
+      : event.message && isVisibleLandlordTimelineDescription(event.message)
+        ? event.message
+        : null
   const metadata = { ...(event.metadata ?? {}) }
   delete metadata.reason
   delete metadata._paired_reason
@@ -772,7 +821,7 @@ function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimel
     residentId: row.resident_id,
     residentName: readMetadataString(metadata, 'resident_name'),
     vendorName: readMetadataString(metadata, 'vendor_name'),
-    maintenanceRequestId: row.maintenance_request_id,
+    maintenanceRequestId: row.maintenance_request_id?.trim() || ticketIdFromGraphPayload(metadata),
     workflowRunId: row.workflow_run_id,
     onboardingSessionId: readMetadataString(metadata, 'onboarding_session_id'),
     metadata,
@@ -1001,8 +1050,13 @@ export function formatTimelineContextLine(
 ): string | null {
   const place = (event.building || event.unitLabel || '').trim() || null
   const person = contextPerson(event)
-  if (place && person) return `${place} · ${person}`
-  return place ?? person
+  const label = (event.fullLabel ?? event.label ?? '').toLowerCase()
+  // Attention / action lines often already include the street — don't repeat it.
+  const placeAlreadyInLabel =
+    Boolean(place) && label.includes(place!.toLowerCase())
+  const shownPlace = placeAlreadyInLabel ? null : place
+  if (shownPlace && person) return `${shownPlace} · ${person}`
+  return shownPlace ?? person
 }
 
 export type TimelineResidentOption = {
