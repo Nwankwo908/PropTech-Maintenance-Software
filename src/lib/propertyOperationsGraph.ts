@@ -22,6 +22,7 @@ import {
   fallbackFeedLine,
   feedScopeFromSource,
   landlordFeedLine,
+  shortVendorName,
   withFeedScope,
   type FeedLine,
 } from '@/lib/landlordFeedCopy'
@@ -741,12 +742,17 @@ function applyLandlordFacingCopy(
   const metadata = { ...(event.metadata ?? {}) }
   delete metadata.reason
   delete metadata._paired_reason
+  const waitingHint =
+    event.waitingHint?.trim() ||
+    feedWaitingHint({ ...event, metadata }) ||
+    null
   return {
     ...event,
     label: copy.line,
     fullLabel: copy.full,
     message,
     metadata,
+    waitingHint,
     category: isMergedLandlordFacingFeedCard(event)
       ? event.category
       : categorizePropertyOperationsEvent(event.eventType, event.eventSource),
@@ -1079,6 +1085,85 @@ export async function enrichTicketsForFeed(
   return out
 }
 
+function feedTicketBitsFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): FeedTicketEnrichment | null {
+  const raw = metadata?._feed_ticket
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = raw as Record<string, unknown>
+  return {
+    issueHeadline: null,
+    unitLabel: null,
+    building: null,
+    propertyId: null,
+    propertyType: null,
+    awaitingLandlordChoiceAt: asOptionalString(row.awaitingLandlordChoiceAt),
+    vendorWorkStatus: asOptionalString(row.vendorWorkStatus),
+    spendStatus: asOptionalString(row.spendStatus),
+    scheduleConfirmedAt: asOptionalString(row.scheduleConfirmedAt),
+    scheduledAt: asOptionalString(row.scheduledAt),
+    recognizedSpendAmount: asOptionalNumber(row.recognizedSpendAmount),
+  }
+}
+
+function moneyHint(amount: number | null): string | null {
+  if (amount == null || !Number.isFinite(amount)) return null
+  const cents = Math.round(amount * 100) / 100
+  if (Math.abs(cents - Math.round(cents)) < 0.001) {
+    return `$${Math.round(cents).toLocaleString('en-US')}`
+  }
+  return cents.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+}
+
+/**
+ * Thin “Waiting on …” subtitle from live ticket state.
+ * Only when someone is clearly blocked; null otherwise.
+ */
+export function feedWaitingHint(
+  event: Pick<
+    PropertyOperationsTimelineEvent,
+    'eventType' | 'vendorName' | 'residentName' | 'metadata'
+  >,
+  ticket?: FeedTicketEnrichment | null,
+): string | null {
+  const bits = ticket ?? feedTicketBitsFromMetadata(event.metadata)
+  if (!bits) return null
+
+  const type = event.eventType.trim().toLowerCase()
+  if (
+    type.includes('completed') ||
+    type.includes('cancelled') ||
+    type.includes('terminated') ||
+    type.includes('archived') ||
+    type === 'vendor.declined'
+  ) {
+    return null
+  }
+
+  if (bits.awaitingLandlordChoiceAt) {
+    return 'Waiting on you to choose a vendor'
+  }
+
+  const spend = (bits.spendStatus ?? '').trim().toLowerCase()
+  if (spend === 'pending_approval') {
+    const amount = moneyHint(bits.recognizedSpendAmount)
+    return amount ? `Waiting on you to approve ${amount}` : 'Waiting on you to approve the estimate'
+  }
+
+  const workStatus = (bits.vendorWorkStatus ?? '').trim().toLowerCase()
+  if (workStatus === 'pending_accept') {
+    const vendor = shortVendorName(event.vendorName) || 'the vendor'
+    return `Waiting on ${vendor} to accept`
+  }
+
+  if (bits.scheduledAt && !bits.scheduleConfirmedAt) {
+    const resident = shortVendorName(event.residentName) || 'the resident'
+    return `Waiting on ${resident} to pick a time`
+  }
+
+  return null
+}
+
 /** Attach ticket enrichments onto timeline events before landlord copy runs. */
 export function applyFeedTicketEnrichment(
   events: PropertyOperationsTimelineEvent[],
@@ -1090,7 +1175,7 @@ export function applyFeedTicketEnrichment(
     if (!ticketId) return event
     const ticket = tickets.get(ticketId)
     if (!ticket) return event
-    return {
+    const next: PropertyOperationsTimelineEvent = {
       ...event,
       issueHeadline: event.issueHeadline?.trim() || ticket.issueHeadline,
       propertyType: event.propertyType?.trim() || ticket.propertyType,
@@ -1108,6 +1193,10 @@ export function applyFeedTicketEnrichment(
           recognizedSpendAmount: ticket.recognizedSpendAmount,
         },
       },
+    }
+    return {
+      ...next,
+      waitingHint: feedWaitingHint(next, ticket),
     }
   })
 }

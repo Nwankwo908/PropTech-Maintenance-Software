@@ -3,6 +3,7 @@ import {
   applyFeedTicketEnrichment,
   categorizePropertyOperationsEvent,
   dedupePropertyOperationsEvents,
+  feedWaitingHint,
   formatTimelineContextLine,
   isLandlordFacingFeedEvent,
   selectLandlordFacingFeedEvents,
@@ -157,6 +158,88 @@ describe('isLandlordFacingFeedEvent', () => {
         }),
       ),
     ).toBe(true)
+  })
+})
+
+describe('feedWaitingHint', () => {
+  const ticketBase = (): FeedTicketEnrichment => ({
+    issueHeadline: 'kitchen sink leak',
+    unitLabel: '1',
+    building: '14 Maple Ave',
+    propertyId: 'prop-1',
+    propertyType: 'multifamily',
+    awaitingLandlordChoiceAt: null,
+    vendorWorkStatus: null,
+    spendStatus: null,
+    scheduleConfirmedAt: null,
+    scheduledAt: null,
+    recognizedSpendAmount: null,
+  })
+
+  it('names who is waiting from ticket state', () => {
+    expect(
+      feedWaitingHint(
+        feedEvent({ id: '1', eventType: 'vendor.alert_sent', label: 'Sent a job' }),
+        { ...ticketBase(), awaitingLandlordChoiceAt: '2026-10-21T18:00:00.000Z' },
+      ),
+    ).toBe('Waiting on you to choose a vendor')
+    expect(
+      feedWaitingHint(
+        feedEvent({ id: '2', eventType: 'maintenance.estimate_approved', label: 'Approved' }),
+        {
+          ...ticketBase(),
+          spendStatus: 'pending_approval',
+          recognizedSpendAmount: 240,
+        },
+      ),
+    ).toBe('Waiting on you to approve $240')
+    expect(
+      feedWaitingHint(
+        feedEvent({
+          id: '3',
+          eventType: 'vendor.accepted',
+          label: 'Accepted',
+          vendorName: 'Ecosafe Pest',
+        }),
+        { ...ticketBase(), vendorWorkStatus: 'pending_accept' },
+      ),
+    ).toBe('Waiting on Ecosafe to accept')
+    expect(
+      feedWaitingHint(
+        feedEvent({
+          id: '4',
+          eventType: 'vendor.proposed',
+          label: 'Proposed',
+          residentName: 'Jordan Lee',
+        }),
+        {
+          ...ticketBase(),
+          vendorWorkStatus: 'accepted',
+          scheduledAt: '2026-10-22T15:00:00.000Z',
+          scheduleConfirmedAt: null,
+        },
+      ),
+    ).toBe('Waiting on Jordan to pick a time')
+  })
+
+  it('returns null when nobody is waiting', () => {
+    expect(
+      feedWaitingHint(
+        feedEvent({ id: '5', eventType: 'maintenance.completed', label: 'Complete' }),
+        { ...ticketBase(), vendorWorkStatus: 'pending_accept' },
+      ),
+    ).toBeNull()
+    expect(
+      feedWaitingHint(
+        feedEvent({ id: '6', eventType: 'vendor.accepted', label: 'Accepted' }),
+        {
+          ...ticketBase(),
+          vendorWorkStatus: 'accepted',
+          scheduledAt: '2026-10-22T15:00:00.000Z',
+          scheduleConfirmedAt: '2026-10-22T16:00:00.000Z',
+        },
+      ),
+    ).toBeNull()
   })
 })
 

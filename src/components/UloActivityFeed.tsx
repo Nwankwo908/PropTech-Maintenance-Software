@@ -322,6 +322,11 @@ export function UloActivityFeedList({
                 target={target}
                 onOpen={onOpenTarget}
               />
+              {event.waitingHint?.trim() ? (
+                <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
+                  {event.waitingHint.trim()}
+                </p>
+              ) : null}
               <div className="mt-1 flex items-center gap-2">
                 <span
                   className={[
