@@ -46,6 +46,11 @@ describe('feed voice, names, and issue labels', () => {
     expect(vendorDisplayName('Bmore Appliances')).toBe('Bmore Appliances')
     expect(vendorDisplayName('NTA')).toBeNull()
     expect(vendorDisplayName('Ecosafe Pest Control Co.')).toMatch(/Ecosafe Pest/)
+    // Keep “By Michael” — truncating to 3 words left “Handyman Services By”.
+    expect(vendorDisplayName('Handyman Services By Michael')).toBe(
+      'Handyman Services By Michael',
+    )
+    expect(vendorDisplayName('Handyman Services By Michael')).not.toMatch(/By$/)
   })
 
   it('never uses Repair or update as the issue', () => {

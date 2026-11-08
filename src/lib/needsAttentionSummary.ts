@@ -103,10 +103,16 @@ export function vendorDeclinedAttentionSummary(vendorName?: string | null): stri
   return 'The assigned vendor declined. Find a replacement.'
 }
 
-export function staleVendorAttentionSummary(vendorName?: string | null): string {
-  const name = vendorDisplayName(vendorName)
-  if (name) return `${name} never accepted. Choose a new vendor.`
-  return 'The assigned vendor never accepted. Choose a new vendor.'
+/** Second column on Needs Your Attention for stale / needs-reassignment cards. */
+export const STALE_VENDOR_ATTENTION_INVITE_META =
+  'Invite vendor. Grow your trusted vendor network'
+
+/**
+ * Second-column copy for Vendor unresponsive / needs reassignment cards.
+ * Status (who never accepted) stays in the title; this column invites growth of the network.
+ */
+export function staleVendorAttentionSummary(_vendorName?: string | null): string {
+  return STALE_VENDOR_ATTENTION_INVITE_META
 }
 
 /** Shared copy for escalated-run and stale-ticket Vendor unresponsive cards. */

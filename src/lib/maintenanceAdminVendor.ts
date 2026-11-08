@@ -79,7 +79,7 @@ export const STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT =
  */
 export function staleVendorAttentionTitle(vendorName?: string | null): string {
   const name = displayVendorNameForAttention(vendorName)
-  if (name) return `${name} never accepted — needs reassignment`
+  if (name) return `No acceptance from ${name} — needs reassignment`
   return STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE
 }
 

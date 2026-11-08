@@ -4,6 +4,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AdminBreadcrumb } from '@/components/AdminBreadcrumb'
 import { adminPageBreadcrumbItems } from '@/lib/adminPageBreadcrumb'
 import { useAdminScrollRestoration } from '@/hooks/useAdminScrollRestoration'
+import { useScrollVisibleScrollbar } from '@/hooks/useScrollVisibleScrollbar'
 import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
 import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
 import { AskUloPanel } from '@/components/AskUloPanel'
@@ -299,6 +300,8 @@ function AdminMainContent() {
   const [shellEnter, setShellEnter] = useState(false)
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
   useAdminScrollRestoration(scrollEl)
+  const { scrolling: mainScrolling, onScroll: onMainScroll } =
+    useScrollVisibleScrollbar()
 
   // Full-screen Ask Ulo used to replace <Outlet />, so navigating to Properties
   // while Ask Ulo was open showed a blank/stuck shell. Always keep the route
@@ -335,7 +338,7 @@ function AdminMainContent() {
       <div
         ref={setScrollEl}
         className={[
-          'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white',
+          'admin-scroll-on-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white',
           'transition-[margin] duration-[var(--sa-duration)] ease-[var(--sa-ease)] motion-reduce:transition-none',
           open ? '' : 'flex flex-col',
           open && docked ? 'lg:mr-[min(100%,440px)]' : 'mr-0',
@@ -343,6 +346,8 @@ function AdminMainContent() {
           .filter(Boolean)
           .join(' ')}
         data-admin-scroll-root
+        data-scrolling={mainScrolling ? '' : undefined}
+        onScroll={onMainScroll}
         // Keep the route interactive under the undocked panel. The full-panel
         // overlay already covers it; pointer-events-none left dead clicks if
         // Ask Ulo open state and the overlay ever got out of sync.
@@ -379,8 +384,8 @@ function AdminMobileNavDrawer({
   open: boolean
   onClose: () => void
 }) {
-  const [mobileNavScrolling, setMobileNavScrolling] = useState(false)
-  const mobileNavScrollHideTimerRef = useRef<number | null>(null)
+  const { scrolling: mobileNavScrolling, onScroll: onMobileNavScroll } =
+    useScrollVisibleScrollbar()
 
   useEffect(() => {
     if (!open) return
@@ -395,25 +400,6 @@ function AdminMobileNavDrawer({
       window.removeEventListener('keydown', onKey)
     }
   }, [open, onClose])
-
-  useEffect(() => {
-    return () => {
-      if (mobileNavScrollHideTimerRef.current != null) {
-        window.clearTimeout(mobileNavScrollHideTimerRef.current)
-      }
-    }
-  }, [])
-
-  const onMobileNavScroll = () => {
-    setMobileNavScrolling(true)
-    if (mobileNavScrollHideTimerRef.current != null) {
-      window.clearTimeout(mobileNavScrollHideTimerRef.current)
-    }
-    mobileNavScrollHideTimerRef.current = window.setTimeout(() => {
-      setMobileNavScrolling(false)
-      mobileNavScrollHideTimerRef.current = null
-    }, 700)
-  }
 
   if (!open || typeof document === 'undefined') return null
 

@@ -102,6 +102,12 @@ verify_jwt = false
 import_map = "./functions/summarize-landlord-response-topics/deno.json"
 entrypoint = "./functions/summarize-landlord-response-topics/index.ts"
 
+[functions.polish-work-order-rail-line]
+enabled = true
+verify_jwt = false
+import_map = "./functions/polish-work-order-rail-line/deno.json"
+entrypoint = "./functions/polish-work-order-rail-line/index.ts"
+
 [functions.start-insight-inspection-scheduling]
 enabled = true
 verify_jwt = false

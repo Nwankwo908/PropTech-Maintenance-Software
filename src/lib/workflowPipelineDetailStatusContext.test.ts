@@ -162,9 +162,10 @@ describe('buildMaintenanceOverviewStatusContext', () => {
       scheduleConfirmedAt: null,
       stalePendingAcceptNeedsAdmin: true,
     })
-    expect(text).toMatch(/never accepted/i)
+    expect(text).toMatch(/^No acceptance from Handyman Services By Michael\./)
     expect(text).toMatch(/unresponsive/i)
     expect(text).not.toMatch(/Waiting for Handyman Services By Michael to accept/i)
+    expect(text).not.toMatch(/^Handyman Services By Michael never accepted/i)
     expect(
       buildMaintenanceOverviewStatusLabel({
         vendorWorkStatus: 'pending_accept',

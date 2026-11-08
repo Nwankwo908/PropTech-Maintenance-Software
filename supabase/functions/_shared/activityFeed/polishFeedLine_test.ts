@@ -20,6 +20,18 @@ Deno.test("needsFeedLineRecovery catches robotic drafts", () => {
   assertEquals(needsFeedLineRecovery("Noted Ecosafe accepted WO-074B"), true)
   assertEquals(
     needsFeedLineRecovery(
+      "Handyman Services By Michael never accepted — needs reassignment",
+    ),
+    true,
+  )
+  assertEquals(
+    needsFeedLineRecovery(
+      "No acceptance from Handyman Services By Michael. Choose a new vendor.",
+    ),
+    true,
+  )
+  assertEquals(
+    needsFeedLineRecovery(
       "Asked you to pick a vendor for the leaking kitchen faucet at 14 Maple Ave (WO-A1B2) — no preferred match",
     ),
     false,

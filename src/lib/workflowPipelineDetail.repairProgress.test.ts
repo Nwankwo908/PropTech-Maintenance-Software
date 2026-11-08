@@ -100,7 +100,8 @@ describe('buildMaintenanceRepairNextAction', () => {
       scheduledAt: '2099-10-22T18:00:00.000Z',
       scheduleConfirmedAt: '2026-10-21T12:00:00.000Z',
     })
-    expect(text.startsWith('Ecosafe is scheduled for ')).toBe(true)
+    expect(text).toBeTruthy()
+    expect(text!.startsWith('Ecosafe is scheduled for ')).toBe(true)
     expect(text).not.toMatch(/tomorrow/i)
   })
 

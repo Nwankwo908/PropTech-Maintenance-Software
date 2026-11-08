@@ -1,5 +1,6 @@
 import { NavLink, useSearchParams } from 'react-router-dom'
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { useScrollVisibleScrollbar } from '@/hooks/useScrollVisibleScrollbar'
 import residentsIcon from '@/assets/Residents.svg'
 import graphIcon from '@/assets/graph.svg'
 import settingIcon from '@/assets/Setting.svg'
@@ -208,8 +209,7 @@ export function AdminSidebarContent({
   const [portfolioShineKey, setPortfolioShineKey] = useState(0)
   const [portfolioShineImmediate, setPortfolioShineImmediate] = useState(false)
   /** Scrollbar only while the nav rail is actively scrolling. */
-  const [navScrolling, setNavScrolling] = useState(false)
-  const navScrollHideTimerRef = useRef<number | null>(null)
+  const { scrolling: navScrolling, onScroll: onNavScroll } = useScrollVisibleScrollbar()
 
   useEffect(() => {
     const onPoint = (event: Event) => {
@@ -219,25 +219,6 @@ export function AdminSidebarContent({
     window.addEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
     return () => window.removeEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
   }, [])
-
-  useEffect(() => {
-    return () => {
-      if (navScrollHideTimerRef.current != null) {
-        window.clearTimeout(navScrollHideTimerRef.current)
-      }
-    }
-  }, [])
-
-  const onNavScroll = () => {
-    setNavScrolling(true)
-    if (navScrollHideTimerRef.current != null) {
-      window.clearTimeout(navScrollHideTimerRef.current)
-    }
-    navScrollHideTimerRef.current = window.setTimeout(() => {
-      setNavScrolling(false)
-      navScrollHideTimerRef.current = null
-    }, 700)
-  }
 
   const replayPortfolioShine = () => {
     setPortfolioShineImmediate(true)

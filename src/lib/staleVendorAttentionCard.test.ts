@@ -15,10 +15,19 @@ import {
 describe('stale vendor attention card', () => {
   it('puts the vendor name in the title and summary when known', () => {
     expect(staleVendorAttentionTitle("Joe's Plumbing")).toBe(
-      "Joe's Plumbing never accepted — needs reassignment",
+      "No acceptance from Joe's Plumbing — needs reassignment",
     )
     expect(staleVendorAttentionSummary("Joe's Plumbing")).toBe(
-      "Joe's Plumbing never accepted. Choose a new vendor.",
+      'Invite vendor. Grow your trusted vendor network',
+    )
+    expect(staleVendorAttentionTitle('Handyman Services By Michael')).toBe(
+      'No acceptance from Handyman Services By Michael — needs reassignment',
+    )
+    expect(staleVendorAttentionSummary('Handyman Services By Michael')).toBe(
+      'Invite vendor. Grow your trusted vendor network',
+    )
+    expect(staleVendorAttentionTitle('Handyman Services By Michael')).not.toMatch(
+      /Services By —/,
     )
   })
 
@@ -30,22 +39,22 @@ describe('stale vendor attention card', () => {
       'Vendor unresponsive — needs reassignment',
     )
     expect(staleVendorAttentionSummary(null)).toBe(
-      'The assigned vendor never accepted. Choose a new vendor.',
+      'Invite vendor. Grow your trusted vendor network',
     )
   })
 
   it('strips legal suffixes and never shortens to initials', () => {
     expect(staleVendorAttentionTitle('NTA Services LLC')).toBe(
-      'NTA Services never accepted — needs reassignment',
+      'No acceptance from NTA Services — needs reassignment',
     )
     expect(staleVendorAttentionSummary('NTA Services LLC')).toBe(
-      'NTA Services never accepted. Choose a new vendor.',
+      'Invite vendor. Grow your trusted vendor network',
     )
     expect(staleVendorAttentionTitle('NTA')).toBe(
       'Vendor unresponsive — needs reassignment',
     )
     expect(staleVendorAttentionTitle('Ecosafe Pest Management Inc.')).toMatch(
-      /^Ecosafe Pest Management never accepted/,
+      /^No acceptance from Ecosafe Pest Management/,
     )
   })
 
@@ -118,8 +127,8 @@ describe('stale vendor attention card', () => {
     const fromStaleTicket = buildStaleVendorAttentionCard(input)
     expect(fromEscalatedRun).toEqual(fromStaleTicket)
     expect(fromEscalatedRun).toEqual({
-      title: "Joe's Plumbing never accepted — needs reassignment",
-      meta: "Joe's Plumbing never accepted. Choose a new vendor.",
+      title: "No acceptance from Joe's Plumbing — needs reassignment",
+      meta: 'Invite vendor. Grow your trusted vendor network',
       context: '646 Bartlett · Unit 1 · Kenniesa Crews · Plumbing',
     })
   })

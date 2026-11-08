@@ -84,6 +84,10 @@ export function needsFeedLineRecovery(draft: string): boolean {
   // Stiff “Told you …” / “Asked you to …:” stubs that still need a human rewrite.
   if (/^told you\b/i.test(text)) return true
   if (/^asked you to (pick|choose) a vendor:/i.test(text)) return true
+  // Vendor names ending in By/And/Of before “never accepted”, or bare “never accepted”.
+  if (/\b(by|and|of)\s+never accepted\b/i.test(text)) return true
+  if (/\bnever accepted\b/i.test(text)) return true
+  if (/^no acceptance from\b/i.test(text)) return true
   if (/ · /.test(text) && text.length > 70) return true
   return false
 }
@@ -109,7 +113,11 @@ Rewritten: Asked you to pick another vendor — Handyman Services by Michael can
 Draft: Noted Ecosafe accepted WO-074B at 14 Maple Ave
 Rewritten: Ecosafe accepted WO-074B at 14 Maple Ave
 Draft: Asked you to choose a vendor: No preferred vendor matched · leaking faucet (WO-A1B2)
-Rewritten: Asked you to pick a vendor for the leaking faucet (WO-A1B2) — no preferred match`
+Rewritten: Asked you to pick a vendor for the leaking faucet (WO-A1B2) — no preferred match
+Draft: Handyman Services By Michael never accepted — needs reassignment
+Rewritten: Handyman Services By Michael still hasn't accepted — needs reassignment
+Draft: No acceptance from Handyman Services By Michael. Choose a new vendor.
+Rewritten: Still no acceptance from Handyman Services By Michael — choose a new vendor.`
 
 async function polishWithLuna(
   apiKey: string,

@@ -103,6 +103,8 @@ import {
   vendorDeclinedAttentionSummary,
   waitingAttentionSummary,
 } from '@/lib/needsAttentionSummary'
+import { needsWorkOrderRailLineRecovery } from '@shared/ops/workOrderRailLineRecovery.ts'
+import { postPolishWorkOrderRailLines } from '@/api/polishWorkOrderRailLine'
 import {
   finishInvoiceApproval,
   formatInvoiceAmount,
@@ -2572,6 +2574,78 @@ export function AdminOverviewDashboard() {
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
+  /** Luna polish for stiff Needs Your Attention titles/metas (OpenAI Docs recovery). */
+  const [attentionCopyPolish, setAttentionCopyPolish] = useState<
+    Record<string, { title?: string; meta?: string }>
+  >({})
+
+  useEffect(() => {
+    let cancelled = false
+    const candidates = allAttentionItems.filter(
+      (item) =>
+        needsWorkOrderRailLineRecovery(item.title) ||
+        needsWorkOrderRailLineRecovery(item.meta),
+    )
+    if (candidates.length === 0) {
+      setAttentionCopyPolish({})
+      return
+    }
+
+    const lines = candidates.flatMap((item) => {
+      const requests: Array<{ id: string; draft: string; mustKeep: string[] }> = []
+      if (needsWorkOrderRailLineRecovery(item.title)) {
+        requests.push({ id: `${item.key}::title`, draft: item.title, mustKeep: [] })
+      }
+      if (needsWorkOrderRailLineRecovery(item.meta)) {
+        requests.push({ id: `${item.key}::meta`, draft: item.meta, mustKeep: [] })
+      }
+      return requests
+    })
+
+    void postPolishWorkOrderRailLines(lines).then((rows) => {
+      if (cancelled || !rows) return
+      const next: Record<string, { title?: string; meta?: string }> = {}
+      for (const row of rows) {
+        const sep = row.id.lastIndexOf('::')
+        if (sep <= 0 || !row.line) continue
+        const key = row.id.slice(0, sep)
+        const field = row.id.slice(sep + 2)
+        const bucket = next[key] ?? {}
+        if (field === 'title') bucket.title = row.line
+        if (field === 'meta') bucket.meta = row.line
+        next[key] = bucket
+      }
+      setAttentionCopyPolish(next)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [allAttentionItems])
+
+  const polishAttentionItem = useCallback(
+    (item: AttentionItem): AttentionItem => {
+      const polished = attentionCopyPolish[item.key]
+      if (!polished) return item
+      return {
+        ...item,
+        title: polished.title ?? item.title,
+        meta: polished.meta ?? item.meta,
+      }
+    },
+    [attentionCopyPolish],
+  )
+
+  const displayAttentionItems = useMemo(
+    () => attentionItems.map(polishAttentionItem),
+    [attentionItems, polishAttentionItem],
+  )
+
+  const displayAllAttentionItems = useMemo(
+    () => allAttentionItems.map(polishAttentionItem),
+    [allAttentionItems, polishAttentionItem],
+  )
+
   const handleAwaitingDecisionItemAction = useCallback((item: AttentionItem) => {
     setAwaitingDecisionListOpen(false)
     item.onAction?.()
@@ -3799,7 +3873,7 @@ export function AdminOverviewDashboard() {
               </span>
             ) : null}
           </div>
-          {allAttentionItems.length > 3 ? (
+          {displayAllAttentionItems.length > 3 ? (
             <button
               type="button"
               onClick={() => setAwaitingDecisionListOpen(true)}
@@ -3813,12 +3887,12 @@ export function AdminOverviewDashboard() {
         <div className="flex min-h-0 flex-1 flex-col divide-y divide-[#f3f4f6]">
           {loading ? (
             <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
-          ) : attentionItems.length === 0 ? (
+          ) : displayAttentionItems.length === 0 ? (
             <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
               Nothing needs attention.
             </p>
           ) : (
-            attentionItems.map((item, index) =>
+            displayAttentionItems.map((item, index) =>
               item.key.startsWith('pm_') || item.key.startsWith('weather:') ? (
                 <div
                   key={item.key}
@@ -4155,7 +4229,7 @@ export function AdminOverviewDashboard() {
 
       <AwaitingDecisionListRail
         open={awaitingDecisionListOpen}
-        items={allAttentionItems}
+        items={displayAllAttentionItems}
         criticalCount={criticalAttentionCount}
         onClose={() => setAwaitingDecisionListOpen(false)}
         onItemAction={handleAwaitingDecisionItemAction}

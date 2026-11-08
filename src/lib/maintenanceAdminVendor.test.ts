@@ -73,7 +73,9 @@ describe('maintenanceAdminVendor', () => {
       }),
     ).toBe(false)
     expect(STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL).toMatch(/unresponsive/i)
-    expect(staleVendorAttentionTitle("Joe's Plumbing")).toMatch(/Joe's Plumbing never accepted/)
+    expect(staleVendorAttentionTitle("Joe's Plumbing")).toMatch(
+      /No acceptance from Joe's Plumbing/,
+    )
     expect(staleVendorAttentionTitle(null)).toMatch(/Vendor unresponsive/)
     expect(vendorDeclinedAttentionTitle('NTA Services LLC')).toBe(
       'NTA Services declined — find a replacement',

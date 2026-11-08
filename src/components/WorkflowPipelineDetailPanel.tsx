@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { useScrollVisibleScrollbar } from '@/hooks/useScrollVisibleScrollbar'
 import { Link, useLocation } from 'react-router-dom'
 import { ConversationMonitoringBody } from '@/components/ConversationMonitoringModal'
 import { WorkflowStageMoveDialogs } from '@/components/workflowKanban/WorkflowStageMoveDialogs'
@@ -780,6 +781,8 @@ export function WorkflowPipelineDetailPanel({
   const [quickFixesEnabled, setQuickFixesEnabled] = useState(true)
   const [markingFixed, setMarkingFixed] = useState(false)
   const [markFixedError, setMarkFixedError] = useState<string | null>(null)
+  const { scrolling: detailScrolling, onScroll: onDetailScroll } =
+    useScrollVisibleScrollbar()
 
   const stageMoveCard = useMemo(
     () => (detail ? detailToStageMoveCard(detail) : null),
@@ -1218,7 +1221,15 @@ export function WorkflowPipelineDetailPanel({
           className={
             !loading && detail && detailTab === 'messages'
               ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-6 py-5'
-              : 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'
+              : 'admin-scroll-on-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'
+          }
+          data-scrolling={
+            !loading && detail && detailTab !== 'messages' && detailScrolling
+              ? ''
+              : undefined
+          }
+          onScroll={
+            !loading && detail && detailTab !== 'messages' ? onDetailScroll : undefined
           }
         >
           {loading ? (

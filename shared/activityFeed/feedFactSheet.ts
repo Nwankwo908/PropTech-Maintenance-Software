@@ -175,9 +175,18 @@ export function vendorDisplayName(name: string | null | undefined): string | nul
   if (!cleaned) return null
   const words = cleaned.split(/\s+/).filter(Boolean)
   if (!words.length) return null
-  // Drop trailing empty tokens from suffix strip ("NTA Services ," → already cleaned)
+  // Drop joining “and/&” tokens, but keep “By” — it’s part of names like
+  // “Handyman Services By Michael”.
   const meaningful = words.filter((w) => !/^(and|&)$/i.test(w))
-  const kept = meaningful.length > 3 ? meaningful.slice(0, 3) : meaningful
+  let kept = meaningful.length > 3 ? meaningful.slice(0, 3) : meaningful
+  // Never truncate so the display name ends on By/Of (reads as broken copy).
+  const last = kept[kept.length - 1]?.toLowerCase()
+  if (
+    meaningful.length > kept.length &&
+    (last === 'by' || last === 'of')
+  ) {
+    kept = meaningful.slice(0, kept.length + 1)
+  }
   const result = kept.join(' ').trim()
   if (!result) return null
   // Reject initials-only (e.g. "NTA", "ABC")

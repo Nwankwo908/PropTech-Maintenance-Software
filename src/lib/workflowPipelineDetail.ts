@@ -46,6 +46,8 @@ import {
   type MaintenanceScheduleState,
   type PendingResidentScheduleAsk,
 } from '@/lib/maintenanceScheduleState'
+import { needsWorkOrderRailLineRecovery } from '@shared/ops/workOrderRailLineRecovery.ts'
+import { postPolishWorkOrderRailLines } from '@/api/polishWorkOrderRailLine'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatTicketRequestNumber, formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
@@ -511,7 +513,7 @@ export function buildMaintenanceOverviewStatusContext(input: {
   // Sticky needs_admin with a dead pending_accept assignment — not ordinary waiting.
   if (input.stalePendingAcceptNeedsAdmin) {
     return input.vendorName?.trim()
-      ? `${vendor} never accepted. Vendor unresponsive — needs a new vendor choice.`
+      ? `No acceptance from ${vendor}. Vendor unresponsive — needs a new vendor choice.`
       : STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT
   }
 
@@ -780,7 +782,7 @@ export function buildMaintenanceRepairNextAction(input: {
   }
 
   if (input.stalePendingAcceptNeedsAdmin) {
-    return vendor ? `${vendor} never accepted.` : null
+    return vendor ? `No acceptance from ${vendor}.` : null
   }
 
   if (input.reopenedByResident) {
@@ -2232,7 +2234,7 @@ export async function fetchWorkflowPipelineDetail(
     vendorNotifiedAt,
     pendingResidentAsk,
   })
-  const statusContext = isMaintenance || holdVendorDispatch
+  let statusContext = isMaintenance || holdVendorDispatch
     ? buildMaintenanceOverviewStatusContext({
         vendorWorkStatus,
         vendorName: enrichment.vendorName,
@@ -2272,7 +2274,7 @@ export async function fetchWorkflowPipelineDetail(
         hasCompletionPhotos,
       })
     : null
-  const progressNextAction = holdVendorDispatch
+  let progressNextAction = holdVendorDispatch
     ? 'Review the Home Check before contacting a vendor.'
     : isMaintenance
     ? buildMaintenanceRepairNextAction({
@@ -2292,6 +2294,36 @@ export async function fetchWorkflowPipelineDetail(
         hasCompletionPhotos,
       })
     : null
+
+  // OpenAI Docs / Luna recovery: soften stiff Overview + next-step drafts
+  // (e.g. vendor names ending in “By” before “never accepted”). Best-effort.
+  if (isMaintenance) {
+    const mustKeep = [enrichment.vendorName, residentName]
+      .map((value) => value?.trim() || '')
+      .filter(Boolean)
+    const polishRequests: Array<{ id: string; draft: string; mustKeep: string[] }> = []
+    if (statusContext && needsWorkOrderRailLineRecovery(statusContext)) {
+      polishRequests.push({ id: 'statusContext', draft: statusContext, mustKeep })
+    }
+    if (progressNextAction && needsWorkOrderRailLineRecovery(progressNextAction)) {
+      polishRequests.push({
+        id: 'progressNextAction',
+        draft: progressNextAction,
+        mustKeep,
+      })
+    }
+    if (polishRequests.length > 0) {
+      const polished = await postPolishWorkOrderRailLines(polishRequests)
+      if (polished) {
+        for (const row of polished) {
+          if (!row.line) continue
+          if (row.id === 'statusContext') statusContext = row.line
+          if (row.id === 'progressNextAction') progressNextAction = row.line
+        }
+      }
+    }
+  }
+
   const residentBlock: WorkflowPipelineResident | null = residentName
     ? {
         id: row.residentId,
@@ -2371,7 +2403,7 @@ export async function fetchWorkflowPipelineDetail(
     ? enrichment.vendorName?.trim() || null
     : null
   const activityVendorStatus = isMaintenance
-    ? vendorStatusLabel(vendorWorkStatus, activityVendorName)
+    ? vendorStatusLabel(vendorWorkStatus ?? '', activityVendorName)
     : null
   const vendorNameForBlock = enrichment.vendorName?.trim() || ''
   const vendorTradeLabel = enrichment.vendorCategory
