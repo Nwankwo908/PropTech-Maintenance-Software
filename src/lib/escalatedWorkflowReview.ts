@@ -96,7 +96,7 @@ function isPipelineLogEvent(event: AdminWorkflowTimelineEvent): boolean {
   return false
 }
 
-function timelineFromWorkflowEvents(
+export function timelineFromWorkflowEvents(
   events: AdminWorkflowTimelineEvent[],
 ): SlaOverdueTimelineEntry[] {
   return [...events]
@@ -118,7 +118,7 @@ function timelineFromWorkflowEvents(
     )
 }
 
-function vendorStatusLabel(vendorWorkStatus: string, assignedVendorName: string | null): string {
+export function vendorStatusLabel(vendorWorkStatus: string, assignedVendorName: string | null): string {
   const vws = vendorWorkStatus.trim().toLowerCase()
   if (!assignedVendorName) return 'Unassigned'
   if (vws === 'pending_accept') return 'Assigned · awaiting acceptance'
@@ -127,6 +127,17 @@ function vendorStatusLabel(vendorWorkStatus: string, assignedVendorName: string 
   if (vws === 'declined') return 'Declined · needs reassignment'
   if (vws === 'escalated') return 'Escalated · vendor reassignment in progress'
   return 'Assigned · no ETA confirmed'
+}
+
+/** Landlord-facing work-order story for Active Tasks / escalated rails. */
+export function buildMaintenanceWorkOrderTimeline(
+  ticket: SlaOverdueTicketInput | null,
+  runTimeline: AdminWorkflowTimelineEvent[] | undefined,
+  now = Date.now(),
+): SlaOverdueTimelineEntry[] {
+  const operational = ticket ? buildSlaRailTimeline(ticket, now) : []
+  const fromWorkflow = runTimeline?.length ? timelineFromWorkflowEvents(runTimeline) : []
+  return mergeLandlordRailTimeline(operational, fromWorkflow)
 }
 
 function ratingFromMetrics(

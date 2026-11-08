@@ -17,6 +17,7 @@ import openRepairsIcon from '@/assets/repair-tool.png'
 import scheduledVisitsIcon from '@/assets/calendar.png'
 import propertyHealthIcon from '@/assets/hospital.png'
 import ytdMaintenanceCostIcon from '@/assets/price-up.png'
+import { AdminQuickActions } from '@/components/AdminQuickActions'
 import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
 import { NeedsAttentionRow } from '@/components/NeedsAttentionRowAction'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
@@ -74,7 +75,7 @@ import {
   isStalePendingAcceptNeedsAdminVendor,
   maintenanceAdminVendorAttentionTitle,
   shouldSkipSlaReassignForNeedsAdminVendor,
-  STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE,
+  vendorDeclinedAttentionTitle,
 } from '@/lib/maintenanceAdminVendor'
 import {
   emptyAdminWorkflowDashboardData,
@@ -90,13 +91,15 @@ import {
   buildInspectionScopedAttentionCopy,
 } from '@/lib/needsAttentionWorkOrder'
 import {
+  attentionTradeLabel,
+  buildStaleVendorAttentionCard,
+  formatVendorAttentionContextLabel,
   lateRentAttentionSummary,
   leaseInfoAttentionSummary,
   leaseRenewalAttentionSummary,
   responseTimeNoVendorSummary,
   rosterGapAttentionSummary,
   smsDeliveryAttentionSummary,
-  staleVendorAttentionSummary,
   vendorDeclinedAttentionSummary,
   waitingAttentionSummary,
 } from '@/lib/needsAttentionSummary'
@@ -241,6 +244,10 @@ import {
   schedulingStateFromActionResult,
 } from '@/lib/propertyInsightActions'
 import { NoInspectorAvailableModal } from '@/components/NoInspectorAvailableModal'
+import {
+  isConfirmedUpcomingVisit,
+  type ScheduledVisitTicket,
+} from '@/lib/scheduledVisitsKpi'
 
 type OverviewTicket = {
   id: string
@@ -487,41 +494,31 @@ function isTicketCritical(ticket: OverviewTicket): boolean {
   return CRITICAL_LEVELS.has(ticket.urgency)
 }
 
-/** Upcoming (or today) visit still on an open work order. */
-function isUpcomingScheduledVisit(
-  ticket: OverviewTicket,
-  nowMs: number = Date.now(),
-): boolean {
-  const instant = ticket.scheduledAt?.trim()
-  if (!instant) return false
-  const status = ticket.vendorWorkStatus
-  if (
-    status === 'cancelled' ||
-    status === 'declined' ||
-    status === 'completed'
-  ) {
-    return false
+/** Confirmed visits from the last 8 weeks forward, past the newest-ticket cap. */
+async function loadConfirmedVisitSchedule(landlordId: string): Promise<ScheduledVisitTicket[]> {
+  if (!supabase || !landlordId) return []
+  const since = new Date(Date.now() - 56 * 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('maintenance_requests')
+    .select(
+      'scheduled_at, schedule_confirmed_at, vendor_work_status, description, trigger_type, observation_only',
+    )
+    .eq('landlord_id', landlordId)
+    .not('schedule_confirmed_at', 'is', null)
+    .gte('scheduled_at', since)
+    .order('scheduled_at', { ascending: false })
+    .limit(2000)
+  if (error) {
+    console.warn('[admin overview] confirmed visits', error.message)
+    return []
   }
-  const at = new Date(instant).getTime()
-  if (Number.isNaN(at)) return false
-  const startOfToday = new Date(nowMs)
-  startOfToday.setHours(0, 0, 0, 0)
-  return at >= startOfToday.getTime()
-}
-
-function countScheduledBetween(
-  tickets: OverviewTicket[],
-  fromMs: number,
-  toMs: number,
-): number {
-  return tickets.filter((ticket) => {
-    const instant = ticket.scheduledAt?.trim()
-    if (!instant) return false
-    const status = ticket.vendorWorkStatus
-    if (status === 'cancelled' || status === 'declined') return false
-    const at = new Date(instant).getTime()
-    return !Number.isNaN(at) && at >= fromMs && at < toMs
-  }).length
+  return ((data ?? []) as Record<string, unknown>[])
+    .filter(isLandlordFacingMaintenanceRequest)
+    .map((row) => ({
+      scheduledAt: asString(row.scheduled_at) || null,
+      scheduleConfirmedAt: asString(row.schedule_confirmed_at) || null,
+      vendorWorkStatus: asString(row.vendor_work_status).toLowerCase(),
+    }))
 }
 
 function normalizeUnitLabel(label: string): string {
@@ -674,7 +671,7 @@ function KpiCard({
   const good = neutral ? false : positive === goodWhenUp
 
   const deltaChip =
-    delta != null ? (
+    delta != null && delta !== 0 ? (
       <span
         className={[
           'flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[12px] leading-4 tracking-[-0.1504px] sm:gap-1.5 sm:px-3 sm:py-1.5 sm:text-[14px] sm:leading-5',
@@ -959,6 +956,7 @@ export function AdminOverviewDashboard() {
       ? `${overviewGreetingSalutation()}, ${greetingName}`
       : overviewGreetingSalutation()
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
+  const [confirmedVisits, setConfirmedVisits] = useState<ScheduledVisitTicket[]>([])
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [vendors, setVendors] = useState<OverviewVendor[]>([])
   const [units, setUnits] = useState<OverviewUnit[]>([])
@@ -1187,6 +1185,9 @@ export function AdminOverviewDashboard() {
       setLoading(true)
       setError(null)
 
+      const loadStartedAt =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+
       try {
       const landlordId = getActiveLandlordId()
 
@@ -1212,6 +1213,8 @@ export function AdminOverviewDashboard() {
         recognizedSpendResult,
         mrSpendResult,
         smsNoRecipientsResult,
+        confirmedVisitsResult,
+        vendorVerificationsResult,
       ] = await Promise.all([
           allowImportedOperations
             ? supabase
@@ -1291,9 +1294,18 @@ export function AdminOverviewDashboard() {
                 .limit(500)
             : Promise.resolve({ data: [], error: null }),
           loadSmsNoRecipientsAttention(landlordId),
+          allowImportedOperations
+            ? loadConfirmedVisitSchedule(landlordId)
+            : Promise.resolve([]),
+          supabase
+            .from('vendor_verifications')
+            .select('vendor_id, status')
+            .eq('landlord_id', landlordId)
+            .limit(500),
         ])
 
       if (cancelled) return
+      setConfirmedVisits(confirmedVisitsResult)
 
       const vendorNameById: Record<string, string> = {}
       if (!vendorsResult.error) {
@@ -1306,17 +1318,12 @@ export function AdminOverviewDashboard() {
             overridden: Boolean(r.onboarding_overridden_at),
           }))
           .filter((v) => v.id && v.name)
-        const vendorIds = vendorRows.map((v) => v.id)
         const outreachStartedIds = new Set<string>()
         for (const v of vendorRows) {
           if (v.overridden) outreachStartedIds.add(v.id)
         }
-        if (vendorIds.length > 0) {
-          const { data: verificationRows } = await supabase
-            .from('vendor_verifications')
-            .select('vendor_id, status')
-            .in('vendor_id', vendorIds)
-          for (const row of (verificationRows ?? []) as Record<string, unknown>[]) {
+        if (!vendorVerificationsResult.error) {
+          for (const row of (vendorVerificationsResult.data ?? []) as Record<string, unknown>[]) {
             const id = asString(row.vendor_id)
             // Any verification row = invite/outreach started.
             if (id) outreachStartedIds.add(id)
@@ -1537,7 +1544,14 @@ export function AdminOverviewDashboard() {
       setError(getErrorMessage(err, 'Could not load overview.'))
     } finally {
       window.clearTimeout(timeoutId)
-      if (!cancelled && !timedOut) setLoading(false)
+      if (!cancelled && !timedOut) {
+        setLoading(false)
+        if (import.meta.env.DEV) {
+          const elapsedMs =
+            (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartedAt
+          console.info(`[dashboard] overview hydrate ${Math.round(elapsedMs)}ms`)
+        }
+      }
     }
     }
 
@@ -1626,19 +1640,9 @@ export function AdminOverviewDashboard() {
       now - fourWeeksMs,
     )
 
-    const scheduledVisits = tickets.filter((ticket) =>
-      isUpcomingScheduledVisit(ticket, now),
+    const scheduledVisits = confirmedVisits.filter((ticket) =>
+      isConfirmedUpcomingVisit(ticket, now),
     ).length
-    const scheduledVisitsRecent = countScheduledBetween(
-      tickets,
-      now - fourWeeksMs,
-      now,
-    )
-    const scheduledVisitsPrevious = countScheduledBetween(
-      tickets,
-      now - 2 * fourWeeksMs,
-      now - fourWeeksMs,
-    )
 
     const propertyHealth = healthReport.portfolio?.score ?? null
     const propertyHealthDelta = healthReport.portfolioDelta
@@ -1700,7 +1704,6 @@ export function AdminOverviewDashboard() {
       openRepairs,
       openRepairsDelta: openRepairsRecent - openRepairsPrevious,
       scheduledVisits,
-      scheduledVisitsDelta: scheduledVisitsRecent - scheduledVisitsPrevious,
       propertyHealth,
       propertyHealthDelta,
       vendorResponse,
@@ -1708,7 +1711,7 @@ export function AdminOverviewDashboard() {
       ytdMaintenanceCost,
       ytdMaintenanceCostDelta,
     }
-  }, [tickets, openTickets, healthReport, recognizedSpend, now, fourWeeksMs])
+  }, [tickets, confirmedVisits, openTickets, healthReport, recognizedSpend, now, fourWeeksMs])
 
   const slaOverdueTickets = useMemo(
     () =>
@@ -1785,6 +1788,9 @@ export function AdminOverviewDashboard() {
 
       if (cancelled) return
       setWorkflowData(workflowResult)
+      if (allowImportedOperations) {
+        setConfirmedVisits(await loadConfirmedVisitSchedule(landlordId))
+      }
       if (!ticketsResult.error) {
         const vendorNameById = Object.fromEntries(vendors.map((v) => [v.id, v.name]))
         setTickets(
@@ -2112,6 +2118,37 @@ export function AdminOverviewDashboard() {
       tickets,
       workflowData,
     })
+    const vendorNameById = Object.fromEntries(vendors.map((v) => [v.id, v.name]))
+    const vendorCategoryById = Object.fromEntries(
+      vendors.map((v) => [v.id, v.category ?? null]),
+    )
+    const propertyTypeById = Object.fromEntries(
+      canonicalProperties.map((property) => [property.id, property.propertyType ?? null]),
+    )
+    const resolveAssignedVendorName = (
+      assignedVendorId?: string | null,
+      fallbackName?: string | null,
+    ): string | null => {
+      const id = (assignedVendorId ?? '').trim()
+      if (id && vendorNameById[id]) return vendorNameById[id]!
+      return (fallbackName ?? '').trim() || null
+    }
+    const resolvePropertyType = (input: {
+      propertyId?: string | null
+      building?: string | null
+    }): string | null => {
+      const id = (input.propertyId ?? '').trim()
+      if (id && propertyTypeById[id]) return propertyTypeById[id]
+      const building = (input.building ?? '').trim().toLowerCase()
+      if (!building) return null
+      const match = canonicalProperties.find((property) => {
+        const names = [property.name, property.streetAddress ?? '']
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+        return names.includes(building)
+      })
+      return match?.propertyType ?? null
+    }
 
     for (const ticket of slaOverdueTickets) {
       if (completedTicketIds.has(ticket.id)) continue
@@ -2132,6 +2169,7 @@ export function AdminOverviewDashboard() {
           (u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit),
         )?.building ??
         null
+      const assignedVendorId = ticket.assignedVendorId
       const fallbackMeta = responseTimeNoVendorSummary(ticket.issueCategory)
       const scoped = buildInspectionScopedAttentionCopy({
         ticketId: ticket.id,
@@ -2141,11 +2179,26 @@ export function AdminOverviewDashboard() {
         residentName: ticket.residentName,
         fallbackMeta,
       })
+      const trade = attentionTradeLabel({
+        vendorCategory: assignedVendorId
+          ? vendorCategoryById[assignedVendorId]
+          : null,
+        issueCategory: ticket.issueCategory,
+      })
       items.push({
         key: `sla-${ticket.id}`,
         badge: isTicketCritical(ticket) ? 'critical' : 'warning',
         title: 'No vendor available — response time exceeded',
-        context: scoped.context,
+        context: formatVendorAttentionContextLabel({
+          propertyLabel: building,
+          unitLabel: ticket.unit,
+          residentName: ticket.residentName,
+          propertyType: resolvePropertyType({
+            propertyId: ticket.propertyId,
+            building,
+          }),
+          trade,
+        }),
         meta: scoped.meta,
         actionLabel: 'Assign vendor',
         actionStyle: 'alert',
@@ -2189,25 +2242,80 @@ export function AdminOverviewDashboard() {
           continue
         }
         const issueCategory = run.issueCategory ?? linkedTicket?.issueCategory ?? null
+        const assignedVendorId =
+          linkedTicket?.assignedVendorId ?? run.assignedVendorId ?? null
+        const assignedVendorName = resolveAssignedVendorName(
+          assignedVendorId,
+          linkedTicket?.assignedVendorName ?? null,
+        )
+        const vendorCategory = assignedVendorId
+          ? vendorCategoryById[assignedVendorId] ?? null
+          : null
+        const propertyType = resolvePropertyType({
+          propertyId: linkedTicket?.propertyId ?? run.propertyId ?? null,
+          building: run.propertyLabel ?? linkedTicket?.building ?? null,
+        })
         const stalePendingAccept = isStalePendingAcceptNeedsAdminVendor({
           vendorWorkStatus: linkedTicket?.vendorWorkStatus ?? run.vendorWorkStatus,
-          assignedVendorId: linkedTicket?.assignedVendorId ?? run.assignedVendorId,
+          assignedVendorId,
           autoReassignLastOutcome:
             linkedTicket?.autoReassignLastOutcome ?? run.autoReassignLastOutcome,
           workflowNeedsAdminVendor: needsVendor,
         })
         const relative = run.lastEventAt ? formatRelativeTime(run.lastEventAt) : null
-        const fallbackMeta = stalePendingAccept
-          ? staleVendorAttentionSummary()
-          : needsVendor
-            ? adminVendorReason === 'vendor_declined_no_vendor'
-              ? vendorDeclinedAttentionSummary()
-              : adminVendorReason === 'sla_expired_no_vendor'
-                ? responseTimeNoVendorSummary(issueCategory)
-                : rosterGapAttentionSummary(issueCategory)
-            : isLeaseRenewal
-              ? leaseRenewalAttentionSummary(relative)
-              : waitingAttentionSummary(relative)
+        const vendorTrade = attentionTradeLabel({
+          vendorCategory,
+          issueCategory,
+        })
+        const vendorContext = formatVendorAttentionContextLabel({
+          propertyLabel: run.propertyLabel,
+          unitLabel: run.unitLabel,
+          residentName: run.residentName,
+          propertyType,
+          trade: vendorTrade,
+        })
+        if (stalePendingAccept) {
+          const card = buildStaleVendorAttentionCard({
+            vendorName: assignedVendorName,
+            propertyLabel: run.propertyLabel,
+            unitLabel: run.unitLabel,
+            residentName: run.residentName,
+            propertyType,
+            vendorCategory,
+            issueCategory,
+          })
+          const scopedMeta = ticketId
+            ? buildInspectionScopedAttentionCopy({
+                ticketId,
+                run,
+                workflowData,
+                propertyLabel: run.propertyLabel,
+                unitLabel: run.unitLabel,
+                residentName: run.residentName,
+                fallbackMeta: card.meta,
+              }).meta
+            : card.meta
+          items.push({
+            key: `run-${run.id}`,
+            badge: 'critical',
+            title: card.title,
+            context: card.context,
+            meta: scopedMeta,
+            actionLabel: 'Assign vendor',
+            onAction: () => openEscalatedRailForRun(run.id, true),
+            actionStyle: 'alert',
+          })
+          continue
+        }
+        const fallbackMeta = needsVendor
+          ? adminVendorReason === 'vendor_declined_no_vendor'
+            ? vendorDeclinedAttentionSummary(assignedVendorName)
+            : adminVendorReason === 'sla_expired_no_vendor'
+              ? responseTimeNoVendorSummary(issueCategory)
+              : rosterGapAttentionSummary(issueCategory)
+          : isLeaseRenewal
+            ? leaseRenewalAttentionSummary(relative)
+            : waitingAttentionSummary(relative)
         const scoped = ticketId
           ? buildInspectionScopedAttentionCopy({
               ticketId,
@@ -2226,25 +2334,26 @@ export function AdminOverviewDashboard() {
                 residentName: run.residentName,
               }),
             }
+        const title = needsVendor
+          ? adminVendorReason === 'vendor_declined_no_vendor'
+            ? vendorDeclinedAttentionTitle(assignedVendorName)
+            : maintenanceAdminVendorAttentionTitle(adminVendorReason)
+          : isLeaseRenewal
+            ? 'Lease Renewal Escalated'
+            : `${run.templateName} Escalated`
         items.push({
           key: `run-${run.id}`,
-          badge: needsVendor || isLeaseRenewal || stalePendingAccept ? 'critical' : 'warning',
-          title: stalePendingAccept
-            ? STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE
-            : needsVendor
-              ? maintenanceAdminVendorAttentionTitle(adminVendorReason)
-              : isLeaseRenewal
-                ? 'Lease Renewal Escalated'
-                : `${run.templateName} Escalated`,
-          context: scoped.context,
+          badge: needsVendor || isLeaseRenewal ? 'critical' : 'warning',
+          title,
+          context: needsVendor ? vendorContext : scoped.context,
           meta: scoped.meta,
-          actionLabel: needsVendor || stalePendingAccept ? 'Assign vendor' : 'Review',
+          actionLabel: needsVendor ? 'Assign vendor' : 'Review',
           onAction: isLeaseRenewal
             ? () => openLeaseRenewalRail(run.id)
-            : needsVendor || stalePendingAccept
+            : needsVendor
               ? () => openEscalatedRailForRun(run.id, true)
               : () => openEscalatedRailForRun(run.id),
-          actionStyle: needsVendor || stalePendingAccept ? 'alert' : undefined,
+          actionStyle: needsVendor ? 'alert' : undefined,
         })
       }
 
@@ -2283,20 +2392,39 @@ export function AdminOverviewDashboard() {
             (u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit),
           )?.building ??
           null
-        const scoped = buildInspectionScopedAttentionCopy({
+        const assignedVendorName = resolveAssignedVendorName(
+          ticket.assignedVendorId,
+          ticket.assignedVendorName,
+        )
+        const vendorCategory = ticket.assignedVendorId
+          ? vendorCategoryById[ticket.assignedVendorId] ?? null
+          : null
+        const card = buildStaleVendorAttentionCard({
+          vendorName: assignedVendorName,
+          propertyLabel: building,
+          unitLabel: ticket.unit,
+          residentName: ticket.residentName,
+          propertyType: resolvePropertyType({
+            propertyId: ticket.propertyId,
+            building,
+          }),
+          vendorCategory,
+          issueCategory: ticket.issueCategory,
+        })
+        const scopedMeta = buildInspectionScopedAttentionCopy({
           ticketId: ticket.id,
           workflowData,
           propertyLabel: building,
           unitLabel: ticket.unit,
           residentName: ticket.residentName,
-          fallbackMeta: staleVendorAttentionSummary(),
-        })
+          fallbackMeta: card.meta,
+        }).meta
         items.push({
           key: `stale-admin-${ticket.id}`,
           badge: 'critical',
-          title: STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE,
-          context: scoped.context,
-          meta: scoped.meta,
+          title: card.title,
+          context: card.context,
+          meta: scopedMeta,
           actionLabel: 'Assign vendor',
           actionStyle: 'alert',
           onAction: () => openEscalatedRailForTicket(ticket.id),
@@ -2440,7 +2568,7 @@ export function AdminOverviewDashboard() {
         emergencyRepair: item.emergencyRepair === true,
       })),
     )
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, openTickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches, weatherCard, markWeatherDone])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, openTickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, smsNoRecipients, overviewResidents, propertyIdByBuilding, canonicalProperties, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail, openInvoiceReview, pmServiceBatches, weatherCard, markWeatherDone])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
@@ -3181,6 +3309,9 @@ export function AdminOverviewDashboard() {
   const criticalAttentionCount = allAttentionItems.filter(
     (i) => i.badge === 'critical',
   ).length
+  const warningAttentionCount = allAttentionItems.filter(
+    (i) => i.badge === 'warning',
+  ).length
 
   const portfolioInsightFindings = useMemo<PortfolioInsightFinding[]>(() => {
     return computePortfolioInsights({
@@ -3644,6 +3775,7 @@ export function AdminOverviewDashboard() {
             </p>
           ) : null}
         </div>
+        <AdminQuickActions />
       </div>
 
       {/* Needs Your Attention — top of page, under greeting */}
@@ -3656,11 +3788,13 @@ export function AdminOverviewDashboard() {
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
               Needs Your Attention
             </h2>
-            <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-[4px] bg-[#fef9c2] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-[#a65f00] tabular-nums">
-              {loading ? '—' : allAttentionItems.length}
-            </span>
+            {!loading && warningAttentionCount > 0 ? (
+              <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-[4px] bg-[#fef9c2] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-[#a65f00] tabular-nums">
+                {warningAttentionCount} {warningAttentionCount === 1 ? 'warning' : 'warnings'}
+              </span>
+            ) : null}
             {!loading && criticalAttentionCount > 0 ? (
-              <span className="text-[12px] font-medium leading-4 text-[#DA4951] tabular-nums">
+              <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-[4px] bg-[#E3646C] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
                 {criticalAttentionCount} critical
               </span>
             ) : null}
@@ -3670,7 +3804,7 @@ export function AdminOverviewDashboard() {
               type="button"
               onClick={() => setAwaitingDecisionListOpen(true)}
               disabled={loading}
-              className="admin-quiet-text-action sa-link"
+              className="admin-quiet-text-action setup-portfolio-text sa-link"
             >
               View all →
             </button>
@@ -3808,8 +3942,8 @@ export function AdminOverviewDashboard() {
           label="Scheduled Visits"
           labelIcon={scheduledVisitsIcon}
           value={loading ? '—' : String(kpis.scheduledVisits)}
-          delta={loading ? null : kpis.scheduledVisitsDelta}
-          caption="Upcoming maintenance visits"
+          delta={null}
+          caption="Confirmed upcoming visits"
         />
         <KpiCard
           stagger={2}

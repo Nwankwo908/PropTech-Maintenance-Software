@@ -6,6 +6,11 @@ import {
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
 import {
+  buildMaintenanceWorkOrderTimeline,
+  vendorStatusLabel,
+} from '@/lib/escalatedWorkflowReview'
+import type { SlaOverdueTimelineEntry } from '@/lib/slaOverdueActionReview'
+import {
   WORKFLOW_CATEGORY_BADGE,
   WORKFLOW_STAGE_LABEL,
   buildWorkflowKanbanCard,
@@ -197,6 +202,13 @@ export type WorkflowPipelineDetail = {
   assignedVendorName: string | null
   stageMoveTicketIds: string[]
   inspectionReportId: string | null
+  /**
+   * Work-order activity story under Repair progress (Vendor + Timeline).
+   * Same landlord-facing beats as the escalated / SLA right rail.
+   */
+  activityVendorName: string | null
+  activityVendorStatus: string | null
+  activityTimeline: SlaOverdueTimelineEntry[]
 }
 
 const RENT_PIPELINE_LABELS = [
@@ -686,13 +698,28 @@ function buildConciseWorkOrderTitle(input: {
   description: string
   issueCategory: string
   fallback: string
+  issueHeadline?: string | null
 }): string {
+  const headline = (input.issueHeadline ?? '').trim()
+  if (
+    headline &&
+    !/^maintenance issue$/i.test(headline) &&
+    !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(headline)
+  ) {
+    return headline.charAt(0).toUpperCase() + headline.slice(1)
+  }
   const summary = generateIssueSummary(input.description, {
     format: 'title',
     category: input.issueCategory,
     maxChars: 50,
   })
-  if (summary && !/^maintenance issue$/i.test(summary)) return summary
+  if (
+    summary &&
+    !/^maintenance issue$/i.test(summary) &&
+    !/^(?:a |an )?(plumbing|hvac|electrical|appliance) issue$/i.test(summary)
+  ) {
+    return summary
+  }
   return formatCategoryLabel(input.issueCategory) || input.fallback || 'Work order'
 }
 
@@ -1140,7 +1167,7 @@ async function loadTicketEnrichment(
     const { data } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, created_at, description, priority, urgency, issue_category, unit, due_at, scheduled_at, schedule_confirmed_at, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
+        'id, created_at, description, priority, urgency, issue_category, issue_headline, location_detail, unit, due_at, scheduled_at, schedule_confirmed_at, vendor_work_status, assigned_vendor_id, assigned_at, awaiting_landlord_choice_at, vendor_notify_error, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
       )
       .eq('landlord_id', landlordId)
       .eq('id', ticketId)
@@ -1533,49 +1560,52 @@ export async function fetchCommunicationWorkOrderInboxRows(): Promise<Communicat
     return isInspectionTemplateId(row.templateId)
   })
 
-  const rows: CommunicationWorkOrderInboxRow[] = []
-  for (const row of runs) {
-    const metadata = data.runMetadata[row.id] ?? {}
-    const enrichment = await loadTicketEnrichment(row, metadata)
-    const uloThread = buildWorkflowUloThreadInput(row, metadata, enrichment)
-    if (!uloThread) continue
+  const rows = (
+    await Promise.all(
+      runs.map(async (row) => {
+        const metadata = data.runMetadata[row.id] ?? {}
+        const enrichment = await loadTicketEnrichment(row, metadata)
+        const uloThread = buildWorkflowUloThreadInput(row, metadata, enrichment)
+        if (!uloThread) return null
 
-    const rowForStage: AdminWorkflowRow = {
-      ...row,
-      vendorWorkStatus:
-        asString(enrichment.ticket?.vendor_work_status) || row.vendorWorkStatus,
-      assignedVendorId:
-        asString(enrichment.ticket?.assigned_vendor_id) || row.assignedVendorId,
-    }
-    const stage = deriveWorkflowKanbanStage(rowForStage)
-    const startedMs = new Date(row.startedAt).getTime()
-    const eventMs = row.lastEventAt ? new Date(row.lastEventAt).getTime() : 0
-    const anchorMs =
-      uloThread.kind === 'move_in'
-        ? uloThread.moveInDateMs
-        : uloThread.kind === 'move_out'
-          ? uloThread.moveOutDateMs
-          : uloThread.kind === 'inspection'
-            ? uloThread.scheduledAtMs
-            : 0
-    const lastActivity = Math.max(
-      Number.isFinite(startedMs) ? startedMs : 0,
-      Number.isFinite(eventMs) ? eventMs : 0,
-      anchorMs,
+        const rowForStage: AdminWorkflowRow = {
+          ...row,
+          vendorWorkStatus:
+            asString(enrichment.ticket?.vendor_work_status) || row.vendorWorkStatus,
+          assignedVendorId:
+            asString(enrichment.ticket?.assigned_vendor_id) || row.assignedVendorId,
+        }
+        const stage = deriveWorkflowKanbanStage(rowForStage)
+        const startedMs = new Date(row.startedAt).getTime()
+        const eventMs = row.lastEventAt ? new Date(row.lastEventAt).getTime() : 0
+        const anchorMs =
+          uloThread.kind === 'move_in'
+            ? uloThread.moveInDateMs
+            : uloThread.kind === 'move_out'
+              ? uloThread.moveOutDateMs
+              : uloThread.kind === 'inspection'
+                ? uloThread.scheduledAtMs
+                : 0
+        const lastActivity = Math.max(
+          Number.isFinite(startedMs) ? startedMs : 0,
+          Number.isFinite(eventMs) ? eventMs : 0,
+          anchorMs,
+        )
+
+        return {
+          id: resolveWorkOrderInboxConversationId(uloThread),
+          name: uloThread.residentName,
+          context: [uloThread.propertyLabel, uloThread.unitLabel ? `Unit ${uloThread.unitLabel}` : '']
+            .filter(Boolean)
+            .join(' · '),
+          preview: workflowInboxPreview(uloThread),
+          status: WORKFLOW_STAGE_LABEL[stage],
+          lastActivity: lastActivity || Date.now(),
+          uloThread,
+        } satisfies CommunicationWorkOrderInboxRow
+      }),
     )
-
-    rows.push({
-      id: resolveWorkOrderInboxConversationId(uloThread),
-      name: uloThread.residentName,
-      context: [uloThread.propertyLabel, uloThread.unitLabel ? `Unit ${uloThread.unitLabel}` : '']
-        .filter(Boolean)
-        .join(' · '),
-      preview: workflowInboxPreview(uloThread),
-      status: WORKFLOW_STAGE_LABEL[stage],
-      lastActivity: lastActivity || Date.now(),
-      uloThread,
-    })
-  }
+  ).filter((row): row is CommunicationWorkOrderInboxRow => row != null)
 
   return rows.sort((a, b) => b.lastActivity - a.lastActivity)
 }
@@ -1667,6 +1697,9 @@ export async function fetchWorkflowPipelineDetail(
       assignedVendorName: null,
       stageMoveTicketIds: [],
       inspectionReportId: null,
+      activityVendorName: null,
+      activityVendorStatus: null,
+      activityTimeline: [],
     }
   }
 
@@ -1718,6 +1751,8 @@ export async function fetchWorkflowPipelineDetail(
           description: asString(ticket?.description),
           issueCategory: asString(ticket?.issue_category) || row.templateType || 'general',
           fallback: row.templateName || 'Workflow',
+          issueHeadline:
+            asString(ticket?.issue_headline) || row.issueHeadline || null,
         })
 
   const inspectionGroup =
@@ -1745,7 +1780,8 @@ export async function fetchWorkflowPipelineDetail(
   const structuredMaintenance = isMaintenance && rawTicketDescription && !homeCheckTitle
     ? extractStructuredIssueDetails(rawTicketDescription, {
         category: asString(ticket?.issue_category) || row.templateType || 'general',
-        format: 'summary',
+        // Title format keeps the issue line noun-phrase shaped (not "a … leak").
+        format: 'title',
       })
     : null
 
@@ -1760,10 +1796,29 @@ export async function fetchWorkflowPipelineDetail(
     if (!msg || looksLikeInternalEscalationCode(msg)) return null
     return msg
   })()
-  const issueDescription =
-    structuredMaintenance?.displayDescription?.trim() ||
-    rawTicketDescription.trim() ||
-    ''
+  const issueDescription = (() => {
+    if (!structuredMaintenance) return rawTicketDescription.trim() || ''
+    // Prefer the polished tenant-attributed paragraph; keep triage flags below it.
+    const lines: string[] = []
+    if (structuredMaintenance.reportedDetail) {
+      lines.push(structuredMaintenance.reportedDetail)
+    } else if (structuredMaintenance.displayDescription) {
+      lines.push(structuredMaintenance.displayDescription)
+    }
+    if (structuredMaintenance.servesFloor) {
+      lines.push(`Serves: ${structuredMaintenance.servesFloor}`)
+    }
+    for (const flag of structuredMaintenance.triageFlags) {
+      lines.push(`Flag: ${flag}`)
+    }
+    if (structuredMaintenance.availability) {
+      lines.push(`Resident availability: ${structuredMaintenance.availability}`)
+    }
+    if (structuredMaintenance.needsClarification) {
+      lines.push(`Clarify: ${structuredMaintenance.needsClarification}`)
+    }
+    return lines.join('\n').trim() || rawTicketDescription.trim() || ''
+  })()
 
   const description = homeCheckTitle === 'Home Check'
     ? 'Observation only. Photos of the water heater and heating system are saved here. This does not request a repair.'
@@ -1918,6 +1973,36 @@ export async function fetchWorkflowPipelineDetail(
     maintenanceProgressSteps ??
     buildProgressSteps(lifecyclePipeline.labels, lifecyclePipeline.index)
 
+  const activityVendorName = isMaintenance
+    ? enrichment.vendorName?.trim() || null
+    : null
+  const activityVendorStatus = isMaintenance
+    ? vendorStatusLabel(vendorWorkStatus, activityVendorName)
+    : null
+  const activityTimeline = isMaintenance
+    ? buildMaintenanceWorkOrderTimeline(
+        ticket
+          ? {
+              id: asString(ticket.id) || enrichment.maintenanceRequestId || row.id,
+              createdAt: asString(ticket.created_at) || row.startedAt,
+              dueAt: asString(ticket.due_at) || row.dueAt || null,
+              urgency: urgency || 'normal',
+              unit: asString(ticket.unit) || row.unitLabel || '',
+              building: row.propertyLabel,
+              description: asString(ticket.description),
+              issueCategory: asString(ticket.issue_category) || row.issueCategory,
+              assignedVendorId:
+                asString(ticket.assigned_vendor_id) || row.assignedVendorId,
+              assignedVendorName: activityVendorName,
+              vendorWorkStatus: vendorWorkStatus || 'pending_accept',
+              residentName: residentName || null,
+              assignedAt: asString(ticket.assigned_at) || null,
+            }
+          : null,
+        row.timeline,
+      )
+    : []
+
   return {
     runId: row.id,
     workOrderRef: formatWorkOrderRef(row),
@@ -1988,8 +2073,22 @@ export async function fetchWorkflowPipelineDetail(
             value: dash(formatVendorTradeLabel(asString(ticket?.issue_category), { emptyLabel: '' })),
           },
           {
+            label: 'Location',
+            value: dash(
+              structuredMaintenance?.locationDetail ||
+                asString(ticket?.location_detail) ||
+                row.issueLocationDetail ||
+                '',
+            ),
+          },
+          {
             label: 'Resident access notes',
-            value: dash(asString(ticket?.access_instructions)),
+            value: dash(
+              asString(ticket?.access_instructions) ||
+                (structuredMaintenance?.availability
+                  ? `Availability: ${structuredMaintenance.availability}`
+                  : ''),
+            ),
           },
           { label: 'Parts Ordered', value: '—' },
           {
@@ -2024,5 +2123,8 @@ export async function fetchWorkflowPipelineDetail(
     assignedVendorName: enrichment.vendorName?.trim() || null,
     stageMoveTicketIds: card.stageMoveTicketIds,
     inspectionReportId: card.inspectionReportId ?? row.inspectionReportId ?? null,
+    activityVendorName,
+    activityVendorStatus,
+    activityTimeline,
   }
 }

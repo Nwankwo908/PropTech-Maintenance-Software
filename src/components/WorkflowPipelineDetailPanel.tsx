@@ -1,7 +1,6 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConversationMonitoringBody } from '@/components/ConversationMonitoringModal'
-import { SmsAttachmentCard } from '@/components/SmsAttachmentCard'
 import { WorkflowStageMoveDialogs } from '@/components/workflowKanban/WorkflowStageMoveDialogs'
 import { useWorkflowStageMove } from '@/components/workflowKanban/useWorkflowStageMove'
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
@@ -35,6 +34,7 @@ import type {
   WorkflowPipelineField,
   WorkflowPipelineStep,
 } from '@/lib/workflowPipelineDetail'
+import { isVisibleSlaTimelineEntry } from '@/lib/slaOverdueActionReview'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { residentDetailPath } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
@@ -131,20 +131,17 @@ function WorkOrderPhotosSection({
             key={`${attachment.name}-${attachment.url ?? attachment.sizeLabel}`}
             className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-[#fafafa]"
           >
-            {attachment.kind === 'video' || attachment.kind === 'audio' || attachment.kind === 'document' || (attachment.previewStatus && attachment.previewStatus !== 'ready') ? (
-              <div className="flex aspect-[4/3] items-center justify-center bg-[#fafafa] p-3">
-                <SmsAttachmentCard
-                  item={{
-                    url: attachment.url || '',
-                    downloadUrl: attachment.downloadUrl,
-                    kind: attachment.kind,
-                    label: attachment.kind === 'video' ? 'Video' : attachment.kind === 'audio' ? 'Audio' : attachment.kind === 'document' ? 'Document' : 'Photo',
-                    previewStatus: attachment.previewStatus ?? 'unavailable',
-                    storagePath: attachment.storagePath,
-                  }}
+            {attachment.url && attachment.kind === 'video' && attachment.previewStatus !== 'unavailable' ? (
+              <div className="aspect-[4/3] overflow-hidden bg-[#0a0a0a]">
+                <video
+                  src={attachment.url}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="size-full object-contain"
                 />
               </div>
-            ) : attachment.url && attachment.kind === 'image' && (attachment.previewStatus ?? 'ready') === 'ready' ? (
+            ) : attachment.url && attachment.kind === 'image' && attachment.previewStatus !== 'unavailable' ? (
               <a
                 href={attachment.url}
                 target="_blank"
@@ -173,25 +170,7 @@ function WorkOrderPhotosSection({
               {attachment.caption ? (
                 <p className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-[#364153]">{attachment.caption}</p>
               ) : null}
-              <p className="mt-1 text-[11px] text-[#6a7282]">
-                {attachment.previewStatus === 'processing'
-                  ? 'Preparing a version you can play. The original file is still saved.'
-                  : attachment.previewStatus === 'failed'
-                    ? "We couldn't prepare a preview. The original file is still saved."
-                    : attachment.previewStatus === 'unavailable'
-                      ? "Preview isn't available yet. The original file is still saved."
-                      : attachment.sizeLabel}
-              </p>
-              {attachment.downloadUrl || attachment.url ? (
-                <a
-                  href={attachment.downloadUrl || attachment.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 inline-block text-[12px] font-semibold text-[#0030b5] underline"
-                >
-                  Open original
-                </a>
-              ) : null}
+              <p className="mt-1 text-[11px] text-[#6a7282]">{attachment.sizeLabel}</p>
             </div>
           </div>
         ))}
@@ -265,6 +244,13 @@ function detailToStageMoveCard(detail: WorkflowPipelineDetail): WorkflowKanbanCa
     stageMoveTicketIds: ticketIds,
     assignedVendorId: detail.assignedVendorId,
     assignedVendorName: detail.assignedVendorName,
+    vendorWorkStatus: null,
+    dueAt: null,
+    scheduledAt: null,
+    scheduleConfirmedAt: null,
+    urgency: null,
+    propertyId: null,
+    propertyLabel: null,
     inspectionReportId: detail.inspectionReportId,
     inspectionChecklist: detail.inspectionGroup
       ? detail.inspectionGroup.items.map((item) => ({
@@ -321,6 +307,7 @@ function WorkflowProgressStepper({
   title,
   nextAction,
   changeStage,
+  activity,
 }: {
   steps: WorkflowPipelineStep[]
   caption: string
@@ -332,6 +319,11 @@ function WorkflowProgressStepper({
     options: Array<{ id: WorkflowKanbanStageId; label: string; disabled: boolean; reason?: string }>
     onChange: (to: WorkflowKanbanStageId) => void
   } | null
+  activity?: {
+    vendorName: string | null
+    vendorStatus: string | null
+    timeline: Array<{ timeLabel: string; description: string; actor: string }>
+  } | null
 }) {
   const stepCount = steps.length
   const progressIndex = resolveWorkflowProgressIndex(steps)
@@ -341,6 +333,8 @@ function WorkflowProgressStepper({
       ? '0%'
       : `calc((100% - ${100 / stepCount}%) * ${progressIndex / (stepCount - 1)})`
   const [stageMenuOpen, setStageMenuOpen] = useState(false)
+  const timeline = (activity?.timeline ?? []).filter(isVisibleSlaTimelineEntry)
+  const showActivity = Boolean(activity?.vendorName || timeline.length > 0)
 
   return (
     <section className="w-full rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -463,6 +457,43 @@ function WorkflowProgressStepper({
       ) : null}
       {changeStage?.busy ? (
         <p className="mt-2 text-[12px] text-[#6a7282]">Updating stage…</p>
+      ) : null}
+
+      {showActivity ? (
+        <div className="sa-enter mt-5 border-t border-[#f3f4f6] pt-5" aria-label="Work order activity">
+          {activity?.vendorName ? (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+                Vendor
+              </p>
+              <p className="mt-1 text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                {activity.vendorName}
+              </p>
+              {activity.vendorStatus ? (
+                <p className="text-[13px] leading-5 text-[#6a7282]">{activity.vendorStatus}</p>
+              ) : null}
+            </div>
+          ) : null}
+          {timeline.length > 0 ? (
+            <div className={activity?.vendorName ? 'mt-5' : undefined}>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+                Timeline
+              </p>
+              <ul className="mt-3 space-y-3">
+                {timeline.map((entry) => (
+                  <li
+                    key={`${entry.timeLabel}-${entry.description}-${entry.actor}`}
+                    className="sa-enter grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-0.5 text-[13px] leading-5"
+                  >
+                    <span className="tabular-nums text-[#6a7282]">{entry.timeLabel}</span>
+                    <span className="text-[#364153]">{entry.description}</span>
+                    <span className="text-right text-[#9ca3af]">{entry.actor}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </section>
   )
@@ -924,8 +955,10 @@ export function WorkflowPipelineDetailPanel({
                       : `SMS thread between ${detail?.resident?.name ?? 'resident'} and Ulo`}
                 </p>
               </>
-            ) : loading || !detail ? (
+            ) : loading ? (
               <p className="text-[13px] text-[#6a7282]">Loading workflow…</p>
+            ) : !detail ? (
+              <p className="text-[13px] text-[#6a7282]">This task is no longer on Active Tasks</p>
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1006,9 +1039,22 @@ export function WorkflowPipelineDetailPanel({
                 />
               </div>
             ) : null
-          ) : loading || !detail ? (
+          ) : loading ? (
             <div className="flex h-40 items-center justify-center">
               <p className="text-[13px] text-[#6a7282]">Loading workflow details…</p>
+            </div>
+          ) : !detail ? (
+            <div className="flex h-40 flex-col items-center justify-center gap-3 px-4 text-center">
+              <p className="text-[13px] text-[#6a7282]">
+                This task is no longer on Active Tasks. It may be closed, cancelled, or finished.
+              </p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="sa-press rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5]"
+              >
+                Close
+              </button>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
@@ -1052,6 +1098,15 @@ export function WorkflowPipelineDetailPanel({
                         onChange: (to) => {
                           void handleStageOverride(to)
                         },
+                      }
+                    : null
+                }
+                activity={
+                  detail.isMaintenanceWorkflow
+                    ? {
+                        vendorName: detail.activityVendorName,
+                        vendorStatus: detail.activityVendorStatus,
+                        timeline: detail.activityTimeline,
                       }
                     : null
                 }

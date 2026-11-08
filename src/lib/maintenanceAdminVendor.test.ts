@@ -6,7 +6,9 @@ import {
   looksLikeInternalEscalationCode,
   maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
+  staleVendorAttentionTitle,
   STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL,
+  vendorDeclinedAttentionTitle,
 } from '@/lib/maintenanceAdminVendor'
 
 describe('maintenanceAdminVendor', () => {
@@ -71,5 +73,10 @@ describe('maintenanceAdminVendor', () => {
       }),
     ).toBe(false)
     expect(STALE_PENDING_ACCEPT_NEEDS_ADMIN_STATUS_LABEL).toMatch(/unresponsive/i)
+    expect(staleVendorAttentionTitle("Joe's Plumbing")).toMatch(/Joe's Plumbing never accepted/)
+    expect(staleVendorAttentionTitle(null)).toMatch(/Vendor unresponsive/)
+    expect(vendorDeclinedAttentionTitle('NTA Services LLC')).toBe(
+      'NTA Services declined — find a replacement',
+    )
   })
 })

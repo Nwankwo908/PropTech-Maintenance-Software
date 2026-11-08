@@ -1,5 +1,10 @@
+import { vendorDisplayName } from '@shared/activityFeed/feedFactSheet'
 import { categoryLabelForSms } from '@shared/maintenance/categoryHandlingTips'
-import { rosterVendorTypePlural } from '@/lib/maintenanceAdminVendor'
+import { formatLocationWithOptionalUnit } from '@shared/properties/unitLabelDisplay'
+import {
+  rosterVendorTypePlural,
+  staleVendorAttentionTitle,
+} from '@/lib/maintenanceAdminVendor'
 
 /** Words in a summary. Used to keep the attention column under about 20. */
 export function attentionSummaryWordCount(text: string): number {
@@ -13,11 +18,50 @@ export function attentionSummarySentenceCount(text: string): number {
     .filter(Boolean).length
 }
 
-function namedTrade(issueCategory?: string | null): string | null {
+/**
+ * Landlord-facing trade for attention grey lines.
+ * Never "Maintenance", "Other", or "General".
+ */
+export function namedTrade(issueCategory?: string | null): string | null {
   const label = categoryLabelForSms({ primaryCategory: issueCategory ?? null })
-  if (!label || label === 'maintenance') return null
+  if (!label || label === 'maintenance' || label === 'general' || label === 'other') {
+    return null
+  }
   if (label === 'HVAC') return 'HVAC'
   return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+/** Prefer the assigned vendor’s trade/category; else the ticket issue category. */
+export function attentionTradeLabel(input: {
+  vendorCategory?: string | null
+  issueCategory?: string | null
+}): string | null {
+  return namedTrade(input.vendorCategory) ?? namedTrade(input.issueCategory)
+}
+
+/**
+ * Grey line for vendor-related Needs Your Attention cards.
+ * Property · unit · tenant · trade (trade omitted when unknown; SFH omits unit).
+ */
+export function formatVendorAttentionContextLabel(input: {
+  propertyLabel?: string | null
+  unitLabel?: string | null
+  residentName?: string | null
+  propertyType?: string | null
+  trade?: string | null
+}): string {
+  const place = formatLocationWithOptionalUnit({
+    propertyLabel: input.propertyLabel,
+    unitLabel: input.unitLabel,
+    propertyType: input.propertyType,
+  })
+  const resident = (input.residentName ?? '').trim()
+  const parts = [place, resident].filter(Boolean)
+  const base = parts.length ? parts.join(' · ') : '—'
+  const trade = (input.trade ?? '').trim()
+  if (!trade) return base
+  if (base === '—') return trade
+  return `${base} · ${trade}`
 }
 
 /** "3 days ago" → "for 3 days"; "yesterday" → "since yesterday". */
@@ -53,12 +97,42 @@ export function rosterGapAttentionSummary(issueCategory?: string | null): string
   return `${happened} Assign one.`
 }
 
-export function vendorDeclinedAttentionSummary(): string {
+export function vendorDeclinedAttentionSummary(vendorName?: string | null): string {
+  const name = vendorDisplayName(vendorName)
+  if (name) return `${name} declined. Find a replacement.`
   return 'The assigned vendor declined. Find a replacement.'
 }
 
-export function staleVendorAttentionSummary(): string {
+export function staleVendorAttentionSummary(vendorName?: string | null): string {
+  const name = vendorDisplayName(vendorName)
+  if (name) return `${name} never accepted. Choose a new vendor.`
   return 'The assigned vendor never accepted. Choose a new vendor.'
+}
+
+/** Shared copy for escalated-run and stale-ticket Vendor unresponsive cards. */
+export function buildStaleVendorAttentionCard(input: {
+  vendorName?: string | null
+  propertyLabel?: string | null
+  unitLabel?: string | null
+  residentName?: string | null
+  propertyType?: string | null
+  vendorCategory?: string | null
+  issueCategory?: string | null
+}): { title: string; meta: string; context: string } {
+  return {
+    title: staleVendorAttentionTitle(input.vendorName),
+    meta: staleVendorAttentionSummary(input.vendorName),
+    context: formatVendorAttentionContextLabel({
+      propertyLabel: input.propertyLabel,
+      unitLabel: input.unitLabel,
+      residentName: input.residentName,
+      propertyType: input.propertyType,
+      trade: attentionTradeLabel({
+        vendorCategory: input.vendorCategory,
+        issueCategory: input.issueCategory,
+      }),
+    }),
+  }
 }
 
 export function leaseRenewalAttentionSummary(relative?: string | null): string {

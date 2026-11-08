@@ -1,6 +1,12 @@
+import { vendorDisplayName } from '@shared/activityFeed/feedFactSheet'
 import {
   rosterVendorTypePluralFromTrade,
 } from '@/lib/vendorTrades'
+
+/** Business name for attention cards — strip LLC/Inc; never initials-only. */
+function displayVendorNameForAttention(vendorName?: string | null): string | null {
+  return vendorDisplayName(vendorName)
+}
 
 /** Escalation reasons when no roster vendor is available — admin must assign or onboard. */
 export const MAINTENANCE_ADMIN_VENDOR_ESCALATION_REASONS = [
@@ -66,6 +72,23 @@ export const STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE =
 
 export const STALE_PENDING_ACCEPT_NEEDS_ADMIN_CONTEXT =
   'The assigned vendor never accepted. This needs a new vendor choice — not another wait.'
+
+/**
+ * Needs Your Attention title for a stale pending_accept vendor.
+ * Prefer the business name (no LLC/Inc; never initials-only).
+ */
+export function staleVendorAttentionTitle(vendorName?: string | null): string {
+  const name = displayVendorNameForAttention(vendorName)
+  if (name) return `${name} never accepted — needs reassignment`
+  return STALE_PENDING_ACCEPT_NEEDS_ADMIN_ATTENTION_TITLE
+}
+
+/** Needs Your Attention title when the assigned vendor declined. */
+export function vendorDeclinedAttentionTitle(vendorName?: string | null): string {
+  const name = displayVendorNameForAttention(vendorName)
+  if (name) return `${name} declined — find a replacement`
+  return 'Find a Replacement Vendor'
+}
 
 /**
  * SLA rematch skip must follow the ticket, not a stale `no_vendor_available` run.

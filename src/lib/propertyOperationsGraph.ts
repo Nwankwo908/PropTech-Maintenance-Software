@@ -23,7 +23,6 @@ import {
   fallbackFeedLine,
   feedScopeFromSource,
   landlordFeedLine,
-  shortVendorName,
   withFeedScope,
   type FeedLine,
 } from '@/lib/landlordFeedCopy'
@@ -1043,44 +1042,6 @@ export function selectLandlordFacingFeedEvents(
     .slice(0, Math.max(limit, 0))
 }
 
-function storyStepLabel(event: PropertyOperationsTimelineEvent): string {
-  const vendor = shortVendorName(event.vendorName)
-  const type = event.eventType
-  const amount =
-    typeof event.metadata?.total_cost === 'number' || typeof event.metadata?.amount === 'number'
-      ? `$${Math.round(Number(event.metadata?.total_cost ?? event.metadata?.amount)).toLocaleString('en-US')}`
-      : null
-  if (type === 'vendor.alert_sent') return vendor ? `Sent to ${vendor}` : 'Sent to vendor'
-  if (type === 'vendor.accepted' || (type === 'vendor.replied' && /accept/i.test(String(event.metadata?.parsed_action ?? '')))) {
-    return 'Accepted'
-  }
-  if (type === 'vendor.declined' || (type === 'vendor.replied' && /decline/i.test(String(event.metadata?.parsed_action ?? '')))) {
-    return 'Declined'
-  }
-  if (
-    type === 'maintenance.sla_auto_reassigned' ||
-    type === 'maintenance.sla_expired_needs_vendor' ||
-    /didn'?t reply|no reply|response time expired/i.test(event.label || event.message || '')
-  ) {
-    return 'No reply'
-  }
-  if (type === 'landlord.attention_alert_sent') return 'Asked you'
-  if (type === 'maintenance.created' || type === 'maintenance.request_submitted') return 'Opened'
-  if (type === 'maintenance.completed') return 'Work done'
-  if (type === 'maintenance.estimate_approved') return amount ? `Estimate ${amount}` : 'Estimate ok'
-  if (type === 'maintenance.estimate_declined' || type === 'maintenance.estimate_rejected') {
-    return amount ? `Estimate ${amount}` : 'Estimate no'
-  }
-  if (type === 'maintenance.spend_recorded') return amount ? `Invoice ${amount}` : 'Invoice'
-  if (type.startsWith('inspection.capture')) return 'Scan'
-  if (type.includes('schedule')) return 'Visit set'
-  const mapped = hasMappedEventTypeLabel(type) ? formatEventTypeLabel(type) : null
-  if (mapped && !looksLikeRawEventTypeLabel(type, mapped)) {
-    return mapped.split(/\s+/).slice(0, 3).join(' ')
-  }
-  return (event.label || type).replace(/\s+/g, ' ').trim().split(/\s+/).slice(0, 3).join(' ')
-}
-
 /** Keep ≤3 trail steps (1–3 words each); collapse older history as "+N". */
 export function compactFeedTrailSteps(steps: string[]): string[] | null {
   const cleaned = steps
@@ -1504,7 +1465,6 @@ type MaintenanceTicketFeedRow = {
   schedule_confirmed_at: string | null
   scheduled_at: string | null
   recognized_spend_amount: number | string | null
-  estimate_amount?: number | string | null
   completed_at?: string | null
   cancelled_at?: string | null
   feed_card_copy?: FeedCardCopyCache | Record<string, unknown> | null
@@ -1550,7 +1510,7 @@ export async function enrichTicketsForFeed(
   const { data, error } = await supabase
     .from('maintenance_requests')
     .select(
-      'id, issue_headline, description, issue_category, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount, estimate_amount, completed_at, cancelled_at, feed_card_copy',
+      'id, issue_headline, description, issue_category, unit, unit_id, property_id, awaiting_landlord_choice_at, vendor_work_status, spend_status, schedule_confirmed_at, scheduled_at, recognized_spend_amount, completed_at, cancelled_at, feed_card_copy',
     )
     .in('id', ids)
 
@@ -1640,7 +1600,8 @@ export async function enrichTicketsForFeed(
       scheduleConfirmedAt: asOptionalString(row.schedule_confirmed_at),
       scheduledAt: asOptionalString(row.scheduled_at),
       recognizedSpendAmount: asOptionalNumber(row.recognized_spend_amount),
-      estimateAmount: estimate?.amount ?? asOptionalNumber(row.estimate_amount),
+      // Amount comes from maintenance_estimates — there is no estimate_amount column on tickets.
+      estimateAmount: estimate?.amount ?? null,
       completedAt: asOptionalString(row.completed_at),
       cancelledAt: asOptionalString(row.cancelled_at),
       feedCardCopy,
@@ -1831,26 +1792,6 @@ export async function fetchRecentPropertyOperationsEvents(
       : null
 
   return selectLandlordFacingFeedEvents(enriched, limit, { onboardingSession: session })
-}
-
-function contextPerson(event: PropertyOperationsTimelineEvent): string | null {
-  const vendor = event.vendorName?.trim() || null
-  const resident = event.residentName?.trim() || null
-  const type = event.eventType
-  // Job cards keep place = property (+ unit). Vendor/resident names belong in the
-  // headline or Waiting line — not bolted onto the grey context row.
-  if (event.category === 'work_order' || event.category === 'scheduling') {
-    return resident
-  }
-  const aboutVendor =
-    event.category === 'vendor' ||
-    event.category === 'spend' ||
-    type.startsWith('vendor.') ||
-    type.includes('spend') ||
-    type.includes('invoice') ||
-    type.includes('estimate')
-  if (aboutVendor) return vendor ?? resident
-  return resident ?? vendor
 }
 
 /** Grey context place: "Property, Unit X" when both exist; SFH / Home sentinel omits unit. */

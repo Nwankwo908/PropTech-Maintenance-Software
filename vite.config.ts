@@ -54,6 +54,25 @@ export default defineConfig({
     allowedHosts: true,
     port: 5173,
     strictPort: true,
+    // Local digest/preview HTML copies and numbered duplicates must not full-reload the app.
+    watch: {
+      ignored: [
+        '**/digest-preview*',
+        '**/scripts/digest-preview*',
+        '**/docs/pr-assets/**',
+        (watchPath: string) =>
+          /(?:^|\/)(?:vercel|package-lock) \d+\.(?:json|html|txt)$/i.test(watchPath) ||
+          /(?:^|\/)digest-preview/i.test(watchPath),
+      ],
+    },
+    proxy: {
+      // SMS video playback converter lives on the production site (Vercel).
+      '/api/convert-sms-media': {
+        target: 'https://www.ulohome.io',
+        changeOrigin: true,
+        secure: true,
+      },
+    },
   },
   preview: {
     host: true,
