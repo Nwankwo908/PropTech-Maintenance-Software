@@ -31,6 +31,10 @@ import {
   onboardingSessionFromState,
 } from '@/lib/onboarding/session'
 import { supabase } from '@/lib/supabase'
+import {
+  formatBareUnitLabel,
+  shouldOmitUnitReference,
+} from '@shared/properties/unitLabelDisplay'
 
 export type PropertyOperationsTimelineCategory =
   | 'spend'
@@ -1205,17 +1209,43 @@ function contextPerson(event: PropertyOperationsTimelineEvent): string | null {
   return resident ?? vendor
 }
 
+/** Grey context place: "Property, Unit" when both exist; SFH / Home sentinel omits unit. */
+export function formatTimelinePlace(
+  event: Pick<PropertyOperationsTimelineEvent, 'building' | 'unitLabel' | 'propertyType'>,
+): string | null {
+  const building = (event.building ?? '').trim() || null
+  const unitRaw = (event.unitLabel ?? '').trim() || null
+  const omitUnit = shouldOmitUnitReference({
+    unitLabel: unitRaw,
+    propertyType: event.propertyType,
+  })
+  const unit = omitUnit ? null : formatBareUnitLabel(unitRaw, event.propertyType) || unitRaw
+  if (building && unit) {
+    const unitAlreadyInBuilding = building.toLowerCase().includes(unit.toLowerCase())
+    if (unitAlreadyInBuilding) return building
+    return `${building}, ${unit}`
+  }
+  return building ?? (omitUnit ? null : unit)
+}
+
 export function formatTimelineContextLine(
   event: PropertyOperationsTimelineEvent,
 ): string | null {
-  const place = (event.building || event.unitLabel || '').trim() || null
+  const place = formatTimelinePlace(event)
   const person = contextPerson(event)
   const label = (event.fullLabel ?? event.label ?? '').toLowerCase()
   // Attention / action lines often already include the street — don't repeat it.
   const placeAlreadyInLabel =
-    Boolean(place) && label.includes(place!.toLowerCase())
+    Boolean(place) &&
+    (label.includes(place!.toLowerCase()) ||
+      Boolean(event.building?.trim() && label.includes(event.building.trim().toLowerCase())))
   const shownPlace = placeAlreadyInLabel ? null : place
-  if (shownPlace && person) return `${shownPlace} · ${person}`
+  if (shownPlace && person) {
+    const personAlreadyNamed = label.includes(person.toLowerCase())
+    if (personAlreadyNamed) return shownPlace
+    return `${shownPlace} · ${person}`
+  }
+  if (person && label.includes(person.toLowerCase())) return shownPlace
   return shownPlace ?? person
 }
 

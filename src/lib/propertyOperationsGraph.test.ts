@@ -608,13 +608,14 @@ describe('landlord activity feed cleanup', () => {
     expect(categorizePropertyOperationsEvent('workflow.escalate', 'edge_function')).not.toBe('admin')
   })
 
-  it('names one person next to the address', () => {
+  it('names one person next to the address when not already in the label', () => {
     expect(
       formatTimelineContextLine(
         feedEvent({
           id: 'row',
           eventType: 'vendor.alert_sent',
-          label: 'Sent WO-074B to Ecosafe.',
+          label: 'Sent a job alert',
+          fullLabel: 'Sent a job alert',
           category: 'vendor',
           building: '123 Main',
           residentName: 'LA2 SMS Journey Tenant',
@@ -622,6 +623,66 @@ describe('landlord activity feed cleanup', () => {
         }),
       ),
     ).toBe('123 Main · Ecosafe')
+    expect(
+      formatTimelineContextLine(
+        feedEvent({
+          id: 'named',
+          eventType: 'vendor.alert_sent',
+          label: 'Sent WO-074B to Ecosafe.',
+          fullLabel: 'Sent WO-074B to Ecosafe.',
+          category: 'vendor',
+          building: '123 Main',
+          vendorName: 'Ecosafe',
+        }),
+      ),
+    ).toBe('123 Main')
+  })
+
+  it('shows Property, Unit on the grey context line for multifamily', () => {
+    expect(
+      formatTimelineContextLine(
+        feedEvent({
+          id: 'mf',
+          eventType: 'maintenance.completed',
+          label: 'Marked the repair complete',
+          category: 'work_order',
+          building: '14 Maple Ave',
+          unitLabel: '2B',
+          propertyType: 'multifamily',
+          residentName: 'Jordan Lee',
+        }),
+      ),
+    ).toBe('14 Maple Ave, 2B · Jordan Lee')
+  })
+
+  it('omits the unit on the grey context line for single-family', () => {
+    expect(
+      formatTimelineContextLine(
+        feedEvent({
+          id: 'sfh',
+          eventType: 'maintenance.completed',
+          label: 'Marked the repair complete',
+          category: 'work_order',
+          building: '100 Disposable Test Lane',
+          unitLabel: '1',
+          propertyType: 'single_family',
+          residentName: 'Alex Tenant',
+        }),
+      ),
+    ).toBe('100 Disposable Test Lane · Alex Tenant')
+    expect(
+      formatTimelineContextLine(
+        feedEvent({
+          id: 'sfh-home',
+          eventType: 'maintenance.completed',
+          label: 'Marked the repair complete',
+          category: 'work_order',
+          building: '100 Disposable Test Lane',
+          unitLabel: 'Home',
+          residentName: 'Alex Tenant',
+        }),
+      ),
+    ).toBe('100 Disposable Test Lane · Alex Tenant')
   })
 
   it('turns a 19-row sample into the eight landlord stories', () => {
@@ -743,9 +804,10 @@ describe('landlord activity feed cleanup', () => {
       const line = formatTimelineContextLine(event) ?? ''
       expect(line.split(' · ').length).toBeLessThanOrEqual(2)
       if (event.category === 'vendor' || event.category === 'spend') {
-        // Property is already in the action line — context keeps the vendor only.
-        expect(line).toBe('Ecosafe')
+        // Property and vendor are already in the action line — grey context stays empty.
+        expect(line).toBe('')
         expect(event.label).toMatch(/123 Main/)
+        expect(event.label).toMatch(/Ecosafe/)
       }
     }
   })
