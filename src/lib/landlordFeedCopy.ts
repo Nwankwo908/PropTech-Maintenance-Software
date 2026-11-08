@@ -896,6 +896,208 @@ function isCloseEvent(eventType: string): boolean {
   )
 }
 
+function personName(raw: string | null | undefined, fallback: string): string {
+  return shortVendorName(raw) || (raw ?? '').trim() || fallback
+}
+
+export function openedWorkOrderFeedLine(input: {
+  workOrderRef?: string | null
+  issueHeadline?: string | null
+  residentName?: string | null
+  submitted?: boolean
+}): FeedLine {
+  const { visible, wo, hasIssue } = issueSubject(input)
+  const who = shortVendorName(input.residentName)
+  if (input.submitted) {
+    const subject = hasIssue ? visible : wo
+    const full = who
+      ? subject
+        ? `${who} reported the ${subject}`
+        : `${who} reported a repair`
+      : subject
+        ? `Opened a repair report for the ${subject}`
+        : 'Opened a repair report'
+    return withWorkOrderFull(
+      fitFeedLine(full, [who ? `${who} reported a repair` : 'Opened a repair report'], [
+        visible ?? '',
+        wo ?? '',
+        who ?? '',
+        'reported',
+      ]),
+      hasIssue ? wo : null,
+    )
+  }
+  const subject = hasIssue ? visible : wo
+  const full = subject
+    ? hasIssue
+      ? `Opened a work order for the ${subject}`
+      : `Opened a work order for ${subject}`
+    : 'Opened a work order'
+  return withWorkOrderFull(
+    fitFeedLine(full, ['Opened a work order'], [visible ?? '', wo ?? '', 'Opened']),
+    hasIssue ? wo : null,
+  )
+}
+
+export function completedWorkOrderFeedLine(input: {
+  workOrderRef?: string | null
+  issueHeadline?: string | null
+  vendorName?: string | null
+}): FeedLine {
+  const { visible, wo, hasIssue } = issueSubject(input)
+  const vendor = shortVendorName(input.vendorName)
+  if (hasIssue) {
+    const full = vendor
+      ? `${vendor} finished the ${visible}`
+      : `Marked the ${visible} complete`
+    return withWorkOrderFull(
+      fitFeedLine(full, [`Marked the ${visible} complete`, 'Marked the repair complete'], [
+        visible ?? '',
+        wo ?? '',
+        'complete',
+      ]),
+      wo,
+    )
+  }
+  const full = wo
+    ? vendor
+      ? `${vendor} finished ${wo}`
+      : `Marked ${wo} complete`
+    : 'Marked the repair complete'
+  return fitFeedLine(full, ['Marked the repair complete'], [wo ?? '', 'complete'])
+}
+
+export function scheduleUpdatedFeedLine(input: {
+  workOrderRef?: string | null
+  issueHeadline?: string | null
+  window?: string | null
+}): FeedLine {
+  const { visible, wo, hasIssue } = issueSubject(input)
+  const window = compactWindow(input.window)
+  if (hasIssue) {
+    const withWindow = window ? `Updated the visit to ${window} for the ${visible}` : null
+    const fallback = `Updated the visit time for the ${visible}`
+    return withWorkOrderFull(
+      fitFeedLine(withWindow ?? fallback, [fallback, 'Updated the visit time'], [
+        visible ?? '',
+        wo ?? '',
+        'Updated',
+      ]),
+      wo,
+    )
+  }
+  const withWindow = window
+    ? wo
+      ? `Updated the visit to ${window} for ${wo}`
+      : `Updated the visit to ${window}`
+    : null
+  const fallback = wo ? `Updated the visit time for ${wo}` : 'Updated the visit time'
+  return fitFeedLine(withWindow ?? fallback, [fallback], [wo ?? '', 'Updated'])
+}
+
+export function rentFeedLine(input: {
+  kind: 'due' | 'reminder' | 'payment' | 'late'
+  residentName?: string | null
+  amount?: unknown
+}): FeedLine {
+  const who = personName(input.residentName, 'the resident')
+  const amount = moneyLabel(input.amount)
+  if (input.kind === 'due') {
+    const full = `Marked rent as due for ${who}`
+    return fitFeedLine(full, ['Marked rent as due'], [who, 'due'])
+  }
+  if (input.kind === 'reminder') {
+    const full = `Sent a rent reminder to ${who}`
+    return fitFeedLine(full, ['Sent a rent reminder'], [who, 'reminder'])
+  }
+  if (input.kind === 'late') {
+    const full = `Asked you about late rent for ${who}`
+    return fitFeedLine(full, ['Asked you about late rent'], [who, 'late'])
+  }
+  const withAmount = amount ? `Saved a ${amount} rent payment from ${who}` : `Saved a rent payment from ${who}`
+  return fitFeedLine(withAmount, [`Saved a rent payment from ${who}`, 'Saved a rent payment'], [
+    who,
+    amount ?? '',
+    'payment',
+  ])
+}
+
+export function tenantActivationFeedLine(input: {
+  kind: 'sent' | 'completed'
+  residentName?: string | null
+}): FeedLine {
+  const who = personName(input.residentName, 'the resident')
+  if (input.kind === 'sent') {
+    const full = `Sent a welcome text to ${who}`
+    return fitFeedLine(full, ['Sent a welcome text'], [who, 'welcome'])
+  }
+  const full = `Activated ${who}`
+  return fitFeedLine(full, ['Activated the resident'], [who, 'Activated'])
+}
+
+export function slaReassignedFeedLine(input: {
+  workOrderRef?: string | null
+  issueHeadline?: string | null
+  vendorName?: string | null
+}): FeedLine {
+  const { visible, wo, hasIssue } = issueSubject(input)
+  const vendor = shortVendorName(input.vendorName)
+  if (hasIssue) {
+    const full = vendor
+      ? `Reassigned the ${visible} after ${vendor} didn't respond in time`
+      : `Reassigned the ${visible} after the vendor didn't respond in time`
+    return withWorkOrderFull(
+      fitFeedLine(full, [`Reassigned the ${visible}`, "Reassigned the job after the vendor didn't respond in time"], [
+        visible ?? '',
+        wo ?? '',
+        'Reassigned',
+      ]),
+      wo,
+    )
+  }
+  const full = wo
+    ? `Reassigned ${wo} after the vendor didn't respond in time`
+    : "Reassigned the job after the vendor didn't respond in time"
+  return fitFeedLine(full, ["Reassigned the job after the vendor didn't respond in time"], [
+    wo ?? '',
+    'Reassigned',
+  ])
+}
+
+/** Event types with a dedicated landlordFeedLine sentence template. */
+export const LANDLORD_FEED_SENTENCE_EVENT_TYPES = [
+  'maintenance.created',
+  'maintenance.request_submitted',
+  'maintenance.spend_recorded',
+  'maintenance.estimate_approved',
+  'maintenance.schedule_confirmed',
+  'maintenance.schedule_tenant_accepted',
+  'maintenance.resident_reschedule_confirmed',
+  'maintenance.schedule_updated',
+  'maintenance.schedule_fsm_ttl_expired',
+  'maintenance.completed',
+  'maintenance.sla_auto_reassigned',
+  'maintenance.work_order_terminated',
+  'maintenance.work_order_archived',
+  'maintenance.cancelled',
+  'sms.maintenance_cancelled',
+  'vendor.alert_sent',
+  'vendor.accepted',
+  'vendor.declined',
+  'vendor.replied',
+  'rent.due_detected',
+  'rent.reminder_sent',
+  'rent.payment_received',
+  'rent.late_escalated',
+  'tenant.activation_sms_sent',
+  'tenant.activation_completed',
+  'inspection.serial_read',
+  'inspection.serial_retake_needed',
+  'inspection.capture_session_started',
+  'inspection.capture_session_ended',
+  'landlord.attention_alert_sent',
+] as const
+
 export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | null {
   const type = source.eventType.trim()
   const wo = workOrderRef(source)
@@ -905,7 +1107,55 @@ export function landlordFeedLine(source: LandlordFeedCopySource): FeedLine | nul
     metaString(source.metadata, 'issue') ||
     null
   const vendor = source.vendorName ?? metaString(source.metadata, 'vendor_name')
+  const resident = source.residentName ?? metaString(source.metadata, 'resident_name')
   const meta = source.metadata
+
+  if (type === 'maintenance.created') {
+    return openedWorkOrderFeedLine({ workOrderRef: wo, issueHeadline, residentName: resident })
+  }
+  if (type === 'maintenance.request_submitted') {
+    return openedWorkOrderFeedLine({
+      workOrderRef: wo,
+      issueHeadline,
+      residentName: resident,
+      submitted: true,
+    })
+  }
+  if (type === 'maintenance.completed') {
+    return completedWorkOrderFeedLine({ workOrderRef: wo, issueHeadline, vendorName: vendor })
+  }
+  if (type === 'maintenance.schedule_updated') {
+    return scheduleUpdatedFeedLine({
+      workOrderRef: wo,
+      issueHeadline,
+      window: windowFrom(source),
+    })
+  }
+  if (type === 'maintenance.sla_auto_reassigned') {
+    return slaReassignedFeedLine({ workOrderRef: wo, issueHeadline, vendorName: vendor })
+  }
+  if (type === 'rent.due_detected') {
+    return rentFeedLine({ kind: 'due', residentName: resident })
+  }
+  if (type === 'rent.reminder_sent') {
+    return rentFeedLine({ kind: 'reminder', residentName: resident })
+  }
+  if (type === 'rent.payment_received') {
+    return rentFeedLine({
+      kind: 'payment',
+      residentName: resident,
+      amount: meta?.amount ?? meta?.total_paid ?? meta?.payment_amount,
+    })
+  }
+  if (type === 'rent.late_escalated') {
+    return rentFeedLine({ kind: 'late', residentName: resident })
+  }
+  if (type === 'tenant.activation_sms_sent') {
+    return tenantActivationFeedLine({ kind: 'sent', residentName: resident })
+  }
+  if (type === 'tenant.activation_completed') {
+    return tenantActivationFeedLine({ kind: 'completed', residentName: resident })
+  }
 
   if (type === 'maintenance.spend_recorded') {
     return spendFeedLine({

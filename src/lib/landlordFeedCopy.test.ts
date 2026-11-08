@@ -341,4 +341,69 @@ describe('landlord feed copy', () => {
     expect(html).toContain(`title="${declined.full}"`)
     expect(html).toContain(`aria-label="${declined.full}"`)
   })
+
+  it('writes plain sentences for high-traffic event types', () => {
+    expect(
+      landlordFeedLine({
+        eventType: 'maintenance.created',
+        issueHeadline: 'kitchen sink leak',
+        maintenanceRequestId: '074b0000-0000-4000-8000-000000000001',
+      })?.line,
+    ).toBe('Opened a work order for the kitchen sink leak')
+    expect(
+      landlordFeedLine({
+        eventType: 'maintenance.request_submitted',
+        issueHeadline: 'kitchen sink leak',
+        residentName: 'Jordan Lee',
+        maintenanceRequestId: '074b0000-0000-4000-8000-000000000001',
+      })?.line,
+    ).toBe('Jordan reported the kitchen sink leak')
+    expect(
+      landlordFeedLine({
+        eventType: 'maintenance.completed',
+        issueHeadline: 'kitchen sink leak',
+        vendorName: 'Ecosafe',
+        maintenanceRequestId: '074b0000-0000-4000-8000-000000000001',
+      })?.line,
+    ).toBe('Ecosafe finished the kitchen sink leak')
+    expect(
+      landlordFeedLine({
+        eventType: 'maintenance.schedule_updated',
+        issueHeadline: 'kitchen sink leak',
+        metadata: { window: 'Friday 4:00 pm – 5:00 pm' },
+      })?.line,
+    ).toMatch(/Updated the visit/)
+    expect(
+      landlordFeedLine({
+        eventType: 'rent.reminder_sent',
+        residentName: 'Jordan Lee',
+      })?.line,
+    ).toBe('Sent a rent reminder to Jordan')
+    expect(
+      landlordFeedLine({
+        eventType: 'rent.payment_received',
+        residentName: 'Jordan Lee',
+        metadata: { amount: 1850 },
+      })?.line,
+    ).toBe('Saved a $1,850 rent payment from Jordan')
+    expect(
+      landlordFeedLine({
+        eventType: 'tenant.activation_sms_sent',
+        residentName: 'Jordan Lee',
+      })?.line,
+    ).toBe('Sent a welcome text to Jordan')
+    expect(
+      landlordFeedLine({
+        eventType: 'tenant.activation_completed',
+        residentName: 'Jordan Lee',
+      })?.line,
+    ).toBe('Activated Jordan')
+    expect(
+      landlordFeedLine({
+        eventType: 'maintenance.sla_auto_reassigned',
+        issueHeadline: 'kitchen sink leak',
+        vendorName: 'Ecosafe',
+      })?.line,
+    ).toMatch(/Reassigned the kitchen sink leak/)
+  })
 })

@@ -80,6 +80,10 @@ export type AdminWorkflowRow = {
   issueCategory: string | null
   /** Linked ticket description (or intake metadata) for Active Tasks card blurbs. */
   issueDescription?: string | null
+  /** Linked ticket `issue_headline` when present — preferred Active Tasks title. */
+  issueHeadline?: string | null
+  /** Linked ticket `location_detail` when present. */
+  issueLocationDetail?: string | null
   /**
    * From linked `maintenance_requests.vendor_work_status` when the run targets a ticket.
    * Drives Operations kanban: New Intake → Assigned → In Progress → Completed.
@@ -87,6 +91,14 @@ export type AdminWorkflowRow = {
   vendorWorkStatus: string | null
   /** From linked `maintenance_requests.assigned_vendor_id` when present. */
   assignedVendorId: string | null
+  /** From linked `maintenance_requests.due_at` when present (SLA / response time). */
+  dueAt?: string | null
+  /** From linked `maintenance_requests.scheduled_at` when present. */
+  scheduledAt?: string | null
+  /** From linked `maintenance_requests.schedule_confirmed_at` when present. */
+  scheduleConfirmedAt?: string | null
+  /** From linked `maintenance_requests.urgency` (fallback severity/priority) when present. */
+  urgency?: string | null
   /**
    * From linked `maintenance_requests.auto_reassign_last_outcome` when present.
    * Sticky `needs_admin_vendor|…` means staff must reassign — not ordinary waiting.
@@ -476,75 +488,83 @@ function formatStepLabel(step: string | null): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+/** Fallback feed/timeline labels — lead with what Ulo did for the property team. */
 const EVENT_LABELS: Record<string, string> = {
-  'rent.due_detected': 'Rent due detected',
-  'rent.reminder_sent': 'Rent reminder sent',
-  'rent.payment_requested': 'Payment requested',
-  'rent.payment_received': 'Payment received',
-  'rent.late_escalated': 'Late payment escalated',
-  'rent.ledger_updated': 'Ledger updated',
-  'move_in.started': 'Move-in started',
-  'move_in.checklist_sent': 'Checklist sent',
-  'move_in.unit_activated': 'Unit activated',
-  'move_out.started': 'Move-out started',
-  'move_out.unit_vacated': 'Unit vacated',
-  'inspection.started': 'Inspection started',
-  'inspection.notice_sent': 'Notice sent',
-  'inspection.scheduled': 'Inspection scheduled',
-  'payment_requested': 'Payment requested',
-  'payment_link_included': 'Payment link included',
+  'rent.due_detected': 'Marked rent as due for the resident',
+  'rent.reminder_sent': 'Sent a rent reminder to the resident',
+  'rent.payment_requested': 'Sent a rent payment request',
+  'rent.payment_received': 'Saved a rent payment from the resident',
+  'rent.late_escalated': 'Asked you about late rent for the resident',
+  'rent.ledger_updated': 'Updated the rent ledger',
+  'move_in.started': 'Started move-in',
+  'move_in.checklist_sent': 'Sent the move-in checklist',
+  'move_in.unit_activated': 'Activated the unit',
+  'move_out.started': 'Started move-out',
+  'move_out.unit_vacated': 'Marked the unit vacant',
+  'inspection.started': 'Started an inspection',
+  'inspection.notice_sent': 'Sent an inspection notice',
+  'inspection.scheduled': 'Scheduled an inspection',
+  'inspection.capture_session_started': 'Started phone photo capture for an equipment scan',
+  'inspection.capture_session_ended': 'Finished phone photo capture for an equipment scan',
+  'payment_requested': 'Sent a payment request',
+  'payment_link_included': 'Included a payment link',
   'workflow.trigger': 'Workflow started',
   'workflow.classify': 'Classified',
   'workflow.route': 'Routed',
   'workflow.act': 'Action taken',
-  'workflow.escalate': 'Escalated',
+  'workflow.escalate': 'Asked you to step in',
   'workflow.log': 'Logged',
-  'maintenance.created': 'Work order opened',
-  'maintenance.request_submitted': 'Repair reported',
-  'maintenance.schedule_confirmed': 'Visit confirmed',
-  'maintenance.schedule_updated': 'Visit time updated',
-  'maintenance.completed': 'Repair completed',
+  'maintenance.created': 'Opened a work order',
+  'maintenance.request_submitted': 'Opened a repair report',
+  'maintenance.schedule_confirmed': 'Confirmed a visit time with the tenant',
+  'maintenance.schedule_updated': 'Updated the visit time',
+  'maintenance.completed': 'Marked the repair complete',
+  'maintenance.spend_recorded': 'Recorded repair spend',
+  'maintenance.estimate_approved': 'Approved an estimate; confirming visit time with tenant',
+  'vendor.alert_sent': 'Sent a job to the vendor',
   'vendor.accepted': 'Vendor accepted the job',
-  'vendor.declined': 'Vendor declined the job',
-  'tenant.activation_sms_sent': 'Welcome text sent',
-  'tenant.activation_sms_failed': 'Welcome text could not be sent',
+  'vendor.declined': 'Vendor declined the job; finding another',
+  'vendor.replied': 'Vendor replied on the job',
+  'tenant.activation_sms_sent': 'Sent a welcome text to the resident',
+  'tenant.activation_sms_failed': 'Could not send the welcome text',
   'tenant.sms_opted_in': 'Resident opted in to texts',
   'tenant.sms_opted_out': 'Resident opted out of texts',
-  'tenant.sms_help': 'Resident asked for help over text',
-  'tenant.activation_completed': 'Resident activated',
-  'tenant.onboarding_verification': 'Tenant onboarding verification',
-  'sms.delivery_failed': 'Text could not be delivered',
+  'tenant.sms_help': 'Answered a resident help request over text',
+  'tenant.activation_completed': 'Activated the resident',
+  'tenant.onboarding_verification': 'Finished tenant text onboarding',
+  'sms.delivery_failed': 'Could not deliver a text',
   'maintenance.sla_auto_reassigned':
-    "Vendor didn't respond in time. The job was reassigned.",
-  'maintenance.external_vendor_reassigned': 'External vendor assigned',
-  'vendor.thumbtack_message_sent': 'Vendor contacted on Thumbtack',
+    "Reassigned the job after the vendor didn't respond in time",
+  'maintenance.external_vendor_reassigned': 'Assigned an external vendor',
+  'vendor.thumbtack_message_sent': 'Contacted the vendor on Thumbtack',
   'vendor.thumbtack_replied': 'External vendor replied',
-  'maintenance.sla_expired_needs_vendor': 'Vendor Needed, Response Time Expired',
-  'unit.registered': 'Unit registered',
-  'tenant.sms_registered': 'Resident SMS linked',
-  'sms.intake_handed_off': 'Resident text handed off to the property team',
-  'sms.routed_to_landlord': 'Resident text routed to the property team',
-  'lease.info_answered': 'Lease details shared over text',
-  'sms.lease_info_missing': 'Leasing information is missing',
-  'sms.rent_balance_answered': 'Rent balance shared over text',
-  'sms.rent_payment_status_answered': 'Rent payment status shared over text',
+  'maintenance.sla_expired_needs_vendor': 'Still need a vendor for this job',
+  'unit.registered': 'Registered a unit',
+  'tenant.sms_registered': 'Linked a resident for SMS',
+  'sms.intake_handed_off': 'Handed a resident text off to you',
+  'sms.routed_to_landlord': 'Routed a resident text to you',
+  'lease.info_answered': 'Shared lease details over text',
+  'sms.lease_info_missing': 'Missing lease information',
+  'sms.rent_balance_answered': 'Shared the rent balance over text',
+  'sms.rent_payment_status_answered': 'Shared rent payment status over text',
   'sms.rent_late_noted': 'Resident said rent will be late',
-  'sms.maintenance_status_answered': 'Repair status shared over text',
-  'sms.maintenance_update_noted': 'Repair update noted, waiting for confirm',
-  'sms.maintenance_update_applied': 'Repair update added to the work order',
+  'sms.maintenance_status_answered': 'Shared repair status over text',
+  'sms.maintenance_update_noted': 'Repair update waiting for confirm',
+  'sms.maintenance_update_applied': 'Added a repair update to the work order',
   'sms.maintenance_followup_clarify': 'Asked which open request the resident meant',
   'sms.maintenance_update_declined': 'Resident chose not to add a repair update',
-  'sms.maintenance_reopened': 'Repair reopened after resident said it was not fixed',
-  'sms.maintenance_cancel_noted': 'Repair cancel request noted, waiting for confirm',
-  'sms.maintenance_cancelled': 'Repair cancelled from resident text',
+  'sms.maintenance_reopened': 'Reopened the repair after the resident said it was not fixed',
+  'sms.maintenance_cancel_noted': 'Repair cancel waiting for confirm',
+  'sms.maintenance_cancelled': 'Cancelled the repair from the resident text',
   'sms.maintenance_cancel_declined': 'Resident chose not to cancel the repair',
-  'sms.maintenance_cancel_needs_review': 'Repair cancel needs the property team',
+  'sms.maintenance_cancel_needs_review': 'Repair cancel needs you',
   'sms.schedule_change_requested': 'Resident asked to change a visit time',
-  'sms.access_instruction_saved': 'Access notes saved from resident text',
-  'sms.move_out_noted': 'Move-out request noted from resident text',
-  'sms.move_out_started': 'Move-out started from resident text',
+  'sms.access_instruction_saved': 'Saved access notes from the resident text',
+  'sms.move_out_noted': 'Move-out request from the resident text',
+  'sms.move_out_started': 'Started move-out from the resident text',
   'sms.move_out_declined': 'Resident chose not to start a move-out',
-  'attention.dismissed': 'Removed from Needs Your Attention',
+  'attention.dismissed': 'Removed an item from Needs Your Attention',
+  'landlord.attention_alert_sent': 'Texted you for a decision',
 }
 
 const RENT_CLASSIFICATION_LABELS: Record<RentCollectionClassification, string> = {
@@ -1290,14 +1310,20 @@ export async function fetchAdminWorkflowDashboard(
       auto_reassign_last_outcome: string | null
       issue_category: string | null
       description: string | null
+      issue_headline: string | null
+      location_detail: string | null
       inspection_report_id: string | null
+      due_at: string | null
+      scheduled_at: string | null
+      schedule_confirmed_at: string | null
+      urgency: string | null
     }
   >()
   if (maintenanceTicketIds.length) {
     const { data: tickets, error: ticketsError } = await supabase
       .from('maintenance_requests')
       .select(
-        'id, vendor_work_status, assigned_vendor_id, auto_reassign_last_outcome, issue_category, description, inspection_report_id',
+        'id, vendor_work_status, assigned_vendor_id, auto_reassign_last_outcome, issue_category, description, issue_headline, location_detail, inspection_report_id, due_at, scheduled_at, schedule_confirmed_at, urgency, severity, priority',
       )
       .in('id', maintenanceTicketIds)
     if (ticketsError) {
@@ -1331,11 +1357,36 @@ export async function fetchAdminWorkflowDashboard(
             typeof ticket.description === 'string' && ticket.description.trim()
               ? ticket.description.trim()
               : null,
+          issue_headline:
+            typeof ticket.issue_headline === 'string' && ticket.issue_headline.trim()
+              ? ticket.issue_headline.trim()
+              : null,
+          location_detail:
+            typeof ticket.location_detail === 'string' && ticket.location_detail.trim()
+              ? ticket.location_detail.trim()
+              : null,
           inspection_report_id:
             typeof ticket.inspection_report_id === 'string' &&
               ticket.inspection_report_id.trim()
               ? ticket.inspection_report_id.trim()
               : null,
+          due_at: typeof ticket.due_at === 'string' && ticket.due_at.trim() ? ticket.due_at.trim() : null,
+          scheduled_at:
+            typeof ticket.scheduled_at === 'string' && ticket.scheduled_at.trim()
+              ? ticket.scheduled_at.trim()
+              : null,
+          schedule_confirmed_at:
+            typeof ticket.schedule_confirmed_at === 'string' &&
+              ticket.schedule_confirmed_at.trim()
+              ? ticket.schedule_confirmed_at.trim()
+              : null,
+          urgency: (() => {
+            for (const key of ['urgency', 'severity', 'priority'] as const) {
+              const raw = ticket[key]
+              if (typeof raw === 'string' && raw.trim()) return raw.trim().toLowerCase()
+            }
+            return null
+          })(),
         })
       }
     }
@@ -1451,8 +1502,16 @@ export async function fetchAdminWorkflowDashboard(
         readMetaString(metadata, 'description') ??
         readMetaString(metadata, 'issue_description') ??
         readMetaString(metadata, 'issue_summary'),
+      issueHeadline:
+        ticket?.issue_headline ?? readMetaString(metadata, 'issue_headline'),
+      issueLocationDetail:
+        ticket?.location_detail ?? readMetaString(metadata, 'location_detail'),
       vendorWorkStatus: ticket?.vendor_work_status ?? null,
       assignedVendorId: ticket?.assigned_vendor_id ?? null,
+      dueAt: ticket?.due_at ?? null,
+      scheduledAt: ticket?.scheduled_at ?? null,
+      scheduleConfirmedAt: ticket?.schedule_confirmed_at ?? null,
+      urgency: ticket?.urgency ?? null,
       autoReassignLastOutcome: ticket?.auto_reassign_last_outcome ?? null,
       inspectionReportId: ticket?.inspection_report_id ?? null,
       inspectionGroupItems: null,
