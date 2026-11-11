@@ -24,7 +24,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[admin-approve-maintenance-invoice]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[admin-approve-maintenance-invoice]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
 
@@ -60,6 +60,8 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   if (action === "reject") {
     const reason =

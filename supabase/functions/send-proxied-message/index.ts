@@ -11,7 +11,7 @@ import {
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-admin-reassign-secret",
+    "authorization, x-client-info, apikey, content-type, x-ulo-access-token",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 

@@ -9,17 +9,7 @@
  * Bearer token is not the legacy admin secret (e.g. it is the anon JWT). Fix by
  * aligning Dashboard Edge secrets with `VITE_ADMIN_REASSIGN_SECRET`.
  */
-export function adminReassignSecretAuthorized(req: Request): boolean {
-  const expected = Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()
-  if (!expected) return false
-
-  const fromCustom = req.headers.get("x-admin-reassign-secret")?.trim()
-  if (fromCustom === expected) return true
-
-  const h = req.headers.get("Authorization")?.trim()
-  if (h?.toLowerCase().startsWith("bearer ")) {
-    const t = h.slice(7).trim()
-    if (t === expected) return true
-  }
+/** Browser and user calls must use a session. The shared secret is not authorization. */
+export function adminReassignSecretAuthorized(_req: Request): boolean {
   return false
 }

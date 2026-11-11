@@ -80,7 +80,7 @@ export async function postAdminReassignVendor(input: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: "POST",
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify(requestJson),
   })
   const text = await res.text()

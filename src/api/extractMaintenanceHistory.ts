@@ -127,7 +127,7 @@ export async function extractMaintenanceHistoryFromFile(input: {
   const fileBase64 = await fileToBase64(input.file)
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       fileName: input.file.name,
       contentType: input.file.type || 'application/octet-stream',

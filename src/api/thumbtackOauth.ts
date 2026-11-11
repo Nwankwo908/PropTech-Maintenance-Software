@@ -40,7 +40,7 @@ export async function getThumbtackOauthStatus(input: {
   url.searchParams.set('landlordId', input.landlordId.trim())
   const res = await fetchAdminEdgeFunction(url.toString(), {
     method: 'GET',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
   })
   return (await parseAdminJson(res)) as { connected: boolean }
 }
@@ -54,7 +54,7 @@ export async function startThumbtackOauth(input: {
 }): Promise<{ authorizeUrl: string }> {
   const res = await fetchAdminEdgeFunction(input.url.trim(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
     body: JSON.stringify({
       action: 'start',
       landlordId: input.landlordId.trim(),
@@ -74,7 +74,7 @@ export async function exchangeThumbtackOauth(input: {
 }): Promise<{ ok: true; returnPath: string }> {
   const res = await fetchAdminEdgeFunction(input.url.trim(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
     body: JSON.stringify({
       action: 'exchange',
       code: input.code,

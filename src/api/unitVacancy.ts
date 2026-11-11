@@ -44,7 +44,7 @@ async function postAdminFunction<T>(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify(body),
   })
 

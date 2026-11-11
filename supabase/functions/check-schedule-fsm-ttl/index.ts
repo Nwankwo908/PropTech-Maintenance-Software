@@ -2,7 +2,10 @@
  * Scheduled POST: expire stalled vendor schedule FSM threads (TTL_CHECK).
  */
 import { serve } from "https://deno.land/std/http/server.ts"
-import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
+import {
+  authorizedCronBearer,
+  requireAdminReassignAuth,
+} from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { processScheduleFsmTtlChecks } from "../_shared/scheduleFsmTtl.ts"
 import { processExpiredVendorProbeHolds } from "../_shared/vendorAvailabilityProbe.ts"
@@ -10,7 +13,7 @@ import { processExpiredVendorProbeHolds } from "../_shared/vendorAvailabilityPro
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-ulo-access-token",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
@@ -28,16 +31,11 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  if (
-    !authorizedCronBearer(req, [
-      "ULO_OPS_CRON_SECRET",
-      "CHECK_SCHEDULE_FSM_TTL_SECRET",
-      "CHECK_WORK_ORDER_TERMINATE_NOTIFY_SECRET",
-      "ADMIN_REASSIGN_SECRET",
-    ])
-  ) {
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
+  const cronOk = authorizedCronBearer(req, [
+    "ULO_OPS_CRON_SECRET",
+    "CHECK_SCHEDULE_FSM_TTL_SECRET",
+    "CHECK_WORK_ORDER_TERMINATE_NOTIFY_SECRET",
+  ])
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -66,6 +64,12 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  if (!cronOk) {
+    const session = await requireAdminReassignAuth(req, "[check-schedule-fsm-ttl]")
+    if (!session.ok) return session.response
+    const denied = await session.denyUnless(supabase, landlordId)
+    if (denied) return denied
+  }
 
   try {
     const summary = await processScheduleFsmTtlChecks(supabase, {

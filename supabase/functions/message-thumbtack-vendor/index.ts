@@ -25,7 +25,7 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders })
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[message-thumbtack-vendor]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[message-thumbtack-vendor]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
@@ -43,6 +43,16 @@ serve(async (req) => {
     if (!ticketId || !isUuidShape(ticketId)) {
       return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
     }
+    const { data: scopeRow } = await supabase
+      .from("maintenance_requests")
+      .select("landlord_id")
+      .eq("id", ticketId)
+      .maybeSingle()
+    const landlordDenied = await adminAuth.denyUnless(
+      supabase,
+      typeof scopeRow?.landlord_id === "string" ? scopeRow.landlord_id : "",
+    )
+    if (landlordDenied) return landlordDenied
     const threads = await listThumbtackThreadsForTicket(supabase, ticketId)
     return jsonResponse({ ticketId, threads })
   }
@@ -102,6 +112,11 @@ serve(async (req) => {
     ticket = loaded.data
   }
   if (!ticket) return jsonResponse({ error: "Ticket not found" }, 404)
+  const postDenied = await adminAuth.denyUnless(
+    supabase,
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id : "",
+  )
+  if (postDenied) return postDenied
   const landlordIdRaw = typeof ticket.landlord_id === "string" ? ticket.landlord_id : ""
   const landlordId = isRetiredLandlordAccountId(landlordIdRaw)
     ? LIMITED_ALPHA_1_LANDLORD_ID

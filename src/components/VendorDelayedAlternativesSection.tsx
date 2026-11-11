@@ -124,7 +124,7 @@ export function VendorDelayedAlternativesSection({
         try {
           const res = await fetchAdminEdgeFunction(recommendUrl!, {
             method: 'POST',
-            headers: adminEdgeInvokeHeaders(secret!),
+            headers: await adminEdgeInvokeHeaders(secret!),
             body: JSON.stringify({
               ticketId,
             }),

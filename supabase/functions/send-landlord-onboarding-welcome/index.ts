@@ -23,7 +23,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[send-landlord-onboarding-welcome]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[send-landlord-onboarding-welcome]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: {
@@ -63,6 +63,8 @@ serve(async (req) => {
   const forceEmail = body.forceEmail === true
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   try {
     const summary = await sendLandlordOnboardingWelcome(supabase, {

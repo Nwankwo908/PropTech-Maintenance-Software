@@ -67,7 +67,7 @@ async function invokeCompliance(body: Record<string, unknown>): Promise<Record<s
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify(body),
   })
   const text = await res.text()

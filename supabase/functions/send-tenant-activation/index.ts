@@ -22,7 +22,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[send-tenant-activation]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[send-tenant-activation]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
 
@@ -60,6 +60,8 @@ serve(async (req) => {
     typeof body.companyName === "string" ? body.companyName.trim() || null : null
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   try {
     const summary = await sendTenantActivation(supabase, {

@@ -46,7 +46,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[admin-move-workflow-stage]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[admin-move-workflow-stage]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: Record<string, unknown> = {}
@@ -79,6 +79,8 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     const result = await setManualVisitTime(supabase, {
       landlordId,
       ticketId,
@@ -147,6 +149,8 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   const result = await applyAdminStageMove(supabase, {
     landlordId,

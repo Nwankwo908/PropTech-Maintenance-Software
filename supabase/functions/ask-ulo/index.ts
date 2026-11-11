@@ -60,7 +60,7 @@ serve(async (req) => {
     if (req.method !== "POST") {
       return jsonResponse({ error: "Method not allowed" }, 405)
     }
-    const adminAuth = requireAdminReassignAuth(req, "[ask-ulo]", corsHeaders)
+    const adminAuth = await requireAdminReassignAuth(req, "[ask-ulo]", corsHeaders)
     if (!adminAuth.ok) { timing.emit(adminAuth.response.status); return adminAuth.response }
 
     let body: Record<string, unknown>

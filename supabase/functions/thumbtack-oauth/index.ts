@@ -261,7 +261,7 @@ serve(async (req) => {
     return Response.redirect(withThumbtackFlag(dest, "connected"), 302)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[thumbtack-oauth]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[thumbtack-oauth]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   if (req.method === "GET") {
@@ -269,6 +269,8 @@ serve(async (req) => {
     if (!landlordId || !isUuidShape(landlordId)) {
       return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
     }
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     const connected = await landlordThumbtackIsConnected(supabase, landlordId)
     const { id: clientId, secret: clientSecret } = messagingClient()
     return jsonResponse({
@@ -301,6 +303,8 @@ serve(async (req) => {
     if (!landlordId || !isUuidShape(landlordId)) {
       return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
     }
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     const { id: clientId, secret: clientSecret } = messagingClient()
     if (!clientId || !clientSecret) {
       console.error(

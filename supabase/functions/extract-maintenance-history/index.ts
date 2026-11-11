@@ -40,7 +40,8 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const auth = requireAdminReassignAuth(req, "[extract-maintenance-history]", corsHeaders)
+  // session-scoped: caller-supplied content
+  const auth = await requireAdminReassignAuth(req, "[extract-maintenance-history]", corsHeaders)
   if (!auth.ok) return auth.response
 
   const geminiKey = Deno.env.get("GEMINI_API_KEY")?.trim()

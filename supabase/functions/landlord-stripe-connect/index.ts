@@ -82,7 +82,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[landlord-stripe-connect]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[landlord-stripe-connect]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
 
@@ -113,6 +113,8 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   const { data: landlord, error: loadErr } = await supabase
     .from("landlords")

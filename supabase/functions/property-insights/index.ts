@@ -28,7 +28,8 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[property-insights]", corsHeaders)
+  // session-scoped: caller-supplied content
+  const adminAuth = await requireAdminReassignAuth(req, "[property-insights]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: { address?: string }

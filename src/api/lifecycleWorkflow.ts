@@ -68,7 +68,7 @@ export async function startLifecycleWorkflow(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       ...payload,
       landlordId: payload.landlordId?.trim() || defaultLandlordId(),

@@ -99,7 +99,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[send-settings-test-notification]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[send-settings-test-notification]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   try {
@@ -129,6 +129,8 @@ serve(async (req) => {
     if (!landlordId || !channel) {
       return jsonResponse({ error: "landlordId and channel are required" }, 400)
     }
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
 
     if (channel === "email") {
       const contact = await loadLandlordSupportContact(supabase, landlordId)

@@ -25,7 +25,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[activate-unit]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[activate-unit]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: {
@@ -60,6 +60,11 @@ serve(async (req) => {
 
   try {
     if (skip) {
+      const skipDenied = await adminAuth.denyUnless(
+        supabase,
+        typeof body.landlordId === "string" ? body.landlordId : "",
+      )
+      if (skipDenied) return skipDenied
       const result = await activateUnit(supabase, {
         landlordId: body.landlordId,
         unitId,
@@ -73,6 +78,8 @@ serve(async (req) => {
     if (!landlordId || !uuidRe.test(landlordId)) {
       return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
     }
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
 
     const residentId = typeof body.residentId === "string" ? body.residentId.trim() : null
     const moveInDate = typeof body.moveInDate === "string" ? body.moveInDate.trim() : null

@@ -38,7 +38,7 @@ export async function postSynthesizePropertyInsights(input: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({ findings: input.findings }),
   })
   const text = await res.text()

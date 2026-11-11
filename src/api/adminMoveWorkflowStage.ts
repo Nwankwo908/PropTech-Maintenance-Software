@@ -69,7 +69,7 @@ export async function postAdminMoveWorkflowStage(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       landlordId,
       runId: input.runId.trim(),
@@ -130,7 +130,7 @@ export async function postAdminSetVisitTime(input: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       action: 'set_visit_time',
       landlordId,

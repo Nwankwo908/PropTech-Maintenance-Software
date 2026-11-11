@@ -43,7 +43,7 @@ export async function postStartInsightInspectionScheduling(input: {
   const res = await fetchAdminEdgeFunction(input.url, {
     method: 'POST',
     headers: {
-      ...adminEdgeInvokeHeaders(input.secret),
+      ...await adminEdgeInvokeHeaders(input.secret),
       Authorization: `Bearer ${input.secret}`,
     },
     body: JSON.stringify({

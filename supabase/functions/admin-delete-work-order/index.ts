@@ -51,7 +51,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[admin-delete-work-order]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[admin-delete-work-order]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: {
@@ -83,6 +83,8 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   const { data: run, error: runErr } = await supabase
     .from("workflow_runs")

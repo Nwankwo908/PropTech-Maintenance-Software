@@ -62,7 +62,7 @@ export async function getThumbtackVendorThreads(input: {
   url.searchParams.set('ticketId', input.ticketId.trim())
   const res = await fetchAdminEdgeFunction(url.toString(), {
     method: 'GET',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
   })
   return (await parseAdminJson(res)) as { ticketId: string; threads: ThumbtackVendorThreadDto[] }
 }
@@ -82,7 +82,7 @@ export async function postMessageThumbtackVendor(input: {
 }): Promise<{ ok: true; ticketId: string; thread: ThumbtackVendorThreadDto }> {
   const res = await fetchAdminEdgeFunction(input.url.trim(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
     body: JSON.stringify({
       ticketId: input.ticketId.trim(),
       businessId: input.businessId.trim(),

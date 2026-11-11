@@ -1,9 +1,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { isStaffAdminEmail } from "../../../shared/admin/staffAllowlist.ts"
-import { adminReassignSecretAuthorized } from "./admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "./admin_edge_auth.ts"
 import { bearerLooksLikeJwt } from "./vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "./vendor_portal_api_key.ts"
-import { getVendorFromJobActionToken } from "./vendorJobActionToken.ts"
+import {
+  getVendorFromJobActionToken,
+  normalizeVendorJobToken,
+} from "./vendorJobActionToken.ts"
 import type { ProxiedSenderType } from "./sms/proxiedMessaging.ts"
 
 const uuidRe =
@@ -37,11 +39,16 @@ export async function authorizeProxiedMessageSender(
     return { ok: false, status: 400, error: "Invalid sender_id" }
   }
 
-  if (params.senderType === "system") {
-    if (!adminReassignSecretAuthorized(req)) {
-      return { ok: false, status: 401, error: "Unauthorized" }
+  if (params.senderType === "system" || params.senderType === "landlord") {
+    const session = await requireAdminReassignAuth(req, "[proxied-message]")
+    if (!session.ok) {
+      return { ok: false, status: 401, error: "Authorization required" }
     }
-    if (params.senderId !== params.landlordId) {
+    const denied = await session.denyUnless(supabase, params.landlordId)
+    if (denied) {
+      return { ok: false, status: 403, error: "Forbidden" }
+    }
+    if (params.senderType === "landlord" && params.senderId !== params.landlordId) {
       return { ok: false, status: 403, error: "Forbidden" }
     }
     return { ok: true }
@@ -100,8 +107,25 @@ export async function authorizeProxiedMessageSender(
     }
 
     const fromJob = await getVendorFromJobActionToken(supabase, token)
-    const vendor = fromJob ?? (await getVendorFromPortalApiKey(supabase, token))
-    if (!vendor || vendor.id !== params.senderId) {
+    if (fromJob) {
+      if (fromJob.id !== params.senderId) {
+        return { ok: false, status: 403, error: "Forbidden" }
+      }
+      const { data: ticket } = await supabase
+        .from("maintenance_requests")
+        .select("vendor_action_token")
+        .eq("id", params.maintenanceRequestId)
+        .maybeSingle()
+      const expected = typeof ticket?.vendor_action_token === "string"
+        ? ticket.vendor_action_token
+        : ""
+      if (!expected || normalizeVendorJobToken(token) !== expected) {
+        return { ok: false, status: 403, error: "Forbidden" }
+      }
+      return { ok: true }
+    }
+    const portalVendor = await getVendorFromPortalApiKey(supabase, token)
+    if (!portalVendor || portalVendor.id !== params.senderId) {
       return { ok: false, status: 403, error: "Forbidden" }
     }
     return { ok: true }
@@ -142,31 +166,6 @@ export async function authorizeProxiedMessageSender(
       residentRow.supabase_user_id &&
       residentRow.supabase_user_id !== auth.user.id
     ) {
-      return { ok: false, status: 403, error: "Forbidden" }
-    }
-
-    return { ok: true }
-  }
-
-  if (params.senderType === "landlord") {
-    if (params.senderId !== params.landlordId) {
-      return { ok: false, status: 403, error: "Forbidden" }
-    }
-
-    if (adminReassignSecretAuthorized(req)) {
-      return { ok: true }
-    }
-
-    if (!bearerLooksLikeJwt(token)) {
-      return { ok: false, status: 401, error: "Unauthorized" }
-    }
-
-    const { data: auth, error } = await supabase.auth.getUser(token)
-    if (error || !auth?.user?.email) {
-      return { ok: false, status: 401, error: "Invalid session" }
-    }
-
-    if (!isStaffAdminEmail(auth.user.email)) {
       return { ok: false, status: 403, error: "Forbidden" }
     }
 

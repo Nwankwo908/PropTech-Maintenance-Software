@@ -34,7 +34,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[send-vendor-invite]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[send-vendor-invite]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: {
@@ -86,6 +86,8 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     const { data: ticket } = await supabase
       .from("maintenance_requests")
       .select(
@@ -197,6 +199,8 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     let sms: "sent" | "skipped" | "failed" = "skipped"
     if (action === "notify_override_activated") {
       const result = await sendVendorOnboardingOverrideActivatedSms(supabase, {
@@ -239,6 +243,8 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     const result = await sendVendorInsuranceRequestSms(supabase, {
       landlordId,
       vendorId,
@@ -292,6 +298,8 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   try {
     const vendorId = await findLandlordVendorByContact(supabase, landlordId, {

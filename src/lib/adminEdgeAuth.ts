@@ -1,24 +1,24 @@
 /**
- * Client-side admin Edge auth — one path for VITE_ADMIN_REASSIGN_SECRET and
- * browser → hosted Supabase invoke headers.
+ * Browser admin Edge calls send the signed-in user access token.
+ * The anon key is only the Supabase apikey. It is not the caller's identity.
+ * Do not read an admin secret from the Vite env here. That value would be shipped in the JS bundle.
  */
 
-export const ADMIN_EDGE_SECRET_MISMATCH_HINT =
-  'Edge ADMIN_REASSIGN_SECRET must match VITE_ADMIN_REASSIGN_SECRET for this project.'
+import { supabase } from '@/lib/supabase'
 
+export const ADMIN_EDGE_SIGN_IN_HINT = 'Sign in required for this admin action.'
+
+/** @deprecated The browser no longer holds an admin secret. Kept so older call sites still compile. */
 export function getAdminEdgeSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
+  return 'session'
 }
 
+/** @deprecated Use the signed-in session. Throws only when this helper is called without a label path that already checked the session. */
 export function requireAdminEdgeSecret(featureLabel = 'Admin'): string {
-  const secret = getAdminEdgeSecret()
-  if (!secret) {
-    throw new Error(`${featureLabel}: missing VITE_ADMIN_REASSIGN_SECRET configuration`)
-  }
-  return secret
+  void featureLabel
+  return 'session'
 }
 
-/** Dev-only: warn when an admin Edge URL host differs from VITE_SUPABASE_URL. */
 function warnIfAdminEdgeHostMismatch(url: string): void {
   if (!import.meta.env.DEV) return
   const base = import.meta.env.VITE_SUPABASE_URL?.trim()
@@ -37,10 +37,6 @@ function warnIfAdminEdgeHostMismatch(url: string): void {
   }
 }
 
-/**
- * `fetch` for admin Edge URLs; turns opaque `TypeError: Failed to fetch` into
- * actionable text (CORS preflight, bad host, offline, extensions).
- */
 export async function fetchAdminEdgeFunction(
   url: string,
   init: RequestInit,
@@ -59,27 +55,37 @@ export async function fetchAdminEdgeFunction(
   }
 }
 
-/** Headers for admin-only Edge calls from the browser against hosted Supabase. */
-export function adminEdgeInvokeHeaders(secret: string): Record<string, string> {
-  const s = secret.trim()
+/**
+ * Headers for an admin Edge call. `legacySecret` is ignored so a leftover
+ * argument cannot be attached to the request.
+ */
+export async function adminEdgeInvokeHeaders(
+  _legacySecret?: string,
+): Promise<Record<string, string>> {
   const anon =
     typeof import.meta !== 'undefined' &&
     import.meta.env?.VITE_SUPABASE_ANON_KEY != null
       ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).trim()
       : ''
-  const h: Record<string, string> = {
+  if (!supabase) {
+    throw new Error(ADMIN_EDGE_SIGN_IN_HINT)
+  }
+  const { data } = await supabase.auth.getSession()
+  const accessToken = data.session?.access_token?.trim() || ''
+  if (!accessToken) {
+    throw new Error(ADMIN_EDGE_SIGN_IN_HINT)
+  }
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-admin-reassign-secret': s,
+    'x-ulo-access-token': accessToken,
   }
   if (anon) {
-    h.apikey = anon
-    h.Authorization = `Bearer ${anon}`
-  } else {
-    h.Authorization = `Bearer ${s}`
+    headers.apikey = anon
+    headers.Authorization = `Bearer ${anon}`
   }
-  return h
+  return headers
 }
 
 export function formatAdminEdgeUnauthorizedError(base: string): string {
-  return `${base} (401): Edge secret ADMIN_REASSIGN_SECRET must exactly match VITE_ADMIN_REASSIGN_SECRET for this project (trimmed; check Dashboard → Edge Functions → Secrets).`
+  return `${base} (401): Sign in again. This action uses your account, not a shared admin secret.`
 }

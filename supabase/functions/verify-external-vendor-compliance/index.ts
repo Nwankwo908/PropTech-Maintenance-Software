@@ -46,7 +46,8 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[verify-external-vendor-compliance]", corsHeaders)
+  // session-scoped: caller-supplied content
+  const adminAuth = await requireAdminReassignAuth(req, "[verify-external-vendor-compliance]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: Record<string, unknown>

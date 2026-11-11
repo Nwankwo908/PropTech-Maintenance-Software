@@ -8,6 +8,8 @@ export type WorkOrderRailLinePolishRequest = {
   id: string
   draft: string
   mustKeep?: string[]
+  /** status = Overview / next-step / Activity; issue_description = Issue details body */
+  kind?: 'status' | 'issue_description'
 }
 
 export type WorkOrderRailLinePolishResult = {
@@ -36,7 +38,7 @@ export async function postPolishWorkOrderRailLines(
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: adminEdgeInvokeHeaders(secret),
+      headers: await adminEdgeInvokeHeaders(secret),
       body: JSON.stringify({ lines }),
     })
     const text = await res.text()

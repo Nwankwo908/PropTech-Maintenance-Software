@@ -90,7 +90,8 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[generate-late-rent-insights]", corsHeaders)
+  // session-scoped: caller-supplied content
+  const adminAuth = await requireAdminReassignAuth(req, "[generate-late-rent-insights]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
 

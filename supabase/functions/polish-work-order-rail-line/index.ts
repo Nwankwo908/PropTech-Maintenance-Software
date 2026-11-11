@@ -1,6 +1,7 @@
 /**
  * POST polish-work-order-rail-line
- * Best-effort gpt-6-luna rewrite for Active Tasks Overview / next-step drafts.
+ * Best-effort gpt-6-luna rewrite for Active Tasks Overview / next-step /
+ * Activity Timeline / Issue details drafts (one batched request).
  * Auth: ADMIN_REASSIGN_SECRET via x-admin-reassign-secret.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
@@ -17,13 +18,19 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-type LineIn = { id?: string; draft?: string; mustKeep?: unknown }
+type LineIn = {
+  id?: string
+  draft?: string
+  mustKeep?: unknown
+  kind?: unknown
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405)
 
-  const auth = requireAdminReassignAuth(req, "[polish-work-order-rail-line]")
+  // session-scoped: caller-supplied content
+  const auth = await requireAdminReassignAuth(req, "[polish-work-order-rail-line]")
   if (!auth.ok) return auth.response
 
   let body: Record<string, unknown> = {}
@@ -45,9 +52,11 @@ serve(async (req) => {
       const mustKeep = Array.isArray(row.mustKeep)
         ? row.mustKeep.map((item) => (typeof item === "string" ? item : "")).filter(Boolean)
         : []
+      const kind = row.kind === "issue_description" ? "issue_description" : "status"
       const result = await polishWorkOrderRailLine({
         draft,
         mustKeep,
+        kind,
         skipLlm,
       })
       return { id, line: result.line, method: result.method }

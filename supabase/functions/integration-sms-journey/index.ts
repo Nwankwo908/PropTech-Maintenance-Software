@@ -123,8 +123,11 @@ Deno.serve(async (req) => {
   }
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
 
-  const auth = requireAdminReassignAuth(req, "[integration-sms-journey]", corsHeaders)
+  const auth = await requireAdminReassignAuth(req, "[integration-sms-journey]", corsHeaders)
   if (!auth.ok) return auth.response
+  if (!auth.platformStaff) {
+    return json({ error: "Forbidden" }, 403)
+  }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()

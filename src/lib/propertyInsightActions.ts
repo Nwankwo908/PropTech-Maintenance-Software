@@ -71,22 +71,18 @@ export type PropertyInsightActionResult =
     }
   | { ok: false; kind: InsightRecommendationActionType; error: string }
 
-function defaultNudgeVendorSchedule(input: {
+async function defaultNudgeVendorSchedule(input: {
   landlordId: string
   ticketIds: string[]
 }): Promise<{ ok: boolean; error?: string }> {
   const base = import.meta.env.VITE_SUPABASE_URL?.trim()?.replace(/\/$/, '')
-  const secret = getAdminEdgeSecret()
-  if (!base || !secret) {
-    return Promise.resolve({ ok: false, error: 'Admin configuration is missing.' })
+  if (!base) {
+    return { ok: false, error: 'Admin configuration is missing.' }
   }
   const url = `${base}/functions/v1/check-schedule-fsm-ttl`
   return fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: {
-      ...adminEdgeInvokeHeaders(secret),
-      Authorization: `Bearer ${secret}`,
-    },
+    headers: await adminEdgeInvokeHeaders(),
     body: JSON.stringify({
       landlord_id: input.landlordId,
       ticket_ids: input.ticketIds,

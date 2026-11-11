@@ -35,7 +35,7 @@ export async function postSlaAutoReassign(input: {
   }
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({ ticketId: input.ticketId.trim() }),
   })
   const text = await res.text()

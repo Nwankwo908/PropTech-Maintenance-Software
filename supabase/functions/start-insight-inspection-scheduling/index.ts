@@ -25,7 +25,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const auth = requireAdminReassignAuth(req, "[start-insight-inspection-scheduling]")
+  const auth = await requireAdminReassignAuth(req, "[start-insight-inspection-scheduling]")
   if (!auth.ok) {
     return auth.response
   }
@@ -61,6 +61,8 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const landlordDenied = await auth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
   const result = await startInsightInspectorScheduling(supabase, {
     landlordId,
     insightCardId,

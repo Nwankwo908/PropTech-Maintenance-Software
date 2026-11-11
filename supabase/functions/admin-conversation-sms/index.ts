@@ -28,7 +28,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const auth = requireAdminReassignAuth(req, "[admin-conversation-sms]", corsHeaders)
+  const auth = await requireAdminReassignAuth(req, "[admin-conversation-sms]", corsHeaders)
   if (!auth.ok) return auth.response
 
   let body: {
@@ -71,6 +71,19 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const { data: conversationScope } = await supabase
+    .from("sms_conversations")
+    .select("landlord_id")
+    .eq("id", conversationId)
+    .maybeSingle()
+  const conversationLandlordId = typeof conversationScope?.landlord_id === "string"
+    ? conversationScope.landlord_id
+    : ""
+  if (!conversationLandlordId || conversationLandlordId !== landlordId) {
+    return jsonResponse({ error: "Forbidden" }, 403)
+  }
+  const landlordDenied = await auth.denyUnless(supabase, conversationLandlordId)
+  if (landlordDenied) return landlordDenied
 
   if (action === "takeover" || action === "release") {
     const result = await setAdminConversationTakeover(supabase, {

@@ -50,7 +50,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const auth = requireAdminReassignAuth(
+  const auth = await requireAdminReassignAuth(
     req,
     "[remediate-maintenance-ticket]",
     corsHeaders,
@@ -81,6 +81,16 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
   const supabase = createClient(supabaseUrl, serviceKey)
+  const { data: scopeRow } = await supabase
+    .from("maintenance_requests")
+    .select("landlord_id")
+    .eq("id", ticketId)
+    .maybeSingle()
+  const landlordDenied = await auth.denyUnless(
+    supabase,
+    typeof scopeRow?.landlord_id === "string" ? scopeRow.landlord_id : "",
+  )
+  if (landlordDenied) return landlordDenied
 
   const action = (body.action ?? "orphan").trim().toLowerCase()
   if (action === "resurface_assign_vendor_attention") {
@@ -120,6 +130,8 @@ serve(async (req) => {
     if (!landlordId) {
       return jsonResponse({ ok: false, error: "missing_landlord" }, 400)
     }
+    const landlordDenied = await auth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
     if (
       typeof ticket.assigned_vendor_id === "string" &&
       ticket.assigned_vendor_id.trim()

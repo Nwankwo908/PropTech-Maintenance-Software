@@ -8,7 +8,6 @@ import {
   FunctionsHttpError,
   FunctionsRelayError,
 } from '@supabase/supabase-js'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
@@ -198,15 +197,10 @@ async function invokeAskUlo(payload: Record<string, unknown>, traceId: string = 
 }
 
 async function invokeAskUloRequest(payload: Record<string, unknown>, traceId: string): Promise<InvokeAskUloResult> {
-  const secret = getAdminEdgeSecret()
   const host = expectedAskUloHost()
   if (!supabase) {
     console.error('[ask-ulo] missing Supabase client — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY')
     throw new Error("We can't reach the server right now. Please try again in a moment.")
-  }
-  if (!secret) {
-    console.error('[ask-ulo] missing VITE_ADMIN_REASSIGN_SECRET')
-    throw new Error('Ask Ulo: missing admin secret configuration')
   }
 
   if (import.meta.env.DEV && host && host !== 'mzpqwuizhiaczxcnmxbt.supabase.co') {
@@ -227,7 +221,6 @@ async function invokeAskUloRequest(payload: Record<string, unknown>, traceId: st
     const { data, error } = await supabase.functions.invoke('ask-ulo', {
       body: payload,
       headers: {
-        'x-admin-reassign-secret': secret,
         'x-ulo-access-token': accessToken,
         'x-ulo-trace-id': traceId,
       },

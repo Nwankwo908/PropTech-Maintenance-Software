@@ -61,7 +61,7 @@ export async function postPropertyInsights(input: {
 }): Promise<PropertyInsightsOk> {
   const res = await fetchAdminEdgeFunction(input.url.trim(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
     body: JSON.stringify({ address: input.address.trim() }),
   })
   const text = await res.text()

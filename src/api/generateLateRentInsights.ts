@@ -52,7 +52,7 @@ export async function postGenerateLateRentInsights(input: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({ account: input.account }),
   })
   const text = await res.text()

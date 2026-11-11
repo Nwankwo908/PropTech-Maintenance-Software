@@ -157,7 +157,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[invoice-payment-checkout]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[invoice-payment-checkout]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   const pilotGate = assertPilotAllows("rent_payment_ledger", Deno.env)
@@ -211,6 +211,8 @@ serve(async (req) => {
     if (!landlordHasPayments(landlordId)) {
       return jsonResponse({ error: "Payments are not available on this account." }, 403)
     }
+    const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+    if (landlordDenied) return landlordDenied
 
     const retrieved = await stripeGet(
       `checkout/sessions/${encodeURIComponent(sessionId)}` +
@@ -460,6 +462,8 @@ serve(async (req) => {
   if (!landlordHasPayments(landlordId)) {
     return jsonResponse({ error: "Payments are not available on this account." }, 403)
   }
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
   if (!paymentMethod) {
     return jsonResponse({ error: "Unsupported payment method" }, 400)
   }

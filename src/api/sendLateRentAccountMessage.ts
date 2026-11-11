@@ -42,7 +42,7 @@ export async function postSendLateRentAccountMessage(params: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       workflowRunId: params.workflowRunId,
       residentId: params.residentId,

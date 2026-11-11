@@ -38,7 +38,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[sync-home-data-graph]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[sync-home-data-graph]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: {
@@ -72,6 +72,8 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   const existing = await loadHomeDataGraphSnapshot(supabase, propertyId)
   if (existing && !force && !homeDataNeedsProviderRefresh(existing)) {

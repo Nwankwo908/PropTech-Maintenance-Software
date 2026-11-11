@@ -56,7 +56,7 @@ export async function sendLandlordProxiedMessage(input: {
   const landlordId = getActiveLandlordId()
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       maintenance_request_id: maintenanceRequestId,
       sender_type: 'landlord',

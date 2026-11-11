@@ -29,7 +29,8 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[zillow-property-photos]", corsHeaders)
+  // session-scoped: caller-supplied content
+  const adminAuth = await requireAdminReassignAuth(req, "[zillow-property-photos]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: { address?: string }

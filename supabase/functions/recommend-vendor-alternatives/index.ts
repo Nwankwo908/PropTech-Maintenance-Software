@@ -22,7 +22,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[recommend-vendor-alternatives]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[recommend-vendor-alternatives]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
 
@@ -54,6 +54,16 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const { data: scopeRow } = await supabase
+    .from("maintenance_requests")
+    .select("landlord_id")
+    .eq("id", ticketId)
+    .maybeSingle()
+  const landlordDenied = await adminAuth.denyUnless(
+    supabase,
+    typeof scopeRow?.landlord_id === "string" ? scopeRow.landlord_id : "",
+  )
+  if (landlordDenied) return landlordDenied
   const result = await recommendAlternativeVendorsForTicket(supabase, ticketId, {
     limit,
   })

@@ -32,7 +32,7 @@ export async function postTriggerMoveOutFromLeaseRenewal(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       leaseRenewalRunId,
       landlordId: landlordId?.trim() || getActiveLandlordId(),

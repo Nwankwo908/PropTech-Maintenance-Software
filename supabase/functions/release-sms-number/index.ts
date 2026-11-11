@@ -21,7 +21,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[release-sms-number]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[release-sms-number]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
 
@@ -48,6 +48,17 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  let scopeLandlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!scopeLandlordId && typeof body.smsNumberId === "string" && body.smsNumberId.trim()) {
+    const { data: numberRow } = await supabase
+      .from("sms_numbers")
+      .select("landlord_id")
+      .eq("id", body.smsNumberId.trim())
+      .maybeSingle()
+    scopeLandlordId = typeof numberRow?.landlord_id === "string" ? numberRow.landlord_id : ""
+  }
+  const landlordDenied = await adminAuth.denyUnless(supabase, scopeLandlordId)
+  if (landlordDenied) return landlordDenied
 
   try {
     const result = await releaseLandlordMainNumber(supabase, {

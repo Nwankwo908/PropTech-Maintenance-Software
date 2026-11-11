@@ -68,7 +68,8 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const auth = requireAdminReassignAuth(req, "[synthesize-property-insights]")
+  // session-scoped: caller-supplied content
+  const auth = await requireAdminReassignAuth(req, "[synthesize-property-insights]")
   if (!auth.ok) {
     return auth.response
   }

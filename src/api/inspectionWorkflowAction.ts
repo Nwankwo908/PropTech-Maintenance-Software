@@ -34,7 +34,7 @@ export async function postInspectionWorkflowAction(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       workflowRunId: params.workflowRunId,
       action: params.action,

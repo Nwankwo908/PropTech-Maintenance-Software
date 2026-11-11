@@ -77,7 +77,7 @@ export async function postDiscoverExternalVendors(input: {
   }
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       ticketId: input.ticketId.trim(),
       limit: EXTERNAL_VENDOR_SEARCH_LIMIT,

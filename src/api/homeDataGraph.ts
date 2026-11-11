@@ -98,7 +98,7 @@ export async function postSyncHomeDataGraph(input: {
 }): Promise<SyncHomeDataGraphOk> {
   const res = await fetchAdminEdgeFunction(input.url.trim(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(input.secret.trim()),
+    headers: await adminEdgeInvokeHeaders(input.secret.trim()),
     body: JSON.stringify({
       propertyId: input.propertyId.trim(),
       landlordId: input.landlordId.trim(),

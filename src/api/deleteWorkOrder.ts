@@ -61,7 +61,7 @@ export async function archiveWorkOrders(ticketIds: string[]): Promise<{
     try {
       const res = await fetchAdminEdgeFunction(url, {
         method: 'POST',
-        headers: adminEdgeInvokeHeaders(secret),
+        headers: await adminEdgeInvokeHeaders(secret),
         body: JSON.stringify({
           landlordId,
           ticketId,
@@ -110,7 +110,7 @@ export async function deleteWorkOrderPermanently(params: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminEdgeInvokeHeaders(secret),
     body: JSON.stringify({
       landlordId: getActiveLandlordId(),
       workflowRunId: params.workflowRunId,

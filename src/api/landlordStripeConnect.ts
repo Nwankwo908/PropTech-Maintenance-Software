@@ -44,7 +44,7 @@ async function invokeLandlordStripeConnect(
 ): Promise<Record<string, unknown>> {
   const res = await fetchAdminEdgeFunction(resolveEdgeUrl(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(requireAdminEdgeSecret('Payout setup')),
+    headers: await adminEdgeInvokeHeaders(requireAdminEdgeSecret('Payout setup')),
     body: JSON.stringify({
       ...body,
       landlordId:

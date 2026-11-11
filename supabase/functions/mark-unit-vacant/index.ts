@@ -26,7 +26,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[mark-unit-vacant]", corsHeaders)
+  const adminAuth = await requireAdminReassignAuth(req, "[mark-unit-vacant]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
 
   let body: {
@@ -54,6 +54,8 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const landlordDenied = await adminAuth.denyUnless(supabase, landlordId)
+  if (landlordDenied) return landlordDenied
 
   try {
     const activeRunId = await findActiveMoveOutRunForUnit(supabase, {
