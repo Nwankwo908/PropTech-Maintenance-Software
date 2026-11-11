@@ -20,6 +20,7 @@
     "check:lint": "bash scripts/readiness/check-lint.sh",
     "check:behavior-frontend": "bash scripts/readiness/check-behavior-frontend.sh",
     "check:behavior-backend": "bash scripts/readiness/check-behavior-backend.sh",
+    "sim:sms": "deno run --config supabase/functions/deno.json --no-lock --allow-env --allow-read --allow-net supabase/functions/_shared/sms/sim/cli.ts",
     "check:connected-workflows": "bash scripts/readiness/check-connected-workflows.sh",
     "check:readiness": "bash scripts/readiness/run-all.sh",
     "verify:vendor-support-isolation": "node scripts/integration-verification/verify-vendor-support-isolation.mjs",
