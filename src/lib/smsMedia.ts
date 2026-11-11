@@ -15,7 +15,7 @@ import {
   type PlaybackStatusRecord,
 } from '@shared/sms/videoPlayback.ts'
 
-export type { SmsMediaItem, SmsMediaKind } from '@shared/sms/media.ts'
+export type { SmsMediaItem, SmsMediaKind, SmsMediaPreviewStatus } from '@shared/sms/media.ts'
 export {
   inboxPreviewForSmsMessage,
   isProviderAuthMediaUrl,

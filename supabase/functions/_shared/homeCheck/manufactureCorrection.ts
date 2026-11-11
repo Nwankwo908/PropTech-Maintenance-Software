@@ -109,7 +109,7 @@ export async function applyHomeCheckSmsManufactureCorrection(
       manufacture_year: correction.year,
       manufacture_month: correction.month,
     },
-  }).then(() => undefined).catch(() => undefined)
+  }).then(() => undefined, () => undefined)
 
   await recordActivityLog(db, {
     landlordId: check.landlord_id,

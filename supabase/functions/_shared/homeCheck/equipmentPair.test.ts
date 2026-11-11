@@ -91,7 +91,6 @@ describe('Scoped paired equipment photos', () => {
         purpose: 'label',
         referenceImages: [{ purpose: 'overview', imageBase64: 'Ag==', mediaType: 'image/jpeg' }],
       },
-      { persist: false },
     ])
     expect(db.updates).toContainEqual(
       expect.objectContaining({ provider: 'claude', status: 'needs_review' }),

@@ -79,7 +79,6 @@ export async function analyzeHomeCheckEquipmentPair(
           mediaType: wholeDownload.data.type,
         }],
       },
-      { persist: false },
     ))
     if (result.status==='error' || !result.ai_result) throw new Error('Temporary analysis failure')
     const rawReading = result.ai_result as ApplianceVisionResult | null
