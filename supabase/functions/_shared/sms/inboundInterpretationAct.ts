@@ -1,3 +1,6 @@
+import { tryExplainPendingRepair } from "./pendingRepairNextSteps.ts"
+import { tryPendingRepairFrustration } from "./pendingRepairFrustration.ts"
+import { pendingRepairRecovery } from "./pendingRepairRecovery.ts"
 import { isExplicitNewRepair } from "./explicitNewRepair.ts"
 import { trySubmittedMaintenanceConfirmation } from "./submittedMaintenanceConfirmation.ts"
 import { planLeaseInfoReply } from "./leaseInfoReply.ts"
@@ -93,6 +96,7 @@ import {
   RESCHEDULE_WINDOW_ASK,
 } from "./tenantSchedulePreferredWindow.ts"
 import { closeWorkOrderCancelledByResident } from "./cancelResidentWorkOrder.ts"
+import { decideCancelConfirm } from "./cancelConfirmDecision.ts"
 import { closeWorkOrderResolvedByResident } from "./tenantResolvedWorkOrder.ts"
 import {
   looksLikeTenantReportedFix,
@@ -741,6 +745,54 @@ function pickHistoricalTicket(tickets: OpenTicket[]): OpenTicket | null {
   ) ?? tickets.find((row) =>
     isHistoricalMaintenanceTicketStatus(row.vendor_work_status)
   ) ?? null
+}
+
+async function loadOwnedCancelTicket(
+  ctx: InboundSmsHandlerContext,
+  ticketId: string,
+): Promise<OpenTicket | null> {
+  const { data } = await ctx.supabase
+    .from("maintenance_requests")
+    .select(
+      "id, unit, description, vendor_work_status, scheduled_at, scheduled_window_text, assigned_vendor_id, access_instructions, priority, issue_category, created_at, resident_request_ref, resident_phone, resident_id, resident_user_id",
+    )
+    .eq("id", ticketId)
+    .eq("landlord_id", ctx.landlordId)
+    .maybeSingle()
+  if (!data) return null
+  const phone = ctx.identity.phone_number?.trim() || ctx.inbound.from?.trim() || ""
+  const residentId = ctx.identity.resident_id?.trim() || ""
+  const rowPhone = typeof data.resident_phone === "string" ? data.resident_phone : ""
+  const rowResident = typeof data.resident_id === "string" ? data.resident_id : ""
+  const rowUser = typeof data.resident_user_id === "string" ? data.resident_user_id : ""
+  const owned = (phone && rowPhone === phone) ||
+    (residentId && (rowResident === residentId || rowUser === residentId))
+  if (!owned) return null
+  return {
+    id: data.id as string,
+    unit: typeof data.unit === "string" ? data.unit : null,
+    description: typeof data.description === "string" ? data.description : null,
+    vendor_work_status: typeof data.vendor_work_status === "string"
+      ? data.vendor_work_status
+      : null,
+    scheduled_at: typeof data.scheduled_at === "string" ? data.scheduled_at : null,
+    scheduled_window_text: typeof data.scheduled_window_text === "string"
+      ? data.scheduled_window_text
+      : null,
+    assigned_vendor_id: typeof data.assigned_vendor_id === "string"
+      ? data.assigned_vendor_id
+      : null,
+    access_instructions: typeof data.access_instructions === "string"
+      ? data.access_instructions
+      : null,
+    priority: typeof data.priority === "string" ? data.priority : null,
+    issue_category: typeof data.issue_category === "string" ? data.issue_category : null,
+    created_at: typeof data.created_at === "string" ? data.created_at : null,
+    updated_at: null,
+    resident_request_ref: typeof data.resident_request_ref === "string"
+      ? data.resident_request_ref
+      : null,
+  }
 }
 
 function pickCancellableTicket(tickets: OpenTicket[]): OpenTicket | null {
@@ -1938,15 +1990,18 @@ async function handleCancel(
   const pendingTicket = pendingId
     ? tickets.find((row) => row.id === pendingId) ?? null
     : null
-  const ticket = namedTicket ??
-    (intake.awaiting_ticket_cancel_confirm ? pendingTicket ?? tickets[0] ?? null : null) ??
-    (activeIntake && intake.draft_ticket_id
+  let ticket = namedTicket ??
+    (intake.awaiting_ticket_cancel_confirm ? pendingTicket : null) ??
+    (!intake.awaiting_ticket_cancel_confirm && activeIntake && intake.draft_ticket_id
       ? tickets.find((row) => row.id === intake.draft_ticket_id) ?? null
       : null) ??
-    pickCancellableTicket(tickets) ??
+    (!intake.awaiting_ticket_cancel_confirm ? pickCancellableTicket(tickets) : null) ??
     (interpretation.extractedSlots.historical === "true"
       ? pickHistoricalTicket(tickets)
       : null)
+  if (!ticket && intake.awaiting_ticket_cancel_confirm && pendingId) {
+    ticket = await loadOwnedCancelTicket(ctx, pendingId)
+  }
   const answeredWhichRequest = interpretation.extractedSlots.which_request_resolved === "true"
 
   // Already-closed historical ticket — confirm without another mutation.
@@ -1962,14 +2017,8 @@ async function handleCancel(
     return executeResidentTicketCancel(ctx, intake, ticket, residentName, tickets)
   }
 
-  // One clear active ticket + clear close/cancel intent → close and confirm.
-  if (
-    ticket &&
-    !intake.awaiting_ticket_cancel_confirm &&
-    isActiveMaintenanceTicketStatus(ticket.vendor_work_status) &&
-    interpretation.intent === "maintenance_cancel"
-  ) {
-    const activePool = tickets.filter((row) =>
+  const identifiable = dedupeTicketsByRequestLabel(
+    tickets.filter((row) =>
       isActiveMaintenanceTicketStatus(row.vendor_work_status) &&
       isIdentifiableRequestLabel({
         id: row.id,
@@ -1977,83 +2026,56 @@ async function handleCancel(
         vendor_work_status: row.vendor_work_status,
         issue_category: row.issue_category,
       })
-    )
-    const unique = dedupeTicketsByRequestLabel(activePool)
-    if (unique.length <= 1 || namedTicket) {
-      return executeResidentTicketCancel(ctx, intake, ticket, residentName, tickets)
-    }
-  }
+    ),
+  )
+  const cancelDecision = decideCancelConfirm({
+    whichRequestConfirmed: answeredWhichRequest,
+    awaitingYes: intake.awaiting_ticket_cancel_confirm === true,
+    affirmative: isAffirmativeReply(ctx.inbound.body) ||
+      interpretation.pendingAnswer === "yes",
+    negative: isNegativeReply(ctx.inbound.body) ||
+      interpretation.pendingAnswer === "no",
+    identifiableCount: identifiable.length,
+    hasNamedTicket: Boolean(namedTicket),
+    hasTicket: Boolean(ticket),
+  })
 
-  if (intake.awaiting_ticket_cancel_confirm && ticket) {
-    if (isNegativeReply(ctx.inbound.body) || interpretation.pendingAnswer === "no") {
-      await patchIntakeState(ctx.supabase, ctx.conversationId, {
-        awaiting_ticket_cancel_confirm: false,
-        pending_ticket_cancel_id: undefined,
-      })
-      await logOutcome(ctx, {
-        eventType: "sms.maintenance_cancel_declined",
-        message: "Resident chose not to cancel the work order.",
-        maintenanceRequestId: ticket.id,
-      })
-      return handled(
-        "sms_maintenance_cancel",
-        "No problem — I left the work order as-is. Reply here if you need anything else.",
-      )
-    }
-
-    if (
-      isAffirmativeReply(ctx.inbound.body) ||
-      interpretation.pendingAnswer === "yes" ||
-      answeredWhichRequest ||
-      interpretation.intent === "maintenance_cancel"
-    ) {
-      return executeResidentTicketCancel(ctx, intake, ticket, residentName, tickets)
-    }
-
+  if (cancelDecision === "decline" && ticket) {
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {
+      awaiting_ticket_cancel_confirm: false,
+      pending_ticket_cancel_id: undefined,
+    })
     await logOutcome(ctx, {
-      eventType: "sms.maintenance_cancel_noted",
-      message: `Asked the resident again to confirm cancel for ${tenantRef(ticket)}.`,
+      eventType: "sms.maintenance_cancel_declined",
+      message: "Resident chose not to cancel the work order.",
       maintenanceRequestId: ticket.id,
     })
     return handled(
       "sms_maintenance_cancel",
-      [
-        `Hi ${who},`,
-        "",
-        "This is the property management team.",
-        "",
-        `I can still cancel ${tenantRef(ticket)} if you no longer need this repair.`,
-        "",
-        "Reply YES to cancel it, or NO to leave it open.",
-      ].join("\n"),
+      "No problem — I left the work order as-is. Reply here if you need anything else.",
+    )
+  }
+
+  if (cancelDecision === "close" && ticket) {
+    return executeResidentTicketCancel(ctx, intake, ticket, residentName, tickets)
+  }
+
+  if (cancelDecision === "ask_which") {
+    return handleWhichRequestClarify(
+      ctx,
+      identifiable.length > 0 ? identifiable : tickets,
+      identifiable.map((row) => row.id),
+      residentName,
+      "maintenance_cancel",
     )
   }
 
   if (!ticket) {
     const draftId = intake.draft_ticket_id?.trim()
-    if (draftId) {
-      const closed = await closeWorkOrderCancelledByResident(ctx.supabase, {
-        landlordId: ctx.landlordId,
-        ticketId: draftId,
-        conversationId: ctx.conversationId,
-        residentId: ctx.identity.resident_id,
-        intake,
-        descriptionNote: "Resident cancelled this request over text.",
-        lastResidentMessage: ctx.inbound.body.trim().slice(0, 160),
-      })
-      if (!closed.ok) {
-        console.warn("[sms-interpret] draft cancel failed", closed.error)
-      }
-      await logOutcome(ctx, {
-        eventType: "sms.maintenance_cancelled",
-        message: "Stopped the in-progress repair request after the resident said they no longer need it.",
-        maintenanceRequestId: draftId,
-      })
-      return handled(
-        "sms_maintenance_cancel",
-        `Hi ${who},\n\nThis is the property management team.\n\nOkay — I've stopped that request. Reply here if you need anything else.`,
-      )
-    }
+    if (draftId) ticket = await loadOwnedCancelTicket(ctx, draftId)
+  }
+
+  if (!ticket) {
     const runId = await maybeReleaseIntake(
       ctx.supabase,
       ctx,
@@ -2110,7 +2132,7 @@ async function handleCancel(
       "",
       "This is the property management team.",
       "",
-      `I can cancel ${tenantRef(ticket)} if you no longer need this repair.`,
+      `Do you want to cancel the ${repairLabelForConfirm(ticket)} repair, or were you referring to something else?`,
       "",
       "Reply YES to cancel it, or NO to leave it open.",
     ].join("\n"),
@@ -2706,24 +2728,32 @@ export async function tryHandleInterpretedInbound(
   if (!ctx.identity.resident_id?.trim()) return { handled: false }
   if (shouldSkipInboundInterpretation(ctx.inbound.body)) return { handled: false }
 
+  const residentId = ctx.identity.resident_id
+  const pendingFrustration = await tryPendingRepairFrustration(ctx)
+  if (pendingFrustration.handled) return pendingFrustration
+
   const submittedConfirmation = await trySubmittedMaintenanceConfirmation(ctx)
   if (submittedConfirmation.handled) return submittedConfirmation
 
+  const measure = <T>(stage: string, run: () => Promise<T>) =>
+    ctx.timing ? ctx.timing.measure(stage, run) : run()
   const intake = await loadIntakeRow(ctx.supabase, ctx.conversationId)
   const pending = pendingContextFromIntake(intake)
-  const smsContext = await loadResidentSmsContext(ctx.supabase, {
+  const nextSteps = await tryExplainPendingRepair(ctx)
+  if (nextSteps.handled) return nextSteps
+  const smsContext = await measure("interpretation.context", () => loadResidentSmsContext(ctx.supabase, {
     landlordId: ctx.landlordId,
     conversationId: ctx.conversationId,
     messageId: ctx.messageId,
-    residentId: ctx.identity.resident_id,
+    residentId,
     unitId: ctx.identity.unit_id || null,
     externalPhone: ctx.inbound.from,
     uloPhone: ctx.inbound.to,
     ticketId: intake.pending_ticket_update_id ?? intake.pending_ticket_cancel_id ??
       intake.pending_related_ticket_id ?? intake.draft_ticket_id ?? ctx.maintenanceRequestId,
-  })
+  }, ctx.timing))
   smsContext.pendingQuestion = pending.activeIntake ? pendingIntakeQuestion(intake) : null
-  const interpretation = await interpretInboundSms({
+  const interpretation = await measure("interpretation.recognize", () => interpretInboundSms({
     body: ctx.inbound.body,
     pending,
     smsContext,
@@ -2735,11 +2765,27 @@ export async function tryHandleInterpretedInbound(
       intake.awaiting_reschedule_window === true ||
       intake.awaiting_related_confirm === true ||
       (pending.activeIntake === true && isAffirmativeReply(ctx.inbound.body)),
-  })
+  }))
 
-  await logIntentRecognition(ctx, intake, interpretation)
+  await measure("interpretation.audit", () => logIntentRecognition(ctx, intake, interpretation))
 
-  const residentId = ctx.identity.resident_id
+  // These decisions do not use profile or existing-ticket ranking. Keep their
+  // scoped history and recognition audit, then return before unrelated reads.
+  if (recognizeInboundIntentSync(ctx.inbound.body).intent === "emergency") {
+    if (intake.awaiting_handoff_target) await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
+    return {handled: false, interpretation: {...interpretation, intent: "maintenance_new", addressesPending: false,
+      needsClarification: false}}
+  }
+
+  // Do not let the access/cancel/update handlers attach a distinct repair to
+  // the latest open ticket. Pass the whole text to fresh intake, including access.
+  if (isExplicitNewRepair(ctx.inbound.body)) {
+    await measure("interpretation.release_new", () => maybeReleaseIntake(ctx.supabase, ctx, intake, pending.activeIntake, "maintenance_new", false))
+    return { handled: false, interpretation: {
+      ...markAsNewMaintenanceIssue(interpretation), addressesPending: false,
+    } }
+  }
+
   const profile = await loadResidentProfile(ctx.supabase, residentId)
   let propertyId: string | null = null
   const unitId = ctx.identity.unit_id?.trim() || null
@@ -2772,20 +2818,6 @@ export async function tryHandleInterpretedInbound(
     looksLikeStatusInquiryTicketDescription(row.description)
   )
 
-  if (recognizeInboundIntentSync(ctx.inbound.body).intent === "emergency") {
-    if (intake.awaiting_handoff_target) await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
-    return {handled: false, interpretation: {...interpretation, intent: "maintenance_new", addressesPending: false,
-      needsClarification: false}}
-  }
-
-  // Do not let the access/cancel/update handlers attach a distinct repair to
-  // the latest open ticket. Pass the whole text to fresh intake, including access.
-  if (isExplicitNewRepair(ctx.inbound.body)) {
-    await maybeReleaseIntake(ctx.supabase, ctx, intake, pending.activeIntake, "maintenance_new", false)
-    return { handled: false, interpretation: {
-      ...markAsNewMaintenanceIssue(interpretation), addressesPending: false,
-    } }
-  }
 
   if (isNegativeHandoffRequest(ctx.inbound.body) || (intake.awaiting_handoff_target && /\b(?:never mind|cancel (?:that|the) (?:call|message|handoff))\b/i.test(ctx.inbound.body))) {
     await patchIntakeState(ctx.supabase, ctx.conversationId, {awaiting_handoff_target:null})
@@ -2815,13 +2847,18 @@ export async function tryHandleInterpretedInbound(
         facts:JSON.stringify({requestedContact:request,propertyManagerSaved:!managerMissing,savedContacts:contacts.map(c=>({name:c.name,role:c.role,handlesPropertyManagement:c.handlesPropertyManagement===true})),pendingSelection:true,noNotificationSent:true}),fallback:body}) : {body,source:"fallback"}
       return handled("sms_recovery",recovery.body,{preserveIntake:true,notifyStaff:false,recoverySource:recovery.source})
     }
-    const context = pending.activeIntake ? pendingIntakeQuestion(intake)
+    const repairRecovery = pending.activeIntake && intake.step === "awaiting_confirm"
+      ? pendingRepairRecovery(intake,count) : null
+    const context = repairRecovery ? undefined : pending.activeIntake ? pendingIntakeQuestion(intake)
       : tickets.length === 1 ? `I have your request about ${tickets[0].description?.slice(0,160) || "the repair"}. What needs to change?`
       : tickets.length > 1 ? "You have more than one open repair. Which repair are you referring to, and what needs to change?"
       : count > 1 ? "What should happen next at your property? Tell me the outcome you need." : undefined
-    const fallback = buildConversationRecoverySms(firstName(profile?.full_name ?? null),context)
-    const recovery = count > 1 ? await recoverConversation(ctx.supabase,{landlordId:ctx.landlordId,conversationId:ctx.conversationId,latest:ctx.inbound.body,
-      facts:JSON.stringify({pendingQuestion:pending.activeIntake?pendingIntakeQuestion(intake):null,openRepairs:tickets.map(t=>t.description?.slice(0,160)),noNotificationSent:true}),fallback}) : {body:fallback,source:"fallback"}
+    const fallback = repairRecovery?.fallback ?? buildConversationRecoverySms(firstName(profile?.full_name ?? null),context)
+    const recovery = count > 1 || repairRecovery ? await recoverConversation(ctx.supabase,{landlordId:ctx.landlordId,conversationId:ctx.conversationId,latest:ctx.inbound.body,
+      focus:repairRecovery ? "pending_repair" : undefined, timeoutMs:repairRecovery ? 1800 : undefined,
+      traceId:ctx.timing?.traceId, messageId:ctx.messageId,
+      historySince:repairRecovery ? tickets.find(t=>t.id===intake.draft_ticket_id)?.created_at : undefined,
+      facts:JSON.stringify({pendingRepair:repairRecovery?.facts??null,pendingQuestion:repairRecovery?null:pending.activeIntake?pendingIntakeQuestion(intake):null,openRepairs:repairRecovery?[]:tickets.map(t=>t.description?.slice(0,160)),noNotificationSent:true}),fallback}) : {body:fallback,source:"fallback"}
     return handled("sms_recovery",recovery.body,{preserveIntake:true,notifyStaff:false,recoverySource:recovery.source})
   }
   if (intake.awaiting_handoff_target && isHandoffRequest(ctx.inbound.body) && resolveHandoffTarget(ctx.inbound.body,[]).kind === "generic") {

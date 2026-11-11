@@ -1,3 +1,4 @@
+import type { SmsRequestTiming } from "./requestReadCache.ts"
 /**
  * Mint a real maintenance_requests row as soon as SMS intake is classifiable.
  * Prevents phantom WO refs from sms_conversation ids and keeps Active Tasks durable.
@@ -23,6 +24,7 @@ import {
 } from "./residentIntakeTypes.ts"
 import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
 import { queueWorkOrderContext } from "../workOrderContext.ts"
+import { isExplicitSeparateRequest } from "./intakeDraftClaim.ts"
 
 type ResidentRow = {
   id: string
@@ -80,30 +82,36 @@ export async function ensureEarlySmsMaintenanceTicket(
     residentId: string
     intake: SmsIntakeState
     workflowRunId?: string | null
+    timing?: SmsRequestTiming
+    /** Fresh engine intake only: its atomic finalizer validates and owns this link. */
+    deferRunLinkToFinalizer?: boolean
   },
 ): Promise<{ ticketId: string | null; created: boolean }> {
+  const measure = <T>(stage: string, run: () => Promise<T>) =>
+    params.timing ? params.timing.measure(stage, run) : run()
   if (!shouldMintEarlyTicket(params.intake)) {
     return { ticketId: null, created: false }
   }
 
-  const { data: convo } = await supabase
-    .from("sms_conversations")
-    .select("workflow_run_id")
-    .eq("id", params.conversationId)
-    .maybeSingle()
-
-  const runId =
-    params.workflowRunId?.trim() ||
-    (typeof convo?.workflow_run_id === "string" ? convo.workflow_run_id.trim() : "") ||
-    null
-
+  const suppliedRunId = params.workflowRunId?.trim() || null
+  // Independent reads. A per-execution server run avoids rereading a shared
+  // conversation pointer that another inbound could have changed.
+  const [conversationRead, residentRead] = await Promise.allSettled([
+    suppliedRunId ? Promise.resolve({ data: { workflow_run_id: suppliedRunId } }) :
+      measure("draft.lookup_conversation", async () => await supabase
+        .from("sms_conversations").select("workflow_run_id")
+        .eq("id", params.conversationId).maybeSingle()),
+    measure("draft.lookup_resident", async () => await supabase
+      .from("users").select("id, full_name, email, phone, unit")
+      .eq("id", params.residentId).maybeSingle()),
+  ])
+  if (conversationRead.status === "rejected") throw conversationRead.reason
+  if (residentRead.status === "rejected") throw residentRead.reason
+  const convo = conversationRead.value.data
+  const { data: resident, error: residentErr } = residentRead.value
+  const runId = suppliedRunId ||
+    (typeof convo?.workflow_run_id === "string" ? convo.workflow_run_id.trim() : "") || null
   const draftId = params.intake.draft_ticket_id?.trim() || ""
-
-  const { data: resident, error: residentErr } = await supabase
-    .from("users")
-    .select("id, full_name, email, phone, unit")
-    .eq("id", params.residentId)
-    .maybeSingle()
 
   if (residentErr || !resident) {
     console.error("[sms-intake] early ticket resident lookup", residentErr?.message)
@@ -145,7 +153,7 @@ export async function ensureEarlySmsMaintenanceTicket(
 
   // Only reuse the ticket minted for *this* intake (never a prior conversation ticket).
   if (draftId && isMidIntake(params.intake)) {
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await measure("draft.update", async () => await supabase
       .from("maintenance_requests")
       .update({
         description,
@@ -164,7 +172,7 @@ export async function ensureEarlySmsMaintenanceTicket(
         photo_paths: storagePhotoPaths(params.intake.photo_urls),
         resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
       })
-      .eq("id", draftId)
+      .eq("id", draftId))
 
     if (updateErr) {
       console.error("[sms-intake] early ticket patch failed", updateErr.message)
@@ -172,69 +180,83 @@ export async function ensureEarlySmsMaintenanceTicket(
       queueWorkOrderContext(supabase, { id: draftId, description }, "[sms-intake]")
     }
 
-    await supabase
+    await measure("draft.link_conversation", async () => await supabase
       .from("sms_conversations")
       .update({
         maintenance_request_id: draftId,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", params.conversationId)
+      .eq("id", params.conversationId))
 
-    await linkRunToTicket(supabase, runId, draftId, params.intake)
+    if (!params.deferRunLinkToFinalizer || !suppliedRunId) {
+      await measure("draft.link_run", () => linkRunToTicket(supabase, runId, draftId, params.intake))
+    }
     return { ticketId: draftId, created: false }
   }
 
-  const { data: ticket, error: insertErr } = await supabase
-    .from("maintenance_requests")
-    .insert({
-      landlord_id: params.landlordId,
-      priority,
-      urgency: priority,
-      resident_name: row.full_name?.trim() || "Resident",
-      email: row.email?.trim() || `${params.residentId}@sms-resident.ulohome.local`,
-      resident_phone: row.phone,
-      unit,
-      description,
-      ...(location ? {room: location, location_detail: location} : {}),
-      resident_user_id: null,
-      photo_paths: storagePhotoPaths(params.intake.photo_urls),
-      issue_category: issueCategory,
-      issue_headline: issueHeadline,
-      entry_ok_if_absent: entryOkIfAbsent,
-      severity: dbSeverity,
-      estimated_minutes: estimatedMinutes,
-      due_at: dueAt.toISOString(),
-      vendor_work_status: "unassigned",
-      resident_availability_text: residentAvailability,
-      resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
+  const separateRequest = isExplicitSeparateRequest(
+    `${params.intake.initial_message ?? ""} ${description}`,
+  )
+  const { data: claimed, error: insertErr } = await measure("draft.insert", async () =>
+    await supabase.rpc("claim_sms_intake_draft", {
+      p_landlord_id: params.landlordId,
+      p_conversation_id: params.conversationId,
+      p_issue_category: issueCategory,
+      p_separate_request: separateRequest,
+      p_ticket: {
+        priority,
+        urgency: priority,
+        resident_name: row.full_name?.trim() || "Resident",
+        email: row.email?.trim() || `${params.residentId}@sms-resident.ulohome.local`,
+        resident_phone: row.phone,
+        unit,
+        description,
+        ...(location ? { room: location, location_detail: location } : {}),
+        photo_paths: storagePhotoPaths(params.intake.photo_urls),
+        issue_category: issueCategory,
+        issue_headline: issueHeadline,
+        entry_ok_if_absent: entryOkIfAbsent,
+        severity: dbSeverity,
+        estimated_minutes: estimatedMinutes,
+        due_at: dueAt.toISOString(),
+        resident_availability_text: residentAvailability,
+        resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
+      },
     })
-    .select("id")
-    .single()
+  )
 
-  if (insertErr || !ticket?.id) {
+  const claimedRow = claimed && typeof claimed === "object"
+    ? claimed as { id?: string; created?: boolean }
+    : null
+  if (insertErr || !claimedRow?.id) {
     console.error("[sms-intake] early ticket insert failed", insertErr?.message)
     return { ticketId: null, created: false }
   }
 
-  const ticketId = ticket.id as string
+  const ticketId = claimedRow.id
+  if (claimedRow.created === false) {
+    return { ticketId, created: false }
+  }
   queueWorkOrderContext(supabase, { id: ticketId, description }, "[sms-intake]")
   void emitJobCreatedBundle(supabase, {
     landlordId: params.landlordId,
     jobType: issueCategory,
   })
 
-  await supabase
+  await measure("draft.link_conversation", async () => await supabase
     .from("sms_conversations")
     .update({
       maintenance_request_id: ticketId,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", params.conversationId)
+    .eq("id", params.conversationId))
 
-  await linkRunToTicket(supabase, runId, ticketId, params.intake)
+  if (!params.deferRunLinkToFinalizer || !suppliedRunId) {
+    await measure("draft.link_run", () => linkRunToTicket(supabase, runId, ticketId, params.intake))
+  }
 
   try {
-    await logGraphEvent(supabase, {
+    await measure("draft.audit", () => logGraphEvent(supabase, {
       landlord_id: params.landlordId,
       event_type: "maintenance.request_drafted",
       source: "sms",
@@ -253,7 +275,7 @@ export async function ensureEarlySmsMaintenanceTicket(
         intake_step: params.intake.step,
         early_ticket: true,
       },
-    })
+    }))
   } catch (e) {
     console.warn("[sms-intake] early ticket graph event failed", e)
   }

@@ -29,6 +29,7 @@ import {
   matchShortReplyToken,
   normalizeShortReply,
 } from "./shortReplyTokens.ts"
+import { bareEstimateApproval } from "./estimateApprovalGuard.ts"
 import { loadRepeatedApprovalAcknowledgement } from "./repeatedLandlordApproval.ts"
 import { isHomeCheckResultsAwaitingOk } from "../homeCheck/manufactureCorrectionParse.ts"
 
@@ -715,50 +716,6 @@ export async function tryHandleEstimateDecisionInbound(
     return { handled: false }
   }
 
-  // Thread WO fallback when awaiting flag missing but ticket is on the conversation.
-  if (!awaiting) {
-    const ticketId =
-      typeof conv.maintenance_request_id === "string"
-        ? conv.maintenance_request_id
-        : null
-    if (ticketId) {
-      const { data: pending } = await supabase
-        .from("maintenance_estimates")
-        .select("id, landlord_action_token, status, landlord_id")
-        .eq("maintenance_request_id", ticketId)
-        .eq("landlord_id", landlordId)
-        .order("submitted_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (pending?.id && pending.status === "pending_approval") {
-        awaiting = {
-          estimateId: pending.id as string,
-          actionToken:
-            typeof pending.landlord_action_token === "string"
-              ? pending.landlord_action_token
-              : null,
-          ticketId,
-        }
-      } else if (pending?.id && typeof pending.status === "string") {
-        const terminal = await replyForTerminalEstimate(
-          supabase,
-          String(pending.status),
-          ticketId,
-        )
-        if (terminal) {
-          return {
-            handled: true,
-            action,
-            estimateId: pending.id as string,
-            status: action === "approve" ? "approved" : "rejected",
-            already: true,
-            replyBody: terminal,
-          }
-        }
-      }
-    }
-  }
-
   // Cross-thread / account-level when this reply thread has no pending ask.
   // Backup handsets often reply on a different conversation than the primary
   // ops notify thread — prefer an ask already stored on any landlord thread.
@@ -847,60 +804,31 @@ export async function tryHandleEstimateDecisionInbound(
           }
           options = [...byId.values()]
         }
-        if (options.length > 1) return await disambiguate(options)
-        if (options.length === 1) {
-          awaiting = {
-            estimateId: options[0]!.estimateId,
-            actionToken: options[0]!.actionToken,
-            ticketId: options[0]!.ticketId,
-          }
+        if (
+          bareEstimateApproval({
+            hasActiveAsk: false,
+            pendingCount: options.length,
+          }) === "disambiguate"
+        ) {
+          return await disambiguate(options)
         }
-      } else if (pending.length > 1) {
+      } else if (
+        bareEstimateApproval({
+          hasActiveAsk: false,
+          pendingCount: pending.length,
+        }) === "disambiguate"
+      ) {
         return await disambiguate(pending)
-      } else if (pending.length === 1) {
-        const only = pending[0]!
-        awaiting = {
-          estimateId: only.estimateId,
-          actionToken: only.actionToken,
-          ticketId: only.ticketId,
-        }
       }
 
       if (!awaiting) {
-        const { data: latest } = await supabase
-          .from("maintenance_estimates")
-          .select("id, status, maintenance_request_id")
-          .eq("landlord_id", landlordId)
-          .in("status", [
-            "approved",
-            "rejected",
-            "superseded",
-            "expired",
-            "withdrawn",
-          ])
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (latest?.id) {
-          const terminal = await replyForTerminalEstimate(
-            supabase,
-            String(latest.status),
-            typeof latest.maintenance_request_id === "string"
-              ? latest.maintenance_request_id
-              : null,
-          )
-          if (terminal) {
-            return {
-              handled: true,
-              action,
-              estimateId: latest.id as string,
-              status: action === "approve" ? "approved" : "rejected",
-              already: true,
-              replyBody: terminal,
-            }
-          }
+        return {
+          handled: true,
+          clarified: true,
+          estimateId: "",
+          replyBody:
+            "I don't have an estimate waiting for a reply on this message. Reply to the approval text, or use the approval link in that message. I haven't approved or declined anything.",
         }
-        return { handled: false }
       }
     }
   }

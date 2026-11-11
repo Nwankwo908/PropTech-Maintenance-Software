@@ -18,6 +18,7 @@ import { emitJobCreatedBundle } from "../_shared/ga4MeasurementProtocol.ts"
 import { lookupOutdoorTempForProperty } from "../_shared/weather/propertyOutdoorTemp.ts"
 import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
 import { queueWorkOrderContext } from "../_shared/workOrderContext.ts"
+import { chooseResidentForSubmit } from "../_shared/residentSubmitMatch.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -76,9 +77,6 @@ function normalizeFormIssueCategory(raw: string | null): string | null {
   }
   return null
 }
-
-/** Max active `public.users` rows scanned in-memory for unit-only matching (no normalized_unit column). */
-const ACTIVE_USERS_SCAN_LIMIT = 2500
 
 type ResidentLookupRow = {
   id: string
@@ -174,87 +172,65 @@ serve(async (req) => {
     )
   }
 
+  const residentSelect = "id, email, unit, status, supabase_user_id, landlord_id"
+  const { data: linkedRaw, error: linkedError } = await supabase
+    .from("users")
+    .select(residentSelect)
+    .eq("status", "active")
+    .eq("supabase_user_id", authUser.id)
+    .limit(5)
+  if (linkedError) {
+    console.error("[submit-maintenance-request] linked resident lookup failed", linkedError)
+    return jsonResponse({ error: "Could not verify resident account." }, 500)
+  }
+
   const { data: byEmailRaw, error: residentFetchError } = await supabase
     .from("users")
-    .select("id, email, unit, status, supabase_user_id, landlord_id")
+    .select(residentSelect)
     .eq("status", "active")
     .ilike("email", escapeIlikeLiteral(normalizedFormEmail))
-    .limit(50)
+    .limit(20)
 
   if (residentFetchError) {
     console.error("[submit-maintenance-request] resident lookup failed", residentFetchError)
     return jsonResponse({ error: "Could not verify resident account." }, 500)
   }
 
-  const byEmail = (byEmailRaw ?? []) as ResidentLookupRow[]
-
   const rowMatchesBoth = (row: ResidentLookupRow) =>
     normalizeEmail(row.email) === normalizedFormEmail &&
     normalizeUnitForMatch(row.unit) === normalizedFormUnit
-
-  const emailUnitMatches = byEmail.filter(rowMatchesBoth)
-  if (emailUnitMatches.length > 1) {
+  const toCandidate = (row: ResidentLookupRow) => ({
+    id: row.id,
+    email: row.email ?? "",
+    unit: row.unit ?? "",
+    landlordId: row.landlord_id ?? "",
+    supabaseUserId: row.supabase_user_id,
+  })
+  const linkedRows = ((linkedRaw ?? []) as ResidentLookupRow[]).filter(rowMatchesBoth)
+  const emailUnitMatches = ((byEmailRaw ?? []) as ResidentLookupRow[])
+    .filter(rowMatchesBoth)
+    .map(toCandidate)
+  if ((byEmailRaw ?? []).length >= 20 && emailUnitMatches.length !== 1) {
     return jsonResponse(
       { error: "More than one resident matches this email and unit." },
       409,
     )
   }
-  let residentRow = emailUnitMatches[0]
-
+  const choice = chooseResidentForSubmit({
+    linkedResidents: linkedRows.map(toCandidate),
+    emailUnitMatches: linkedRows.length > 0 ? [] : emailUnitMatches,
+    formLandlordId: textField(form, "landlordId") ?? textField(form, "landlord_id"),
+  })
+  if (!choice.ok) {
+    return jsonResponse({ error: choice.error }, choice.status)
+  }
+  const residentRow = ((linkedRaw ?? []) as ResidentLookupRow[]).find((row) =>
+    row.id === choice.resident.id
+  ) ?? ((byEmailRaw ?? []) as ResidentLookupRow[]).find((row) =>
+    row.id === choice.resident.id
+  )
   if (!residentRow) {
-    const { data: activeScanRaw, error: scanError } = await supabase
-      .from("users")
-      .select("id, email, unit, status, supabase_user_id, landlord_id")
-      .eq("status", "active")
-      .limit(ACTIVE_USERS_SCAN_LIMIT)
-
-    if (scanError) {
-      console.error("[submit-maintenance-request] active users scan failed", scanError)
-      return jsonResponse({ error: "Could not verify resident account." }, 500)
-    }
-
-    const activeScan = (activeScanRaw ?? []) as ResidentLookupRow[]
-    const mergedById = new Map<string, ResidentLookupRow>()
-    for (const row of byEmail) mergedById.set(row.id, row)
-    for (const row of activeScan) mergedById.set(row.id, row)
-    const residentRows = [...mergedById.values()]
-
-    const both = residentRows.filter(rowMatchesBoth)
-    if (both.length > 1) {
-      return jsonResponse(
-        { error: "More than one resident matches this email and unit." },
-        409,
-      )
-    }
-    residentRow = both[0]
-
-    if (!residentRow) {
-      const emailMatches = residentRows.filter(
-        (row) => normalizeEmail(row.email) === normalizedFormEmail,
-      )
-      const unitMatches = residentRows.filter(
-        (row) => normalizeUnitForMatch(row.unit) === normalizedFormUnit,
-      )
-
-      const hasEmail = emailMatches.length > 0
-      const hasUnit = unitMatches.length > 0
-
-      let mismatchError: string
-      if (!hasEmail && !hasUnit) {
-        mismatchError = "No resident found with this email or unit."
-      } else if (hasEmail && !hasUnit) {
-        mismatchError =
-          "This email is registered, but the unit does not match."
-      } else if (!hasEmail && hasUnit) {
-        mismatchError =
-          "This unit exists, but the email does not match."
-      } else {
-        mismatchError =
-          "Email and unit exist, but do not belong to the same resident."
-      }
-
-      return jsonResponse({ error: mismatchError }, 403)
-    }
+    return jsonResponse({ error: "Could not verify resident account." }, 403)
   }
 
   if (
@@ -339,6 +315,7 @@ serve(async (req) => {
   const { data: row, error: insertError } = await supabase
     .from("maintenance_requests")
     .insert({
+      landlord_id: residentLandlordId,
       priority,
       urgency: priority,
       resident_name: residentName,

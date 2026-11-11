@@ -567,7 +567,7 @@ export async function decideMaintenanceEstimate(
 
   const next = params.action === "approve" ? "approved" : "rejected"
   const nowIso = new Date().toISOString()
-  const { error: upErr } = await supabase
+  const { data: updated, error: upErr } = await supabase
     .from("maintenance_estimates")
     .update({
       status: next,
@@ -576,10 +576,26 @@ export async function decideMaintenanceEstimate(
     })
     .eq("id", params.estimateId)
     .eq("status", "pending_approval")
+    .select("id")
 
   if (upErr) {
     console.error("[maintenance-estimates] decide", upErr.message)
     return { ok: false, error: "Could not update estimate", status: 500 }
+  }
+  if (!updated || updated.length === 0) {
+    const { data: current } = await supabase
+      .from("maintenance_estimates")
+      .select("status")
+      .eq("id", params.estimateId)
+      .maybeSingle()
+    if (current?.status === "approved" || current?.status === "rejected") {
+      return {
+        ok: true,
+        status: current.status,
+        already: true,
+      }
+    }
+    return { ok: false, error: "This estimate can no longer be updated", status: 409 }
   }
 
   const ticketId = row.maintenance_request_id as string
