@@ -15,7 +15,6 @@ import { dispatchConfirmedMaintenanceTicket } from "../_shared/confirmedMaintena
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { startMaintenanceRequestWorkflow } from "../_shared/engine/startMaintenanceRequestWorkflow.ts"
 import { emitJobCreatedBundle } from "../_shared/ga4MeasurementProtocol.ts"
-import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { lookupOutdoorTempForProperty } from "../_shared/weather/propertyOutdoorTemp.ts"
 import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
 import { queueWorkOrderContext } from "../_shared/workOrderContext.ts"
@@ -87,6 +86,7 @@ type ResidentLookupRow = {
   unit: string | null
   status: string
   supabase_user_id: string | null
+  landlord_id: string | null
 }
 
 function parseResidentNotificationChannel(form: FormData): string {
@@ -176,7 +176,7 @@ serve(async (req) => {
 
   const { data: byEmailRaw, error: residentFetchError } = await supabase
     .from("users")
-    .select("id, email, unit, status, supabase_user_id")
+    .select("id, email, unit, status, supabase_user_id, landlord_id")
     .eq("status", "active")
     .ilike("email", escapeIlikeLiteral(normalizedFormEmail))
     .limit(50)
@@ -192,12 +192,19 @@ serve(async (req) => {
     normalizeEmail(row.email) === normalizedFormEmail &&
     normalizeUnitForMatch(row.unit) === normalizedFormUnit
 
-  let residentRow = byEmail.find(rowMatchesBoth)
+  const emailUnitMatches = byEmail.filter(rowMatchesBoth)
+  if (emailUnitMatches.length > 1) {
+    return jsonResponse(
+      { error: "More than one resident matches this email and unit." },
+      409,
+    )
+  }
+  let residentRow = emailUnitMatches[0]
 
   if (!residentRow) {
     const { data: activeScanRaw, error: scanError } = await supabase
       .from("users")
-      .select("id, email, unit, status, supabase_user_id")
+      .select("id, email, unit, status, supabase_user_id, landlord_id")
       .eq("status", "active")
       .limit(ACTIVE_USERS_SCAN_LIMIT)
 
@@ -212,7 +219,14 @@ serve(async (req) => {
     for (const row of activeScan) mergedById.set(row.id, row)
     const residentRows = [...mergedById.values()]
 
-    residentRow = residentRows.find(rowMatchesBoth)
+    const both = residentRows.filter(rowMatchesBoth)
+    if (both.length > 1) {
+      return jsonResponse(
+        { error: "More than one resident matches this email and unit." },
+        409,
+      )
+    }
+    residentRow = both[0]
 
     if (!residentRow) {
       const emailMatches = residentRows.filter(
@@ -243,30 +257,40 @@ serve(async (req) => {
     }
   }
 
-  // Link or re-link roster row to this Auth user (same email + unit already verified above).
-  if (residentRow.supabase_user_id !== authUser.id) {
-    const previousAuthId = residentRow.supabase_user_id
-    const isRelink = previousAuthId != null && previousAuthId !== authUser.id
+  if (
+    residentRow.supabase_user_id &&
+    residentRow.supabase_user_id !== authUser.id
+  ) {
+    return jsonResponse(
+      { error: "This resident record is already linked to another login." },
+      403,
+    )
+  }
+  if (!residentRow.supabase_user_id) {
     const { error: linkErr } = await supabase
       .from("users")
       .update({ supabase_user_id: authUser.id })
       .eq("id", residentRow.id)
+      .is("supabase_user_id", null)
     if (linkErr) {
       console.error("[submit-maintenance-request] resident link failed", linkErr)
       return jsonResponse({ error: "Could not link resident account." }, 500)
     }
-    if (isRelink) {
-      console.log(
-        "[submit-maintenance-request] Resident re-linked to new auth user",
-        { residentRowId: residentRow.id, previousAuthId, newAuthId: authUser.id },
-      )
-    }
+  }
+
+  const residentLandlordId =
+    typeof residentRow.landlord_id === "string" ? residentRow.landlord_id.trim() : ""
+  if (!residentLandlordId) {
+    return jsonResponse(
+      { error: "This resident is not assigned to a property account." },
+      422,
+    )
   }
 
   const overrideCategory = normalizeFormIssueCategory(
     textField(form, "issueCategory"),
   )
-  const scopedLandlordId = resolveLandlordId()
+  const scopedLandlordId = residentLandlordId
   const outdoorTempF = await lookupOutdoorTempForProperty(supabase, {
     landlordId: scopedLandlordId,
     unitLabel: unit,
@@ -357,7 +381,7 @@ serve(async (req) => {
 
   const ticketId = row.id as string
   queueWorkOrderContext(supabase, { id: ticketId, description }, "[submit-maintenance-request]")
-  const landlordId = resolveLandlordId()
+  const landlordId = residentLandlordId
   void emitJobCreatedBundle(supabase, {
     landlordId,
     jobType: slaClassification.issue_category,

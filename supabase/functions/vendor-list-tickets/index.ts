@@ -5,7 +5,10 @@ import {
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
-import { getVendorFromJobActionToken } from "../_shared/vendorJobActionToken.ts"
+import {
+  getVendorFromJobActionToken,
+  normalizeVendorJobToken,
+} from "../_shared/vendorJobActionToken.ts"
 import {
   mapPropertyAccessRow,
   propertyAccessMappedHasContent,
@@ -121,6 +124,8 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   let vendor: { id: string; name: string } | null = null
+  let jobToken: string | null = null
+  let includeEntryCredentials = false
 
   if (bearerLooksLikeJwt(accessToken)) {
     const { data: auth, error: authErr } = await supabase.auth.getUser(accessToken)
@@ -191,10 +196,12 @@ serve(async (req) => {
       return jsonResponse({ error: "Vendor not found" }, 403)
     }
     vendor = { id: jwtVendor.id, name: jwtVendor.name }
+    includeEntryCredentials = true
   } else {
     const fromJob = await getVendorFromJobActionToken(supabase, accessToken)
     if (fromJob) {
       vendor = fromJob
+      jobToken = normalizeVendorJobToken(accessToken)
     } else {
       const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
       if (!portalVendor) {
@@ -209,12 +216,14 @@ serve(async (req) => {
     return jsonResponse({ error: "Vendor not found" }, 403)
   }
 
-  const { data: rows, error: qErr } = await supabase
+  let ticketQuery = supabase
     .from("maintenance_requests")
     .select(
       "id, created_at, landlord_id, priority, urgency, resident_name, unit, description, issue_headline, location_detail, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token, access_instructions, entry_ok_if_absent, resident_availability_text",
     )
     .eq("assigned_vendor_id", vendor.id)
+  if (jobToken) ticketQuery = ticketQuery.eq("vendor_action_token", jobToken)
+  const { data: rows, error: qErr } = await ticketQuery
     .order("created_at", { ascending: false })
 
   if (qErr) {
@@ -335,11 +344,10 @@ serve(async (req) => {
       const building = buildingById.get(id) ?? null
       const landlordId =
         typeof row.landlord_id === "string" ? row.landlord_id : ""
-      const property_access =
-        landlordId && building
-          ? accessByLandlordBuilding.get(`${landlordId}::${building.toLowerCase()}`) ??
-            null
-          : null
+      const property_access = includeEntryCredentials && landlordId && building
+        ? accessByLandlordBuilding.get(`${landlordId}::${building.toLowerCase()}`) ??
+          null
+        : null
       const unitLabel =
         typeof row.unit === "string" && row.unit.trim() ? row.unit.trim() : ""
       const building_address = building
@@ -349,6 +357,7 @@ serve(async (req) => {
         : unitLabel || null
       return {
         ...row,
+        access_instructions: includeEntryCredentials ? row.access_instructions : null,
         building: building,
         building_address,
         property_access,

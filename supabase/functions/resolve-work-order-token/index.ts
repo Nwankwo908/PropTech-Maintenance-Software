@@ -9,11 +9,9 @@ import {
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 import { resolvePropertyLocation } from "../_shared/properties/propertyLocation.ts"
-import {
-  formatPropertyAccessPlainText,
-  loadPropertyAccessForBuilding,
-} from "../_shared/propertyAccessProfile.ts"
+import { loadPropertyAccessForBuilding } from "../_shared/propertyAccessProfile.ts"
 import { selectVendorPropertyUnitJobHistory } from "../_shared/vendorJobPropertyHistory.ts"
+import { discloseWorkOrderSensitiveFields } from "../../../shared/security/workOrderDisclosure.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -392,12 +390,15 @@ serve(async (req) => {
     }
   }
 
-  const propertyAccessPlain = propertyAccess
-    ? formatPropertyAccessPlainText(propertyAccess)
-    : ""
-
-  const mergedAccess =
-    accessRaw || propertyAccessPlain || null
+  const disclosed = discloseWorkOrderSensitiveFields({
+    vendorSessionVerified: false,
+    residentPhone:
+      typeof row.resident_phone === "string" && row.resident_phone.trim()
+        ? row.resident_phone.trim()
+        : null,
+    accessInstructions: accessRaw || null,
+    propertyAccess,
+  })
 
   return jsonResponse({
     ok: true,
@@ -437,21 +438,17 @@ serve(async (req) => {
         typeof row.created_at === "string" ? row.created_at : null,
       dueAt: typeof row.due_at === "string" ? row.due_at : null,
       photoUrls,
-      accessInstructions: accessRaw || null,
+      accessInstructions: disclosed.accessInstructions,
       accessInstructionsFallback:
         "Contact the property team if you need entry instructions for this unit.",
-      propertyAccess,
-      /** Combined plain text when UI needs a single block (ticket notes preferred, else building profile). */
-      accessInstructionsCombined: mergedAccess,
+      propertyAccess: disclosed.propertyAccess,
+      accessInstructionsCombined: disclosed.accessInstructions,
       tenant: {
         name:
           typeof row.resident_name === "string" && row.resident_name.trim()
             ? row.resident_name.trim()
             : "Resident",
-        phone:
-          typeof row.resident_phone === "string" && row.resident_phone.trim()
-            ? row.resident_phone.trim()
-            : null,
+        phone: disclosed.residentPhone,
         // Email omitted from public page for privacy; phone is enough for visit.
       },
       appointment: {
