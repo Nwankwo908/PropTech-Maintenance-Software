@@ -423,7 +423,7 @@ async function loadVendorAttentionInputs(input: {
   }
 
   const tickets: VendorAttentionTicket[] = ((ticketsResult.data ?? []) as Record<string, unknown>[])
-    .map((row) => {
+    .map((row): VendorAttentionTicket | null => {
       const id = asString(row.id)
       if (!id) return null
       return {
@@ -451,7 +451,7 @@ async function loadVendorAttentionInputs(input: {
       console.warn('[AdminVendorDetailDashboard] attention estimates', estimatesResult.error.message)
     } else {
       estimates = ((estimatesResult.data ?? []) as Record<string, unknown>[])
-        .map((row) => {
+        .map((row): VendorAttentionEstimate | null => {
           const id = asString(row.id)
           const maintenanceRequestId = asString(row.maintenance_request_id)
           if (!id || !maintenanceRequestId) return null

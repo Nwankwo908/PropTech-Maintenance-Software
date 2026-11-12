@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import {
   assignVendorAndNotify,
   reassignVendorByIdAndNotify,
@@ -35,12 +35,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[admin-reassign-vendor]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
-
-
   let body: {
     action?: string
+    landlordId?: string
     ticketId?: string
     vendorId?: string
     vendorName?: string
@@ -51,6 +48,11 @@ serve(async (req) => {
     body = await req.json()
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
+  }
+
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!landlordId || !isUuidShape(landlordId)) {
+    return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
 
   const ticketId = typeof body.ticketId === "string" ? body.ticketId.trim() : ""
@@ -78,6 +80,9 @@ serve(async (req) => {
     )
   }
 
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
   const supabase = createClient(supabaseUrl, serviceKey)
 
   const { data: ticketRow, error: ticketLoadErr } = await supabase
@@ -86,6 +91,7 @@ serve(async (req) => {
       "id, landlord_id, issue_category, assigned_vendor_id, vendor_work_status, scheduled_window_text, schedule_confirmed_at, vendor_notified_at, vendor_action_token, priority, unit, description, issue_headline, entry_ok_if_absent, urgency, severity, due_at, estimated_minutes, resident_availability_text",
     )
     .eq("id", ticketId)
+    .eq("landlord_id", landlordId)
     .maybeSingle()
 
   if (ticketLoadErr) {
@@ -102,6 +108,25 @@ serve(async (req) => {
   const ticketIssueCategory = ticketRow.issue_category == null
     ? null
     : String(ticketRow.issue_category).trim()
+
+  // A ticket grant does not grant authority over another portfolio's vendor.
+  const assignedAction = ["ask_availability", "schedule_confirm", "notify_selected"].includes(action)
+  const scopedVendorId = vendorIdRaw && isUuidShape(vendorIdRaw)
+    ? vendorIdRaw
+    : assignedAction && typeof ticketRow.assigned_vendor_id === "string"
+    ? ticketRow.assigned_vendor_id.trim()
+    : ""
+  if (scopedVendorId) {
+    const { data: scopedVendor, error: vendorScopeError } = await supabase
+      .from("vendors")
+      .select("id")
+      .eq("id", scopedVendorId)
+      .eq("landlord_id", landlordId)
+      .eq("active", true)
+      .maybeSingle()
+    if (vendorScopeError) return jsonResponse({ error: "Load vendor failed" }, 500)
+    if (!scopedVendor) return jsonResponse({ error: "Vendor not found" }, 404)
+  }
 
   // Ops heal: resend "Earliest availability?" after accept when the ask SMS failed.
   if (action === "ask_availability") {
@@ -361,6 +386,7 @@ serve(async (req) => {
         .from("vendors")
         .select("name")
         .eq("id", _vendorId)
+        .eq("landlord_id", landlordId)
         .maybeSingle()
       const resolvedVendorName = typeof vendorRow?.name === "string"
         ? vendorRow.name

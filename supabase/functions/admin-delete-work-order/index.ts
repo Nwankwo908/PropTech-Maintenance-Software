@@ -1,6 +1,6 @@
 /**
  * Soft-archive a maintenance work order (no hard-delete).
- * Auth: ADMIN_REASSIGN_SECRET via x-admin-reassign-secret.
+ * Auth: verified user session and account-scoped portfolio authority.
  *
  * Preserves the ticket + estimates + activity history. Notifies the assigned
  * vendor via terminateWorkOrder. Cancels linked workflow runs.
@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { detachDeletedTicketFromSmsConversations } from "../_shared/sms/detachTicketFromConversations.ts"
 import { terminateWorkOrder } from "../_shared/terminateWorkOrder.ts"
 
@@ -51,8 +51,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[admin-delete-work-order]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: {
     landlordId?: string
@@ -82,12 +80,16 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
   const supabase = createClient(supabaseUrl, serviceKey)
 
   const { data: run, error: runErr } = await supabase
     .from("workflow_runs")
     .select("id, landlord_id, template_id, entity_type, entity_id, metadata")
     .eq("id", workflowRunId)
+    .eq("landlord_id", landlordId)
     .maybeSingle()
 
   if (runErr) {
@@ -132,6 +134,17 @@ serve(async (req) => {
       deletedRunIds: [workflowRunId],
       archived: true,
     })
+  }
+
+  const { data: ticket, error: ticketErr } = await supabase
+    .from("maintenance_requests")
+    .select("id, landlord_id")
+    .eq("id", ticketId)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  if (ticketErr) return jsonResponse({ error: "Load work order failed" }, 500)
+  if (!ticket || String(ticket.landlord_id) !== landlordId) {
+    return jsonResponse({ error: "Work order not found" }, 404)
   }
 
   const result = await terminateWorkOrder(supabase, {

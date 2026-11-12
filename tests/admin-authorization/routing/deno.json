@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ]
+  },
+  "imports": {
+    "https://deno.land/std/http/server.ts": "./server_stub.ts",
+    "https://esm.sh/@supabase/supabase-js@2.49.1": "./sdk_stub.ts",
+    "../../../supabase/functions/submit-maintenance-request/vendor_notify.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/graph/logGraphEvent.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/engine/maintenanceRequestEngine.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/landlordSmsOnboarding.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/vendor_job_schedule.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/vendor_outreach_copy.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/vendorSmsRouting.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/uloAppUrl.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/workflowStageMove/applyAdminStageMove.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/setManualVisitTime.ts": "./business_stub.ts"
+  }
+}

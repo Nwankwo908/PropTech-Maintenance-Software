@@ -2445,11 +2445,16 @@ export function applyDiagnosticAnswer(
     }
   }
 
-  const customReply = interpretCustomSafetyReply(
-    state.safety_concerns,
-    answer,
-    tenantAuthoredText(state),
-  )
+  // "Not sure" to the entry question answers that question. It is not a
+  // status update on a safety concern.
+  const unitEntryNotSure = type === "unit_entry" && isUnitEntryNotSure(answer)
+  const customReply = unitEntryNotSure
+    ? ({ kind: "unchanged" } as const)
+    : interpretCustomSafetyReply(
+      state.safety_concerns,
+      answer,
+      tenantAuthoredText(state),
+    )
   if (customReply.kind !== "unchanged") {
     const index = askedTypes.indexOf(type)
     if (index >= 0) askedTypes.splice(index, 1)
@@ -2466,7 +2471,7 @@ export function applyDiagnosticAnswer(
     })
   }
 
-  if (type === "unit_entry" && isUnitEntryNotSure(answer)) {
+  if (unitEntryNotSure) {
     answer = "not_sure"
   }
 

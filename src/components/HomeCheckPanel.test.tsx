@@ -6,6 +6,7 @@ import { HomeCheckCapturePage } from '@/components/HomeCheckCapturePage'
 import { HomeCheckPanel } from '@/components/HomeCheckPanel'
 import { HOME_CHECK_CHANGED_EVENT } from '@/lib/homeCheckEvents'
 import type { HomeCheckField } from '@shared/homeCheck'
+import type { HomeCheckSummaryRow } from '@/api/homeCheck'
 
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: {} } }))
 vi.mock('@/lib/assetRegistry', () => ({ notifyAssetRegistryChanged: vi.fn() }))
@@ -39,12 +40,16 @@ function asset(id: string, system: 'water_heater' | 'heating') {
   }
 }
 
-const openCheck = {
+const openCheck: HomeCheckSummaryRow = {
   id: 'check',
   reference: 'HC-100',
   property_label: '14 Maple Ave',
   unit_label: null,
   status: 'completed',
+  created_at: '2026-10-24T00:00:00.000Z',
+  sent_at: null,
+  opened_at: null,
+  issue_ticket_id: null,
   expires_at: '2026-11-01T00:00:00.000Z',
   completed_at: '2026-10-25T00:00:00.000Z',
   confirmed_at: null,
@@ -55,14 +60,6 @@ const openCheck = {
     { slot: 'heating_label', previewUrl: null, state: 'ready' },
   ],
   role: 'landlord',
-  sent: 0,
-  opened: 0,
-  completed: 1,
-  labelReadable: 0,
-  confirmed: 0,
-  averageMinutes: null,
-  issueShare: null,
-  approvedJobShare: null,
 }
 
 describe('Home Check results', () => {

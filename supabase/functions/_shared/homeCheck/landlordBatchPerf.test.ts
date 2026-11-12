@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs'
+import process from 'node:process'
 import { performance } from 'node:perf_hooks'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { homeCheckCaptureSms, HOME_CHECK_PHOTOS } from '../../../../shared/homeCheck.ts'

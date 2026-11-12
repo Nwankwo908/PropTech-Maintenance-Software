@@ -1,4 +1,8 @@
-@import 'tailwindcss';
+/* Scan authored UI sources only; embedded asset data is not utility markup. */
+@import 'tailwindcss' source('./');
+@source not './assets';
+@source '../shared';
+@source '../index.html';
 
 /** Compact portrait: 320×480–568, 346×346, 360×480, 360×640–780, 375×812, 384×640, 384×824, 390×390, 393×786, 412×690, 432×768, 440×956, 480×800–853, and 504×504 (with a small size band around each). */
 @custom-variant landing-compact {

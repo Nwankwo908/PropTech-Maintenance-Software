@@ -1,16 +1,12 @@
 /**
  * Soft-terminate (cancel/archive) a maintenance work order.
- * Replaces hard-delete for assigned tickets. Auth: ADMIN_REASSIGN_SECRET.
- *
- *   curl -X POST ".../functions/v1/terminate-work-order" \
- *     -H "Authorization: Bearer $ADMIN_REASSIGN_SECRET" \
- *     -H "Content-Type: application/json" \
- *     -d '{"landlordId":"...","ticketId":"...","mode":"cancel","source":"dashboard"}'
+ * Replaces hard-delete for assigned tickets. Auth: verified user session
+ * and account-scoped portfolio authority.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import {
   terminateWorkOrder,
   type TerminateMode,
@@ -43,8 +39,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[terminate-work-order]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: Record<string, unknown> = {}
   try {
@@ -89,9 +83,23 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+
+  const { data: ticket, error: ticketErr } = await supabase
+    .from("maintenance_requests")
+    .select("id, landlord_id")
+    .eq("id", ticketId)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  if (ticketErr) return jsonResponse({ error: "Load work order failed" }, 500)
+  if (!ticket || String(ticket.landlord_id) !== landlordId) {
+    return jsonResponse({ error: "Work order not found" }, 404)
+  }
 
   try {
     const result = await terminateWorkOrder(supabase, {
