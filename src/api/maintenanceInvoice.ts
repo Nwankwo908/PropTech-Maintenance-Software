@@ -1,11 +1,8 @@
 /**
  * Admin Edge Functions for maintenance invoice approval.
  */
-import {
-  adminEdgeInvokeHeaders,
-  fetchAdminEdgeFunction,
-} from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { fetchAdminEdgeFunction } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 
@@ -347,14 +344,13 @@ export async function approveMaintenanceInvoice(
   note?: string,
 ): Promise<void> {
   const url = approveInvoiceUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
-    throw new Error('Invoice approval is not configured (admin Edge URL/secret).')
+  if (!url) {
+    throw new Error('Invoice approval is not configured (admin Edge URL).')
   }
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(),
     body: JSON.stringify({
       invoiceId,
       landlordId: getActiveLandlordId(),
@@ -365,7 +361,7 @@ export async function approveMaintenanceInvoice(
 
   const payload = (await res.json().catch(() => ({}))) as { error?: string }
   if (!res.ok) {
-    throw new Error(payload.error ?? `Approval failed (${res.status})`)
+    throw new Error(res.status === 401 ? ADMIN_SESSION_REQUIRED : payload.error ?? `Approval failed (${res.status})`)
   }
 }
 
@@ -374,14 +370,13 @@ export async function rejectMaintenanceInvoice(
   reason?: string,
 ): Promise<void> {
   const url = approveInvoiceUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
-    throw new Error('Invoice approval is not configured (admin Edge URL/secret).')
+  if (!url) {
+    throw new Error('Invoice approval is not configured (admin Edge URL).')
   }
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(),
     body: JSON.stringify({
       invoiceId,
       landlordId: getActiveLandlordId(),
@@ -392,6 +387,6 @@ export async function rejectMaintenanceInvoice(
 
   const payload = (await res.json().catch(() => ({}))) as { error?: string }
   if (!res.ok) {
-    throw new Error(payload.error ?? `Rejection failed (${res.status})`)
+    throw new Error(res.status === 401 ? ADMIN_SESSION_REQUIRED : payload.error ?? `Rejection failed (${res.status})`)
   }
 }

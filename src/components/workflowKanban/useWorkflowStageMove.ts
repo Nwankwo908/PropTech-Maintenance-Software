@@ -4,7 +4,6 @@ import {
   postAdminMoveWorkflowStage,
 } from '@/api/adminMoveWorkflowStage'
 import { postAdminReassignVendor, resolveAdminReassignUrl } from '@/api/adminReassignVendor'
-import { requireAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import type { WorkflowKanbanCard, WorkflowKanbanStageId } from '@/lib/adminWorkflowKanban'
 import { WORKFLOW_STAGE_LABEL } from '@/lib/adminWorkflowKanban'
 import { resolveStageMoveGate, type StageMoveGate } from '@/lib/workflowStageMoveRules'
@@ -208,11 +207,9 @@ export function useWorkflowStageMove(opts: {
       setError(null)
       setOptimistic({ runId: pending.card.id, stage: 'assigned' })
       try {
-        const secret = requireAdminEdgeSecret('Reassign vendor')
         for (const ticketId of targets) {
           await postAdminReassignVendor({
             url,
-            secret,
             ticketId,
             vendorName,
             createVendorIfMissing: true,

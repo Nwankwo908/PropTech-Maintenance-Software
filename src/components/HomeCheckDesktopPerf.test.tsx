@@ -45,7 +45,8 @@ it('renders the desktop request screens for a full vendor handoff', () => {
       expect(selection.error).toBeNull()
       expect(preview).toContain('Can you complete a Home Check at 12 Oak St, Unit 2B?')
       expect(preview).toContain('Reply YES to accept or NO to decline')
-      expect(preview).toContain('coordinate a visit time with the tenant')
+      // The dialog has no tenant info, so it previews the default (landlord) wording.
+      expect(preview).toContain('coordinate a visit time with the landlord')
       expect(preview).not.toContain('Next: send a clear photo')
       expect(success).toContain('Message was sent successfully.')
       expect(setup).toContain('Go and set up your vendor first.')

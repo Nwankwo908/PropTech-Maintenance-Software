@@ -7,7 +7,6 @@ import { useWorkflowStageMove } from '@/components/workflowKanban/useWorkflowSta
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
 import { postAdminReassignVendor, resolveAdminReassignUrl } from '@/api/adminReassignVendor'
 import { postAdminSetVisitTime } from '@/api/adminMoveWorkflowStage'
-import { requireAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import {
   fetchInboxConversationMonitoring,
   fetchWorkflowUloThreadMonitoring,
@@ -90,24 +89,6 @@ function ImageIcon() {
   )
 }
 
-function DocumentIcon() {
-  return (
-    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" strokeLinejoin="round" />
-      <path d="M14 2v6h6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function VideoIcon() {
-  return (
-    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <rect x="3" y="6" width="14" height="12" rx="2" />
-      <path d="m17 10 4-2v8l-4-2z" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function WorkOrderPhotosSection({
   title,
   subtitle,
@@ -159,13 +140,8 @@ function WorkOrderPhotosSection({
               </a>
             ) : (
               <div className="flex aspect-[4/3] items-center justify-center bg-[#f3f4f6]">
-                {attachment.kind === 'video' ? (
-                  <VideoIcon />
-                ) : attachment.kind === 'image' ? (
-                  <ImageIcon />
-                ) : (
-                  <DocumentIcon />
-                )}
+                {/* Video, audio and document attachments render in SmsAttachmentCard above. */}
+                <ImageIcon />
               </div>
             )}
             <div className="px-3 py-2.5">
@@ -661,11 +637,9 @@ export function WorkflowPipelineDetailPanel({
     setVendorSaveError(null)
     stageMove.setError(null)
     try {
-      const secret = requireAdminEdgeSecret('Reassign vendor')
       for (const ticketId of ticketIds) {
         await postAdminReassignVendor({
           url,
-          secret,
           ticketId,
           vendorName: trimmed,
           createVendorIfMissing: true,

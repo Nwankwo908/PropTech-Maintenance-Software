@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { approveMaintenanceInvoice } from "../_shared/maintenanceSpend.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -24,8 +24,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[admin-approve-maintenance-invoice]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
 
   let body: {
@@ -59,26 +57,37 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
   const supabase = createClient(supabaseUrl, serviceKey)
+
+  const { data: invoice, error: fetchErr } = await supabase
+    .from("maintenance_invoices")
+    .select("id, landlord_id, maintenance_request_id, status, metadata")
+    .eq("id", invoiceId)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  if (fetchErr) return jsonResponse({ error: "Load invoice failed" }, 500)
+  if (!invoice || String(invoice.landlord_id) !== landlordId) {
+    return jsonResponse({ error: "Invoice not found" }, 404)
+  }
+  const { data: ticket, error: ticketErr } = await supabase
+    .from("maintenance_requests")
+    .select("id, landlord_id")
+    .eq("id", invoice.maintenance_request_id)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  if (ticketErr) return jsonResponse({ error: "Load work order failed" }, 500)
+  if (!ticket || String(ticket.landlord_id) !== landlordId) {
+    return jsonResponse({ error: "Work order not found" }, 404)
+  }
 
   if (action === "reject") {
     const reason =
       typeof body.rejectionReason === "string"
         ? body.rejectionReason.trim()
         : "Rejected by property manager"
-
-    const { data: invoice, error: fetchErr } = await supabase
-      .from("maintenance_invoices")
-      .select("id, landlord_id, maintenance_request_id, status, metadata")
-      .eq("id", invoiceId)
-      .maybeSingle()
-
-    if (fetchErr || !invoice) {
-      return jsonResponse({ error: "Invoice not found" }, 404)
-    }
-    if (String(invoice.landlord_id) !== landlordId) {
-      return jsonResponse({ error: "Forbidden" }, 403)
-    }
 
     const now = new Date().toISOString()
     const existingMeta =
@@ -100,11 +109,13 @@ serve(async (req) => {
         },
       })
       .eq("id", invoiceId)
+      .eq("landlord_id", landlordId)
 
     await supabase
       .from("maintenance_requests")
       .update({ spend_status: "rejected" })
       .eq("id", invoice.maintenance_request_id)
+      .eq("landlord_id", landlordId)
 
     return jsonResponse({ ok: true, invoiceId, status: "rejected" })
   }
