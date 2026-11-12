@@ -1,12 +1,10 @@
 /**
- * POST admin-move-workflow-stage (ADMIN_REASSIGN_SECRET).
+ * POST admin-move-workflow-stage (user-session authorization).
  */
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
-  formatAdminEdgeUnauthorizedError,
-  requireAdminEdgeSecret,
 } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import type { WorkflowKanbanStageId } from '@/lib/adminWorkflowKanban'
 
@@ -57,7 +55,6 @@ export async function postAdminMoveWorkflowStage(
   input: AdminMoveWorkflowStageInput,
 ): Promise<AdminMoveWorkflowStageOk> {
   const url = resolveAdminMoveWorkflowStageUrl()
-  const secret = requireAdminEdgeSecret('Move workflow stage')
   if (!url) {
     throw new Error('Stage move is not configured (admin Edge URL).')
   }
@@ -69,7 +66,7 @@ export async function postAdminMoveWorkflowStage(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(import.meta.env.VITE_ADMIN_AUTH_LEGACY_COMPAT === 'true'),
     body: JSON.stringify({
       landlordId,
       runId: input.runId.trim(),
@@ -97,7 +94,7 @@ export async function postAdminMoveWorkflowStage(
 
   if (res.status === 401) {
     throw new Error(
-      formatAdminEdgeUnauthorizedError(payload.error ?? 'Stage move unauthorized'),
+      ADMIN_SESSION_REQUIRED,
     )
   }
 
@@ -123,14 +120,13 @@ export async function postAdminSetVisitTime(input: {
   windowText: string
 }): Promise<{ scheduledWindowText: string; vendorTexted: boolean }> {
   const url = resolveAdminMoveWorkflowStageUrl()
-  const secret = requireAdminEdgeSecret('Set visit time')
   if (!url) throw new Error('Visit time is not configured (admin Edge URL).')
   const landlordId = getActiveLandlordId()
   if (!landlordId) throw new Error('No active landlord selected.')
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(import.meta.env.VITE_ADMIN_AUTH_LEGACY_COMPAT === 'true'),
     body: JSON.stringify({
       action: 'set_visit_time',
       landlordId,
@@ -144,6 +140,7 @@ export async function postAdminSetVisitTime(input: {
     scheduled_window_text?: string
     vendor_texted?: boolean
   }
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
   if (!res.ok) {
     throw new Error(payload.error ?? `Could not set the visit time (${res.status})`)
   }

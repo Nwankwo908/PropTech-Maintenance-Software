@@ -7,7 +7,6 @@ import { useWorkflowStageMove } from '@/components/workflowKanban/useWorkflowSta
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
 import { postAdminReassignVendor, resolveAdminReassignUrl } from '@/api/adminReassignVendor'
 import { postAdminSetVisitTime } from '@/api/adminMoveWorkflowStage'
-import { requireAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import {
   fetchInboxConversationMonitoring,
   fetchWorkflowUloThreadMonitoring,
@@ -650,11 +649,9 @@ export function WorkflowPipelineDetailPanel({
     setVendorSaveError(null)
     stageMove.setError(null)
     try {
-      const secret = requireAdminEdgeSecret('Reassign vendor')
       for (const ticketId of ticketIds) {
         await postAdminReassignVendor({
           url,
-          secret,
           ticketId,
           vendorName: trimmed,
           createVendorIfMissing: true,

@@ -1,16 +1,11 @@
 /**
  * Admin Active Tasks: move a maintenance card between kanban stages.
- * Auth: ADMIN_REASSIGN_SECRET (same as admin-reassign-vendor).
- *
- *   curl -X POST ".../functions/v1/admin-move-workflow-stage" \
- *     -H "x-admin-reassign-secret: $ADMIN_REASSIGN_SECRET" \
- *     -H "Content-Type: application/json" \
- *     -d '{"landlordId":"...","runId":"...","ticketId":"...","fromStage":"assigned","toStage":"in_progress"}'
+ * Auth: verified user session and account-scoped portfolio authority.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { applyAdminStageMove } from "../_shared/workflowStageMove/applyAdminStageMove.ts"
 import { setManualVisitTime } from "../_shared/sms/setManualVisitTime.ts"
@@ -46,9 +41,6 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[admin-move-workflow-stage]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
-
   let body: Record<string, unknown> = {}
   try {
     body = (await req.json()) as Record<string, unknown>
@@ -59,6 +51,12 @@ serve(async (req) => {
   const action = typeof body.action === "string" ? body.action.trim() : ""
   const landlordId =
     typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+
+  if (!landlordId || !isUuidShape(landlordId)) {
+    return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  }
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
   if (action === "set_visit_time") {
     const ticketId =

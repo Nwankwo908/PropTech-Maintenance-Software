@@ -2,8 +2,10 @@ import { supabase } from '@/lib/supabase'
 
 export const ADMIN_SESSION_REQUIRED = 'Please sign in again to continue.'
 
-/** User-session headers for the five F08 dashboard actions only. */
-export async function adminSessionInvokeHeaders(): Promise<Record<string, string>> {
+/** User-session headers for account-scoped administrative actions. */
+export async function adminSessionInvokeHeaders(
+  legacyCompatibility = import.meta.env.VITE_F08_LEGACY_ADMIN_COMPAT === 'true',
+): Promise<Record<string, string>> {
   if (!supabase) throw new Error(ADMIN_SESSION_REQUIRED)
 
   let accessToken: string
@@ -27,7 +29,7 @@ export async function adminSessionInvokeHeaders(): Promise<Record<string, string
 
   // Phase 1 only: old functions require this header. It never substitutes for
   // the session above. Disable the flag after all three new guards are live.
-  if (import.meta.env.VITE_F08_LEGACY_ADMIN_COMPAT === 'true') {
+  if (legacyCompatibility) {
     const legacySecret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
     if (!legacySecret) throw new Error('Legacy rollout configuration is missing.')
     headers['x-admin-reassign-secret'] = legacySecret
