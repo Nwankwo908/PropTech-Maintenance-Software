@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs'
+import process from 'node:process'
 import { performance } from 'node:perf_hooks'
 import { expect, it, vi } from 'vitest'
 import {

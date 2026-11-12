@@ -3,6 +3,7 @@
  * Excludes carrier latency; measures parse + prepare/act with mocked I/O.
  */
 import { writeFileSync } from 'node:fs'
+import process from 'node:process'
 import { performance } from 'node:perf_hooks'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { parseHomeCheckManufactureCorrection } from './manufactureCorrectionParse.ts'

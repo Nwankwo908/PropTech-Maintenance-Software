@@ -89,15 +89,6 @@ function ImageIcon() {
   )
 }
 
-function DocumentIcon() {
-  return (
-    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" strokeLinejoin="round" />
-      <path d="M14 2v6h6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function WorkOrderPhotosSection({
   title,
   subtitle,
@@ -149,11 +140,8 @@ function WorkOrderPhotosSection({
               </a>
             ) : (
               <div className="flex aspect-[4/3] items-center justify-center bg-[#f3f4f6]">
-                {attachment.kind === 'image' ? (
-                  <ImageIcon />
-                ) : (
-                  <DocumentIcon />
-                )}
+                {/* Video, audio and document attachments render in SmsAttachmentCard above. */}
+                <ImageIcon />
               </div>
             )}
             <div className="px-3 py-2.5">

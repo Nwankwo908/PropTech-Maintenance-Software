@@ -28,17 +28,23 @@ Fresh local results on the candidate:
 | Frontend TypeScript: application, tooling, tests | Passed after fixing one test-fixture import during test integration |
 | Production packaging | Passed |
 | Edge lockfile compatibility | Passed |
-| Full frontend behavior | 1,707 passed; 1 failed: HomeCheckDesktopPerf expected-copy assertion |
-| Full backend behavior | 2,001 passed; 1 failed: intakeSilence_recurring NOT SURE assertion |
-| Full backend types | Failed: equipmentPair argument count; manufactureCorrection PromiseLike.catch |
-| Full lint | Frontend: zero errors, 65 warnings. Backend: nine errors |
+| Full frontend behavior after incorporating PR #11 | 1,708 passed; no failures |
+| Full backend behavior after incorporating PR #11 | 2,002 passed; no failures |
+| Full backend types after incorporating PR #11 | Passed: 100 entrypoints and shared tests |
+| Full lint after incorporating PR #11 | Passed; frontend retains 65 pre-existing warnings |
 | Connected workflows | Isolated onboarding PostgreSQL suite and timezone matrix passed. Home Check SQL requires an isolated pre-migrated database; browser/live suites not run |
 
-The two backend type errors, nine backend lint findings, HomeCheckDesktopPerf failure and intakeSilence_recurring failure were independently reproduced on unchanged GitHub main. These checks are not suppressed or converted to success. GitHub CI is authoritative for its own runtime and must be reviewed before approval. No local check proves real-browser button availability.
+The original candidate reproduced two backend type errors, nine backend lint findings and the HomeCheckDesktopPerf/intakeSilence_recurring failures on main. PR #11 fixes those issues and is incorporated directly into this PR without merging #11 to main. The attachment-rendering conflict keeps #11’s cleanup and #12’s session-based reassignment; requireAdminEdgeSecret is not restored. All seven local readiness checks now pass, with no checks weakened. An initial preview dependency symlink caused one test-suite load failure; reinstalling the exact locked dependencies locally resolved that environment issue. GitHub CI remains a separate verification, and no local check proves real-browser button availability.
 
 ## Deployment hold and next verification
 
-Vercel automatic deployment is disabled for this PR branch only using `git.deploymentEnabled`. Other branch settings are unchanged. There are no deployment steps in the added CI job. Do not merge or deploy until the user approves the PR.
+The temporary `vercel.json` branch-deployment entry has been removed at the user’s request. Vercel project settings remain unchanged; an automatic preview of this branch is permitted. Production is linked to main, and main must not be changed until the user approves the coordinated rollout. There are no deployment steps in the added CI job. Do not merge this PR or deploy to production without approval.
+
+## Frontend preservation before merging
+
+Production was rechecked read-only: its READY deployment serves frontend commit `32f283eb0d74e5cf9036f103c761ca1fdbacc03a` in session-only F08 mode. That exact commit is an ancestor of this PR. The three API files `deleteWorkOrder.ts`, `emergencyWorkOrderDecision.ts`, and `maintenanceInvoice.ts` remain byte-for-byte identical to that live release. Their five calls still obtain the signed-in Supabase session and retain the sign-in-again behavior. The shared session helper keeps that default behavior while allowing an independent compatibility flag for the newer reassignment/stage callers. The 76 frontend authorization regressions verify the request headers and refusal behavior.
+
+Merging this PR into main therefore includes a frontend newer than the live F08 release; it does not revert main to the pre-F08 callers. This is a source/build guarantee, not a prediction that an automatic deployment cannot fail. Verify the actual served commit after any separately approved production release. The newer reassignment/stage guards still require the coordinated compatibility order below; this source-preservation check does not authorize their production deployment.
 
 After approval:
 

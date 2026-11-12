@@ -74,6 +74,8 @@ export async function runHomeCheckPhotoRecovery(db: SupabaseClient, landlordId?:
       // Reserve BEFORE sending. A crash/ambiguous provider outcome is never blindly resent.
       const saved = await db.from('home_check_recovery_notices').update({ state, updated_at: new Date().toISOString() })
         .eq('id', notice.id).eq('check_id', id).eq('state', 'sending')
+      // Deliberate: if the outcome can't be saved, stop recovery rather than risk a resend.
+      // deno-lint-ignore no-unsafe-finally
       if (saved.error) throw new Error('Recovery notice outcome requires review')
     }
   }
