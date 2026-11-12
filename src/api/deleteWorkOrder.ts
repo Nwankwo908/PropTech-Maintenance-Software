@@ -2,11 +2,8 @@
  * Soft-archive a maintenance work order (replaces permanent hard-delete).
  * Uses terminate-work-order Edge Function — vendor is notified; row is preserved.
  */
-import {
-  adminEdgeInvokeHeaders,
-  fetchAdminEdgeFunction,
-} from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { fetchAdminEdgeFunction } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function terminateWorkOrderUrl(): string | null {
@@ -44,13 +41,13 @@ export async function archiveWorkOrders(ticketIds: string[]): Promise<{
   errors: Array<{ ticketId: string; error: string }>
 }> {
   const url = terminateWorkOrderUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     throw new Error(
-      'Work order archive is not configured (admin Edge URL/secret).',
+      'Work order archive is not configured (admin Edge URL).',
     )
   }
 
+  const headers = await adminSessionInvokeHeaders()
   const landlordId = getActiveLandlordId()
   const archivedIds: string[] = []
   const errors: Array<{ ticketId: string; error: string }> = []
@@ -61,7 +58,7 @@ export async function archiveWorkOrders(ticketIds: string[]): Promise<{
     try {
       const res = await fetchAdminEdgeFunction(url, {
         method: 'POST',
-        headers: adminEdgeInvokeHeaders(secret),
+        headers,
         body: JSON.stringify({
           landlordId,
           ticketId,
@@ -74,7 +71,7 @@ export async function archiveWorkOrders(ticketIds: string[]): Promise<{
       if (!res.ok) {
         errors.push({
           ticketId,
-          error: payload.error ?? `Archive failed (${res.status})`,
+          error: res.status === 401 ? ADMIN_SESSION_REQUIRED : payload.error ?? `Archive failed (${res.status})`,
         })
         continue
       }
@@ -96,10 +93,9 @@ export async function deleteWorkOrderPermanently(params: {
   maintenanceRequestId?: string | null
 }): Promise<DeleteWorkOrderResult> {
   const url = terminateWorkOrderUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     throw new Error(
-      'Work order archive is not configured (admin Edge URL/secret).',
+      'Work order archive is not configured (admin Edge URL).',
     )
   }
 
@@ -110,7 +106,7 @@ export async function deleteWorkOrderPermanently(params: {
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(),
     body: JSON.stringify({
       landlordId: getActiveLandlordId(),
       workflowRunId: params.workflowRunId,
@@ -130,7 +126,7 @@ export async function deleteWorkOrderPermanently(params: {
   }
 
   if (!res.ok) {
-    throw new Error(payload.error ?? `Archive failed (${res.status})`)
+    throw new Error(res.status === 401 ? ADMIN_SESSION_REQUIRED : payload.error ?? `Archive failed (${res.status})`)
   }
 
   return {

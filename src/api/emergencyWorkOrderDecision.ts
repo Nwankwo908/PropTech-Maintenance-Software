@@ -2,11 +2,8 @@
  * Property-detail emergency Review: stop a job when there is no pending estimate.
  * Soft-terminates via terminate-work-order Edge Function (vendor notify + audit).
  */
-import {
-  adminEdgeInvokeHeaders,
-  fetchAdminEdgeFunction,
-} from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { fetchAdminEdgeFunction } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { recordActivityLog } from '@/lib/recordActivityLog'
 
@@ -34,17 +31,16 @@ export async function cancelEmergencyWorkOrder(input: {
   if (!ticketId) throw new Error('Missing work order id.')
 
   const url = terminateWorkOrderUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     throw new Error(
-      'Work order cancel is not configured (admin Edge URL/secret).',
+      'Work order cancel is not configured (admin Edge URL).',
     )
   }
 
   const landlordId = getActiveLandlordId()
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(),
     body: JSON.stringify({
       landlordId,
       ticketId,
@@ -61,7 +57,7 @@ export async function cancelEmergencyWorkOrder(input: {
   }
 
   if (!res.ok) {
-    throw new Error(payload.error ?? `Cancel failed (${res.status})`)
+    throw new Error(res.status === 401 ? ADMIN_SESSION_REQUIRED : payload.error ?? `Cancel failed (${res.status})`)
   }
 
   void recordActivityLog({
