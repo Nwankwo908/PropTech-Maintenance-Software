@@ -47,8 +47,8 @@ async function postAdminFunction<T>(
   let headers: Record<string, string>
   try {
     headers = sessionOnly
-      // Phase 1 bridges old/new Edge guards; a session is always required.
-      ? await adminSessionInvokeHeaders(import.meta.env.VITE_INSPECTION_ACTIVATION_LEGACY_COMPAT !== 'false')
+      // Activation is session-only, independent of the remaining legacy callers.
+      ? await adminSessionInvokeHeaders(false)
       : adminEdgeInvokeHeaders(secret!)
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Please sign in again to continue.' }

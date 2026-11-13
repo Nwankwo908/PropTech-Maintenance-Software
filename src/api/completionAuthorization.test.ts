@@ -30,21 +30,21 @@ describe('inspection and activation use account sessions', () => {
       expect(headers.has('x-admin-reassign-secret')).toBe(false)
       expect(JSON.parse(String(init?.body)).landlordId).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     })
-    it(`${action.name} can reach the old guard during an explicit compatibility phase`, async () => {
+    it(`${action.name} ignores the retired compatibility flag`, async () => {
       vi.stubEnv('VITE_INSPECTION_ACTIVATION_LEGACY_COMPAT', 'true')
       vi.stubEnv('VITE_ADMIN_REASSIGN_SECRET', 'synthetic-unusable-legacy-value')
       expect((await action.invoke()).ok).toBe(true)
       const headers = new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers)
       expect(headers.get('Authorization')).toBe('Bearer synthetic-unusable-user-session')
-      expect(headers.get('x-admin-reassign-secret')).toBe('synthetic-unusable-legacy-value')
+      expect(headers.has('x-admin-reassign-secret')).toBe(false)
     })
-    it(`${action.name} defaults to the bridge when the rollout flag is unset`, async () => {
+    it(`${action.name} defaults to session-only headers when the rollout flag is unset`, async () => {
       vi.stubEnv('VITE_INSPECTION_ACTIVATION_LEGACY_COMPAT', undefined)
       vi.stubEnv('VITE_ADMIN_REASSIGN_SECRET', 'synthetic-unusable-legacy-value')
       expect((await action.invoke()).ok).toBe(true)
       const headers = new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers)
       expect(headers.get('Authorization')).toBe('Bearer synthetic-unusable-user-session')
-      expect(headers.get('x-admin-reassign-secret')).toBe('synthetic-unusable-legacy-value')
+      expect(headers.has('x-admin-reassign-secret')).toBe(false)
     })
     for (const compatibility of [false, true]) for (const state of ['signed-out', 'expired', 'auth-error']) {
       it(`${action.name} sends no mutation when ${state}, compatibility=${compatibility}`, async () => {
