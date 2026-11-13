@@ -1,5 +1,5 @@
 /**
- * Unit vacancy + activation Edge Functions (admin secret).
+ * Unit vacancy (legacy guard) and session-authorized activation Edge Functions.
  */
 
 import {
@@ -7,6 +7,7 @@ import {
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type UnitRecord = {
@@ -36,15 +37,26 @@ function functionUrl(name: 'mark-unit-vacant' | 'activate-unit'): string | undef
 async function postAdminFunction<T>(
   url: string | undefined,
   body: Record<string, unknown>,
+  sessionOnly = false,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url || (!sessionOnly && !secret)) {
     return { ok: false, error: 'Admin SMS configuration is missing.' }
+  }
+
+  let headers: Record<string, string>
+  try {
+    headers = sessionOnly
+      // Phase 1 bridges old/new Edge guards; a session is always required.
+      ? await adminSessionInvokeHeaders(import.meta.env.VITE_INSPECTION_ACTIVATION_LEGACY_COMPAT !== 'false')
+      : adminEdgeInvokeHeaders(secret!)
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Please sign in again to continue.' }
   }
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers,
     body: JSON.stringify(body),
   })
 
@@ -122,7 +134,7 @@ export async function activateUnit(
     tenantEmail: payload.tenantEmail,
     moveInDate: payload.moveInDate,
     residentId: payload.residentId,
-  })
+  }, true)
 
   if (!result.ok) return result
   return {

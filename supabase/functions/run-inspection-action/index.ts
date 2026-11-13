@@ -1,11 +1,12 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { runInspectionViaEngine } from "../_shared/engine/inspectionEngine.ts"
 import type { InspectionAdminEngineAction } from "../_shared/engine/inspectionProgress.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const ENGINE_ACTIONS = new Set<InspectionAdminEngineAction>([
   "send_reminder",
@@ -30,8 +31,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[run-inspection-action]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: {
     landlordId?: string
@@ -41,7 +40,11 @@ serve(async (req) => {
     notes?: string | null
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "Expected JSON object" }, 400)
+    }
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -52,9 +55,12 @@ serve(async (req) => {
     : ""
   const action = typeof body.action === "string" ? body.action.trim() : ""
 
-  if (!landlordId || !workflowRunId || !action) {
+  if (!uuidRe.test(landlordId) || !uuidRe.test(workflowRunId) || !action) {
     return jsonResponse({ error: "Missing landlordId, workflowRunId, or action" }, 400)
   }
+
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
   if (!ENGINE_ACTIONS.has(action as InspectionAdminEngineAction)) {
     return jsonResponse({ error: "Unsupported inspection action" }, 400)
@@ -69,6 +75,16 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   try {
+    const { data: run, error: runError } = await supabase
+      .from("workflow_runs")
+      .select("id, landlord_id")
+      .eq("id", workflowRunId)
+      .eq("landlord_id", landlordId)
+      .eq("template_id", "inspection")
+      .maybeSingle()
+    if (runError) return jsonResponse({ error: "Workflow lookup unavailable" }, 503)
+    if (!run) return jsonResponse({ error: "Workflow not found" }, 404)
+
     const engineResult = await runInspectionViaEngine(supabase, {
       landlordId,
       runId: workflowRunId,
