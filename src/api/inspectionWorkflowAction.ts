@@ -1,8 +1,5 @@
-import {
-  adminEdgeInvokeHeaders,
-  fetchAdminEdgeFunction,
-} from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { fetchAdminEdgeFunction } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type InspectionAdminAction =
@@ -27,14 +24,22 @@ export async function postInspectionWorkflowAction(
   },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const url = functionUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return { ok: false, error: 'Admin workflow configuration is missing.' }
+  }
+
+  let headers: Record<string, string>
+  try {
+    // Phase 1 defaults to sending both session and legacy header so this
+    // frontend can ship before the two session-only Edge guards.
+    headers = await adminSessionInvokeHeaders(import.meta.env.VITE_INSPECTION_ACTIVATION_LEGACY_COMPAT !== 'false')
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Please sign in again to continue.' }
   }
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers,
     body: JSON.stringify({
       workflowRunId: params.workflowRunId,
       action: params.action,

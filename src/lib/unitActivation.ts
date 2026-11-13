@@ -1036,13 +1036,9 @@ export async function applyAdminUnitOccupancyStatus(params: {
       return { ok: true }
     }
 
-    // Fallback when admin edge secret is missing — still persist active status.
-    return setUnitStatusDirect({
-      unitId: params.unitId,
-      landlordId,
-      status: 'active',
-      skipTenantRegistration: true,
-    })
+    // Activation must fail closed: a denied/unavailable Edge call must not be
+    // converted into a separate direct database mutation.
+    return viaEdge
   }
 
   if (params.status === 'under_maintenance') {
