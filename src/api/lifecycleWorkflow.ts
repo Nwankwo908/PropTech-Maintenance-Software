@@ -65,7 +65,7 @@ export async function startLifecycleWorkflow(
   }
 
   let headers: Record<string, string>
-  try { headers = await adminSessionInvokeHeaders(true) } catch { return { ok: false, error: ADMIN_SESSION_REQUIRED } }
+  try { headers = await adminSessionInvokeHeaders(false) } catch { return { ok: false, error: ADMIN_SESSION_REQUIRED } }
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
     headers,
