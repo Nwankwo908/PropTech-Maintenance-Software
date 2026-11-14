@@ -2,10 +2,9 @@
  * Client wrappers for landlord Stripe Express Connect (rent payouts).
  */
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { requireAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isStripeConnectReady } from '@/lib/stripeConnectReady'
 
@@ -44,7 +43,7 @@ async function invokeLandlordStripeConnect(
 ): Promise<Record<string, unknown>> {
   const res = await fetchAdminEdgeFunction(resolveEdgeUrl(), {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(requireAdminEdgeSecret('Payout setup')),
+    headers: await adminSessionInvokeHeaders(true),
     body: JSON.stringify({
       ...body,
       landlordId:
@@ -53,6 +52,7 @@ async function invokeLandlordStripeConnect(
           : getActiveLandlordId(),
     }),
   })
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) {
     const raw =

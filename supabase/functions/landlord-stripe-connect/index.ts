@@ -8,12 +8,12 @@
  * - status (read flags only)
  * - clear_connect (onboarding reset — unlink + delete Express account)
  *
- * Auth: ADMIN_REASSIGN_SECRET (same as other admin edges).
+ * Auth: verified user session with current account authority.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { recordActivityLog } from "../_shared/graph/recordActivityLog.ts"
 import { recordLandlordStripeConnectReadyIfTransition } from "../_shared/paymentActivityEvents.ts"
 import {
@@ -82,13 +82,15 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[landlord-stripe-connect]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
 
   let body: Record<string, unknown>
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "Expected JSON object" }, 400)
+    }
+    body = parsed as Record<string, unknown>
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -100,6 +102,8 @@ serve(async (req) => {
   if (!landlordId || !isUuidShape(landlordId)) {
     return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
   if (!landlordHasPayments(landlordId)) {
     return jsonResponse({ error: "Payments are not available on this account." }, 403)
   }
