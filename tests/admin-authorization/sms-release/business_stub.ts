@@ -3,6 +3,9 @@ export function releaseLandlordMainNumber(
   _db: unknown,
   params: Record<string, unknown>,
 ) {
+  if (state.errorTable === "release-business") {
+    throw new Error("Synthetic release diagnostic");
+  }
   state.business.push({ name: "release", params });
   state.writes++;
   return Promise.resolve({

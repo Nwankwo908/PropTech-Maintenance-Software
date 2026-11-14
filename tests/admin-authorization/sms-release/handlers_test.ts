@@ -22,6 +22,7 @@ async function run(
     rawBody?: string;
     method?: string;
     error?: boolean;
+    businessError?: boolean;
   } = {},
 ) {
   reset();
@@ -31,6 +32,7 @@ async function run(
     { id: POOL, landlord_id: ACCOUNT_A, purpose: "pool" },
   ];
   if (options.error) state.errorTable = "sms_numbers";
+  if (options.businessError) state.errorTable = "release-business";
   const original = globalThis.fetch;
   const keys = [
     "SUPABASE_URL",
@@ -200,4 +202,24 @@ Deno.test("release: unsupported method has no effects", async () => {
   equal((await run({ method: "GET" })).status, 405);
   equal(state.clients, 0);
   noEffects();
+});
+
+Deno.test("release: caught failure is logged server-side without client disclosure", async () => {
+  const original = console.error;
+  const logs: unknown[][] = [];
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
+  };
+  try {
+    const response = await run({ businessError: true });
+    equal(response.status, 503);
+    equal(response.body, { error: "SMS number release unavailable" });
+    equal(logs.length, 1);
+    equal(logs[0][0], "[release-sms-number] release failed");
+    equal(logs[0][1] instanceof Error, true);
+    equal((logs[0][1] as Error).message, "Synthetic release diagnostic");
+    noEffects();
+  } finally {
+    console.error = original;
+  }
 });

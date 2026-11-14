@@ -80,7 +80,8 @@ serve(async (req) => {
     })
 
     return jsonResponse({ ok: true, ...result })
-  } catch {
+  } catch (error) {
+    console.error("[release-sms-number] release failed", error)
     return jsonResponse({ error: "SMS number release unavailable" }, 503)
   }
 })
