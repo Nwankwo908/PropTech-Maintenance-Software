@@ -1,10 +1,11 @@
 /**
- * POST verify-external-vendor-compliance (ADMIN_REASSIGN_SECRET).
+ * POST verify-external-vendor-compliance (verified account session).
  * License + COI checks for Find External Vendor verification screen.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 import {
   attestExternalCoiOnFile,
   attestExternalLicenseNumber,
@@ -46,15 +47,20 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[verify-external-vendor-compliance]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: Record<string, unknown>
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as Record<string, unknown>
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
+
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!isUuidShape(landlordId)) return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
   const actionRaw = typeof body.action === "string" ? body.action.trim().toLowerCase() : "lookup"
   const subject = parseSubject(body)

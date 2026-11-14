@@ -1,11 +1,11 @@
 /**
- * POST verify-external-vendor-compliance (ADMIN_REASSIGN_SECRET).
+ * POST verify-external-vendor-compliance (verified account session).
  */
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { formatAdminEdgeUnauthorizedError, getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type ExternalComplianceCheckSource =
   | 'thumbtack'
@@ -60,15 +60,13 @@ function resolveUrl(): string | null {
 
 async function invokeCompliance(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const url = resolveUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
-    throw new Error('External vendor compliance is not configured (admin Edge URL/secret).')
-  }
+  if (!url) throw new Error('External vendor compliance is not configured.')
+  const headers = await adminSessionInvokeHeaders(true)
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
-    body: JSON.stringify(body),
+    headers,
+    body: JSON.stringify({ ...body, landlordId: getActiveLandlordId() }),
   })
   const text = await res.text()
   let payload: Record<string, unknown> = {}
@@ -83,7 +81,7 @@ async function invokeCompliance(body: Record<string, unknown>): Promise<Record<s
         ? payload.error
         : `Compliance check failed (${res.status})`
     if (res.status === 401) {
-      throw new Error(formatAdminEdgeUnauthorizedError(base))
+      throw new Error(ADMIN_SESSION_REQUIRED)
     }
     throw new Error(base)
   }
