@@ -1,14 +1,12 @@
 /**
  * Landlord SMS onboarding + unit registration Edge Functions.
- * Identity sync uses a user session; other onboarding calls retain their existing transport.
+ * Every caller requires a user session; onboarding temporarily retains a rollout header.
  */
 
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
 import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function supabaseFunctionsBase(): string | undefined {
@@ -32,15 +30,15 @@ async function postAdminFunction<T>(
   url: string | undefined,
   body: Record<string, unknown>,
 ): Promise<T | null> {
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) return null
+  if (!url) return null
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(true),
     body: JSON.stringify(body),
   })
 
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
   if (!res.ok) {
     const text = await res.text()
     console.warn('[landlordSms]', url, res.status, text.slice(0, 300))

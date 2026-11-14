@@ -1,0 +1,11 @@
+{
+ "compilerOptions":{"strict":true,"lib":["deno.window","dom","esnext"]},
+ "imports":{
+  "https://deno.land/std/http/server.ts":"../inspection-activation/server_stub.ts",
+  "https://esm.sh/@supabase/supabase-js@2.49.1":"../financial/sdk_stub.ts",
+  "../../../supabase/functions/_shared/sms/landlordSmsOnboarding.ts":"./business_stub.ts",
+  "../../../supabase/functions/_shared/sms/smsNumberPool.ts":"./business_stub.ts",
+  "../../../supabase/functions/_shared/unitVacancy.ts":"./business_stub.ts",
+  "../../../supabase/functions/_shared/graph/logGraphEvent.ts":"./business_stub.ts"
+ }
+}
