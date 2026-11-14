@@ -153,6 +153,7 @@ const ADMIN_NAV_ICONS: Record<AdminNavId, ReactNode> = {
   workflows: <OperationsIcon />,
   residents: <img src={residentsIcon} alt="" className="size-5" />,
   analytics: <img src={graphIcon} alt="" className="size-5" />,
+  staff_ops: <OperationsIcon />,
   settings: <img src={settingIcon} alt="" className="size-5" />,
   settings_organization: <img src={settingIcon} alt="" className="size-5" />,
   settings_connected_email: <img src={settingIcon} alt="" className="size-5" />,

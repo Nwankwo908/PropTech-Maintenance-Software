@@ -6,7 +6,7 @@
  * Entity deep links (property detail, vendor detail) compose paths via `adminNavPath`.
  */
 
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isSessionPlatformStaff } from '@/lib/activeLandlord'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 
 /** Mirrors `UniversalSearchCategory` — kept local to avoid circular imports. */
@@ -48,6 +48,7 @@ export type AdminNavId =
   | 'residents'
   | 'resident_detail'
   | 'analytics'
+  | 'staff_ops'
   | 'settings'
   | 'settings_organization'
   | 'settings_connected_email'
@@ -82,6 +83,8 @@ export type AdminNavNode = {
   routeSegment?: string
   /** Index route under `/admin` */
   index?: boolean
+  /** Only Ulo platform staff see this in the sidebar and search (the database still enforces access). */
+  staffOnly?: boolean
   /** Pass through to NavLink `end` */
   navEnd?: boolean
   surfaces: AdminNavSurfaces
@@ -242,6 +245,20 @@ export const ADMIN_NAV_TREE: AdminNavNode[] = [
     },
   },
   {
+    id: 'staff_ops',
+    label: 'Ulo Ops',
+    path: `${ADMIN_BASE}/ops`,
+    routeSegment: 'ops',
+    staffOnly: true,
+    surfaces: { sidebar: true, search: true },
+    search: {
+      category: 'report',
+      title: 'Ulo Ops',
+      subtitle: 'Staff metrics across every landlord',
+      keywords: ['ops', 'staff', 'internal', 'metrics', 'all landlords', 'platform'],
+    },
+  },
+  {
     id: 'settings',
     label: 'Settings',
     path: `${ADMIN_BASE}/settings`,
@@ -352,6 +369,11 @@ function flattenAdminNav(nodes: AdminNavNode[] = ADMIN_NAV_TREE): AdminNavNode[]
 
 const ADMIN_NAV_FLAT = flattenAdminNav()
 
+/** Staff-only pages stay out of landlord navigation. */
+function isNavNodeVisible(node: AdminNavNode): boolean {
+  return !node.staffOnly || isSessionPlatformStaff()
+}
+
 const ADMIN_NAV_BY_ID = new Map<AdminNavId, AdminNavNode>(
   ADMIN_NAV_FLAT.map((node) => [node.id, node]),
 )
@@ -391,7 +413,9 @@ function toSidebarNavItem(node: AdminNavNode): AdminSidebarNavItem {
 
 /** Primary sidebar items derived from the master list. */
 export function getAdminSidebarNavItems(): AdminSidebarNavItem[] {
-  return ADMIN_NAV_FLAT.filter((node) => node.surfaces.sidebar).map(toSidebarNavItem)
+  return ADMIN_NAV_FLAT.filter((node) => node.surfaces.sidebar && isNavNodeVisible(node)).map(
+    toSidebarNavItem,
+  )
 }
 
 const SIDEBAR_PRIMARY_GROUP_DEFS: ReadonlyArray<{
@@ -406,7 +430,7 @@ const SIDEBAR_PRIMARY_GROUP_DEFS: ReadonlyArray<{
     label: 'People & Properties',
     itemIds: ['properties', 'residents', 'vendors'],
   },
-  { id: 'insights', label: 'Insights', itemIds: ['analytics'] },
+  { id: 'insights', label: 'Insights', itemIds: ['analytics', 'staff_ops'] },
 ]
 
 /**
@@ -467,6 +491,7 @@ export function getAdminNavSearchItems(): AdminNavSearchItem[] {
   const payments = landlordHasPayments(getActiveLandlordId())
   return ADMIN_NAV_FLAT.filter((node) => {
     if (!node.surfaces.search || !node.search) return false
+    if (!isNavNodeVisible(node)) return false
     if (!payments && node.id === 'settings_billing') return false
     return true
   }).map((node) => ({

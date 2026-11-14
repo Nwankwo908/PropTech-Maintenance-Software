@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { setSessionLandlordFromEmail } from '@/lib/activeLandlord'
 import {
   ADMIN_NAV_TREE,
   adminNavPath,
@@ -25,6 +26,7 @@ const APP_ADMIN_ROUTE_SEGMENTS = [
   'residents',
   'residents/:residentId',
   'analytics',
+  'ops',
   'settings/*',
   'settings/organization',
   'settings/billing',
@@ -33,6 +35,10 @@ const APP_ADMIN_ROUTE_SEGMENTS = [
 ]
 
 describe('adminNavigation registry', () => {
+  afterEach(() => {
+    setSessionLandlordFromEmail(null)
+  })
+
   it('uses unique nav ids', () => {
     const ids = getAdminNavNodes().map((node) => node.id)
     expect(new Set(ids).size).toBe(ids.length)
@@ -98,7 +104,9 @@ describe('adminNavigation registry', () => {
 
   it('keeps top-level tree order aligned with sidebar order', () => {
     const sidebarIds = getAdminSidebarNavItems().map((item) => item.id)
-    const treeSidebarIds = ADMIN_NAV_TREE.filter((node) => node.surfaces.sidebar).map(
+    const treeSidebarIds = ADMIN_NAV_TREE.filter(
+      (node) => node.surfaces.sidebar && !node.staffOnly,
+    ).map(
       (node) => node.id,
     )
     expect(sidebarIds).toEqual(treeSidebarIds)
@@ -138,5 +146,20 @@ describe('adminNavigation registry', () => {
     expect(groups.flatMap((group) => group.items.map((item) => item.id))).not.toContain(
       'settings',
     )
+  })
+
+  it('shows Ulo Ops only to platform staff', () => {
+    setSessionLandlordFromEmail('ceorentalsnj@gmail.com')
+    expect(getAdminSidebarNavItems().map((item) => item.id)).not.toContain('staff_ops')
+    expect(getAdminNavSearchItems().map((item) => item.id)).not.toContain('nav-staff_ops')
+
+    setSessionLandlordFromEmail('emeka@ulohome.io')
+    const { groups } = getAdminSidebarNavGroups()
+    expect(groups.find((group) => group.id === 'insights')?.items.map((item) => item.id)).toEqual([
+      'analytics',
+      'staff_ops',
+    ])
+    expect(getAdminNavSearchItems().map((item) => item.id)).toContain('nav-staff_ops')
+    expect(adminNavPath('staff_ops')).toBe('/admin/ops')
   })
 })
