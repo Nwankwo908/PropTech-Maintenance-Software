@@ -1,11 +1,14 @@
 {
   "compilerOptions": {
     "strict": true,
-    "lib": ["deno.window", "dom", "esnext"]
+    "lib": [
+      "deno.window",
+      "dom",
+      "esnext"
+    ]
   },
   "imports": {
     "https://deno.land/std/http/server.ts": "../inspection-activation/server_stub.ts",
-    "https://esm.sh/@supabase/supabase-js@2.49.1": "../routing/sdk_stub.ts",
-    "../../../supabase/functions/_shared/sms/smsNumberPool.ts": "./business_stub.ts"
+    "https://esm.sh/@supabase/supabase-js@2.49.1": "../routing/sdk_stub.ts"
   }
 }
