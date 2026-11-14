@@ -6,7 +6,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 import { recordActivityLog } from "../_shared/graph/recordActivityLog.ts"
@@ -14,15 +14,14 @@ import {
   buildThumbtackAuthorizeUrl,
   DEFAULT_THUMBTACK_AUTH_URL,
   DEFAULT_THUMBTACK_TOKEN_URL,
+  normalizeThumbtackRedirectUri,
+  parseThumbtackAuthorizeRedirect,
+  pickThumbtackOAuthTokens,
   THUMBTACK_OAUTH_AUDIENCE,
   thumbtackAuthorizationCodeClient,
   thumbtackOauthLogSafe,
-  parseThumbtackAuthorizeRedirect,
-  pickThumbtackOAuthTokens,
-  normalizeThumbtackRedirectUri,
 } from "../_shared/external_vendor/thumbtackOauth.ts"
 import {
-  landlordThumbtackIsConnected,
   saveLandlordThumbtackRefreshToken,
 } from "../_shared/external_vendor/thumbtackOauthStore.ts"
 
@@ -44,7 +43,9 @@ function messagingClient(): { id: string; secret: string } {
 }
 
 function redirectUri(): string {
-  return normalizeThumbtackRedirectUri(Deno.env.get("THUMBTACK_OAUTH_REDIRECT_URI"))
+  return normalizeThumbtackRedirectUri(
+    Deno.env.get("THUMBTACK_OAUTH_REDIRECT_URI"),
+  )
 }
 
 function isAllowedOauthReturnOrigin(origin: string): boolean {
@@ -64,7 +65,8 @@ function oauthReturnDestination(input: {
   returnOrigin?: string
 }): string {
   const path =
-    typeof input.returnPath === "string" && input.returnPath.startsWith("/")
+    typeof input.returnPath === "string" && input.returnPath.startsWith("/") &&
+      !input.returnPath.startsWith("//") && !/[\\\r\n]/.test(input.returnPath)
       ? input.returnPath
       : "/admin"
   const origin = (input.returnOrigin ?? "").trim().replace(/\/$/, "")
@@ -81,42 +83,56 @@ function withThumbtackFlag(dest: string, value: "connected" | "error"): string {
 async function thumbtackAuthorizeClientIsKnown(authorizeUrl: string): Promise<{
   ok: boolean
   status: number
-  location: string
   error: string | null
   errorDescription: string | null
 }> {
   try {
-    const res = await fetch(authorizeUrl, { method: "GET", redirect: "manual" })
+    const res = await fetch(authorizeUrl, {
+      method: "GET",
+      redirect: "manual",
+    })
     const location = res.headers.get("location") ?? res.url
     const parsed = parseThumbtackAuthorizeRedirect(location)
-    console.warn("[thumbtack-oauth] authorize probe", JSON.stringify({
-      status: res.status,
-      location: location.slice(0, 240),
-      ok: parsed.ok,
-      error: parsed.error,
-      error_description: parsed.errorDescription,
-      path: parsed.path,
-    }))
+    console.warn(
+      "[thumbtack-oauth] authorize probe",
+      JSON.stringify({
+        status: res.status,
+        ok: parsed.ok,
+        error: parsed.error,
+        error_description: parsed.errorDescription,
+        path: parsed.path,
+      }),
+    )
     return {
       ok: parsed.ok,
       status: res.status,
-      location: location.slice(0, 240),
       error: parsed.error,
       errorDescription: parsed.errorDescription,
     }
   } catch (err) {
     console.warn("[thumbtack-oauth] authorize probe failed", err)
-    return { ok: true, status: 0, location: "", error: null, errorDescription: null }
+    return {
+      ok: true,
+      status: 0,
+      error: null,
+      errorDescription: null,
+    }
   }
 }
 
 async function exchangeThumbtackCode(
   supabase: SupabaseClient,
-  input: { code: string; state: string },
-): Promise<{ ok: true; returnPath: string } | { ok: false; error: string }> {
+  input: { code: string; state: string; request?: Request },
+): Promise<
+  { ok: true; returnPath: string } | {
+    ok: false
+    error: string
+    status?: number
+  }
+> {
   const code = input.code.trim()
   const state = input.state.trim()
-  if (!code || state.length < 8) {
+  if (!code || !isUuidShape(state)) {
     return { ok: false, error: "Missing code or state." }
   }
   const { data: row, error: stateErr } = await supabase
@@ -125,13 +141,39 @@ async function exchangeThumbtackCode(
     .eq("state", state)
     .maybeSingle()
   if (stateErr || !row) {
-    return { ok: false, error: "This Thumbtack sign-in expired. Try Connect Thumbtack again." }
+    return {
+      ok: false,
+      error: "This Thumbtack sign-in expired. Try Connect Thumbtack again.",
+    }
   }
-  if (new Date(String(row.expires_at)).getTime() < Date.now()) {
+  if (
+    !Number.isFinite(Date.parse(String(row.expires_at))) ||
+    Date.parse(String(row.expires_at)) <= Date.now()
+  ) {
     await supabase.from("thumbtack_oauth_states").delete().eq("state", state)
-    return { ok: false, error: "This Thumbtack sign-in expired. Try Connect Thumbtack again." }
+    return {
+      ok: false,
+      error: "This Thumbtack sign-in expired. Try Connect Thumbtack again.",
+    }
   }
   const landlordId = String(row.landlord_id)
+  if (!isUuidShape(landlordId)) {
+    return { ok: false, error: "Invalid sign-in state." }
+  }
+  if (input.request) {
+    const denied = await authorizeAdminAccount(
+      input.request,
+      landlordId,
+      corsHeaders,
+    )
+    if (denied) {
+      return {
+        ok: false,
+        error: "Not authorized for this sign-in.",
+        status: denied.status,
+      }
+    }
+  }
   const { id: clientId, secret: clientSecret } = messagingClient()
   if (!clientId || !clientSecret) {
     console.error(
@@ -144,8 +186,23 @@ async function exchangeThumbtackCode(
     )
     return { ok: false, error: "Thumbtack messaging OAuth is not configured." }
   }
-  const tokenUrl =
-    Deno.env.get("THUMBTACK_MESSAGING_TOKEN_URL")?.trim() ||
+  // Atomically consume once, before any provider call. Replays and concurrent
+  // callbacks cannot exchange the same state. A failed exchange requires restart.
+  const { data: consumed, error: consumeError } = await supabase.from(
+    "thumbtack_oauth_states",
+  )
+    .delete().eq("state", state).eq("landlord_id", landlordId).gt(
+      "expires_at",
+      new Date().toISOString(),
+    )
+    .select("landlord_id").maybeSingle()
+  if (consumeError || !consumed) {
+    return {
+      ok: false,
+      error: "This Thumbtack sign-in expired. Try Connect Thumbtack again.",
+    }
+  }
+  const tokenUrl = Deno.env.get("THUMBTACK_MESSAGING_TOKEN_URL")?.trim() ||
     Deno.env.get("THUMBTACK_TOKEN_URL")?.trim() ||
     DEFAULT_THUMBTACK_TOKEN_URL
   const form = new URLSearchParams({
@@ -181,13 +238,15 @@ async function exchangeThumbtackCode(
       redirectUri: redirectUri(),
       tokenUrl,
       status: res.status,
-      body: text,
       hasRefreshToken: Boolean(refresh),
       hasAccessToken: Boolean(accessToken),
     })),
   )
   if (!res.ok) {
-    return { ok: false, error: "Thumbtack did not finish sign-in. Try Connect Thumbtack again." }
+    return {
+      ok: false,
+      error: "Thumbtack did not finish sign-in. Try Connect Thumbtack again.",
+    }
   }
   if (!refresh) {
     return {
@@ -196,11 +255,17 @@ async function exchangeThumbtackCode(
         "Thumbtack signed in but did not return a refresh token. Ask Thumbtack to include offline_access on the Message API app.",
     }
   }
-  const saved = await saveLandlordThumbtackRefreshToken(supabase, landlordId, refresh, {
-    scope: tokens.scope,
-    accessToken,
-    expiresInSec: tokens.expiresIn,
-  })
+  const saved = await saveLandlordThumbtackRefreshToken(
+    supabase,
+    landlordId,
+    refresh,
+    {
+      exactAccount: true,
+      scope: tokens.scope,
+      accessToken,
+      expiresInSec: tokens.expiresIn,
+    },
+  )
   console.warn(
     "[thumbtack-oauth] persist tokens",
     JSON.stringify({
@@ -212,9 +277,12 @@ async function exchangeThumbtackCode(
     }),
   )
   if (!saved.ok) {
-    return { ok: false, error: "Could not save the Thumbtack connection. Try Connect Thumbtack again." }
+    return {
+      ok: false,
+      error:
+        "Could not save the Thumbtack connection. Try Connect Thumbtack again.",
+    }
   }
-  await supabase.from("thumbtack_oauth_states").delete().eq("state", state)
   void recordActivityLog(supabase, {
     landlordId,
     eventType: "vendor.thumbtack_connected",
@@ -222,11 +290,18 @@ async function exchangeThumbtackCode(
     actorType: "landlord",
     metadata: { message: "Connected Thumbtack for in-app vendor messaging." },
   })
-  const stored = typeof row.return_path === "string" ? row.return_path.trim() : ""
-  const returnPath =
-    stored.startsWith("/") || stored.startsWith("http://") || stored.startsWith("https://")
-      ? stored
-      : "/admin"
+  const stored = typeof row.return_path === "string"
+    ? row.return_path.trim()
+    : ""
+  let returnPath = "/admin"
+  if (
+    stored.startsWith("/") && !stored.startsWith("//") &&
+    !/[\\\r\n]/.test(stored)
+  ) returnPath = stored
+  else {try {
+      const url = new URL(stored)
+      if (isAllowedOauthReturnOrigin(url.origin)) returnPath = url.href
+    } catch { /* use safe dashboard */ }}
   return { ok: true, returnPath }
 }
 
@@ -246,14 +321,20 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   const incoming = new URL(req.url)
-  if (req.method === "GET" && incoming.searchParams.get("code") && incoming.searchParams.get("state")) {
+  if (
+    req.method === "GET" && incoming.searchParams.get("code") &&
+    incoming.searchParams.get("state")
+  ) {
     const result = await exchangeThumbtackCode(supabase, {
       code: incoming.searchParams.get("code") ?? "",
       state: incoming.searchParams.get("state") ?? "",
     })
     if (!result.ok) {
       console.warn("[thumbtack-oauth] callback failed", result.error)
-      return Response.redirect(withThumbtackFlag(uloAppUrl.admin(), "error"), 302)
+      return Response.redirect(
+        withThumbtackFlag(uloAppUrl.admin(), "error"),
+        302,
+      )
     }
     const dest = result.returnPath.startsWith("http")
       ? result.returnPath
@@ -261,19 +342,26 @@ serve(async (req) => {
     return Response.redirect(withThumbtackFlag(dest, "connected"), 302)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[thumbtack-oauth]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
-
   if (req.method === "GET") {
-    const landlordId = new URL(req.url).searchParams.get("landlordId")?.trim() ?? ""
+    const landlordId =
+      new URL(req.url).searchParams.get("landlordId")?.trim() ?? ""
     if (!landlordId || !isUuidShape(landlordId)) {
       return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
     }
-    const connected = await landlordThumbtackIsConnected(supabase, landlordId)
+    const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+    if (denied) return denied
+    const { data, error } = await supabase.from("landlord_thumbtack_oauth")
+      .select("refresh_token").eq("landlord_id", landlordId).maybeSingle()
+    if (error) {
+      return jsonResponse({ error: "Connection status unavailable" }, 503)
+    }
+    const connected = typeof data?.refresh_token === "string" && Boolean(data.refresh_token.trim())
     const { id: clientId, secret: clientSecret } = messagingClient()
     return jsonResponse({
       connected,
-      messagingClientReady: Boolean(clientId && clientSecret && isUuidShape(clientId)),
+      messagingClientReady: Boolean(
+        clientId && clientSecret && isUuidShape(clientId),
+      ),
     })
   }
 
@@ -290,17 +378,32 @@ serve(async (req) => {
     state?: string
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "Expected JSON object" }, 400)
+    }
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
 
-  const action = (body.action ?? "").trim()
+  for (
+    const value of [body.returnOrigin, body.returnPath, body.code, body.state]
+  ) {
+    if (value != null && typeof value !== "string") {
+      return jsonResponse({ error: "Invalid sign-in fields" }, 400)
+    }
+  }
+  const action = typeof body.action === "string" ? body.action.trim() : ""
   if (action === "start") {
-    const landlordId = body.landlordId?.trim() ?? ""
+    const landlordId = typeof body.landlordId === "string"
+      ? body.landlordId.trim()
+      : ""
     if (!landlordId || !isUuidShape(landlordId)) {
       return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
     }
+    const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+    if (denied) return denied
     const { id: clientId, secret: clientSecret } = messagingClient()
     if (!clientId || !clientSecret) {
       console.error(
@@ -336,7 +439,8 @@ serve(async (req) => {
       redirectUri: redirectUri(),
       state,
       scope: Deno.env.get("THUMBTACK_MESSAGING_OAUTH_SCOPE"),
-      authUrl: Deno.env.get("THUMBTACK_AUTH_URL")?.trim() || DEFAULT_THUMBTACK_AUTH_URL,
+      authUrl: Deno.env.get("THUMBTACK_AUTH_URL")?.trim() ||
+        DEFAULT_THUMBTACK_AUTH_URL,
     })
     const probe = await thumbtackAuthorizeClientIsKnown(authorizeUrl)
     if (!probe.ok) {
@@ -347,9 +451,9 @@ serve(async (req) => {
           clientId,
           searchClientId: Deno.env.get("THUMBTACK_CLIENT_ID"),
           redirectUri: redirectUri(),
-          authUrl: Deno.env.get("THUMBTACK_AUTH_URL")?.trim() || DEFAULT_THUMBTACK_AUTH_URL,
+          authUrl: Deno.env.get("THUMBTACK_AUTH_URL")?.trim() ||
+            DEFAULT_THUMBTACK_AUTH_URL,
           status: probe.status,
-          body: probe.location,
         })),
       )
       const mismatch = /redirect_uri/i.test(probe.errorDescription ?? "")
@@ -357,8 +461,8 @@ serve(async (req) => {
         error: mismatch
           ? `Thumbtack does not have this redirect URI registered: ${redirectUri()}`
           : probe.errorDescription
-            ? `Thumbtack rejected Connect (${probe.error}): ${probe.errorDescription}`
-            : "Thumbtack did not recognize the Message API app, so Ulo stayed here. Confirm THUMBTACK_MESSAGING_CLIENT_ID with Thumbtack, then try again.",
+          ? `Thumbtack rejected Connect (${probe.error}): ${probe.errorDescription}`
+          : "Thumbtack did not recognize the Message API app, so Ulo stayed here. Confirm THUMBTACK_MESSAGING_CLIENT_ID with Thumbtack, then try again.",
       }, 500)
     }
     console.warn(
@@ -367,7 +471,8 @@ serve(async (req) => {
         clientId,
         searchClientId: Deno.env.get("THUMBTACK_CLIENT_ID"),
         redirectUri: redirectUri(),
-        authUrl: Deno.env.get("THUMBTACK_AUTH_URL")?.trim() || DEFAULT_THUMBTACK_AUTH_URL,
+        authUrl: Deno.env.get("THUMBTACK_AUTH_URL")?.trim() ||
+          DEFAULT_THUMBTACK_AUTH_URL,
         status: probe.status,
       })),
     )
@@ -376,11 +481,12 @@ serve(async (req) => {
 
   if (action === "exchange") {
     const result = await exchangeThumbtackCode(supabase, {
-      code: body.code ?? "",
-      state: body.state ?? "",
+      code: typeof body.code === "string" ? body.code : "",
+      state: typeof body.state === "string" ? body.state : "",
+      request: req,
     })
     if (!result.ok) {
-      return jsonResponse({ error: result.error }, 400)
+      return jsonResponse({ error: result.error }, result.status ?? 400)
     }
     return jsonResponse({ ok: true, returnPath: result.returnPath })
   }

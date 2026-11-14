@@ -505,11 +505,10 @@ export function FindExternalVendorRail({
       return
     }
     const url = resolveThumbtackOauthUrl()
-    const secret = getAdminEdgeSecret()
     let cancelled = false
     void resolveThumbtackLandlordId(ticketId).then((landlordId) => {
-      if (cancelled || !url || !secret || !landlordId) return
-      return getThumbtackOauthStatus({ url, secret, landlordId })
+      if (cancelled || !url || !landlordId) return
+      return getThumbtackOauthStatus({ url, landlordId })
         .then((result) => {
           if (!cancelled) setThumbtackConnected(result.connected)
         })
@@ -524,9 +523,8 @@ export function FindExternalVendorRail({
 
   async function connectThumbtack() {
     const url = resolveThumbtackOauthUrl()
-    const secret = getAdminEdgeSecret()
     const landlordId = await resolveThumbtackLandlordId(ticketId)
-    if (!url || !secret || !landlordId) {
+    if (!url || !landlordId) {
       setMessageError('Thumbtack connect is not configured for this dashboard.')
       return
     }
@@ -534,7 +532,6 @@ export function FindExternalVendorRail({
     try {
       const { authorizeUrl } = await startThumbtackOauth({
         url,
-        secret,
         landlordId,
         returnOrigin: window.location.origin,
         returnPath: `${window.location.pathname}${window.location.search}`,
@@ -561,6 +558,7 @@ export function FindExternalVendorRail({
         if (error) setMessageError(error)
       }
       const onMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin || event.source !== popup) return
         const data = event.data as { type?: string; ok?: boolean; error?: string } | null
         if (!data || data.type !== THUMBTACK_OAUTH_PAGE_MESSAGE) return
         finish(data.ok === true, data.error)
@@ -568,7 +566,7 @@ export function FindExternalVendorRail({
       window.addEventListener('message', onMessage)
       const timer = window.setInterval(() => {
         if (popup.closed || Date.now() - started > 5 * 60 * 1000) {
-          void getThumbtackOauthStatus({ url, secret, landlordId })
+          void getThumbtackOauthStatus({ url, landlordId })
             .then((result) => {
               finish(
                 result.connected,
