@@ -11,7 +11,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import {
   startInspectionWorkflow,
   startMoveInWorkflow,
@@ -82,13 +82,13 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[start-lifecycle-workflow]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
 
   let body: Record<string, unknown> = {}
   try {
-    body = (await req.json()) as Record<string, unknown>
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as Record<string, unknown>
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -105,11 +105,13 @@ serve(async (req) => {
     return jsonResponse({ error: "Missing or invalid unitId" }, 400)
   }
 
-  const landlordId = readString(body.landlordId) ??
-    Deno.env.get("DEFAULT_LANDLORD_ID")?.trim()
+  const landlordId = readString(body.landlordId)
   if (!landlordId || !uuidRe.test(landlordId)) {
     return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
+
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -119,10 +121,10 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  const residentId = readString(body.residentId)
+  let residentId = readString(body.residentId)
   const occupancyId = readString(body.occupancyId)
-  const unitLabel = readString(body.unitLabel)
-  const building = readString(body.building)
+  let unitLabel = readString(body.unitLabel)
+  let building = readString(body.building)
   const moveInDate = readString(body.moveInDate)
   const moveOutDate = readString(body.moveOutDate)
   const scheduledAt = readString(body.scheduledAt)
@@ -130,6 +132,28 @@ serve(async (req) => {
   const initialAction = parseInitialAction(body)
 
   try {
+    if ([body.residentId, body.occupancyId].some(v => v != null && v !== "" && (typeof v !== "string" || !uuidRe.test(v.trim())))) return jsonResponse({ error: "Invalid resident or occupancy ID" }, 400)
+    const { data: unit, error: unitError } = await supabase.from("units").select("id, unit_label, building, property_id").eq("id", unitId).eq("landlord_id", landlordId).maybeSingle()
+    if (unitError) return jsonResponse({ error: "Unit lookup unavailable" }, 503)
+    if (!unit) return jsonResponse({ error: "Unit not found" }, 404)
+    if (unit.property_id) {
+      const { data, error } = await supabase.from("properties").select("id").eq("id", unit.property_id).eq("landlord_id", landlordId).maybeSingle()
+      if (error) return jsonResponse({ error: "Property lookup unavailable" }, 503)
+      if (!data) return jsonResponse({ error: "Property not found" }, 404)
+    }
+    unitLabel = String(unit.unit_label)
+    building = typeof unit.building === "string" ? unit.building : null
+    if (occupancyId) {
+      const { data: occupancy, error } = await supabase.from("occupancy").select("id, resident_id").eq("id", occupancyId).eq("landlord_id", landlordId).eq("unit_id", unitId).maybeSingle()
+      if (error) return jsonResponse({ error: "Occupancy lookup unavailable" }, 503)
+      if (!occupancy || residentId && occupancy.resident_id !== residentId) return jsonResponse({ error: "Occupancy not found for this unit/resident" }, 404)
+      if (!residentId && typeof occupancy.resident_id === "string") residentId = occupancy.resident_id
+    }
+    if (residentId) {
+      const { data, error } = await supabase.from("users").select("id").eq("id", residentId).eq("landlord_id", landlordId).maybeSingle()
+      if (error) return jsonResponse({ error: "Resident lookup unavailable" }, 503)
+      if (!data) return jsonResponse({ error: "Resident not found" }, 404)
+    }
     if (workflow === "move_in") {
       const result = await startMoveInWorkflow(supabase, {
         landlordId,

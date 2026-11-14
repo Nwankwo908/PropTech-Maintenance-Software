@@ -1,10 +1,10 @@
 /**
- * POST start-insight-inspection-scheduling (ADMIN_REASSIGN_SECRET).
+ * POST start-insight-inspection-scheduling (account session).
  */
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import type { InsightRecommendationActionType } from '@shared/portfolioIntelligence'
 
 export type StartInsightInspectionSchedulingOk = {
@@ -27,7 +27,7 @@ export function resolveStartInsightInspectionSchedulingUrl(): string | null {
 
 export async function postStartInsightInspectionScheduling(input: {
   url: string
-  secret: string
+  secret?: string
   landlordId: string
   insightCardId: string
   actionType: InsightRecommendationActionType
@@ -42,10 +42,7 @@ export async function postStartInsightInspectionScheduling(input: {
 }): Promise<StartInsightInspectionSchedulingOk> {
   const res = await fetchAdminEdgeFunction(input.url, {
     method: 'POST',
-    headers: {
-      ...adminEdgeInvokeHeaders(input.secret),
-      Authorization: `Bearer ${input.secret}`,
-    },
+    headers: await adminSessionInvokeHeaders(true),
     body: JSON.stringify({
       landlordId: input.landlordId,
       insightCardId: input.insightCardId,
@@ -67,6 +64,7 @@ export async function postStartInsightInspectionScheduling(input: {
   } catch {
     json = {}
   }
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
   if (!res.ok) {
     throw new Error(
       typeof json.error === 'string' ? json.error : text.slice(0, 200) || `Failed (${res.status})`,
