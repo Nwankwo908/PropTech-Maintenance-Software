@@ -576,3 +576,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/integration-sms-journey/deno.json"
 entrypoint = "./functions/integration-sms-journey/index.ts"
+
+[functions.ask-ulo-staff-metrics]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ask-ulo-staff-metrics/deno.json"
+entrypoint = "./functions/ask-ulo-staff-metrics/index.ts"

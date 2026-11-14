@@ -83,6 +83,10 @@ const AdminAnalyticsDashboard = lazyNamed(
   () => import('./components/AdminAnalyticsDashboard'),
   'AdminAnalyticsDashboard',
 )
+const AdminStaffOpsDashboard = lazyNamed(
+  () => import('./components/AdminStaffOpsDashboard'),
+  'AdminStaffOpsDashboard',
+)
 const AdminSettingsDashboard = lazyNamed(
   () => import('./components/AdminSettingsDashboard'),
   'AdminSettingsDashboard',
@@ -227,6 +231,8 @@ export default function App() {
               <Route path="analytics" element={<AdminAnalyticsDashboard />} />
               <Route path="settings/*" element={<AdminSettingsDashboard />} />
             </Route>
+            {/* Staff-only: outside the landlord onboarding guard; the page checks staff access. */}
+            <Route path="ops" element={<AdminStaffOpsDashboard />} />
           </Route>
         </Routes>
       </Suspense>

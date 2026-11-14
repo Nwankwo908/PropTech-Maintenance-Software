@@ -100,9 +100,20 @@ const TRY_DEMO_WELCOME_SEEN_KEY = 'ulo.tryDemoWelcomeSeen'
 /** Landlord bound to the signed-in account email (null for staff logins). */
 let sessionLandlordId: string | null = null
 let sessionLandlordLabel: string | null = null
+/**
+ * Ulo platform staff (core team), not landlord portal accounts. Only decides
+ * which staff pages appear in the UI; the database enforces access with
+ * is_platform_staff() on every staff query.
+ */
+let sessionPlatformStaff = false
 
 export function setSessionLandlordFromEmail(email: string | null | undefined): void {
   sessionLandlordId = seededLandlordIdForEmail(email)
+  sessionPlatformStaff = isStaffAdminEmail(email)
+}
+
+export function isSessionPlatformStaff(): boolean {
+  return sessionPlatformStaff
 }
 
 /** Bind dashboard scope for seeded logins or saved team-member emails. */
@@ -111,6 +122,7 @@ export async function bindSessionLandlordFromEmail(
 ): Promise<void> {
   sessionLandlordLabel = null
   const normalized = email?.trim().toLowerCase() ?? ''
+  sessionPlatformStaff = isStaffAdminEmail(normalized)
   sessionLandlordId = null
   if (!normalized) {
     sessionLandlordId = null
