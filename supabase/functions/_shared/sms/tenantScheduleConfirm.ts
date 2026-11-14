@@ -49,6 +49,7 @@ import {
   looksLikeTenantScheduleChange,
 } from "./inboundInterpretation.ts"
 import { matchShortReplyToken } from "./shortReplyTokens.ts"
+import { shouldYieldPendingAskToRepair } from "./pendingAskRepairReport.ts"
 import { landlordRecipients, recordSmsNoRecipients } from "../smsRecipients.ts"
 
 export {
@@ -183,6 +184,8 @@ export function parseTenantScheduleDecision(
 
   const normalized = trimmed
     .toUpperCase()
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/,/g, " ")
     .replace(/[.!]+$/g, "")
     .replace(/\s+/g, " ")
 
@@ -194,7 +197,8 @@ export function parseTenantScheduleDecision(
     normalized === "WORKS" ||
     normalized === "THAT WORKS" ||
     normalized === "OK" ||
-    normalized === "OKAY"
+    normalized === "OKAY" ||
+    /^(?:(?:YES|YEAH|YEP|YUP)(?: THAT WORKS(?: FOR ME)?)?|SOUNDS GOOD|THAT WORKS(?: FOR ME)?|WORKS FOR ME)(?: THANKS| THANK YOU| PLEASE)?$/.test(normalized)
   ) {
     return "accept"
   }
@@ -711,6 +715,9 @@ export async function tryHandleTenantScheduleConfirmInbound(
   | { handled: false }
 > {
   if (params.identityType !== "resident") return { handled: false }
+  // Check before selecting/expiring a question: a new failure report is not an
+  // answer to any visit, including a stale or multi-job question.
+  if (shouldYieldPendingAskToRepair(params.body)) return { handled: false }
 
   const { data: conv } = await supabase
     .from("sms_conversations")

@@ -2,8 +2,7 @@
   "id": "visit-question-captures-new-repair",
   "title": "A new repair report while a visit question is open is not treated as the answer",
   "origin": "code review (routing investigation)",
-  "status": "known_bug",
-  "currentBehavior": "schedule_confirm owns every reply while the question is open. Ulo answers 'did you mean to confirm Thu 2-4pm? Reply YES or NO' and no repair is opened.",
+  "status": "locked",
   "setup": {
     "ticket": {},
     "intakeState": {

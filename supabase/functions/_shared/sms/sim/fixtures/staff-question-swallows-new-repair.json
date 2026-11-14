@@ -2,8 +2,7 @@
   "id": "staff-question-swallows-new-repair",
   "title": "A new repair report after a property-team question is not swallowed",
   "origin": "code review (routing investigation)",
-  "status": "known_bug",
-  "currentBehavior": "staff_reply owns the next resident message for 24 hours. A new non-emergency repair report gets no reply and no work order.",
+  "status": "locked",
   "setup": {
     "ticket": {},
     "intakeState": {

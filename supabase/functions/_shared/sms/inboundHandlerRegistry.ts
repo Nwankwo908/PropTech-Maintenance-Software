@@ -996,8 +996,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   pm_service_yes_hvac:
     "intake_state.awaiting_pm_service on the landlord thread and the reply is YES HVAC",
   staff_reply:
-    "intake_state.awaiting_staff_reply on a resident thread (property-team photo or information request within 24h; a question mark is not required). Emergencies fall through.",
-  schedule_confirm: "intake_state.awaiting_schedule_confirmation",
+    "intake_state.awaiting_staff_reply on a resident thread (property-team photo or information request within 24h; a question mark is not required). Emergencies and clear repair reports fall through to contextual workflow routing.",
+  schedule_confirm: "intake_state.awaiting_schedule_confirmation + a visit answer; emergencies and clear repair reports fall through before selecting or expiring a question",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
   property_choice:

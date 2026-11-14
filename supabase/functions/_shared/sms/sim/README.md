@@ -34,6 +34,12 @@ CI runs `replay_test.ts` as part of the Deno behavior suite.
 Write `expect` as the **correct** behavior, even for a known bug.
 `currentBehavior` says what Ulo does today.
 
+The four original routing bugs are now `locked`: fresh repair reports break out
+of open/expired visit and staff questions, and natural visit confirmations work.
+Additional tests check that the original repair stays unchanged, intake continues
+on the next turn, and polite confirmations apply to the pending visit only.
+These are network-blocked simulations, not handset or production verification.
+
 ## Adding a fixture
 
 1. Copy a fixture in `fixtures/` and rename it. The file name must match `id`.
