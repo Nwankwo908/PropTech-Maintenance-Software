@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { sendLandlordOnboardingWelcome } from "../_shared/sms/landlordOnboardingWelcome.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -23,8 +23,6 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[send-landlord-onboarding-welcome]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: {
     landlordId?: string
@@ -34,7 +32,9 @@ serve(async (req) => {
     forceEmail?: boolean
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -45,13 +45,10 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
-  let landlordId: string
-  try {
-    landlordId = resolveLandlordId(body.landlordId)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ error: message }, 400)
-  }
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!isUuidShape(landlordId)) return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
   const companyName =
     typeof body.companyName === "string" ? body.companyName.trim() || null : null

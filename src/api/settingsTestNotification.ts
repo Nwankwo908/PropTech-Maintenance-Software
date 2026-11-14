@@ -1,8 +1,7 @@
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 
@@ -29,8 +28,7 @@ export async function sendSettingsTestNotification(params: {
   toPhone?: string
 }): Promise<SettingsTestNotificationResult> {
   const url = functionUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return {
       ok: false,
       channel: params.channel,
@@ -42,7 +40,7 @@ export async function sendSettingsTestNotification(params: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: adminEdgeInvokeHeaders(secret),
+      headers: await adminSessionInvokeHeaders(true),
       body: JSON.stringify({
         landlordId,
         channel: params.channel,
@@ -50,6 +48,7 @@ export async function sendSettingsTestNotification(params: {
         toPhone: params.toPhone?.trim() || undefined,
       }),
     })
+    if (res.status === 401) return { ok: false, channel: params.channel, error: ADMIN_SESSION_REQUIRED }
     const raw = await res.text()
     let payload: { ok?: boolean; message?: string; error?: string } = {}
     try {

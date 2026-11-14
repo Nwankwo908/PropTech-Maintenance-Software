@@ -2,12 +2,12 @@
  * Client wrappers for the vendor verification flow.
  *
  * - `sendVendorInvite` → admin-authorized `send-vendor-invite` Edge Function
- *   (ADMIN_REASSIGN_SECRET via `x-admin-reassign-secret`).
+ *   (signed-in account session; temporary rollout bridge).
  * - `vendorVerificationAction` → public token-authorized `vendor-verification`
  *   Edge Function, invoked through the shared Supabase client.
  */
-import { adminEdgeInvokeHeaders, fetchAdminEdgeFunction } from '@/api/adminReassignVendor'
-import { formatAdminEdgeUnauthorizedError, getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { fetchAdminEdgeFunction } from '@/api/adminReassignVendor'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
@@ -55,14 +55,10 @@ function resolveEdgeUrl(fn: string): string {
 export async function sendVendorInvite(
   input: SendVendorInviteInput,
 ): Promise<SendVendorInviteResult> {
-  const secret = getAdminEdgeSecret()
-  if (!secret) {
-    throw new Error("This feature isn't available right now. Please try again later.")
-  }
   const url = resolveEdgeUrl('send-vendor-invite')
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(true),
     body: JSON.stringify(input),
   })
   const text = await res.text()
@@ -73,7 +69,7 @@ export async function sendVendorInvite(
     throw new Error(`Vendor invite: invalid JSON (${res.status})`)
   }
   if (res.status === 401) {
-    throw new Error(formatAdminEdgeUnauthorizedError("We couldn't start vendor onboarding."))
+    throw new Error(ADMIN_SESSION_REQUIRED)
   }
   if (!res.ok) {
     throw new Error(inviteFailureMessageFromResponse(parsed))
@@ -123,21 +119,18 @@ export async function notifyVendorOnboardingOverrideActivated(input: {
   landlordId: string
   vendorId: string
 }): Promise<{ sms: 'sent' | 'skipped' | 'failed'; assignedCount: number }> {
-  const secret = getAdminEdgeSecret()
-  if (!secret) {
-    return { sms: 'failed', assignedCount: 0 }
-  }
   const url = resolveEdgeUrl('send-vendor-invite')
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: adminEdgeInvokeHeaders(secret),
+      headers: await adminSessionInvokeHeaders(true),
       body: JSON.stringify({
         action: 'notify_override_activated',
         landlordId: input.landlordId,
         vendorId: input.vendorId,
       }),
     })
+    if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
     const parsed = (await res.json().catch(() => ({}))) as {
       sms?: string
       assignedCount?: number
@@ -150,7 +143,8 @@ export async function notifyVendorOnboardingOverrideActivated(input: {
       return { sms: parsed.sms, assignedCount }
     }
     return { sms: res.ok ? 'skipped' : 'failed', assignedCount }
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === ADMIN_SESSION_REQUIRED) throw err
     return { sms: 'failed', assignedCount: 0 }
   }
 }
@@ -160,19 +154,18 @@ export async function dispatchUnassignedJobsAfterVendorOverride(input: {
   landlordId: string
   vendorId: string
 }): Promise<{ assignedCount: number }> {
-  const secret = getAdminEdgeSecret()
-  if (!secret) return { assignedCount: 0 }
   const url = resolveEdgeUrl('send-vendor-invite')
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: adminEdgeInvokeHeaders(secret),
+      headers: await adminSessionInvokeHeaders(true),
       body: JSON.stringify({
         action: 'dispatch_override_jobs',
         landlordId: input.landlordId,
         vendorId: input.vendorId,
       }),
     })
+    if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
     const parsed = (await res.json().catch(() => ({}))) as { assignedCount?: number }
     return {
       assignedCount:
@@ -180,7 +173,8 @@ export async function dispatchUnassignedJobsAfterVendorOverride(input: {
           ? Math.floor(parsed.assignedCount)
           : 0,
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === ADMIN_SESSION_REQUIRED) throw err
     return { assignedCount: 0 }
   }
 }

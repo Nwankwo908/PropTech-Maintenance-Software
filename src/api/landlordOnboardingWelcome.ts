@@ -1,9 +1,8 @@
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function functionUrl(): string | undefined {
@@ -35,8 +34,7 @@ export async function sendLandlordOnboardingWelcome(params: {
   email?: string | null
 }): Promise<LandlordOnboardingWelcomeSummary> {
   const url = functionUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return {
       ok: false,
       configured: false,
@@ -52,7 +50,7 @@ export async function sendLandlordOnboardingWelcome(params: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: adminEdgeInvokeHeaders(secret),
+      headers: await adminSessionInvokeHeaders(true),
       body: JSON.stringify({
         landlordId,
         companyName: params.companyName ?? null,
@@ -61,6 +59,7 @@ export async function sendLandlordOnboardingWelcome(params: {
       }),
     })
 
+    if (res.status === 401) return { ok: false, configured: true, error: ADMIN_SESSION_REQUIRED }
     if (!res.ok) {
       const text = await res.text()
       console.warn('[landlordOnboardingWelcome]', url, res.status, text.slice(0, 300))
