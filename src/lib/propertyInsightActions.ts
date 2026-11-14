@@ -112,14 +112,12 @@ async function defaultStartInspectorScheduling(input: {
   issueSummary?: string | null
 }): Promise<{ ok: true; result: InsightSchedulingStartResult } | { ok: false; error: string }> {
   const url = resolveStartInsightInspectionSchedulingUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return { ok: false, error: 'Admin configuration is missing.' }
   }
   try {
     const result = await postStartInsightInspectionScheduling({
       url,
-      secret,
       ...input,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
