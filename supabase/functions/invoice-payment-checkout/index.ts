@@ -5,12 +5,12 @@
  * - create: starts Checkout for a specific method (ach, apple_pay, klarna, afterpay, card)
  * - complete: verifies a paid session and approves the invoice
  *
- * Edge secrets: STRIPE_SECRET_KEY, ADMIN_REASSIGN_SECRET, APP_URL (optional)
+ * Edge secrets: STRIPE_SECRET_KEY, APP_URL (optional)
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { approveMaintenanceInvoice } from "../_shared/maintenanceSpend.ts"
 import { canReceivePayments } from "../_shared/paymentReadiness.ts"
 import {
@@ -157,9 +157,23 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[invoice-payment-checkout]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
+
+  let body: Record<string, unknown>
+  try {
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "Expected JSON object" }, 400)
+    }
+    body = parsed as Record<string, unknown>
+  } catch {
+    return jsonResponse({ error: "Expected JSON body" }, 400)
+  }
+
+  const accountId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!uuidRe.test(accountId)) return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  const denied = await authorizeAdminAccount(req, accountId, corsHeaders)
+  if (denied) return denied
   const pilotGate = assertPilotAllows("rent_payment_ledger", Deno.env)
   if (!pilotGate.ok) {
     return jsonResponse(
@@ -170,13 +184,6 @@ serve(async (req) => {
       },
       503,
     )
-  }
-
-  let body: Record<string, unknown>
-  try {
-    body = await req.json()
-  } catch {
-    return jsonResponse({ error: "Expected JSON body" }, 400)
   }
 
   const action = typeof body.action === "string" ? body.action.trim() : "create"

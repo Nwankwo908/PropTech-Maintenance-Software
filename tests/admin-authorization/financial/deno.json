@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": [
+      "deno.window",
+      "dom",
+      "esnext"
+    ]
+  },
+  "imports": {
+    "https://deno.land/std/http/server.ts": "../inspection-activation/server_stub.ts",
+    "https://esm.sh/@supabase/supabase-js@2.49.1": "./sdk_stub.ts",
+    "../../../supabase/functions/_shared/stripeConnect.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/maintenanceSpend.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/paymentReadiness.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/paymentSettlement.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/paymentActivityEvents.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/graph/recordActivityLog.ts": "./business_stub.ts"
+  }
+}

@@ -2,10 +2,9 @@
  * Stripe Checkout for maintenance invoice payments (ACH, Klarna, Afterpay, Apple Pay, card).
  */
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type InvoiceCheckoutPaymentMethod =
@@ -27,8 +26,7 @@ async function postInvoicePaymentCheckout(
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const url = invoicePaymentCheckoutUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     throw new Error(
       "This feature isn't available right now. Please try again later.",
     )
@@ -36,7 +34,7 @@ async function postInvoicePaymentCheckout(
 
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(true),
     body: JSON.stringify({
       ...body,
       landlordId: getActiveLandlordId(),
@@ -44,6 +42,7 @@ async function postInvoicePaymentCheckout(
     }),
   })
 
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) {
     throw new Error(
