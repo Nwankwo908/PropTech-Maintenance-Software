@@ -10,9 +10,6 @@ import type {
   SMSStatusUpdate,
 } from "./types.ts"
 
-const PROVISION_STUB_ERROR =
-  "Twilio number provisioning via API is not enabled yet. Register the number in Twilio console and pass phoneNumber plus providerNumberSid."
-
 const RELEASE_STUB_LOG =
   "[TwilioProvider] releaseNumber stubbed — no Twilio API call"
 
@@ -560,32 +557,8 @@ export class TwilioProvider implements SMSProvider {
     }
   }
 
-  async provisionNumber(input: ProvisionNumberInput): Promise<ProvisionedNumber> {
-    const cfg = readTwilioConfig()
-    if ("error" in cfg) throw new Error(cfg.error)
-
-    const phoneNumber = input.phoneNumber?.trim()
-    const providerNumberSid = input.providerNumberSid?.trim()
-
-    if (!phoneNumber) {
-      throw new Error(PROVISION_STUB_ERROR)
-    }
-
-    if (!providerNumberSid) {
-      throw new Error(
-        `${PROVISION_STUB_ERROR} Include providerNumberSid from the Twilio console.`,
-      )
-    }
-
-    return {
-      provider: "twilio",
-      phoneNumber,
-      providerNumberSid,
-      messagingServiceSid:
-        input.messagingServiceSid?.trim() ||
-        cfg.messagingServiceSid ||
-        undefined,
-    }
+  async provisionNumber(_input: ProvisionNumberInput): Promise<ProvisionedNumber> {
+    throw new Error("Dedicated SMS number provisioning is retired")
   }
 
   async releaseNumber(input: ReleaseNumberInput): Promise<void> {

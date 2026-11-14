@@ -51,6 +51,7 @@ export type SmsFixture = {
     tables?: Tables
     sharedLine?: boolean
     failReads?: string[]
+    ensureSharedLineFor?: string[]
     /** Seed an existing work order; fields merge over a default open plumbing ticket. */
     ticket?: Row | null
     /** Seed the resident's thread state (sms_conversations.intake_state). */
@@ -66,6 +67,7 @@ export type SmsFixture = {
     /** Work orders created during the conversation. */
     ticketsCreated?: number
     unchangedTables?: string[]
+    sharedLineIdsSame?: boolean
     unchangedTickets?: string[]
     ticketFields?: Array<{ id: string; fields: Row }>
   }
@@ -114,6 +116,7 @@ export async function runFixture(raw: SmsFixture): Promise<SimRun> {
       tables: { ...(fixture.setup?.tables ?? {}), ...(ticket ? { maintenance_requests: [ticket] } : {}) },
       sharedLine: fixture.setup?.sharedLine,
       failReads: fixture.setup?.failReads,
+      ensureSharedLineFor: fixture.setup?.ensureSharedLineFor,
       conversation: ticket || fixture.setup?.intakeState
         ? {
           maintenance_request_id: ticket ? SIM_TICKET_ID : null,
@@ -179,6 +182,10 @@ export function checkFixture(raw: SmsFixture, run: SimRun): string[] {
   for (const expected of fixture.expectEnd?.ticketFields ?? []) {
     const after = run.db.rows("maintenance_requests").find(row => row.id === expected.id)
     for (const [key, value] of Object.entries(expected.fields)) if (JSON.stringify(after?.[key]) !== JSON.stringify(value)) failures.push(`ticket ${expected.id}: ${key} did not match ${JSON.stringify(value)}`)
+  }
+  if (fixture.expectEnd?.sharedLineIdsSame) {
+    const lines = run.sharedLineResults
+    if (lines.length !== fixture.setup?.ensureSharedLineFor?.length || !lines.length || lines.some(line => line.id !== lines[0].id || line.phone !== "+18775803356" || line.created)) failures.push("new landlords did not reuse the canonical shared line read-only")
   }
   for (const table of fixture.expectEnd?.unchangedTables ?? []) {
     if (JSON.stringify(run.db.rows(table)) !== JSON.stringify(run.initialTables[table] ?? [])) failures.push(`${table} changed unexpectedly`)

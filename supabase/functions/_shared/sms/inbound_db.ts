@@ -7,7 +7,6 @@ import {
 import { teamMemberContactFromOnboarding } from "../landlordTeamContact.ts"
 import { isBareSharedLineAction, normalizeSharedLineAddress, sharedLineAddressReply, sharedLineWorkOrderSelector } from "./sharedLineSelector.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { claimPoolNumberByPhone } from "./smsNumberPool.ts"
 import { smsIdentityAllowsTypePatch } from "./smsIdentityUpgrade.ts"
 import { resolveUnitIdForLandlord } from "./resolveUnitId.ts"
 
@@ -57,6 +56,7 @@ export async function lookupSmsNumberByTo(
     )
     .in("phone_number", variants)
     .eq("status", "active")
+    .in("purpose", ["landlord_main", "vendor_main"])
     .limit(1)
     .maybeSingle()
 
@@ -70,70 +70,13 @@ export async function lookupSmsNumberByTo(
 
 /**
  * Resolve the Ulo line for an inbound SMS.
- * Active landlord_main first; otherwise auto-claim an available pool row using DEFAULT_LANDLORD_ID.
+ * Read existing active lines only; inbound traffic never assigns a pool row.
  */
 export async function resolveInboundSmsNumber(
   supabase: SupabaseClient,
   toNumber: string,
 ): Promise<SmsNumberRow | null> {
-  const active = await lookupSmsNumberByTo(supabase, toNumber)
-  if (active) return active
-
-  const variants = phoneLookupVariants(toNumber)
-  if (variants.length === 0) return null
-
-  const { data: poolRow, error: poolErr } = await supabase
-    .from("sms_numbers")
-    .select(
-      "id, landlord_id, vendor_id, phone_number, provider, purpose, status, release_auto_reply",
-    )
-    .in("phone_number", variants)
-    .eq("purpose", "pool")
-    .is("landlord_id", null)
-    .in("status", ["available", "active"])
-    .limit(1)
-    .maybeSingle()
-
-  if (poolErr) {
-    console.error("[sms-inbound] pool number lookup", poolErr.message)
-    throw new Error("Failed to look up SMS pool number")
-  }
-
-  if (!poolRow) return null
-
-  const landlordId = Deno.env.get("DEFAULT_LANDLORD_ID")?.trim()
-  if (!landlordId) {
-    console.error("[sms-inbound] pool number matched but DEFAULT_LANDLORD_ID is unset", {
-      to: toNumber,
-      smsNumberId: poolRow.id,
-    })
-    return null
-  }
-
-  const claimed = await claimPoolNumberByPhone(supabase, {
-    phoneNumber: toNumber,
-    landlordId,
-  })
-
-  if (claimed) {
-    console.info("[sms-inbound] auto-claimed pool number for inbound", {
-      to: toNumber,
-      landlordId,
-      smsNumberId: claimed.id,
-    })
-    return {
-      id: claimed.id,
-      landlord_id: claimed.landlord_id,
-      vendor_id: null,
-      phone_number: claimed.phone_number,
-      provider: claimed.provider,
-      purpose: claimed.purpose,
-      status: claimed.status,
-      release_auto_reply: claimed.release_auto_reply ?? null,
-    }
-  }
-
-  return null
+  return await lookupSmsNumberByTo(supabase, toNumber)
 }
 
 /** Numbers in churn — inbound gets auto-reply only, no workflow routing. */

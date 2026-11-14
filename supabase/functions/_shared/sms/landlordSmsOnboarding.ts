@@ -8,7 +8,6 @@ import {
 import { ensureUnitRow, findUnitRow } from "../unitVacancy.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
-  provisionLandlordMainNumber,
   resolveLandlordId,
   type LandlordSmsNumberRow,
 } from "./smsNumberPool.ts"
@@ -16,14 +15,13 @@ import type { SmsProviderName } from "./types.ts"
 import {
   LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
   landlordMayUseSharedSmsLine,
-  isUnusableSmsIntakeLine,
 } from "../../../../shared/landlordCapabilities.ts"
 
 export { resolveLandlordId, type LandlordSmsNumberRow } from "./smsNumberPool.ts"
 export { claimAvailablePoolNumber as claimPoolNumberForLandlord } from "./smsNumberPool.ts"
 
 export const NO_SMS_POOL_NUMBERS_ERROR =
-  "No available SMS numbers in pool. Pre-seed pool rows or configure SMS_AUTO_PROVISION_* for provider provisioning."
+  "Dedicated SMS number allocation is retired. The shared Ulo line must be configured."
 
 export type EnsureLandlordMainResult = {
   number: LandlordSmsNumberRow
@@ -69,105 +67,19 @@ export async function findActiveLandlordMainNumber(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<LandlordSmsNumberRow | null> {
-  const { data, error } = await supabase
-    .from("sms_numbers")
-    .select(selectSmsNumberFields())
-    .eq("landlord_id", landlordId)
-    .eq("purpose", "landlord_main")
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(10)
-
-  if (error) {
-    console.error("[landlordSms] find landlord_main", error.message)
-    throw new Error("Failed to look up landlord SMS number")
-  }
-
-  const rows = (data as unknown as LandlordSmsNumberRow[] | null) ?? []
-  const owned =
-    rows.find(
-      (row) =>
-        !isUnusableSmsIntakeLine({
-          phone: row.phone_number,
-          provider: row.provider,
-        }),
-    ) ?? null
-  if (owned) return owned
-
-  // Every account may reuse the platform DID. Never transfer its ownership.
-  if (landlordMayUseSharedSmsLine(landlordId)) {
-    return await findActiveNumberByPhoneAndProvider(
-      supabase,
-      LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
-      "twilio",
-    )
-  }
-
-  return null
+  if (!landlordMayUseSharedSmsLine(landlordId)) return null
+  const { data, error } = await supabase.from("sms_numbers")
+    .select(selectSmsNumberFields()).in("phone_number", [...phoneLookupVariants(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER), LIMITED_ALPHA_1_TWILIO_SMS_NUMBER.slice(-10)])
+    .eq("provider", "twilio").eq("purpose", "landlord_main").eq("status", "active").limit(2)
+  if (error || !data || data.length > 1) throw new Error("Shared Ulo SMS line is unavailable")
+  const row = (data as unknown as LandlordSmsNumberRow[])[0]
+  return row ? { ...row, phone_number: LIMITED_ALPHA_1_TWILIO_SMS_NUMBER } : null
 }
 
 export type OutboundLandlordSmsLine = {
   id: string
   phone: string
   provider: SmsProviderName
-}
-
-async function findActiveNumberByPhoneAndProvider(
-  supabase: SupabaseClient,
-  phone: string,
-  provider: SmsProviderName,
-  landlordId?: string | null,
-): Promise<LandlordSmsNumberRow | null> {
-  const variants = phoneLookupVariants(phone)
-  if (variants.length === 0) return null
-
-  if (landlordId?.trim()) {
-    const { data: scoped } = await supabase
-      .from("sms_numbers")
-      .select(selectSmsNumberFields())
-      .eq("landlord_id", landlordId.trim())
-      .in("phone_number", variants)
-      .eq("provider", provider)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle()
-
-    if (scoped) return scoped as unknown as LandlordSmsNumberRow
-  }
-
-  const { data: shared } = await supabase
-    .from("sms_numbers")
-    .select(selectSmsNumberFields())
-    .in("phone_number", variants)
-    .eq("provider", provider)
-    .eq("status", "active")
-    .eq("purpose", "landlord_main")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
-
-  return (shared as LandlordSmsNumberRow | null) ?? null
-}
-
-/** Shared Twilio from-number when this landlord has no Twilio landlord_main row yet. */
-async function resolveSharedTwilioOutboundLine(
-  supabase: SupabaseClient,
-  landlordId?: string | null,
-): Promise<OutboundLandlordSmsLine | null> {
-  const envFrom =
-    Deno.env.get("TWILIO_FROM_NUMBER")?.trim() || LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
-  const row =
-    (landlordId
-      ? await findActiveNumberByPhoneAndProvider(supabase, envFrom, "twilio", landlordId)
-      : null) ??
-    (await findActiveNumberByPhoneAndProvider(supabase, envFrom, "twilio")) ??
-    (await findActiveNumberByPhoneAndProvider(supabase, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, "twilio"))
-  if (!row) return null
-  return {
-    id: String(row.id),
-    phone: normalizeSmsPhone(String(row.phone_number)),
-    provider: "twilio",
-  }
 }
 
 function twilioLineFromRow(row: LandlordSmsNumberRow): OutboundLandlordSmsLine | null {
@@ -182,7 +94,7 @@ function twilioLineFromRow(row: LandlordSmsNumberRow): OutboundLandlordSmsLine |
 /**
  * Landlord_main line for outbound SMS.
  * All accounts are eligible for the shared Ulo DID, independently of plan tier.
- * Existing owned-line precedence is retained until the separate provisioning shutdown.
+ * The canonical shared row is reused read-only; owned-line fallback is retired.
  */
 export async function resolveOutboundLandlordSmsLine(
   supabase: SupabaseClient,
@@ -191,38 +103,19 @@ export async function resolveOutboundLandlordSmsLine(
   const row = await findActiveLandlordMainNumber(supabase, landlordId)
   const line = row ? twilioLineFromRow(row) : null
   if (line) return line
-  if (landlordMayUseSharedSmsLine(landlordId)) {
-    return await resolveSharedTwilioOutboundLine(supabase, landlordId)
-  }
   return null
 }
 
 /**
- * Ensure landlord has an active landlord_main line (pool claim or provider provision).
+ * Validate the shared platform line. Never claim or provision a per-landlord number.
  */
 export async function ensureLandlordMainSmsNumber(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<EnsureLandlordMainResult> {
-  const result = await provisionLandlordMainNumber(supabase, { landlordId })
   const number = await findActiveLandlordMainNumber(supabase, landlordId)
-  if (!number) {
-    throw new Error("Failed to load provisioned landlord_main number")
-  }
-
-  if (result.created) {
-    console.info("[landlordSms] provisioned landlord_main", {
-      landlordId,
-      phoneNumber: number.phone_number,
-      source: result.source,
-    })
-  }
-
-  return {
-    number,
-    created: result.created,
-    source: result.source,
-  }
+  if (!number) throw new Error("Shared Ulo SMS line is unavailable")
+  return { number, created: false, source: "existing" }
 }
 
 async function createResidentSmsIdentity(

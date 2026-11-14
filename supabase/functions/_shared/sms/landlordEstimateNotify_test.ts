@@ -130,7 +130,7 @@ function newState(overrides?: Partial<TestState>): TestState {
       {
         id: LINE_ID,
         landlord_id: LANDLORD_ID,
-        phone_number: "+15550001111",
+        phone_number: "+18775803356",
         provider: "twilio",
         status: "active",
         purpose: "landlord_main",
@@ -410,7 +410,7 @@ function mockSupabase(state: TestState) {
 
   return {
     from,
-    // provision path used by ensureLandlordMainSmsNumber — unused when linePresent
+    // Canonical shared-line lookup; normal notification code must never allocate.
   } as unknown as import("https://esm.sh/@supabase/supabase-js@2.49.1").SupabaseClient
 }
 

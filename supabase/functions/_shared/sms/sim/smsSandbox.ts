@@ -52,6 +52,7 @@ export type SimRun = {
   turns: SimTurnResult[]
   db: FakeDb
   initialTables: Tables
+  sharedLineResults: Array<{ id: string; phone: string; created: boolean }>
 }
 
 /** Base portfolio: one property, one unit, one resident, one plumber. */
@@ -77,7 +78,7 @@ export function baseSandboxTables(): Tables {
       vendor_id: null,
       phone_number: SIM_ULO_NUMBER,
       provider: "twilio",
-      purpose: "landlord",
+      purpose: "landlord_main",
       status: "active",
       release_auto_reply: null,
     }],
@@ -249,6 +250,7 @@ export type SimOptions = {
   /** Simulate the public platform DID in memory; sends are still captured. */
   sharedLine?: boolean
   failReads?: string[]
+  ensureSharedLineFor?: string[]
   /** Patch the resident's sms_conversations row (created on first turn). */
   conversation?: Row
 }
@@ -265,7 +267,7 @@ export async function runSmsSandbox(
     }
   }
   const receivingNumber = opts.sharedLine ? LIMITED_ALPHA_1_TWILIO_SMS_NUMBER : SIM_ULO_NUMBER
-  if (opts.sharedLine) tables.sms_numbers = (tables.sms_numbers ?? []).map(row => ({ ...row, phone_number: receivingNumber, purpose: "landlord_main" }))
+  if (opts.sharedLine) tables.sms_numbers = (tables.sms_numbers ?? []).map(row => (row.phone_number === SIM_ULO_NUMBER ? { ...row, phone_number: receivingNumber, purpose: "landlord_main" } : row))
   if (opts.conversation) {
     tables.sms_conversations = [{
       id: "5a4d0000-0000-4000-8000-000000000101",
@@ -299,7 +301,16 @@ export async function runSmsSandbox(
   resetSMSProviderCache()
 
   const results: SimTurnResult[] = []
+  const sharedLineResults: SimRun["sharedLineResults"] = []
   try {
+    if (opts.ensureSharedLineFor?.length) {
+      const { ensureLandlordMainSmsNumber } = await import("../landlordSmsOnboarding.ts")
+      for (const landlordId of opts.ensureSharedLineFor) {
+        if ((LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(landlordId)) throw new Error("SMS sandbox refuses Limited Alpha landlord ids")
+        const result = await ensureLandlordMainSmsNumber(db.client(), landlordId)
+        sharedLineResults.push({ id: result.number.id, phone: result.number.phone_number, created: result.created })
+      }
+    }
     let n = 0
     for (const turn of turns) {
       n += 1
@@ -342,5 +353,5 @@ export async function runSmsSandbox(
     restoreEnv()
     resetSMSProviderCache()
   }
-  return { turns: results, db, initialTables }
+  return { turns: results, db, initialTables, sharedLineResults }
 }
