@@ -1,14 +1,13 @@
 import { getErrorMessage } from '@/lib/errorMessage'
 /**
  * Post-onboarding tenant activation SMS trigger.
- * Uses the same ADMIN_REASSIGN_SECRET as other admin Edge calls.
+ * Requires a signed-in account session (temporary rollout bridge).
  */
 
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
 import { supabase } from '@/lib/supabase'
@@ -24,7 +23,7 @@ function functionUrl(): string | undefined {
 
 export type TenantActivationSummary = {
   ok: boolean
-  /** False only when the client is missing the function URL/secret/landlord. */
+  /** False only when the client is missing the function URL/landlord. */
   configured: boolean
   attempted?: number
   sent?: number
@@ -46,8 +45,7 @@ export async function sendTenantActivationSms(params: {
   resend?: boolean
 }): Promise<TenantActivationSummary> {
   const url = functionUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return { ok: false, configured: false, error: 'Tenant activation SMS is not configured.' }
   }
 
@@ -59,7 +57,7 @@ export async function sendTenantActivationSms(params: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: adminEdgeInvokeHeaders(secret),
+      headers: await adminSessionInvokeHeaders(true),
       body: JSON.stringify({
         landlordId,
         residentIds: params.residentIds,
@@ -68,6 +66,7 @@ export async function sendTenantActivationSms(params: {
       }),
     })
 
+    if (res.status === 401) return { ok: false, configured: true, error: ADMIN_SESSION_REQUIRED }
     if (!res.ok) {
       const text = await res.text()
       console.warn('[tenantActivation]', url, res.status, text.slice(0, 300))

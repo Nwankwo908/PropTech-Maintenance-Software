@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import {
   sendAdminConversationSms,
@@ -28,8 +28,6 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const auth = requireAdminReassignAuth(req, "[admin-conversation-sms]", corsHeaders)
-  if (!auth.ok) return auth.response
 
   let body: {
     action?: string
@@ -38,7 +36,9 @@ serve(async (req) => {
     body?: string
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -63,6 +63,9 @@ serve(async (req) => {
     )
   }
 
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
   if (!supabaseUrl || !serviceKey) {
@@ -70,6 +73,10 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+
+  const { data: conversation, error } = await supabase.from("sms_conversations").select("id").eq("id", conversationId).eq("landlord_id", landlordId).maybeSingle()
+  if (error) return jsonResponse({ error: "Conversation lookup unavailable" }, 503)
+  if (!conversation) return jsonResponse({ error: "Conversation not found" }, 404)
 
   if (action === "takeover" || action === "release") {
     const result = await setAdminConversationTakeover(supabase, {
