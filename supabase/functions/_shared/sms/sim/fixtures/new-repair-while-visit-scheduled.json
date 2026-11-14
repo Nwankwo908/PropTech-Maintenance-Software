@@ -1,0 +1,31 @@
+{
+  "id": "new-repair-while-visit-scheduled",
+  "title": "A new problem during a scheduled visit opens a new repair",
+  "origin": "code review",
+  "status": "locked",
+  "setup": {
+    "ticket": {
+      "vendor_work_status": "scheduled",
+      "scheduled_at": "2026-11-12T19:00:00.000Z",
+      "scheduled_window_text": "Thu 2-4pm",
+      "schedule_confirmed_at": "2026-11-10T10:00:00.000Z"
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Good morning, the bathroom ceiling light stopped working.",
+      "expect": {
+        "route": "resident_maintenance_intake",
+        "routeNot": [
+          "sms_schedule_change",
+          "tenant_schedule_confirm"
+        ],
+        "replies": true
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 1
+  }
+}
