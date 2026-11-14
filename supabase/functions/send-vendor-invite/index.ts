@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 import {
   abortFailedVendorOnboardingInvite,
   completeVendorOnboardingAfterOverride,
@@ -33,8 +33,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[send-vendor-invite]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: {
     action?: string
@@ -51,7 +49,9 @@ serve(async (req) => {
     tradeCategories?: unknown
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -62,14 +62,19 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
-  let landlordId: string
-  try {
-    landlordId = resolveLandlordId(body.landlordId)
-  } catch (err) {
-    return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
-      400,
-    )
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!isUuidShape(landlordId)) return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
+  // A caller's account membership never authorizes a foreign nested target.
+  for (const [value, table] of [[body.vendorId, "vendors"], [body.ticketId, "maintenance_requests"]] as const) {
+    if (value == null || value === "") continue
+    if (typeof value !== "string" || !isUuidShape(value.trim())) return jsonResponse({ error: "Invalid target ID" }, 400)
+    const client = createClient(supabaseUrl, serviceKey)
+    const { data, error } = await client.from(table).select("id").eq("id", value.trim()).eq("landlord_id", landlordId).maybeSingle()
+    if (error) return jsonResponse({ error: "Target lookup unavailable" }, 503)
+    if (!data) return jsonResponse({ error: "Target not found" }, 404)
   }
 
   const action = typeof body.action === "string" ? body.action.trim() : ""
@@ -100,6 +105,11 @@ serve(async (req) => {
       typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
         ? ticket.assigned_vendor_id.trim()
         : ""
+    if (assignedId) {
+      const { data, error } = await supabase.from("vendors").select("id").eq("id", assignedId).eq("landlord_id", landlordId).maybeSingle()
+      if (error) return jsonResponse({ error: "Vendor lookup unavailable" }, 503)
+      if (!data) return jsonResponse({ error: "Vendor not found" }, 404)
+    }
     const workStatus =
       typeof ticket.vendor_work_status === "string"
         ? ticket.vendor_work_status.trim().toLowerCase()

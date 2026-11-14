@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": [
+      "deno.window",
+      "dom",
+      "esnext"
+    ]
+  },
+  "imports": {
+    "https://deno.land/std/http/server.ts": "../inspection-activation/server_stub.ts",
+    "https://esm.sh/@supabase/supabase-js@2.49.1": "./sdk_stub.ts",
+    "../../../supabase/functions/_shared/sms/landlordOnboardingWelcome.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/delivery.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/graph/recordActivityLog.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/landlordOpsNotify.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/providerFactory.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/landlordSmsOnboarding.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/engine/vendorOnboardingProgress.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/vendor_verification/findVendor.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/vendor_verification/deliverVendorInvite.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/vendorOnboardingOverrideSms.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/vendorOnboardingOverrideDispatch.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/vendor_outreach_copy.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/sms/vendorSmsRouting.ts": "./business_stub.ts",
+    "../../../supabase/functions/_shared/assignVendorAndNotify.ts": "./business_stub.ts",
+    "../../../supabase/functions/submit-maintenance-request/vendor_notify.ts": "./business_stub.ts"
+  }
+}

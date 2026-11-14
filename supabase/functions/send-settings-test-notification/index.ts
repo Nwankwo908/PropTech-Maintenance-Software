@@ -4,7 +4,8 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { recordActivityLog } from "../_shared/graph/recordActivityLog.ts"
 import {
@@ -65,7 +66,7 @@ async function resolveAccountPhoneForSettingsTest(
   if (membersError) {
     console.warn("[send-settings-test-notification] portal members", membersError.message)
   }
-  const memberPhones = (members ?? []).map((row) =>
+  const memberPhones = (members ?? []).map((row: { phone?: unknown }) =>
     typeof row.phone === "string" ? row.phone : "",
   )
   const { data: residents } = await supabase
@@ -74,7 +75,7 @@ async function resolveAccountPhoneForSettingsTest(
     .eq("landlord_id", landlordId)
     .not("phone", "is", null)
     .limit(500)
-  const residentPhones = (residents ?? []).map((row) =>
+  const residentPhones = (residents ?? []).map((row: { phone?: unknown }) =>
     typeof row.phone === "string" ? row.phone : "",
   )
   return pickSettingsTestSmsDestination(
@@ -99,8 +100,6 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  const adminAuth = requireAdminReassignAuth(req, "[send-settings-test-notification]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
@@ -108,7 +107,6 @@ serve(async (req) => {
     if (!supabaseUrl || !serviceKey) {
       return jsonResponse({ error: "Server misconfiguration" }, 500)
     }
-    const supabase = createClient(supabaseUrl, serviceKey)
 
     let body: {
       landlordId?: string
@@ -119,16 +117,22 @@ serve(async (req) => {
       customSmsBody?: string
     } = {}
     try {
-      body = await req.json()
+      const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as typeof body
     } catch {
       return jsonResponse({ error: "Invalid JSON body" }, 400)
     }
 
-    const landlordId = String(body.landlordId ?? "").trim()
+    const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
     const channel = body.channel === "sms" ? "sms" : body.channel === "email" ? "email" : null
-    if (!landlordId || !channel) {
+    if (!isUuidShape(landlordId) || !channel) {
       return jsonResponse({ error: "landlordId and channel are required" }, 400)
     }
+
+    const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+    if (denied) return denied
+    const supabase = createClient(supabaseUrl, serviceKey)
 
     if (channel === "email") {
       const contact = await loadLandlordSupportContact(supabase, landlordId)
