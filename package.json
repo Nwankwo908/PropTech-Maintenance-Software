@@ -20,6 +20,7 @@
     "check:lint": "bash scripts/readiness/check-lint.sh",
     "check:behavior-frontend": "bash scripts/readiness/check-behavior-frontend.sh",
     "check:behavior-backend": "bash scripts/readiness/check-behavior-backend.sh",
+    "sim:sms": "deno run --config supabase/functions/deno.json --no-lock --allow-env --allow-read --allow-net supabase/functions/_shared/sms/sim/cli.ts",
     "check:connected-workflows": "bash scripts/readiness/check-connected-workflows.sh",
     "check:readiness": "bash scripts/readiness/run-all.sh",
     "verify:vendor-support-isolation": "node scripts/integration-verification/verify-vendor-support-isolation.mjs",
@@ -35,7 +36,7 @@
     "verify:failure-recovery": "node scripts/integration-verification/verify-failure-recovery.mjs",
     "verify:sms-failure-recovery": "node scripts/integration-verification/verify-sms-failure-recovery.mjs",
     "verify:live-ai-workflows": "node scripts/integration-verification/verify-live-ai-workflows.mjs",
-    "check:admin-authorization": "deno test --config tests/admin-authorization/f08/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/f08/ && deno test --config tests/admin-authorization/routing/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/routing/ && deno test --config tests/admin-authorization/inspection-activation/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/inspection-activation/ && deno test --config tests/admin-authorization/sms-identity/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/sms-identity/"
+    "check:admin-authorization": "deno test --config tests/admin-authorization/f08/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/f08/ && deno test --config tests/admin-authorization/routing/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/routing/ && deno test --config tests/admin-authorization/inspection-activation/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/inspection-activation/ && deno test --config tests/admin-authorization/sms-release/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/sms-release/ && deno test --config supabase/functions/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/sms-release-helper/ && deno test --config tests/admin-authorization/sms-identity/deno.json --no-lock --allow-env --allow-read tests/admin-authorization/sms-identity/"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

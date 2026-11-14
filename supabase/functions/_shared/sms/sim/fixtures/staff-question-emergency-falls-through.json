@@ -1,0 +1,33 @@
+{
+  "id": "staff-question-emergency-falls-through",
+  "title": "An emergency after a property-team question still gets emergency handling",
+  "origin": "code review",
+  "status": "locked",
+  "setup": {
+    "ticket": {},
+    "intakeState": {
+      "awaiting_staff_reply": {
+        "messageId": "sim-staff-question",
+        "sentAt": "2026-11-10T12:00:00.000Z",
+        "ticketId": "{{TICKET_ID}}"
+      }
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Hi, separate issue: the bathroom outlet is sparking.",
+      "minutesLater": 60,
+      "expect": {
+        "route": "resident_maintenance_intake",
+        "replies": true,
+        "replyMatches": [
+          "same-day"
+        ]
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 1
+  }
+}

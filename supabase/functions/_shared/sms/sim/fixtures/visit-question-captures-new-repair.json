@@ -1,0 +1,40 @@
+{
+  "id": "visit-question-captures-new-repair",
+  "title": "A new repair report while a visit question is open is not treated as the answer",
+  "origin": "code review (routing investigation)",
+  "status": "known_bug",
+  "currentBehavior": "schedule_confirm owns every reply while the question is open. Ulo answers 'did you mean to confirm Thu 2-4pm? Reply YES or NO' and no repair is opened.",
+  "setup": {
+    "ticket": {},
+    "intakeState": {
+      "awaiting_schedule_confirmation": {
+        "ticketId": "{{TICKET_ID}}",
+        "vendorId": "{{VENDOR_ID}}",
+        "vendorConversationId": null,
+        "windowText": "Thu 2-4pm",
+        "scheduledAt": "2026-11-12T19:00:00.000Z",
+        "kind": "initial"
+      }
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Hi, separate issue: the bathroom ceiling light stopped working.",
+      "minutesLater": 60,
+      "expect": {
+        "routeNot": [
+          "sms_schedule_change",
+          "tenant_schedule_confirm"
+        ],
+        "replies": true,
+        "replyNotMatches": [
+          "did you mean to confirm"
+        ]
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 1
+  }
+}
