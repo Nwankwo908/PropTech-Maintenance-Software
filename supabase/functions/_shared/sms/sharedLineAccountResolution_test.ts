@@ -211,3 +211,10 @@ for (
   Deno.test(`shared-line normal words are not mistaken for work-order IDs: ${body}`, () =>
     assertEquals(sharedLineWorkOrderSelector(body).kind, "none"))
 }
+
+Deno.test("shared-line Home Check reference narrows existing links but never creates one", async () => {
+  const db = new FakeDb(seed())
+  const result = await resolveSharedLineInboundAccount(db.client(), { from: FROM, body: "HC-ABCDEF123456", smsNumberId: LINE, homeCheckLandlordId: C })
+  assertEquals(result.landlordId, null)
+  assertEquals(result.reason, "selector_not_found")
+})
