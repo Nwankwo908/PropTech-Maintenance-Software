@@ -105,12 +105,13 @@ export async function saveLandlordThumbtackRefreshToken(
   landlordId: string,
   refreshToken: string,
   opts?: {
+    exactAccount?: boolean
     scope?: string | null
     accessToken?: string | null
     expiresInSec?: number | null
   },
 ): Promise<{ ok: boolean; error?: string }> {
-  const id = remapThumbtackOauthLandlordId(landlordId.trim())
+  const id = opts?.exactAccount ? landlordId.trim() : remapThumbtackOauthLandlordId(landlordId.trim())
   const token = refreshToken.trim()
   if (!id || !token) return { ok: false, error: "missing_token" }
   const now = new Date().toISOString()

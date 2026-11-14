@@ -2,7 +2,6 @@ import {
   exchangeThumbtackOauth,
   resolveThumbtackOauthUrl,
 } from '@/api/thumbtackOauth'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { thumbtackOauthParamsFromSearch } from '@/lib/uloAppUrl'
 
 const HANDLED_KEY = 'ulo.thumbtack.oauth.handled'
@@ -90,8 +89,7 @@ async function finishThumbtackOauth(oauth: {
     }
   }
   const url = resolveThumbtackOauthUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return {
       handled: true,
       error: 'Thumbtack connect is not configured for this dashboard.',
@@ -100,7 +98,6 @@ async function finishThumbtackOauth(oauth: {
   try {
     const result = await exchangeThumbtackOauth({
       url,
-      secret,
       code: oauth.code,
       state: oauth.state,
       returnOrigin: window.location.origin,
