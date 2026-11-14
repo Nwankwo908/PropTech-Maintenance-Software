@@ -1,12 +1,13 @@
 /**
- * A property-team question on a resident thread owns the next reply.
- * Rent, intake, and other handlers must not answer it.
+ * A property-team question on a resident thread owns the next actual answer.
+ * Emergencies and clear repair reports yield to the contextual workflow.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { matchEmergencyNet } from "../../../../shared/maintenance/deterministicRules.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { landlordMessageAwaitsTenantReply } from "./landlordAwait.ts"
+import { shouldYieldPendingAskToRepair } from "./pendingAskRepairReport.ts"
 
 export const AWAITING_STAFF_REPLY_KEY = "awaiting_staff_reply"
 export const STAFF_REPLY_TTL_MS = 24 * 60 * 60 * 1000
@@ -92,6 +93,7 @@ export async function tryHandleStaffReplyInbound(
 ): Promise<{ handled: true } | { handled: false }> {
   if (params.identityType !== "resident") return { handled: false }
   if (inboundIsEmergency(params.body)) return { handled: false }
+  if (shouldYieldPendingAskToRepair(params.body)) return { handled: false }
 
   const { data: conv } = await supabase
     .from("sms_conversations")

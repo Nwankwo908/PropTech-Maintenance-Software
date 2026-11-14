@@ -21,6 +21,15 @@ Deno.test("parseTenantScheduleDecision accepts common YES forms", () => {
   assertEquals(parseTenantScheduleDecision("ok"), "accept")
 })
 
+Deno.test("natural visit confirmations accept only bounded affirmative phrases", () => {
+  for (const body of ["Yes that works", "Yes, that works, thanks!", "Yes thanks", "Yes, thank you", "Sounds good", "That works for me", "Yeah that works", "Yep, thanks"]) {
+    assertEquals(parseTenantScheduleDecision(body), "accept", body)
+  }
+  for (const body of ["Yes thanks but no", "Sounds good but I can't make it", "Yes that works if you change the time", "Yes, my sink is leaking", "Not sounds good", "Yes that works; no it doesn't"]) {
+    assertEquals(parseTenantScheduleDecision(body) === "accept", false, body)
+  }
+})
+
 Deno.test("parseTenantScheduleDecision accepts common NO forms", () => {
   assertEquals(parseTenantScheduleDecision("NO"), "decline")
   assertEquals(parseTenantScheduleDecision("doesn't work"), "decline")

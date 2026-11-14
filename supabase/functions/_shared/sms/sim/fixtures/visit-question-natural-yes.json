@@ -2,8 +2,7 @@
   "id": "visit-question-natural-yes",
   "title": "'Yes that works' to a proposed visit window confirms it",
   "origin": "sandbox run 2026-11-11",
-  "status": "known_bug",
-  "currentBehavior": "Only exact words (YES, OK, THAT WORKS) are accepted. 'Yes that works', 'Yes thanks' and 'Sounds good' get 'I didn't quite catch that... Reply YES or NO.'",
+  "status": "locked",
   "setup": {
     "ticket": {},
     "intakeState": {
