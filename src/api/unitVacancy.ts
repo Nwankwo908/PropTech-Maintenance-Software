@@ -170,7 +170,7 @@ export async function ensureUnitsInDb(
   units: Array<{ unitLabel: string; building: string | null }>,
 ): Promise<boolean> {
   const landlordId = defaultLandlordId()
-  if (!landlordId || !secret || units.length === 0) return false
+  if (!landlordId || units.length === 0) return false
 
   const { registerPropertyUnitsSms } = await import('@/api/landlordSmsOnboarding')
   return registerPropertyUnitsSms({
