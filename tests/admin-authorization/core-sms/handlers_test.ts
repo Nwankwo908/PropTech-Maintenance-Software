@@ -1,0 +1,24 @@
+import {handlers} from '../inspection-activation/server_stub.ts'
+import {state,reset} from '../routing/sdk_stub.ts'
+import {ACCOUNT_A,ACCOUNT_B,RUN_A,RUN_B,token,user,env,authRuntime,equal,type AuthOptions} from '../routing/runtime.ts'
+await import('../../../supabase/functions/admin-conversation-sms/index.ts')
+await import('../../../supabase/functions/send-tenant-activation/index.ts')
+const RES_A='11111111-1111-4111-8111-111111111111',RES_B='22222222-2222-4222-8222-222222222222';
+function payload(index:number){return index===0?{landlord_id:ACCOUNT_A,conversation_id:RUN_A,action:'send',body:'Synthetic only'}:{landlordId:ACCOUNT_A,residentIds:[RES_A]}}
+async function run(index:number,options:{body?:unknown;auth?:AuthOptions;headers?:Record<string,string>;method?:string;errorTable?:string}={}){reset();state.rows.users=[{id:RES_A,landlord_id:ACCOUNT_A},{id:RES_B,landlord_id:ACCOUNT_B}];state.rows.sms_conversations=[{id:RUN_A,landlord_id:ACCOUNT_A},{id:RUN_B,landlord_id:ACCOUNT_B}];state.errorTable=options.errorTable??'';const original=globalThis.fetch,keys=['SUPABASE_URL','SUPABASE_ANON_KEY','SUPABASE_SERVICE_ROLE_KEY'],saved=keys.map(k=>Deno.env.get(k));keys.forEach(k=>Deno.env.set(k,env(k)!));globalThis.fetch=authRuntime(options.auth).runtime.fetch;try{const method=options.method??'POST';const r=await handlers[index](new Request('https://handler.invalid',{method,headers:{'Content-Type':'application/json',...(options.headers??{Authorization:'Bearer '+token()})},...(method==='POST'?{body:JSON.stringify(options.body??payload(index))}:{})}));return {status:r.status,body:await r.json().catch(()=>null)}}finally{globalThis.fetch=original;keys.forEach((k,i)=>saved[i]===undefined?Deno.env.delete(k):Deno.env.set(k,saved[i]!))}}
+for(const index of [0,1]){
+ for(const c of [{name:'missing',headers:{},auth:{},status:401},{name:'legacy',headers:{'x-admin-reassign-secret':'unit-public-browser-secret'},auth:{},status:401},{name:'anon',headers:{Authorization:'Bearer unit-anon-key'},auth:{},status:401},{name:'foreign',auth:{access:false},status:403},{name:'expired',auth:{authStatus:401},status:401},{name:'banned',auth:{account:{...user(),banned_until:'2099-01-01T00:00:00Z'}},status:403}] as Array<{name:string;headers?:Record<string,string>;auth:AuthOptions;status:number}>){Deno.test(`core-sms ${index} ${c.name} denied before reads/sends/writes`,async()=>{equal((await run(index,c)).status,c.status);equal(state.business,[]);equal(state.writes,0);equal(state.reads,[])})}
+ for(const body of [[],{}, {landlordId:'bad'}, {landlordId:2}])Deno.test(`core-sms ${index} malformed scope ${JSON.stringify(body)}`,async()=>{equal((await run(index,{body})).status,400);equal(state.business,[]);equal(state.writes,0)})
+ Deno.test(`core-sms ${index} OPTIONS no effects`,async()=>{equal((await run(index,{method:'OPTIONS'})).status,200);equal(state.business,[])})
+}
+for(const action of ['takeover','release','send']){
+ Deno.test(`foreign conversation ${action} refuses before helper`,async()=>{equal((await run(0,{body:{...payload(0),conversation_id:RUN_B,action}})).status,404);equal(state.business,[])})
+ Deno.test(`own conversation ${action} uses only fake scoped helper`,async()=>{equal((await run(0,{body:{...payload(0),action}})).status,200);equal((state.business[0].params as {landlordId:string}).landlordId,ACCOUNT_A)})
+}
+Deno.test('mixed activation batch refuses before any sends',async()=>{equal((await run(1,{body:{landlordId:ACCOUNT_A,residentIds:[RES_A,RES_B]}})).status,404);equal(state.business,[])})
+for(const residentIds of [null,'all',[RES_A,4],['bad']])Deno.test(`malformed activation batch ${JSON.stringify(residentIds)} never falls through to account-wide send`,async()=>{equal((await run(1,{body:{landlordId:ACCOUNT_A,residentIds}})).status,400);equal(state.business,[])})
+Deno.test('explicit empty activation batch is successful no-op',async()=>{const r=await run(1,{body:{landlordId:ACCOUNT_A,residentIds:[]}});equal(r.status,200);equal(r.body.sent,0);equal(state.business,[]);equal(state.reads,[])})
+Deno.test('own activation batch invokes only fake helper',async()=>{equal((await run(1)).status,200);equal(state.business[0].name,'activate');equal((state.business[0].params as {residentIds:string[]}).residentIds,[RES_A])})
+Deno.test('duplicate activation IDs are sent once',async()=>{equal((await run(1,{body:{landlordId:ACCOUNT_A,residentIds:[RES_A,RES_A]}})).status,200);equal((state.business[0].params as {residentIds:string[]}).residentIds,[RES_A])})
+Deno.test('omitted activation IDs retain explicit account-scoped operation',async()=>{equal((await run(1,{body:{landlordId:ACCOUNT_A}})).status,200);equal((state.business[0].params as {landlordId:string}).landlordId,ACCOUNT_A)})
+for(const [index,errorTable] of [[0,'sms_conversations'],[1,'users']] as const)Deno.test(`core-sms ${errorTable} outage fails closed`,async()=>{equal((await run(index,{errorTable})).status,503);equal(state.business,[])})

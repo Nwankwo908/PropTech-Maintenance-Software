@@ -1,0 +1,4 @@
+import {state} from '../routing/sdk_stub.ts'
+export function sendTenantActivation(_s:unknown,p:{landlordId:string;residentIds?:string[];companyName?:string|null;resend?:boolean}){state.business.push({name:'activate',params:p});return Promise.resolve({attempted:1,sent:1,skipped:0,failed:0,error:undefined as string|undefined})}
+export function setAdminConversationTakeover(_s:unknown,p:{conversationId:string;landlordId:string;active:boolean}){state.business.push({name:'takeover',params:p});return Promise.resolve({ok:true,status:200,error:undefined as string|undefined,conversationId:p.conversationId,adminTakeoverActive:p.active})}
+export function sendAdminConversationSms(_s:unknown,p:{conversationId:string;landlordId:string;body:string}){state.business.push({name:'send',params:p});return Promise.resolve({ok:true,status:200,error:undefined as string|undefined,conversationId:p.conversationId,messageId:'synthetic',adminTakeoverActive:true})}

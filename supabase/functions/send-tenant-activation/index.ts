@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { sendTenantActivation } from "../_shared/sms/tenantActivation.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -22,8 +22,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[send-tenant-activation]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
 
   let body: {
@@ -33,7 +31,9 @@ serve(async (req) => {
     resend?: boolean
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -44,17 +44,17 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
-  let landlordId: string
-  try {
-    landlordId = resolveLandlordId(body.landlordId)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ error: message }, 400)
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!isUuidShape(landlordId)) return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+  let residentIds: string[] | undefined
+  if (body.residentIds !== undefined) {
+    if (!Array.isArray(body.residentIds) || body.residentIds.some(id => typeof id !== "string" || !isUuidShape(id.trim()))) return jsonResponse({ error: "Invalid residentIds" }, 400)
+    residentIds = [...new Set((body.residentIds as string[]).map(id => id.trim()))]
+    // Empty explicit selection is a no-op, never an implicit account-wide send.
+    if (residentIds.length === 0) return jsonResponse({ ok: true, attempted: 0, sent: 0, skipped: 0, failed: 0 })
   }
-
-  const residentIds = Array.isArray(body.residentIds)
-    ? body.residentIds.filter((id): id is string => typeof id === "string")
-    : undefined
 
   const companyName =
     typeof body.companyName === "string" ? body.companyName.trim() || null : null
@@ -62,6 +62,11 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   try {
+    if (residentIds) {
+      const { data, error } = await supabase.from("users").select("id").eq("landlord_id", landlordId).in("id", residentIds)
+      if (error) return jsonResponse({ error: "Resident lookup unavailable" }, 503)
+      if (!data || data.length !== residentIds.length) return jsonResponse({ error: "Resident selection not found" }, 404)
+    }
     const summary = await sendTenantActivation(supabase, {
       landlordId,
       residentIds,
@@ -80,7 +85,6 @@ serve(async (req) => {
     })
   } catch (err) {
     console.error("[send-tenant-activation] error", err)
-    const message = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ error: message }, 500)
+    return jsonResponse({ error: "Activation service unavailable" }, 503)
   }
 })

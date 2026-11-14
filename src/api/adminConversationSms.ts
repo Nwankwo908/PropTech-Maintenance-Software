@@ -1,12 +1,11 @@
 /**
  * POST admin-conversation-sms — take over / release / send on a Communication SMS thread.
- * Auth: VITE_ADMIN_REASSIGN_SECRET (same as other admin Edge calls).
+ * Auth: signed-in account session (temporary legacy header during rollout).
  */
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function adminConversationSmsUrl(): string | null {
@@ -36,10 +35,9 @@ async function invokeAdminConversationSms(input: {
   body?: string
 }): Promise<AdminConversationSmsResult> {
   const url = adminConversationSmsUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     throw new Error(
-      'Communication messaging is not configured (admin Edge URL/secret).',
+      'Communication messaging is not configured (admin Edge URL).',
     )
   }
 
@@ -51,7 +49,7 @@ async function invokeAdminConversationSms(input: {
   const landlordId = getActiveLandlordId()
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers: await adminSessionInvokeHeaders(true),
     body: JSON.stringify({
       action: input.action,
       conversation_id: conversationId,
@@ -68,6 +66,7 @@ async function invokeAdminConversationSms(input: {
     admin_takeover_active?: boolean
   }
 
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
   if (!res.ok || !payload.ok) {
     throw new Error(
       typeof payload.error === 'string' && payload.error.trim()
