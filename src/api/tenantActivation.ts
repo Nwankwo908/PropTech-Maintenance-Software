@@ -57,7 +57,7 @@ export async function sendTenantActivationSms(params: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: await adminSessionInvokeHeaders(true),
+      headers: await adminSessionInvokeHeaders(false),
       body: JSON.stringify({
         landlordId,
         residentIds: params.residentIds,

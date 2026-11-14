@@ -49,7 +49,7 @@ async function invokeAdminConversationSms(input: {
   const landlordId = getActiveLandlordId()
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: await adminSessionInvokeHeaders(true),
+    headers: await adminSessionInvokeHeaders(false),
     body: JSON.stringify({
       action: input.action,
       conversation_id: conversationId,
