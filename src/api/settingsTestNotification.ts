@@ -40,7 +40,7 @@ export async function sendSettingsTestNotification(params: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: await adminSessionInvokeHeaders(true),
+      headers: await adminSessionInvokeHeaders(false),
       body: JSON.stringify({
         landlordId,
         channel: params.channel,

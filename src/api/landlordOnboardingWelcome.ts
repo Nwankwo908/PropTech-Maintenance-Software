@@ -50,7 +50,7 @@ export async function sendLandlordOnboardingWelcome(params: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: await adminSessionInvokeHeaders(true),
+      headers: await adminSessionInvokeHeaders(false),
       body: JSON.stringify({
         landlordId,
         companyName: params.companyName ?? null,

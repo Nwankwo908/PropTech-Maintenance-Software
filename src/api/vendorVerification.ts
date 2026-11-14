@@ -58,7 +58,7 @@ export async function sendVendorInvite(
   const url = resolveEdgeUrl('send-vendor-invite')
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: await adminSessionInvokeHeaders(true),
+    headers: await adminSessionInvokeHeaders(false),
     body: JSON.stringify(input),
   })
   const text = await res.text()
@@ -123,7 +123,7 @@ export async function notifyVendorOnboardingOverrideActivated(input: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: await adminSessionInvokeHeaders(true),
+      headers: await adminSessionInvokeHeaders(false),
       body: JSON.stringify({
         action: 'notify_override_activated',
         landlordId: input.landlordId,
@@ -158,7 +158,7 @@ export async function dispatchUnassignedJobsAfterVendorOverride(input: {
   try {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
-      headers: await adminSessionInvokeHeaders(true),
+      headers: await adminSessionInvokeHeaders(false),
       body: JSON.stringify({
         action: 'dispatch_override_jobs',
         landlordId: input.landlordId,
