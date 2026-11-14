@@ -1,12 +1,13 @@
 /**
  * Landlord SMS onboarding + unit registration Edge Functions.
- * Uses the same ADMIN_REASSIGN_SECRET as other admin Edge calls.
+ * Identity sync uses a user session; other onboarding calls retain their existing transport.
  */
 
 import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
@@ -128,9 +129,13 @@ export async function syncSmsIdentity(params: {
   const resolvedLandlordId = params.landlordId?.trim() || defaultLandlordId()
   if (!resolvedLandlordId) return false
 
-  const result = await postAdminFunction<{ ok: boolean }>(
-    functionUrl('sync-sms-identity'),
-    {
+  const url = functionUrl('sync-sms-identity')
+  if (!url) return false
+  const res = await fetchAdminEdgeFunction(url, {
+    method: 'POST',
+    // Bridge rollout: require the session AND retain the old handler header.
+    headers: await adminSessionInvokeHeaders(true),
+    body: JSON.stringify({
       landlordId: resolvedLandlordId,
       phone,
       identityType: params.identityType,
@@ -139,8 +144,10 @@ export async function syncSmsIdentity(params: {
       unitId: params.unitId ?? null,
       unitLabel: params.unitLabel ?? null,
       building: params.building ?? null,
-    },
-  )
-
-  return result?.ok === true
+    }),
+  })
+  if (res.status === 401) throw new Error(ADMIN_SESSION_REQUIRED)
+  if (!res.ok) return false
+  const result = (await res.json()) as { ok?: boolean }
+  return result.ok === true
 }
