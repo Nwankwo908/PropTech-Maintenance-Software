@@ -1,13 +1,11 @@
 /**
- * Unit vacancy (legacy guard) and session-authorized activation Edge Functions.
+ * Session-authorized unit vacancy and activation Edge Functions.
  */
 
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
-import { adminSessionInvokeHeaders } from '@/lib/adminSessionHeaders'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type UnitRecord = {
@@ -39,8 +37,7 @@ async function postAdminFunction<T>(
   body: Record<string, unknown>,
   sessionOnly = false,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  const secret = getAdminEdgeSecret()
-  if (!url || (!sessionOnly && !secret)) {
+  if (!url) {
     return { ok: false, error: 'Admin SMS configuration is missing.' }
   }
 
@@ -49,7 +46,7 @@ async function postAdminFunction<T>(
     headers = sessionOnly
       // Activation is session-only, independent of the remaining legacy callers.
       ? await adminSessionInvokeHeaders(false)
-      : adminEdgeInvokeHeaders(secret!)
+      : await adminSessionInvokeHeaders(true)
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Please sign in again to continue.' }
   }
@@ -68,6 +65,7 @@ async function postAdminFunction<T>(
     parsed = {}
   }
 
+  if (res.status === 401) return { ok: false, error: ADMIN_SESSION_REQUIRED }
   if (!res.ok) {
     return { ok: false, error: parsed.error ?? (text.slice(0, 200) || `Request failed (${res.status})`) }
   }
@@ -172,7 +170,6 @@ export async function ensureUnitsInDb(
   units: Array<{ unitLabel: string; building: string | null }>,
 ): Promise<boolean> {
   const landlordId = defaultLandlordId()
-  const secret = getAdminEdgeSecret()
   if (!landlordId || !secret || units.length === 0) return false
 
   const { registerPropertyUnitsSms } = await import('@/api/landlordSmsOnboarding')
