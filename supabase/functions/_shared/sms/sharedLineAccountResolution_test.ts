@@ -218,3 +218,17 @@ Deno.test("shared-line Home Check reference narrows existing links but never cre
   assertEquals(result.landlordId, null)
   assertEquals(result.reason, "selector_not_found")
 })
+
+Deno.test("shared-line vendor can select assigned work orders but cannot enumerate unassigned jobs", async () => {
+  const tables = seed(); tables.users = []; tables.vendors = [{ id: "vendor-b", landlord_id: B, phone: FROM, active: true }]
+  tables.maintenance_requests![1].assigned_vendor_id = "another-vendor"
+  assertEquals((await resolve("WO-BBBB", tables)).landlordId, null)
+  tables.maintenance_requests![1].assigned_vendor_id = "vendor-b"
+  assertEquals((await resolve("WO-BBBB", tables)).landlordId, B)
+})
+Deno.test("shared-line resident cannot select another resident's work order in the same account", async () => {
+  const tables = seed(); tables.maintenance_requests![1].resident_id = "other-resident"
+  assertEquals((await resolve("WO-BBBB", tables)).landlordId, null)
+  tables.maintenance_requests![1].resident_id = "resident-b"
+  assertEquals((await resolve("WO-BBBB", tables)).landlordId, B)
+})

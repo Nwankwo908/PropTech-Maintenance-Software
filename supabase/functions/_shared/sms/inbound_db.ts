@@ -331,13 +331,13 @@ export async function resolveSharedLineInboundAccount(
       "account_settings->organization->>backup_contact_phone",
     ]
     const results = await Promise.all([
-      supabase.from("users").select("landlord_id, status").in("phone", variants)
+      supabase.from("users").select("id, landlord_id, status").in("phone", variants)
         .not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
-      supabase.from("vendors").select("landlord_id, active").in(
+      supabase.from("vendors").select("id, landlord_id, active").in(
         "phone",
         variants,
       ).not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
-      supabase.from("sms_identities").select("landlord_id, identity_type").in(
+      supabase.from("sms_identities").select("landlord_id, identity_type, resident_id, vendor_id").in(
         "phone_number",
         variants,
       ).not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
@@ -370,6 +370,8 @@ export async function resolveSharedLineInboundAccount(
       status?: string
       active?: boolean
       identity_type?: string
+      resident_id?: string | null
+      vendor_id?: string | null
       draft_state?: unknown
       account_settings?: unknown
     }
@@ -383,35 +385,34 @@ export async function resolveSharedLineInboundAccount(
       disconnects,
     ] = results.map((result) => checked<LinkRow>(result))
     const disconnected = new Set(landlordIdsFromRows(disconnects))
+    const currentUsers = users.filter(row => !["inactive", "archived", "deleted"].includes(String(row.status)))
+    const currentVendors = vendors.filter(row => row.active !== false)
+    const teamLinks = onboarding.filter(row => {
+      const draft = row.draft_state as Record<string, unknown> | null
+      const account = draft?.accountSetup as Record<string, unknown> | null
+      const phones = [account?.phone, account?.backupContactPhone, account?.backup_contact_phone, teamMemberContactFromOnboarding(row).phone]
+      return phones.some(phone => typeof phone === "string" && normalizeSmsPhone(phone) === normalizeSmsPhone(input.from))
+    })
+    const teamAccounts = new Set([
+      ...owners.map(row => String(row.id)), ...landlordIdsFromRows(managers), ...landlordIdsFromRows(teamLinks),
+      ...landlordIdsFromRows(identities.filter(row => row.identity_type === "landlord")),
+    ])
     const allLinks = [
-      ...landlordIdsFromRows(
-        users.filter((row) =>
-          !["inactive", "archived", "deleted"].includes(String(row.status))
-        ),
-      ),
-      ...landlordIdsFromRows(vendors.filter((row) => row.active !== false)),
-      ...landlordIdsFromRows(
-        identities.filter((row) =>
-          ["resident", "vendor", "landlord"].includes(String(row.identity_type))
-        ),
-      ),
-      ...owners.map((row) => String(row.id)),
-      ...landlordIdsFromRows(managers),
-      ...landlordIdsFromRows(onboarding.filter((row) => {
-        const draft = row.draft_state as Record<string, unknown> | null
-        const account = draft?.accountSetup as Record<string, unknown> | null
-        const phones = [
-          account?.phone,
-          account?.backupContactPhone,
-          account?.backup_contact_phone,
-          teamMemberContactFromOnboarding(row).phone,
-        ]
-        return phones.some((phone) =>
-          typeof phone === "string" &&
-          normalizeSmsPhone(phone) === normalizeSmsPhone(input.from)
-        )
-      })),
-    ].filter((id) => landlordMayUseSharedSmsLine(id))
+      ...landlordIdsFromRows(currentUsers), ...landlordIdsFromRows(currentVendors), ...teamAccounts,
+      ...landlordIdsFromRows(identities.filter(row => ["resident", "vendor"].includes(String(row.identity_type)))),
+    ].filter(id => landlordMayUseSharedSmsLine(id))
+    const ticketLinkedToSender = (ticket: { landlord_id?: unknown; resident_id?: unknown; assigned_vendor_id?: unknown }): boolean => {
+      const accountId = String(ticket.landlord_id)
+      if (!ids.has(accountId)) return false
+      if (teamAccounts.has(accountId)) return true
+      return currentUsers.some(row => row.landlord_id === accountId && row.id && row.id === ticket.resident_id) ||
+        currentVendors.some(row => row.landlord_id === accountId && row.id && row.id === ticket.assigned_vendor_id) ||
+        identities.some(row => row.landlord_id === accountId && (
+          (row.identity_type === "resident" && row.resident_id && row.resident_id === ticket.resident_id) ||
+          (row.identity_type === "vendor" && row.vendor_id && row.vendor_id === ticket.assigned_vendor_id)
+        ))
+    }
+
     const ids = new Set(allLinks.filter((id) => !disconnected.has(id)))
     const linked = [...ids]
     if (input.homeCheckLandlordId) {
@@ -437,11 +438,11 @@ export async function resolveSharedLineInboundAccount(
       const low = wo.prefix.padEnd(8, "0") + "-0000-0000-0000-000000000000"
       const high = wo.prefix.padEnd(8, "f") + "-ffff-ffff-ffff-ffffffffffff"
       const tickets = checked(
-        await supabase.from("maintenance_requests").select("id, landlord_id")
+        await supabase.from("maintenance_requests").select("id, landlord_id, resident_id, assigned_vendor_id")
           .in("landlord_id", linked).gte("id", low).lte("id", high).limit(2),
       )
       // Reference collisions, including within one account, must not pick a job.
-      if (tickets.length !== 1) {
+      if (tickets.length !== 1 || !ticketLinkedToSender(tickets[0])) {
         return { landlordId: null, reason: "selector_not_found" }
       }
       return {
@@ -544,7 +545,7 @@ export async function resolveSharedLineInboundAccount(
       ) return { landlordId: null, reason: "selector_not_found" }
       const prefix = ticketId.slice(0, 4).toLowerCase()
       const current = checked(
-        await supabase.from("maintenance_requests").select("id")
+        await supabase.from("maintenance_requests").select("id, landlord_id, resident_id, assigned_vendor_id")
           .eq("landlord_id", chosenId).gte(
             "id",
             prefix.padEnd(8, "0") + "-0000-0000-0000-000000000000",
@@ -552,7 +553,7 @@ export async function resolveSharedLineInboundAccount(
           .lte("id", prefix.padEnd(8, "f") + "-ffff-ffff-ffff-ffffffffffff")
           .limit(2),
       )
-      if (current.length !== 1 || current[0].id !== ticketId) {
+      if (current.length !== 1 || current[0].id !== ticketId || !ticketLinkedToSender(current[0])) {
         return { landlordId: null, reason: "selector_not_found" }
       }
       return {
