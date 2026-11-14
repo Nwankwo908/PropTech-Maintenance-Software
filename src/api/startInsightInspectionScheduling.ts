@@ -42,7 +42,7 @@ export async function postStartInsightInspectionScheduling(input: {
 }): Promise<StartInsightInspectionSchedulingOk> {
   const res = await fetchAdminEdgeFunction(input.url, {
     method: 'POST',
-    headers: await adminSessionInvokeHeaders(true),
+    headers: await adminSessionInvokeHeaders(false),
     body: JSON.stringify({
       landlordId: input.landlordId,
       insightCardId: input.insightCardId,
