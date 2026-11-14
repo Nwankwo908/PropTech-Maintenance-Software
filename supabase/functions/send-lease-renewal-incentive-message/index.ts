@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { normalizePhoneFlexible } from "../_shared/resident_notify.ts"
 import { sendLeaseRenewalIncentiveSms } from "../_shared/lease_renewal_incentive_outreach.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
 
@@ -28,13 +29,13 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[send-lease-renewal-incentive-message]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
 
   let body: Record<string, unknown> = {}
   try {
-    body = (await req.json()) as Record<string, unknown>
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as Record<string, unknown>
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -44,8 +45,7 @@ serve(async (req) => {
   const residentPhone = readString(body.residentPhone)
   const message = readString(body.message)
   const incentiveAmountLabel = readString(body.incentiveAmountLabel)
-  const landlordId = readString(body.landlordId) ??
-    Deno.env.get("DEFAULT_LANDLORD_ID")?.trim()
+  const landlordId = readString(body.landlordId)
 
   if (!workflowRunId || !isUuidShape(workflowRunId)) {
     return jsonResponse({ error: "Missing or invalid workflowRunId" }, 400)
@@ -63,6 +63,9 @@ serve(async (req) => {
     return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
 
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
   if (!supabaseUrl || !serviceKey) {
@@ -72,11 +75,19 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   try {
+    const { data: run, error: runError } = await supabase.from("workflow_runs").select("id, resident_id").eq("id", workflowRunId).eq("landlord_id", landlordId).eq("template_id", "lease_renewal").maybeSingle()
+    if (runError) return jsonResponse({ error: "Workflow lookup unavailable" }, 503)
+    if (!run || run.resident_id !== residentId) return jsonResponse({ error: "Workflow and resident not found" }, 404)
+    const { data: resident, error: residentError } = await supabase.from("users").select("id, phone").eq("id", residentId).eq("landlord_id", landlordId).maybeSingle()
+    if (residentError) return jsonResponse({ error: "Resident lookup unavailable" }, 503)
+    if (!resident) return jsonResponse({ error: "Resident not found" }, 404)
+    const canonicalPhone = normalizePhoneFlexible(typeof resident.phone === "string" ? resident.phone : "")
+    if (!canonicalPhone || canonicalPhone !== normalizePhoneFlexible(residentPhone)) return jsonResponse({ error: "Resident contact changed. Refresh the resident record before sending." }, 400)
     const result = await sendLeaseRenewalIncentiveSms(supabase, {
       landlordId,
       workflowRunId,
       residentId,
-      residentPhone,
+      residentPhone: canonicalPhone,
       message,
       incentiveAmountLabel,
     })
@@ -92,7 +103,6 @@ serve(async (req) => {
     })
   } catch (err) {
     console.error("[send-lease-renewal-incentive-message]", err)
-    const messageText = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ ok: false, error: messageText }, 500)
+    return jsonResponse({ ok: false, error: "Message service unavailable" }, 503)
   }
 })
