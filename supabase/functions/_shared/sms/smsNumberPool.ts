@@ -575,6 +575,11 @@ export async function releaseLandlordMainNumber(
   },
 ): Promise<ReleaseSmsNumberResult> {
   const row = await resolveLandlordMainToRelease(supabase, params)
+  // Explicit account scope must agree with the resolved number, even if a caller
+  // supplied a globally unique number ID or the binding changed before this read.
+  if (params.landlordId?.trim() && row.landlord_id !== params.landlordId.trim()) {
+    throw new Error("SMS number not found")
+  }
   const landlordId = row.landlord_id ?? resolveLandlordId(params.landlordId)
 
   if (row.status === "released") {

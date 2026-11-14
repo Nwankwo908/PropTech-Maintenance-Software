@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
 import { releaseLandlordMainNumber } from "../_shared/sms/smsNumberPool.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -21,9 +21,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[release-sms-number]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
-
 
   let body: {
     landlordId?: string
@@ -32,14 +29,31 @@ serve(async (req) => {
     completeRelease?: boolean
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "Expected JSON object" }, 400)
+    }
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
 
-  if (!body.landlordId?.trim() && !body.smsNumberId?.trim()) {
-    return jsonResponse({ error: "landlordId or smsNumberId is required" }, 400)
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!uuid.test(landlordId)) {
+    return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
+  if (body.smsNumberId != null && body.smsNumberId !== "" &&
+    (typeof body.smsNumberId !== "string" || !uuid.test(body.smsNumberId.trim()))) {
+    return jsonResponse({ error: "Invalid smsNumberId" }, 400)
+  }
+  if ((body.finalAutoReply != null && typeof body.finalAutoReply !== "string") ||
+    (body.completeRelease != null && typeof body.completeRelease !== "boolean")) {
+    return jsonResponse({ error: "Invalid release options" }, 400)
+  }
+  const smsNumberId = body.smsNumberId?.trim() || undefined
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -50,17 +64,23 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   try {
+    if (smsNumberId) {
+      const { data: number, error } = await supabase
+        .from("sms_numbers").select("id, landlord_id, purpose")
+        .eq("id", smsNumberId).eq("landlord_id", landlordId)
+        .eq("purpose", "landlord_main").maybeSingle()
+      if (error) return jsonResponse({ error: "SMS number lookup unavailable" }, 503)
+      if (!number) return jsonResponse({ error: "SMS number not found" }, 404)
+    }
     const result = await releaseLandlordMainNumber(supabase, {
-      landlordId: body.landlordId,
-      smsNumberId: body.smsNumberId,
+      landlordId,
+      smsNumberId,
       finalAutoReply: body.finalAutoReply,
       completeRelease: body.completeRelease === true,
     })
 
     return jsonResponse({ ok: true, ...result })
-  } catch (err) {
-    console.error("[release-sms-number]", err)
-    const message = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ error: message }, 400)
+  } catch {
+    return jsonResponse({ error: "SMS number release unavailable" }, 503)
   }
 })
