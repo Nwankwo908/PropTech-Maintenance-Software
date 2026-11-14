@@ -790,7 +790,7 @@ export function WorkflowPipelineDetailPanel({
       onClose()
       onWorkflowUpdated?.()
     } catch (err) {
-      setDeleteError(getErrorMessage(err, 'Delete failed'))
+      setDeleteError(getErrorMessage(err, 'Archive failed'))
     } finally {
       setDeleteSaving(false)
     }
@@ -1514,7 +1514,7 @@ export function WorkflowPipelineDetailPanel({
               }}
               className="sa-press inline-flex w-full cursor-pointer items-center justify-center rounded-[8px] border border-[#b52a00]/30 bg-white px-3 py-2.5 text-[13px] font-medium text-[#b52a00] outline-none hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
             >
-              Delete work order
+              Archive work order
             </button>
           </div>
         ) : null}
@@ -1545,17 +1545,17 @@ export function WorkflowPipelineDetailPanel({
                 id={deleteConfirmTitleId}
                 className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#0a0a0a]"
               >
-                Are you sure you want to do this?
+                Archive this work order?
               </h2>
             </div>
             <div className="flex flex-col gap-4 px-6 pb-6 pt-4">
               <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
-                This will permanently delete{' '}
-                <span className="font-medium text-[#0a0a0a]">{detail.workOrderRef}</span>, including
-                its ticket and workflow history. This cannot be undone.
+                This will archive{' '}
+                <span className="font-medium text-[#0a0a0a]">{detail.workOrderRef}</span>.
+                Its ticket and workflow history will be kept.
               </p>
               <p className="text-[13px] leading-5 text-[#6a7282]">
-                Resident SMS history is kept; only this work order is deleted.
+                Resident SMS history will also be kept.
               </p>
               {deleteError ? (
                 <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
@@ -1569,7 +1569,7 @@ export function WorkflowPipelineDetailPanel({
                   className="sa-press inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
                   onClick={() => void handleDeleteWorkOrder()}
                 >
-                  {deleteSaving ? 'Deleting…' : 'Yes, delete permanently'}
+                  {deleteSaving ? 'Archiving…' : 'Archive work order'}
                 </button>
                 <button
                   type="button"
