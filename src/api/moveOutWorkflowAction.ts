@@ -1,8 +1,7 @@
 import {
-  adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { adminSessionInvokeHeaders, ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import type { MoveOutAdminAction } from '@/lib/moveOutWorkflow'
 
@@ -33,14 +32,15 @@ export async function postMoveOutWorkflowAction(
   }
 
   const url = functionUrl()
-  const secret = getAdminEdgeSecret()
-  if (!url || !secret) {
+  if (!url) {
     return { ok: false, error: 'Admin workflow configuration is missing.' }
   }
 
+  let headers: Record<string, string>
+  try { headers = await adminSessionInvokeHeaders(true) } catch { return { ok: false, error: ADMIN_SESSION_REQUIRED } }
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    headers: adminEdgeInvokeHeaders(secret),
+    headers,
     body: JSON.stringify({
       workflowRunId: params.workflowRunId,
       action: params.action,
@@ -61,6 +61,7 @@ export async function postMoveOutWorkflowAction(
     parsed = {}
   }
 
+  if (res.status === 401) return { ok: false, error: ADMIN_SESSION_REQUIRED }
   if (!res.ok || parsed.ok === false) {
     return {
       ok: false,

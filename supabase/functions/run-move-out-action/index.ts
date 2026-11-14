@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { runMoveOutViaEngine } from "../_shared/engine/moveOutEngine.ts"
 import type { MoveOutAdminEngineAction } from "../_shared/engine/moveOutProgress.ts"
 
@@ -31,8 +32,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[run-move-out-action]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
 
   let body: {
     landlordId?: string
@@ -41,7 +40,9 @@ serve(async (req) => {
     scheduledAt?: string | null
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return jsonResponse({ error: "Expected JSON object" }, 400)
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
@@ -52,13 +53,16 @@ serve(async (req) => {
     : ""
   const action = typeof body.action === "string" ? body.action.trim() : ""
 
-  if (!landlordId || !workflowRunId || !action) {
+  if (!isUuidShape(landlordId) || !isUuidShape(workflowRunId) || !action) {
     return jsonResponse({ error: "Missing landlordId, workflowRunId, or action" }, 400)
   }
 
   if (!ENGINE_ACTIONS.has(action as MoveOutAdminEngineAction)) {
     return jsonResponse({ error: "Unsupported move-out action" }, 400)
   }
+
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -69,6 +73,9 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey)
 
   try {
+    const { data: run, error } = await supabase.from("workflow_runs").select("id").eq("id", workflowRunId).eq("landlord_id", landlordId).eq("template_id", "move_out").maybeSingle()
+    if (error) return jsonResponse({ error: "Workflow lookup unavailable" }, 503)
+    if (!run) return jsonResponse({ error: "Workflow not found" }, 404)
     const engineResult = await runMoveOutViaEngine(supabase, {
       landlordId,
       runId: workflowRunId,
