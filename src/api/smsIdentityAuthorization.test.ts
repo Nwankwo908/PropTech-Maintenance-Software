@@ -20,11 +20,11 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllEnvs())
 describe('SMS identity session authorization', () => {
-  it('requires the user session and temporarily retains the old handler header', async () => {
+  it('uses the user session without a legacy header even when compatibility is enabled', async () => {
     expect(await syncSmsIdentity(params)).toBe(true)
     const [url, init] = mocks.fetch.mock.calls[0]
     expect(url).toBe('https://sms-unit.invalid/functions/v1/sync-sms-identity')
-    expect(init.headers).toEqual({ Authorization: 'Bearer synthetic-session', apikey: 'unit-anon-key', 'Content-Type': 'application/json', 'x-admin-reassign-secret': 'unit-legacy-value' })
+    expect(init.headers).toEqual({ Authorization: 'Bearer synthetic-session', apikey: 'unit-anon-key', 'Content-Type': 'application/json' })
     expect(JSON.parse(init.body)).toMatchObject(params)
   })
   for (const session of [null, { access_token: '' }, { access_token: 'expired', expires_at: 1 }]) {
@@ -42,10 +42,9 @@ describe('SMS identity session authorization', () => {
     mocks.fetch.mockResolvedValue(Response.json({ error: 'Forbidden' }, { status: 403 }))
     expect(await syncSmsIdentity(params)).toBe(false)
   })
-  it('fails closed if bridge configuration is missing', async () => {
+  it('does not require the shared secret for sync', async () => {
     vi.stubEnv('VITE_ADMIN_REASSIGN_SECRET', '')
-    await expect(syncSmsIdentity(params)).rejects.toThrow('Legacy rollout configuration is missing.')
-    expect(mocks.fetch).not.toHaveBeenCalled()
+    expect(await syncSmsIdentity(params)).toBe(true)
   })
   it('keeps the other onboarding transports unchanged', async () => {
     await ensureLandlordSmsOnboarding()

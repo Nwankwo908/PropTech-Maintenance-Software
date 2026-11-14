@@ -133,8 +133,7 @@ export async function syncSmsIdentity(params: {
   if (!url) return false
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
-    // Bridge rollout: require the session AND retain the old handler header.
-    headers: await adminSessionInvokeHeaders(true),
+    headers: await adminSessionInvokeHeaders(false),
     body: JSON.stringify({
       landlordId: resolvedLandlordId,
       phone,
