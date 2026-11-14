@@ -1,0 +1,23 @@
+{
+  "id": "greeting-leak-opens-repair",
+  "title": "A greeting and 'may need' don't turn a leak report into a reschedule",
+  "origin": "production (anonymized), fixed in PR #8",
+  "status": "locked",
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Good morning, there is a leak under my kitchen sink and the pipe may need to be replaced.",
+      "expect": {
+        "route": "resident_maintenance_intake",
+        "routeNot": [
+          "sms_schedule_change",
+          "tenant_schedule_confirm"
+        ],
+        "replies": true
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 1
+  }
+}

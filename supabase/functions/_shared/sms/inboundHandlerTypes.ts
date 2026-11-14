@@ -24,6 +24,7 @@ export type ProcessInboundSmsResult =
       tryDemoSilence?: true
       /** Phone matches multiple non-demo accounts — clarify, no Demo hijack. */
       ambiguousSharedDid?: true
+      workflowRoute?: string
     }
   | {
       ok: true

@@ -1,0 +1,30 @@
+{
+  "id": "staff-question-swallows-new-repair",
+  "title": "A new repair report after a property-team question is not swallowed",
+  "origin": "code review (routing investigation)",
+  "status": "known_bug",
+  "currentBehavior": "staff_reply owns the next resident message for 24 hours. A new non-emergency repair report gets no reply and no work order.",
+  "setup": {
+    "ticket": {},
+    "intakeState": {
+      "awaiting_staff_reply": {
+        "messageId": "sim-staff-question",
+        "sentAt": "2026-11-10T12:00:00.000Z",
+        "ticketId": "{{TICKET_ID}}"
+      }
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Hi, separate issue: the bathroom ceiling light stopped working.",
+      "minutesLater": 60,
+      "expect": {
+        "replies": true
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 1
+  }
+}

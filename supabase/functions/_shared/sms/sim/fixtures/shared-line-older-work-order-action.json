@@ -1,0 +1,209 @@
+{
+  "id": "shared-line-older-work-order-action",
+  "title": "A bare YES after selecting an older work order confirms only that visit",
+  "origin": "shared-line product decision and ULO-SEC-01 source review",
+  "status": "locked",
+  "setup": {
+    "sharedLine": true,
+    "tables": {
+      "landlords": [
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000001",
+          "name": "Sandbox A",
+          "phone": "+15550104001"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000002",
+          "name": "Sandbox B",
+          "phone": "+15550104002"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000003",
+          "name": "Unlinked Sandbox C",
+          "phone": "+15550104003"
+        }
+      ],
+      "users": [
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000c1",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "full_name": "Sandbox Resident A",
+          "phone": "+15550102001",
+          "unit": "2B",
+          "building": "12 Sandbox St",
+          "status": "active",
+          "sms_consent": true,
+          "lease_end_date": "2027-06-30"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000c2",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "full_name": "Sandbox Resident B",
+          "phone": "+15550102001",
+          "unit": "3B",
+          "building": "34 Test Rd",
+          "status": "active",
+          "sms_consent": true,
+          "lease_end_date": "2027-07-31"
+        }
+      ],
+      "properties": [
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000a1",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "name": "12 Sandbox St",
+          "street_address": "12 Sandbox St"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000a2",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "name": "34 Test Rd",
+          "street_address": "34 Test Rd"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000a3",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000003",
+          "name": "56 Foreign Ave",
+          "street_address": "56 Foreign Ave"
+        }
+      ],
+      "maintenance_requests": [
+        {
+          "id": "aaaa0000-0000-4000-8000-000000000001",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "resident_id": "5a4d0000-0000-4000-8000-0000000000c1",
+          "description": "Sandbox A towel bar",
+          "status": "open",
+          "assigned_vendor_id": "5a4d0000-0000-4000-8000-0000000000d2",
+          "vendor_work_status": "accepted"
+        },
+        {
+          "id": "bbbb0000-0000-4000-8000-000000000002",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "resident_id": "5a4d0000-0000-4000-8000-0000000000c2",
+          "description": "Sandbox B cabinet latch",
+          "status": "open",
+          "assigned_vendor_id": "5a4d0000-0000-4000-8000-0000000000d2",
+          "vendor_work_status": "accepted"
+        },
+        {
+          "id": "cccc0000-0000-4000-8000-000000000003",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000003",
+          "description": "Unlinked private issue",
+          "status": "open"
+        }
+      ],
+      "vendors": [
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000d2",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "name": "Sandbox B Vendor",
+          "phone": "+15550103001",
+          "active": true
+        }
+      ],
+      "sms_conversations": [
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000101",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "sms_number_id": "5a4d0000-0000-4000-8000-0000000000e1",
+          "external_phone_number": "+15550102001",
+          "status": "open",
+          "conversation_type": "resident_intake",
+          "resident_id": "5a4d0000-0000-4000-8000-0000000000c1",
+          "maintenance_request_id": "aaaa0000-0000-4000-8000-000000000001",
+          "created_at": "2026-11-09T14:00:00.000Z",
+          "updated_at": "2026-11-09T14:00:00.000Z",
+          "intake_state": {
+            "awaiting_schedule_confirmation": {
+              "ticketId": "aaaa0000-0000-4000-8000-000000000001",
+              "vendorId": "5a4d0000-0000-4000-8000-0000000000d2",
+              "vendorConversationId": null,
+              "windowText": "Friday 3\u20135 PM",
+              "scheduledAt": "2026-11-13T20:00:00.000Z",
+              "kind": "initial"
+            }
+          }
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000102",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "sms_number_id": "5a4d0000-0000-4000-8000-0000000000e1",
+          "external_phone_number": "+15550102001",
+          "status": "open",
+          "conversation_type": "resident_intake",
+          "resident_id": "5a4d0000-0000-4000-8000-0000000000c2",
+          "maintenance_request_id": "bbbb0000-0000-4000-8000-000000000002",
+          "created_at": "2026-11-08T14:00:00.000Z",
+          "updated_at": "2026-11-08T14:00:00.000Z",
+          "intake_state": {
+            "awaiting_schedule_confirmation": {
+              "ticketId": "bbbb0000-0000-4000-8000-000000000002",
+              "vendorId": "5a4d0000-0000-4000-8000-0000000000d2",
+              "vendorConversationId": null,
+              "windowText": "Thursday November 12, 2026, 2\u20134 PM",
+              "scheduledAt": "2026-11-12T19:00:00.000Z",
+              "kind": "initial"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Hello",
+      "minutesLater": 1,
+      "expect": {
+        "replies": true,
+        "onlyReplyToSender": true,
+        "landlordId": null,
+        "route": "shared_line_ambiguous"
+      }
+    },
+    {
+      "from": "resident",
+      "body": "WO - BBBB",
+      "minutesLater": 1,
+      "expect": {
+        "replies": true,
+        "onlyReplyToSender": true,
+        "landlordId": "5a4d0000-0000-4000-8000-000000000002",
+        "route": "shared_line_account_selected"
+      }
+    },
+    {
+      "from": "resident",
+      "body": "YES",
+      "expect": {
+        "landlordId": "5a4d0000-0000-4000-8000-000000000002",
+        "route": "tenant_schedule_confirm",
+        "replyMatches": [
+          "confirmed"
+        ],
+        "onlyReplyToSender": true,
+        "replies": true
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 0,
+    "unchangedTables": [
+      "properties",
+      "landlords"
+    ],
+    "unchangedTickets": [
+      "aaaa0000-0000-4000-8000-000000000001",
+      "cccc0000-0000-4000-8000-000000000003"
+    ],
+    "ticketFields": [
+      {
+        "id": "bbbb0000-0000-4000-8000-000000000002",
+        "fields": {
+          "scheduled_at": "2026-11-12T19:00:00.000Z"
+        }
+      }
+    ]
+  }
+}

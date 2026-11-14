@@ -233,3 +233,18 @@ Deno.test("outbound visit and estimate questions advertise their exact answer re
   assertEquals(estimate.includes("E-ABCDEF123456 APPROVE"), true)
   assertEquals(estimate.includes("E-ABCDEF123456 DECLINE"), true)
 })
+
+Deno.test("single pending visit accepts its spaced work-order answer and refuses a different job", () => {
+  const question = { ...first, ticket_id: "aaaa0000-0000-4000-8000-000000000001" }
+  const intake = { awaiting_schedule_confirmation: question }
+  const selected = selectScheduleQuestion(intake, "YES WO - AAAA", NOW)
+  assertEquals(selected.kind, "selected")
+  if (selected.kind === "selected") assertEquals(selected.body, "YES")
+  assertEquals(selectScheduleQuestion(intake, "YES WO-BBBB", NOW).kind, "clarify")
+})
+Deno.test("explicit question and work-order selectors must agree and cannot revive expired questions", () => {
+  const question = { ...first, ticket_id: "aaaa0000-0000-4000-8000-000000000001" }
+  const intake = { awaiting_schedule_confirmation: question }
+  assertEquals(selectScheduleQuestion(intake, `YES ${question.reply_ref} WO-BBBB`, NOW).kind, "clarify")
+  assertEquals(selectScheduleQuestion({ awaiting_schedule_confirmation: { ...question, expires_at: new Date(NOW - 1).toISOString() } }, `YES ${question.reply_ref} WO-AAAA`, NOW).kind, "clarify")
+})

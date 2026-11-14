@@ -1,0 +1,39 @@
+{
+  "id": "visit-question-natural-yes",
+  "title": "'Yes that works' to a proposed visit window confirms it",
+  "origin": "sandbox run 2026-11-11",
+  "status": "known_bug",
+  "currentBehavior": "Only exact words (YES, OK, THAT WORKS) are accepted. 'Yes that works', 'Yes thanks' and 'Sounds good' get 'I didn't quite catch that... Reply YES or NO.'",
+  "setup": {
+    "ticket": {},
+    "intakeState": {
+      "awaiting_schedule_confirmation": {
+        "ticketId": "{{TICKET_ID}}",
+        "vendorId": "{{VENDOR_ID}}",
+        "vendorConversationId": null,
+        "windowText": "Thu 2-4pm",
+        "scheduledAt": "2026-11-12T19:00:00.000Z",
+        "kind": "initial"
+      }
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Yes that works",
+      "minutesLater": 60,
+      "expect": {
+        "route": "tenant_schedule_confirm",
+        "replyMatches": [
+          "confirmed"
+        ],
+        "replyNotMatches": [
+          "didn't quite catch"
+        ]
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 0
+  }
+}

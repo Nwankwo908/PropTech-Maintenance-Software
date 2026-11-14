@@ -9,9 +9,12 @@ import {
   resolveInboundSmsNumber,
   maintenanceRequestIdIfSameLandlord,
   phoneHasNonDemoRosterBinding,
-  resolveLandlordIdForSharedTwilioInbound,
+  resolveSharedLineInboundAccount,
+  SHARED_ACCOUNT_SELECTION_MS,
+  type SharedLineAccountResolution,
   resolveOpenMaintenanceRequestId,
 } from "./inbound_db.ts"
+import { sendInboundAutoReply } from "./inboundReply.ts"
 import { resolvePhoneIdentity } from "./resolveIdentity.ts"
 import { routeInboundSmsWorkflow } from "./workflow_router.ts"
 import {
@@ -60,7 +63,7 @@ const UNMATCHED_SHARED_DID_ACK =
   "Thanks for texting. We couldn't match this number to a property account. Please contact your property manager directly."
 
 const AMBIGUOUS_SHARED_DID_ACK =
-  "Thanks for texting. We found more than one property account for this number, so we did not take action. Please contact your property manager directly or reply with the property address."
+  "Which property is this for? Reply with the property address or work-order ID. I haven't taken any action."
 
 /** Best-effort Twilio ack with no landlord conversation / identity write. */
 async function ackSharedDidWithoutAccountWrite(
@@ -312,12 +315,23 @@ export async function processInboundSms(
   }
 
   let landlordId = smsNumber.landlord_id
+  let sharedSelection: SharedLineAccountResolution | null = null
   if (isLimitedAlphaTwilioSmsNumber(inbound.to)) {
-    const resolvedLandlordId = await resolveHomeCheckLandlord(supabase, inbound) ?? await resolveLandlordIdForSharedTwilioInbound(
-      supabase,
-      inbound.from,
-      smsNumber.landlord_id,
-    )
+    const homeCheckLandlordId = await resolveHomeCheckLandlord(supabase, inbound)
+    sharedSelection = await resolveSharedLineInboundAccount(supabase, {
+      from: inbound.from, body: inbound.body, smsNumberId: smsNumber.id, homeCheckLandlordId,
+    })
+    const resolvedLandlordId = sharedSelection.landlordId
+    if (!resolvedLandlordId && sharedSelection.reason !== "unmatched") {
+      const message = sharedSelection.reason === "unavailable"
+        ? "I couldn't verify which property this belongs to. Please try again shortly. I haven't taken any action."
+        : sharedSelection.reason === "selector_not_found"
+        ? "I couldn't match that address or work-order ID to one account linked to your number. Please check it and try again. I haven't taken any action."
+        : AMBIGUOUS_SHARED_DID_ACK
+      await ackSharedDidWithoutAccountWrite(inbound, message, "shared-line clarification")
+      return { ok: true, unmatchedSharedDid: true, ambiguousSharedDid: true, conversationId: null, messageId: null,
+        workflowRoute: `shared_line_${sharedSelection.reason}` }
+    }
     if (!resolvedLandlordId) {
       console.warn(
         "[sms-inbound] shared DID unmatched sender — not attributing to DID owner",
@@ -508,6 +522,45 @@ export async function processInboundSms(
       resolutionSource: resolution.source,
       selfHealingPhase: resolution.selfHealingPhase,
     }
+  }
+
+  if (sharedSelection?.reason === "selected") {
+    const { data: selectionConversation, error: selectionReadError } = await supabase
+      .from("sms_conversations").select("intake_state, updated_at")
+      .eq("id", conversationId).eq("landlord_id", landlordId).maybeSingle()
+    let selectionSaved = false
+    if (!selectionReadError && selectionConversation) {
+      const state = selectionConversation.intake_state as Record<string, unknown> | null
+      let update = supabase.from("sms_conversations").update({ intake_state: {
+        ...(state ?? {}), shared_line_selection: {
+          ticketId: sharedSelection.ticketId ?? null,
+          selectedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + SHARED_ACCOUNT_SELECTION_MS).toISOString(),
+        },
+      } }).eq("id", conversationId).eq("landlord_id", landlordId)
+      update = selectionConversation.updated_at == null ? update.is("updated_at", null) : update.eq("updated_at", selectionConversation.updated_at)
+      const { data, error } = await update.select("id").maybeSingle()
+      selectionSaved = !error && Boolean(data)
+    }
+    if (!selectionSaved) {
+      await ackSharedDidWithoutAccountWrite(inbound, "I couldn't save your property selection. Please try again. I haven't taken any action.", "shared-line selection unavailable")
+      return { ok: true, conversationId, messageId, workflowRoute: "shared_line_selection_unavailable", identityType: identity.identity_type,
+        landlordId, resolutionSource: resolution.source, selfHealingPhase: resolution.selfHealingPhase }
+    }
+    if (sharedSelection.selectorOnly && inbound.mediaUrls.length === 0) {
+      const sent = await sendInboundAutoReply(supabase, {
+        conversationId, landlordId, fromNumber: inbound.to, toNumber: inbound.from, provider: inbound.provider,
+        body: sharedSelection.workOrderRef ? `Work order ${sharedSelection.workOrderRef} selected. What would you like to do with it?` : "Got it. What would you like help with at this property?", source: "shared_line_account_selected",
+      })
+      return { ok: true, conversationId, messageId, outboundMessageId: sent.ok ? sent.messageId : undefined,
+        workflowRoute: "shared_line_account_selected", identityType: identity.identity_type, landlordId,
+        resolutionSource: resolution.source, selfHealingPhase: resolution.selfHealingPhase }
+    }
+  }
+
+  // The inbound row above retains the actual handset text. Route a bare action
+  // with its prior explicit work-order selection so it cannot hit a newer job.
+  if (sharedSelection?.reason === "context" && sharedSelection.workOrderRef) {
+    inbound = { ...inbound, body: `${inbound.body.trim()} ${sharedSelection.workOrderRef}` }
   }
 
   const explicitHomeCheck = Boolean(parseHomeCheckCommand(inbound.body) || parseHomeCheckGuideStart(inbound.body)) || /^(HC-[A-F0-9]{12}\b|OK(?:\s+HC-[A-F0-9]{12})?$)/i.test(inbound.body.trim())

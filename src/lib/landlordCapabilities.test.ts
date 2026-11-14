@@ -19,6 +19,7 @@ import {
   isTemporarySharedAlphaLineLandlord,
   landlordHasPayments,
   landlordMayUseSharedAlphaLine,
+  landlordMayUseSharedSmsLine,
   landlordBlocksExternalVendorOutreach,
   landlordHasVendorMarketplace,
   landlordUsesTwilioSms,
@@ -120,7 +121,7 @@ describe('Limited Alpha 1 capabilities', () => {
   })
 })
 
-describe('temporary shared Alpha line access', () => {
+describe('shared SMS policy independent of Alpha access', () => {
   const testLandlord = 'd15a0000-0000-4000-8000-000000000001'
   const otherDisposable = 'd15a0000-0000-4000-8000-000000000099'
 
@@ -160,5 +161,19 @@ describe('self-service Limited Alpha profiles', () => {
     expect(isLimitedAlpha2Landlord(first)).toBe(false)
     expect(isLimitedAlphaLandlord('a13a0000-not-a-uuid')).toBe(false)
     expect(isOnboardingLandlordId('068daf53-07e4-4493-bd7f-6106e3c8c62f')).toBe(false)
+  })
+})
+
+describe('SMS eligibility does not grant Alpha or payment authority', () => {
+  it('accepts an ordinary account and retains its independent product flags', () => {
+    const id = '5a4d0000-0000-4000-8000-000000000001'
+    expect(landlordMayUseSharedSmsLine(id)).toBe(true)
+    expect(landlordUsesTwilioSms(id)).toBe(true)
+    expect(isLimitedAlphaLandlord(id)).toBe(false)
+    expect(landlordHasPayments(id)).toBe(true) // Existing entitlement, not changed by SMS policy.
+    expect(resolveSmsIntakeNumber({ landlordId: id, phone: '+15550109999' })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
+  })
+  it('rejects an absent or malformed account instead of treating any string as eligible', () => {
+    for (const id of [undefined, null, '', 'not-an-account', FULL_ALPHA_LANDLORD_ID, EMPTY_LANDLORD_ID]) expect(landlordMayUseSharedSmsLine(id)).toBe(false)
   })
 })
