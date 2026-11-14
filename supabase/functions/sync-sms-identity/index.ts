@@ -1,11 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import {
-  resolveLandlordId,
-  syncResidentSmsIdentity,
-} from "../_shared/sms/landlordSmsOnboarding.ts"
+import { authorizeAdminAccount } from "../_shared/adminAccountAuthorization.ts"
+import { syncResidentSmsIdentity } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { syncVendorSmsIdentity } from "../_shared/sms/vendorSmsRouting.ts"
 import { findUnitRow } from "../_shared/unitVacancy.ts"
 
@@ -29,9 +26,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  const adminAuth = requireAdminReassignAuth(req, "[sync-sms-identity]", corsHeaders)
-  if (!adminAuth.ok) return adminAuth.response
-
 
   let body: {
     landlordId?: string
@@ -44,56 +38,54 @@ serve(async (req) => {
     building?: string | null
   }
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "Expected JSON object" }, 400)
+    }
+    body = parsed as typeof body
   } catch {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
 
-  const phone = typeof body.phone === "string" ? body.phone.trim() : ""
-  if (!phone) {
-    return jsonResponse({ error: "phone is required" }, 400)
+  const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+  if (!uuidRe.test(landlordId)) {
+    return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
+  const denied = await authorizeAdminAccount(req, landlordId, corsHeaders)
+  if (denied) return denied
 
-  const identityType = body.identityType?.trim()
+  const phone = typeof body.phone === "string" ? body.phone.trim() : ""
+  if (!phone) return jsonResponse({ error: "phone is required" }, 400)
+  const identityType = typeof body.identityType === "string" ? body.identityType.trim() : ""
   if (identityType !== "resident" && identityType !== "vendor") {
-    return jsonResponse(
-      { error: "identityType must be resident or vendor" },
-      400,
-    )
+    return jsonResponse({ error: "identityType must be resident or vendor" }, 400)
+  }
+  // Never silently discard a malformed or foreign nested identifier.
+  for (const key of ["residentId", "vendorId", "unitId"] as const) {
+    const value = body[key]
+    if (value != null && value !== "" &&
+      (typeof value !== "string" || !uuidRe.test(value.trim()))) {
+      return jsonResponse({ error: `Invalid ${key}` }, 400)
+    }
+  }
+  const residentId = body.residentId?.trim() || undefined
+  const vendorId = body.vendorId?.trim() || undefined
+  const unitId = body.unitId?.trim() || undefined
+  if (identityType === "resident" && (!residentId || vendorId)) {
+    return jsonResponse({ error: "Resident sync requires residentId and no vendorId" }, 400)
+  }
+  if (identityType === "vendor" && (!vendorId || residentId || unitId || body.unitLabel || body.building)) {
+    return jsonResponse({ error: "Vendor sync requires vendorId and no resident or unit fields" }, 400)
+  }
+  if ((body.unitLabel != null && typeof body.unitLabel !== "string") ||
+    (body.building != null && typeof body.building !== "string")) {
+    return jsonResponse({ error: "Invalid unit location" }, 400)
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
   if (!supabaseUrl || !serviceKey) {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-
-  let landlordId: string
-  try {
-    landlordId = resolveLandlordId(body.landlordId)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ error: message }, 400)
-  }
-
-  const residentId =
-    typeof body.residentId === "string" && uuidRe.test(body.residentId.trim())
-      ? body.residentId.trim()
-      : undefined
-  const vendorId =
-    typeof body.vendorId === "string" && uuidRe.test(body.vendorId.trim())
-      ? body.vendorId.trim()
-      : undefined
-  const unitId =
-    typeof body.unitId === "string" && uuidRe.test(body.unitId.trim())
-      ? body.unitId.trim()
-      : undefined
-
-  if (identityType === "resident" && !residentId) {
-    return jsonResponse({ error: "residentId is required for resident sync" }, 400)
-  }
-  if (identityType === "vendor" && !vendorId) {
-    return jsonResponse({ error: "vendorId is required for vendor sync" }, 400)
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
@@ -105,13 +97,41 @@ serve(async (req) => {
     const building =
       typeof body.building === "string" ? body.building.trim() : null
 
-    if (!resolvedUnitId && unitLabel) {
-      const unitRow = await findUnitRow(supabase, {
-        landlordId,
-        unitLabel,
-        building,
-      })
-      resolvedUnitId = unitRow?.id ?? null
+    const { data: target, error: targetError } = await supabase
+      .from(identityType === "resident" ? "users" : "vendors")
+      .select("id, landlord_id")
+      .eq("id", identityType === "resident" ? residentId! : vendorId!)
+      .eq("landlord_id", landlordId).maybeSingle()
+    if (targetError) return jsonResponse({ error: "Identity lookup unavailable" }, 503)
+    if (!target) return jsonResponse({ error: "Identity not found" }, 404)
+
+    if (resolvedUnitId) {
+      const { data: unit, error: unitError } = await supabase
+        .from("units").select("id, landlord_id, unit_label, building")
+        .eq("id", resolvedUnitId).eq("landlord_id", landlordId).maybeSingle()
+      if (unitError) return jsonResponse({ error: "Unit lookup unavailable" }, 503)
+      if (!unit) return jsonResponse({ error: "Unit not found" }, 404)
+      if (building && String(unit.building ?? "").trim().toLowerCase() !== building.toLowerCase()) {
+        return jsonResponse({ error: "Unit location does not match" }, 400)
+      }
+      // A location label must resolve to the same unit, not override the ID.
+      if (unitLabel || building) {
+        const matches = await findUnitRow(supabase, {
+          landlordId, unitLabel: unitLabel || String(unit.unit_label), building,
+        })
+        if (!matches || matches.id !== resolvedUnitId) {
+          return jsonResponse({ error: "Unit location does not match" }, 400)
+        }
+      }
+    } else if (unitLabel) {
+      const unitRow = await findUnitRow(supabase, { landlordId, unitLabel, building })
+      if (!unitRow) return jsonResponse({ error: "Unit not found" }, 404)
+      if (building && String(unitRow.building ?? "").trim().toLowerCase() !== building.toLowerCase()) {
+        return jsonResponse({ error: "Unit location does not match" }, 400)
+      }
+      resolvedUnitId = unitRow.id
+    } else if (building) {
+      return jsonResponse({ error: "A unit is required for this location" }, 400)
     }
 
     const identity =
@@ -144,8 +164,7 @@ serve(async (req) => {
       unitId: identity.unit_id,
     })
   } catch (err) {
-    console.error("[sync-sms-identity] error", err)
-    const message = err instanceof Error ? err.message : String(err)
-    return jsonResponse({ error: message }, 500)
+    console.error("[sync-sms-identity] operation failed")
+    return jsonResponse({ error: "SMS identity sync unavailable" }, 503)
   }
 })
