@@ -2,14 +2,10 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   DEMO_LANDLORD_ID,
   isDemoLandlord,
-  landlordMayUseSharedAlphaLine,
+  landlordMayUseSharedSmsLine,
 } from "../../../../shared/landlordCapabilities.ts"
-import {
-  landlordAllowedOnReceivingLine,
-  resolveInboundAccount,
-  type InboundExplicitAssignment,
-  type InboundHistoryMatch,
-} from "./inboundAccountRouting.ts"
+import { teamMemberContactFromOnboarding } from "../landlordTeamContact.ts"
+import { isBareSharedLineAction, normalizeSharedLineAddress, sharedLineAddressReply, sharedLineWorkOrderSelector } from "./sharedLineSelector.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { claimPoolNumberByPhone } from "./smsNumberPool.ts"
 import { smsIdentityAllowsTypePatch } from "./smsIdentityUpgrade.ts"
@@ -335,162 +331,312 @@ function landlordIdsFromRows(
 }
 
 /**
- * Shared Limited Alpha line: the receiving number's permitted accounts come
- * first. A current resident, vendor, identity, or account phone beats message
- * history. History is a fallback only when this phone has no current
- * assignment. Closed conversations and disconnected accounts cannot restore
- * an old association. Ambiguous or out-of-scope results stay unresolved so
- * the caller can clarify. Never falls back to the line owner.
+ * Shared Ulo line: only current sender links grant account eligibility.
+ * Selectors and short-lived explicit context may narrow those links. Neither
+ * message history nor the receiving line owner grants access to an account.
  */
+export type SharedLineAccountResolution = {
+  landlordId: string | null
+  reason:
+    | "explicit"
+    | "selected"
+    | "context"
+    | "ambiguous"
+    | "unmatched"
+    | "selector_not_found"
+    | "unavailable"
+  selectorOnly?: boolean
+  ticketId?: string
+  workOrderRef?: string
+}
+
+const SHARED_ACCOUNT_MATCH_LIMIT = 200
+export const SHARED_ACCOUNT_SELECTION_MS = 10 * 60 * 1000
+
+/** Current sender links first; addresses/refs and saved choices can only narrow them. */
+export async function resolveSharedLineInboundAccount(
+  supabase: SupabaseClient,
+  input: {
+    from: string
+    body: string
+    smsNumberId: string
+    homeCheckLandlordId?: string | null
+  },
+): Promise<SharedLineAccountResolution> {
+  const variants = phoneLookupVariants(input.from)
+  if (!variants.length) return { landlordId: null, reason: "unmatched" }
+  // Every discovery query is bounded with an overflow sentinel. Never choose
+  // a single account from truncated or partially failed membership evidence.
+  const checked = <T>(result: { data: T[] | null; error: unknown }): T[] => {
+    if (
+      result.error || !Array.isArray(result.data) ||
+      result.data.length > SHARED_ACCOUNT_MATCH_LIMIT
+    ) {
+      throw new Error("Shared account lookup unavailable")
+    }
+    return result.data
+  }
+  try {
+    const safePhones = variants.filter((v) => /^\+?[0-9]{7,15}$/.test(v))
+    const phoneColumns = [
+      "draft_state->accountSetup->>phone",
+      "draft_state->accountSetup->>backupContactPhone",
+      "draft_state->accountSetup->>backup_contact_phone",
+      "draft_state->organizationSettings->>backupContactPhone",
+      "draft_state->organizationSettings->>backup_contact_phone",
+      "account_settings->organization->>backupContactPhone",
+      "account_settings->organization->>backup_contact_phone",
+    ]
+    const results = await Promise.all([
+      supabase.from("users").select("landlord_id, status").in("phone", variants)
+        .not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
+      supabase.from("vendors").select("landlord_id, active").in(
+        "phone",
+        variants,
+      ).not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
+      supabase.from("sms_identities").select("landlord_id, identity_type").in(
+        "phone_number",
+        variants,
+      ).not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
+      supabase.from("landlords").select("id").in("phone", variants).limit(
+        SHARED_ACCOUNT_MATCH_LIMIT + 1,
+      ),
+      supabase.from("properties").select("landlord_id").in(
+        "manager_phone",
+        variants,
+      ).not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
+      safePhones.length
+        ? supabase.from("landlord_onboarding").select(
+          "landlord_id, draft_state, account_settings",
+        )
+          .or(
+            phoneColumns.flatMap((col) =>
+              safePhones.map((phone) => `${col}.eq.${phone}`)
+            ).join(","),
+          )
+          .not("landlord_id", "is", null).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1)
+        : Promise.resolve({ data: [], error: null }),
+      supabase.from("sms_phone_account_disconnects").select("landlord_id").in(
+        "phone_number",
+        variants,
+      ).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
+    ])
+    type LinkRow = {
+      id?: string
+      landlord_id?: string | null
+      status?: string
+      active?: boolean
+      identity_type?: string
+      draft_state?: unknown
+      account_settings?: unknown
+    }
+    const [
+      users,
+      vendors,
+      identities,
+      owners,
+      managers,
+      onboarding,
+      disconnects,
+    ] = results.map((result) => checked<LinkRow>(result))
+    const disconnected = new Set(landlordIdsFromRows(disconnects))
+    const allLinks = [
+      ...landlordIdsFromRows(
+        users.filter((row) =>
+          !["inactive", "archived", "deleted"].includes(String(row.status))
+        ),
+      ),
+      ...landlordIdsFromRows(vendors.filter((row) => row.active !== false)),
+      ...landlordIdsFromRows(
+        identities.filter((row) =>
+          ["resident", "vendor", "landlord"].includes(String(row.identity_type))
+        ),
+      ),
+      ...owners.map((row) => String(row.id)),
+      ...landlordIdsFromRows(managers),
+      ...landlordIdsFromRows(onboarding.filter((row) => {
+        const draft = row.draft_state as Record<string, unknown> | null
+        const account = draft?.accountSetup as Record<string, unknown> | null
+        const phones = [
+          account?.phone,
+          account?.backupContactPhone,
+          account?.backup_contact_phone,
+          teamMemberContactFromOnboarding(row).phone,
+        ]
+        return phones.some((phone) =>
+          typeof phone === "string" &&
+          normalizeSmsPhone(phone) === normalizeSmsPhone(input.from)
+        )
+      })),
+      ...(input.homeCheckLandlordId ? [input.homeCheckLandlordId] : []),
+    ].filter((id) => landlordMayUseSharedSmsLine(id))
+    const ids = new Set(allLinks.filter((id) => !disconnected.has(id)))
+    const linked = [...ids]
+    if (input.homeCheckLandlordId) {
+      return ids.has(input.homeCheckLandlordId)
+        ? { landlordId: input.homeCheckLandlordId, reason: "explicit" }
+        : { landlordId: null, reason: "selector_not_found" }
+    }
+
+    const wo = sharedLineWorkOrderSelector(input.body)
+    if (!linked.length) {
+      return {
+        landlordId: null,
+        reason:
+          wo.kind !== "none" || /^\d/.test(sharedLineAddressReply(input.body))
+            ? "selector_not_found"
+            : "unmatched",
+      }
+    }
+    if (wo.kind === "invalid") {
+      return { landlordId: null, reason: "selector_not_found" }
+    }
+    if (wo.kind === "work_order") {
+      const low = wo.prefix.padEnd(8, "0") + "-0000-0000-0000-000000000000"
+      const high = wo.prefix.padEnd(8, "f") + "-ffff-ffff-ffff-ffffffffffff"
+      const tickets = checked(
+        await supabase.from("maintenance_requests").select("id, landlord_id")
+          .in("landlord_id", linked).gte("id", low).lte("id", high).limit(2),
+      )
+      // Reference collisions, including within one account, must not pick a job.
+      if (tickets.length !== 1) {
+        return { landlordId: null, reason: "selector_not_found" }
+      }
+      return {
+        landlordId: String(tickets[0].landlord_id),
+        reason: "selected",
+        selectorOnly: wo.selectorOnly,
+        ticketId: String(tickets[0].id),
+        workOrderRef: `WO-${wo.prefix.slice(0, 4).toUpperCase()}`,
+      }
+    }
+    const address = sharedLineAddressReply(input.body)
+    if (/^\d/.test(address)) {
+      const properties = checked(
+        await supabase.from("properties")
+          .select(
+            "id, landlord_id, name, street_address, city, state, zip_code",
+          )
+          .in("landlord_id", linked).limit(SHARED_ACCOUNT_MATCH_LIMIT + 1),
+      )
+      const matches = new Set(
+        properties.filter((row) => {
+          const streets = [row.street_address, row.name]
+            .filter((v): v is string =>
+              typeof v === "string" && /^\d/.test(v.trim())
+            )
+          return streets.some((street) => {
+            const locality = [row.city, row.state, row.zip_code].filter((v) =>
+              typeof v === "string" && v.trim()
+            ).join(" ")
+            return [street, `${street} ${locality}`].some((candidate) =>
+              normalizeSharedLineAddress(candidate) === address
+            )
+          })
+        }).map((row) => String(row.landlord_id)),
+      )
+      if (matches.size !== 1) {
+        return { landlordId: null, reason: "selector_not_found" }
+      }
+      return {
+        landlordId: [...matches][0],
+        reason: "selected",
+        selectorOnly: true,
+      }
+    }
+
+    // A prior explicit selection is short-lived context, never new membership.
+    const conversations = checked(
+      await supabase.from("sms_conversations")
+        .select("landlord_id, intake_state, status").in("landlord_id", linked)
+        .eq("sms_number_id", input.smsNumberId).in(
+          "external_phone_number",
+          variants,
+        )
+        .in("status", [...SHARED_DID_OPEN_CONVERSATION_STATUSES]).limit(
+          SHARED_ACCOUNT_MATCH_LIMIT + 1,
+        ),
+    )
+    const selections = conversations.map((row) => {
+      const state = row.intake_state as Record<string, unknown> | null
+      const selection = state?.shared_line_selection as
+        | Record<string, unknown>
+        | null
+      return {
+        id: String(row.landlord_id),
+        at: Date.parse(String(selection?.selectedAt ?? "")),
+        expires: Date.parse(String(selection?.expiresAt ?? "")),
+        ticketId: typeof selection?.ticketId === "string"
+          ? selection.ticketId
+          : undefined,
+      }
+    }).filter((row) =>
+      Number.isFinite(row.at) && Number.isFinite(row.expires) &&
+      row.at <= Date.now() && row.expires > Date.now() &&
+      row.expires - row.at <= SHARED_ACCOUNT_SELECTION_MS
+    )
+    const latest = Math.max(...selections.map((row) => row.at))
+    const chosen = new Set(
+      selections.filter((row) => row.at === latest).map((row) => row.id),
+    )
+    if (chosen.size !== 1) {
+      return linked.length === 1 && !selections.length &&
+          !allLinks.some((id) => disconnected.has(id))
+        ? { landlordId: linked[0], reason: "explicit" }
+        : { landlordId: null, reason: "ambiguous" }
+    }
+    const chosenId = [...chosen][0]
+    const selectedTickets = new Set(
+      selections.filter((row) => row.at === latest && row.id === chosenId).map(
+        (row) => row.ticketId ?? "",
+      ),
+    )
+    if (selectedTickets.size !== 1) {
+      return { landlordId: null, reason: "ambiguous" }
+    }
+    const ticketId = [...selectedTickets][0]
+    if (ticketId && isBareSharedLineAction(input.body)) {
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test(ticketId)
+      ) return { landlordId: null, reason: "selector_not_found" }
+      const prefix = ticketId.slice(0, 4).toLowerCase()
+      const current = checked(
+        await supabase.from("maintenance_requests").select("id")
+          .eq("landlord_id", chosenId).gte(
+            "id",
+            prefix.padEnd(8, "0") + "-0000-0000-0000-000000000000",
+          )
+          .lte("id", prefix.padEnd(8, "f") + "-ffff-ffff-ffff-ffffffffffff")
+          .limit(2),
+      )
+      if (current.length !== 1 || current[0].id !== ticketId) {
+        return { landlordId: null, reason: "selector_not_found" }
+      }
+      return {
+        landlordId: chosenId,
+        reason: "context",
+        workOrderRef: `WO-${prefix.toUpperCase()}`,
+      }
+    }
+    return { landlordId: chosenId, reason: "context" }
+  } catch {
+    console.error("[sms-inbound] shared-line account lookup unavailable")
+    return { landlordId: null, reason: "unavailable" }
+  }
+}
+
+/** Compatibility wrapper; history never grants an account association. */
 export async function resolveLandlordIdForSharedTwilioInbound(
   supabase: SupabaseClient,
   fromNumber: string,
-  lineOwnerLandlordId?: string | null,
+  _lineOwnerLandlordId?: string | null,
 ): Promise<string | null> {
-  const variants = phoneLookupVariants(fromNumber)
-  if (variants.length === 0) return null
-  const lineOwner = (lineOwnerLandlordId ?? "").trim()
-
-  const explicit: InboundExplicitAssignment[] = []
-  const history: InboundHistoryMatch[] = []
-
-  const { data: waitingUsers, error: waitingErr } = await supabase
-    .from("users")
-    .select("landlord_id")
-    .in("phone", variants)
-    .eq("activation_status", "waiting")
-    .not("landlord_id", "is", null)
-    .limit(8)
-  if (waitingErr) {
-    console.error("[sms-inbound] shared Twilio waiting-resident lookup", waitingErr.message)
-  } else {
-    for (const id of landlordIdsFromRows(waitingUsers)) explicit.push({ landlordId: id })
-  }
-
-  const { data: users, error: usersErr } = await supabase
-    .from("users")
-    .select("landlord_id")
-    .in("phone", variants)
-    .not("landlord_id", "is", null)
-    .limit(8)
-  if (usersErr) {
-    console.error("[sms-inbound] shared Twilio user lookup", usersErr.message)
-  } else {
-    for (const id of landlordIdsFromRows(users)) explicit.push({ landlordId: id })
-  }
-
-  const { data: vendors, error: vendorErr } = await supabase
-    .from("vendors")
-    .select("landlord_id")
-    .in("phone", variants)
-    .not("landlord_id", "is", null)
-    .limit(8)
-  if (vendorErr) {
-    console.error("[sms-inbound] shared Twilio vendor lookup", vendorErr.message)
-  } else {
-    for (const id of landlordIdsFromRows(vendors)) explicit.push({ landlordId: id })
-  }
-
-  const { resolveLandlordIdForAccountOrOpsPhone } = await import(
-    "./landlordAccountPhone.ts"
-  )
-  const opsLandlordId = await resolveLandlordIdForAccountOrOpsPhone(supabase, fromNumber)
-  if (opsLandlordId) explicit.push({ landlordId: opsLandlordId })
-
-  const { data: identities, error: identityErr } = await supabase
-    .from("sms_identities")
-    .select("landlord_id, identity_type")
-    .in("phone_number", variants)
-    .not("landlord_id", "is", null)
-    .limit(16)
-  if (identityErr) {
-    console.error("[sms-inbound] shared Twilio identity lookup", identityErr.message)
-  } else {
-    for (const row of identities ?? []) {
-      const type = String(row.identity_type ?? "").trim()
-      if (type !== "resident" && type !== "vendor" && type !== "landlord") continue
-      const id = String(row.landlord_id ?? "").trim()
-      if (id) explicit.push({ landlordId: id })
-    }
-  }
-
-  const { data: outbound, error: outboundErr } = await supabase
-    .from("sms_messages")
-    .select("landlord_id, created_at")
-    .eq("direction", "outbound")
-    .in("to_number", variants)
-    .not("landlord_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(5)
-  if (outboundErr) {
-    console.error("[sms-inbound] shared Twilio recent-outbound lookup", outboundErr.message)
-  } else {
-    for (const row of outbound ?? []) {
-      const id = String(row.landlord_id ?? "").trim()
-      if (id) history.push({ landlordId: id, at: String(row.created_at ?? "") })
-    }
-  }
-
-  const { data: conversations, error: conversationErr } = await supabase
-    .from("sms_conversations")
-    .select("landlord_id, updated_at, status")
-    .in("external_phone_number", variants)
-    .not("landlord_id", "is", null)
-    .order("updated_at", { ascending: false })
-    .limit(8)
-  if (conversationErr) {
-    console.error("[sms-inbound] shared Twilio recent-conversation lookup", conversationErr.message)
-  } else {
-    for (const row of conversations ?? []) {
-      const id = String(row.landlord_id ?? "").trim()
-      if (!id) continue
-      const status = String(row.status ?? "").trim()
-      const closed = !SHARED_DID_OPEN_CONVERSATION_STATUSES.includes(
-        status as (typeof SHARED_DID_OPEN_CONVERSATION_STATUSES)[number],
-      )
-      history.push({
-        landlordId: id,
-        at: String(row.updated_at ?? ""),
-        closed,
-      })
-    }
-  }
-
-  const disconnectedLandlordIds: string[] = []
-  const { data: disconnects, error: disconnectErr } = await supabase
-    .from("sms_phone_account_disconnects")
-    .select("landlord_id")
-    .in("phone_number", variants)
-  if (disconnectErr) {
-    console.warn("[sms-inbound] phone disconnect lookup", disconnectErr.message)
-  } else {
-    disconnectedLandlordIds.push(...landlordIdsFromRows(disconnects))
-  }
-
-  const candidateIds = [
-    ...explicit.map((row) => row.landlordId),
-    ...history.map((row) => row.landlordId),
-    ...disconnectedLandlordIds,
-    lineOwner,
-  ]
-  const permittedLandlordIds = [...new Set(candidateIds.map((id) => id.trim()).filter(Boolean))]
-    .filter((id) => landlordAllowedOnReceivingLine({
-      sharedLine: true,
-      lineOwnerLandlordId: lineOwner,
-      landlordId: id,
-      usesSharedLine: landlordMayUseSharedAlphaLine(id),
-    }))
-
-  const decision = resolveInboundAccount({
-    permittedLandlordIds,
-    explicit,
-    history,
-    disconnectedLandlordIds,
-  })
-  if (decision.reason === "explicit" || decision.reason === "history") {
-    return decision.landlordId
-  }
-  return null
+  return (await resolveSharedLineInboundAccount(supabase, {
+    from: fromNumber,
+    body: "",
+    smsNumberId: "",
+  })).landlordId
 }
 
 function pickCanonicalSmsIdentity(

@@ -75,13 +75,13 @@ Deno.test("a dedicated line cannot use another account's identity or history", (
   assertEquals(decision.landlordId, null)
 })
 
-Deno.test("shared-line scope keeps Alpha and Demo and one temporary test landlord", () => {
+Deno.test("shared-line scope permits all valid accounts independent of Alpha tier", () => {
   const permitted = [LA1, LA2, DEMO, DISPOSABLE, OTHER_DISPOSABLE].filter((id) => allowed(id, true, LA1))
   assertEquals(permitted.includes(LA1), true)
   assertEquals(permitted.includes(LA2), true)
   assertEquals(permitted.includes(DEMO), true)
   assertEquals(permitted.includes(DISPOSABLE), true)
-  assertEquals(permitted.includes(OTHER_DISPOSABLE), false)
+  assertEquals(permitted.includes(OTHER_DISPOSABLE), true)
 })
 
 Deno.test("the temporary test assignment beats old Demo history on the shared line", () => {
@@ -123,7 +123,7 @@ Deno.test("tied history timestamps are ambiguous", () => {
 })
 
 Deno.test("an assignment outside the receiving line blocks old history without crossing accounts", () => {
-  const permitted = [LA1, LA2, DEMO, DISPOSABLE, OTHER_DISPOSABLE].filter((id) => allowed(id, true, LA1))
+  const permitted = [LA1, LA2, DEMO, DISPOSABLE, OTHER_DISPOSABLE].filter((id) => allowed(id, false, LA1))
   const decision = resolveInboundAccount({
     permittedLandlordIds: permitted,
     explicit: [{ landlordId: OTHER_DISPOSABLE }],

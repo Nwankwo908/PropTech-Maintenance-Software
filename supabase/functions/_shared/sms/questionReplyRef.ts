@@ -1,4 +1,5 @@
 /** Question references identify a proposal/version, never authorize the sender. */
+import { sharedLineWorkOrderSelector } from "./sharedLineSelector.ts"
 export type QuestionReplyRef = {
   kind: "schedule" | "estimate"
   ref: string
@@ -151,6 +152,12 @@ function matchShortVisitRef(
   body: string,
   questions: ScheduleQuestion[],
 ): { kind: "unique"; question: ScheduleQuestion; body: string } | { kind: "none" } {
+  const workOrder = sharedLineWorkOrderSelector(body)
+  if (workOrder.kind === "invalid") return { kind: "none" }
+  if (workOrder.kind === "work_order") {
+    const hits = questions.filter(question => String(question.ticket_id ?? question.ticketId ?? "").replace(/-/g, "").toLowerCase().startsWith(workOrder.prefix))
+    return hits.length === 1 ? { kind: "unique", question: hits[0], body: workOrder.answerBody } : { kind: "none" }
+  }
   const hits = questions.filter((question) =>
     scheduleQuestionShortRefs(question).some((label) =>
       new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body)
@@ -207,6 +214,13 @@ export function selectScheduleQuestion(
     }
   }
   if (!matches.length) return { kind: "none" }
+  const workOrder = sharedLineWorkOrderSelector(explicit?.body ?? body)
+  if (workOrder.kind !== "none" || /\b[0-9a-f]{8}\b/i.test(explicit?.body ?? body)) {
+    const byRef = matchShortVisitRef(explicit?.body ?? body, matches)
+    if (byRef.kind !== "unique") return { kind: "clarify", body: "That work-order ID doesn't match one open visit. Reply with one work-order ID and YES or NO; I haven't changed any schedule." }
+    if (!questionStillOpen(byRef.question, now)) return { kind: "clarify", body: "That visit question has expired. Please ask for a fresh visit proposal; I haven't confirmed the old time." }
+    return { kind: "selected", question: byRef.question, body: byRef.body }
+  }
   if (!explicit && matches.length > 1) {
     const numbered = matchNumberedVisitReply(body, matches)
     if (numbered) {

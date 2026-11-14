@@ -59,3 +59,22 @@ decide the expected behavior itself was wrong.
   Cases that depend on the model need a recorded model answer (not built yet).
 - Fire-and-forget work (activity logs, graph events) lands in the fake
   database. It is not asserted.
+
+## Shared-line account routing fixtures
+
+`setup.sharedLine: true` simulates the public Ulo DID inside the in-memory database.
+The DID is a receiving-line identifier only; all send recipients remain synthetic
+`+1555` phones, all Twilio requests are intercepted, and no real account is used.
+`setup.tables` seeds multiple synthetic portfolios. `setup.failReads` injects a
+lookup outage so partial membership data cannot accidentally select an account.
+
+New locked shared-line fixtures cover ordinary non-Alpha eligibility, address and
+work-order clarification, scoped follow-up context, older work-order confirmation,
+foreign selectors, duplicate short refs, conflicting refs, disconnects, expired
+selection and lookup failures. `expect.landlordId` checks the selected portfolio;
+`onlyReplyToSender` prevents hidden staff/vendor alerts. `unchangedTables`,
+`unchangedTickets` and `ticketFields` verify no job changed except the intended
+positive control. An explicit selection lasts ten minutes and is rechecked against
+current sender links. History and the DID owner are never account authorization.
+
+The existing `known_bug` fixtures remain known bugs, not newly passing behavior.

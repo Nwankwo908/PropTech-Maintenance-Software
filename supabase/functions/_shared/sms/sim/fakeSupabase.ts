@@ -383,6 +383,7 @@ class QueryBuilder implements PromiseLike<Result> {
     const now = this.db.now()
     switch (this.mode) {
       case "select": {
+        if (this.db.readFailures.has(this.table)) return { data: null, error: { message: "sandbox lookup failure" }, status: 503 }
         const rows = this.matching()
         this.db.log({ table: this.table, op: "select", rows: rows.length })
         return this.shape(rows)
@@ -457,6 +458,7 @@ class QueryBuilder implements PromiseLike<Result> {
 export class FakeDb {
   readonly tables: Tables
   readonly ops: FakeDbOp[] = []
+  readonly readFailures = new Set<string>()
   private clock: () => string
 
   constructor(

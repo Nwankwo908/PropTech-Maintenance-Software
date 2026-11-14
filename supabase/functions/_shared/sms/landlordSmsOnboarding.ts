@@ -15,8 +15,7 @@ import {
 import type { SmsProviderName } from "./types.ts"
 import {
   LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
-  isLimitedAlphaLandlord,
-  isTemporarySharedAlphaLineLandlord,
+  landlordMayUseSharedSmsLine,
   isUnusableSmsIntakeLine,
 } from "../../../../shared/landlordCapabilities.ts"
 
@@ -95,9 +94,8 @@ export async function findActiveLandlordMainNumber(
     ) ?? null
   if (owned) return owned
 
-  // Limited Alpha accounts, and the temporary maintenance-test landlord, share
-  // one Twilio DID row owned by an existing account. Do not transfer it.
-  if (isLimitedAlphaLandlord(landlordId) || isTemporarySharedAlphaLineLandlord(landlordId)) {
+  // Every account may reuse the platform DID. Never transfer its ownership.
+  if (landlordMayUseSharedSmsLine(landlordId)) {
     return await findActiveNumberByPhoneAndProvider(
       supabase,
       LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
@@ -183,8 +181,8 @@ function twilioLineFromRow(row: LandlordSmsNumberRow): OutboundLandlordSmsLine |
 
 /**
  * Landlord_main line for outbound SMS.
- * Limited Alpha 1 and 2 always use the shared Twilio DID (same number only).
- * Other landlords use their own Twilio landlord_main — never the Alpha DID.
+ * All accounts are eligible for the shared Ulo DID, independently of plan tier.
+ * Existing owned-line precedence is retained until the separate provisioning shutdown.
  */
 export async function resolveOutboundLandlordSmsLine(
   supabase: SupabaseClient,
@@ -193,7 +191,7 @@ export async function resolveOutboundLandlordSmsLine(
   const row = await findActiveLandlordMainNumber(supabase, landlordId)
   const line = row ? twilioLineFromRow(row) : null
   if (line) return line
-  if (isLimitedAlphaLandlord(landlordId) || isTemporarySharedAlphaLineLandlord(landlordId)) {
+  if (landlordMayUseSharedSmsLine(landlordId)) {
     return await resolveSharedTwilioOutboundLine(supabase, landlordId)
   }
   return null

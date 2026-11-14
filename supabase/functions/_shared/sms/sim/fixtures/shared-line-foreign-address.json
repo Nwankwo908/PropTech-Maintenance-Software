@@ -1,0 +1,118 @@
+{
+  "id": "shared-line-foreign-address",
+  "title": "Unlinked address never grants account access",
+  "origin": "shared-line product decision and ULO-SEC-01 source review",
+  "status": "locked",
+  "setup": {
+    "sharedLine": true,
+    "tables": {
+      "landlords": [
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000001",
+          "name": "Sandbox A",
+          "phone": "+15550104001"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000002",
+          "name": "Sandbox B",
+          "phone": "+15550104002"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-000000000003",
+          "name": "Unlinked Sandbox C",
+          "phone": "+15550104003"
+        }
+      ],
+      "users": [
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000c1",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "full_name": "Sandbox Resident A",
+          "phone": "+15550102001",
+          "unit": "2B",
+          "building": "12 Sandbox St",
+          "status": "active",
+          "sms_consent": true,
+          "lease_end_date": "2027-06-30"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000c2",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "full_name": "Sandbox Resident B",
+          "phone": "+15550102001",
+          "unit": "3B",
+          "building": "34 Test Rd",
+          "status": "active",
+          "sms_consent": true,
+          "lease_end_date": "2027-07-31"
+        }
+      ],
+      "properties": [
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000a1",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "name": "12 Sandbox St",
+          "street_address": "12 Sandbox St"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000a2",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "name": "34 Test Rd",
+          "street_address": "34 Test Rd"
+        },
+        {
+          "id": "5a4d0000-0000-4000-8000-0000000000a3",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000003",
+          "name": "56 Foreign Ave",
+          "street_address": "56 Foreign Ave"
+        }
+      ],
+      "maintenance_requests": [
+        {
+          "id": "aaaa0000-0000-4000-8000-000000000001",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000001",
+          "resident_id": "5a4d0000-0000-4000-8000-0000000000c1",
+          "description": "Sandbox A towel bar",
+          "status": "open"
+        },
+        {
+          "id": "bbbb0000-0000-4000-8000-000000000002",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000002",
+          "resident_id": "5a4d0000-0000-4000-8000-0000000000c2",
+          "description": "Sandbox B cabinet latch",
+          "status": "open"
+        },
+        {
+          "id": "cccc0000-0000-4000-8000-000000000003",
+          "landlord_id": "5a4d0000-0000-4000-8000-000000000003",
+          "description": "Unlinked private issue",
+          "status": "open"
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "56 Foreign Avenue",
+      "minutesLater": 1,
+      "expect": {
+        "replies": true,
+        "onlyReplyToSender": true,
+        "landlordId": null,
+        "route": "shared_line_selector_not_found",
+        "replyMatches": [
+          "couldn.t match"
+        ]
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 0,
+    "unchangedTables": [
+      "maintenance_requests",
+      "properties",
+      "landlords"
+    ]
+  }
+}

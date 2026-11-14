@@ -128,15 +128,14 @@ export function landlordBlocksExternalVendorOutreach(
   return isTemporarySharedAlphaLineLandlord(landlordId)
 }
 
-/**
- * Accounts that may send and receive on the shared Limited Alpha Twilio number.
- * Does not change payments or the rest of the Limited Alpha product surface.
- */
-export function landlordMayUseSharedAlphaLine(
-  landlordId: string | null | undefined,
-): boolean {
-  return landlordUsesLimitedAlphaSurface(landlordId) || isTemporarySharedAlphaLineLandlord(landlordId)
+/** SMS transport policy is independent of plan tier and payment entitlements. */
+export function landlordMayUseSharedSmsLine(landlordId: string | null | undefined): boolean {
+  const id = (landlordId ?? '').trim()
+  return !isRetiredLandlordAccountId(id) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
 }
+
+/** @deprecated Compatibility name; all account tiers use the shared Ulo line. */
+export const landlordMayUseSharedAlphaLine = landlordMayUseSharedSmsLine
 
 /** Production Twilio DID used as the shared Limited Alpha landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
@@ -234,10 +233,9 @@ export function pickSettingsTestSmsDestination(
   return null
 }
 
-/** Limited Alpha (+ Demo surface) send and receive on the shared Twilio DID —
- *  conversations, identities, and rosters stay per-landlord. */
+/** All account tiers use Twilio; account/financial entitlements are separate. */
 export function landlordUsesTwilioSms(landlordId: string | null | undefined): boolean {
-  return landlordUsesLimitedAlphaSurface(landlordId)
+  return landlordMayUseSharedSmsLine(landlordId)
 }
 
 /** Stripe, ACH, Plaid, rent/invoice checkout, vendor payouts, and “pay online” links.

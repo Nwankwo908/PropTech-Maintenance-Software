@@ -5,9 +5,10 @@
  * is a bug that was found once (in production, or by a simulation run) and
  * must never come back. See ./README.md.
  */
-import type { Row } from "./fakeSupabase.ts"
+import type { Row, Tables } from "./fakeSupabase.ts"
 import {
   runSmsSandbox,
+  senderPhone,
   SIM_LANDLORD_ID,
   SIM_PROPERTY_ID,
   SIM_RESIDENT_ID,
@@ -22,6 +23,8 @@ export const SIM_TICKET_ID = "5a4d0000-0000-4000-8000-000000000201"
 export type TurnExpect = {
   /** Workflow route Ulo must take. */
   route?: string
+  landlordId?: string | null
+  onlyReplyToSender?: boolean
   /** Routes Ulo must not take. */
   routeNot?: string[]
   /** Every pattern must match at least one outbound SMS (case-insensitive). */
@@ -45,6 +48,9 @@ export type SmsFixture = {
   /** For known_bug: the behavior Ulo shows today. */
   currentBehavior?: string
   setup?: {
+    tables?: Tables
+    sharedLine?: boolean
+    failReads?: string[]
     /** Seed an existing work order; fields merge over a default open plumbing ticket. */
     ticket?: Row | null
     /** Seed the resident's thread state (sms_conversations.intake_state). */
@@ -59,6 +65,9 @@ export type SmsFixture = {
   expectEnd?: {
     /** Work orders created during the conversation. */
     ticketsCreated?: number
+    unchangedTables?: string[]
+    unchangedTickets?: string[]
+    ticketFields?: Array<{ id: string; fields: Row }>
   }
 }
 
@@ -102,7 +111,9 @@ export async function runFixture(raw: SmsFixture): Promise<SimRun> {
   return await runSmsSandbox(
     fixture.turns.map(({ from, body, minutesLater }) => ({ from, body, minutesLater })),
     {
-      tables: ticket ? { maintenance_requests: [ticket] } : {},
+      tables: { ...(fixture.setup?.tables ?? {}), ...(ticket ? { maintenance_requests: [ticket] } : {}) },
+      sharedLine: fixture.setup?.sharedLine,
+      failReads: fixture.setup?.failReads,
       conversation: ticket || fixture.setup?.intakeState
         ? {
           maintenance_request_id: ticket ? SIM_TICKET_ID : null,
@@ -127,6 +138,8 @@ export function checkFixture(raw: SmsFixture, run: SimRun): string[] {
     if (got.error) failures.push(`${label}: pipeline threw: ${got.error}`)
     const exp = turn.expect
     if (!exp) return
+    if ("landlordId" in exp && got.landlordId !== exp.landlordId) failures.push(`${label}: account ${got.landlordId}, expected ${exp.landlordId}`)
+    if (exp.onlyReplyToSender && got.outbound.some(out => out.to !== senderPhone(turn.from))) failures.push(`${label}: sent an unsolicited message to another phone`)
     if (exp.route && got.route !== exp.route) {
       failures.push(`${label}: route ${got.route}, expected ${exp.route}`)
     }
@@ -150,13 +163,25 @@ export function checkFixture(raw: SmsFixture, run: SimRun): string[] {
     }
   })
   if (fixture.expectEnd?.ticketsCreated !== undefined) {
-    const seeded = fixture.setup?.ticket ? 1 : 0
+    const seeded = run.initialTables.maintenance_requests?.length ?? 0
     const created = run.db.rows("maintenance_requests").length - seeded
     if (created !== fixture.expectEnd.ticketsCreated) {
       failures.push(
         `work orders created: ${created}, expected ${fixture.expectEnd.ticketsCreated}`,
       )
     }
+  }
+  for (const id of fixture.expectEnd?.unchangedTickets ?? []) {
+    const before = run.initialTables.maintenance_requests?.find(row => row.id === id)
+    const after = run.db.rows("maintenance_requests").find(row => row.id === id)
+    if (JSON.stringify(before) !== JSON.stringify(after)) failures.push(`unselected ticket ${id} changed`)
+  }
+  for (const expected of fixture.expectEnd?.ticketFields ?? []) {
+    const after = run.db.rows("maintenance_requests").find(row => row.id === expected.id)
+    for (const [key, value] of Object.entries(expected.fields)) if (JSON.stringify(after?.[key]) !== JSON.stringify(value)) failures.push(`ticket ${expected.id}: ${key} did not match ${JSON.stringify(value)}`)
+  }
+  for (const table of fixture.expectEnd?.unchangedTables ?? []) {
+    if (JSON.stringify(run.db.rows(table)) !== JSON.stringify(run.initialTables[table] ?? [])) failures.push(`${table} changed unexpectedly`)
   }
   return failures
 }

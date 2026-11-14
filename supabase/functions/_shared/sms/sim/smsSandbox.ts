@@ -14,6 +14,7 @@
 import { FakeDb, type Row, type Tables } from "./fakeSupabase.ts"
 import {
   LIMITED_ALPHA_LANDLORD_IDS,
+  LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
 } from "../../../../../shared/landlordCapabilities.ts"
 
 export const SIM_LANDLORD_ID = "5a4d0000-0000-4000-8000-000000000001"
@@ -41,6 +42,7 @@ export type SimTurnResult = {
   turn: SimTurn
   at: string
   route: string | null
+  landlordId: string | null
   /** SMS bodies Ulo would have sent during this turn (any recipient). */
   outbound: Array<{ to: string; body: string }>
   error: string | null
@@ -49,6 +51,7 @@ export type SimTurnResult = {
 export type SimRun = {
   turns: SimTurnResult[]
   db: FakeDb
+  initialTables: Tables
 }
 
 /** Base portfolio: one property, one unit, one resident, one plumber. */
@@ -144,7 +147,7 @@ export function baseSandboxTables(): Tables {
   }
 }
 
-function senderPhone(from: SimSender): string {
+export function senderPhone(from: SimSender): string {
   if (from === "vendor") return SIM_VENDOR_PHONE
   if (from === "landlord") return SIM_LANDLORD_PHONE
   return SIM_RESIDENT_PHONE
@@ -175,9 +178,9 @@ function installClock(getNow: () => number): () => void {
   }
 }
 
-function installEnv(): () => void {
+function installEnv(sharedLine = false): () => void {
   const previous = new Map<string, string | undefined>()
-  for (const [key, value] of Object.entries(SIM_ENV)) {
+  for (const [key, value] of Object.entries({ ...SIM_ENV, TWILIO_FROM_NUMBER: sharedLine ? LIMITED_ALPHA_1_TWILIO_SMS_NUMBER : SIM_ULO_NUMBER })) {
     previous.set(key, Deno.env.get(key))
     Deno.env.set(key, value)
   }
@@ -243,6 +246,9 @@ function installFetch(capture: (to: string, body: string) => void): () => void {
 export type SimOptions = {
   /** Extra or replacement rows merged over the base tables. */
   tables?: Tables
+  /** Simulate the public platform DID in memory; sends are still captured. */
+  sharedLine?: boolean
+  failReads?: string[]
   /** Patch the resident's sms_conversations row (created on first turn). */
   conversation?: Row
 }
@@ -252,11 +258,14 @@ export async function runSmsSandbox(
   opts: SimOptions = {},
 ): Promise<SimRun> {
   const tables = { ...baseSandboxTables(), ...(opts.tables ?? {}) }
-  for (const row of tables.landlords ?? []) {
-    if ((LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(String(row.id))) {
+  for (const [table, rows] of Object.entries(tables)) for (const row of rows) {
+    const ids = [row.landlord_id, ...(table === "landlords" ? [row.id] : [])]
+    if (ids.some(id => (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(String(id)))) {
       throw new Error("SMS sandbox refuses Limited Alpha landlord ids")
     }
   }
+  const receivingNumber = opts.sharedLine ? LIMITED_ALPHA_1_TWILIO_SMS_NUMBER : SIM_ULO_NUMBER
+  if (opts.sharedLine) tables.sms_numbers = (tables.sms_numbers ?? []).map(row => ({ ...row, phone_number: receivingNumber, purpose: "landlord_main" }))
   if (opts.conversation) {
     tables.sms_conversations = [{
       id: "5a4d0000-0000-4000-8000-000000000101",
@@ -278,8 +287,11 @@ export async function runSmsSandbox(
     sms_messages: [["provider_message_sid"]],
   }, () => new Date(nowMs).toISOString())
 
+  for (const table of opts.failReads ?? []) db.readFailures.add(table)
+  const initialTables = structuredClone(db.tables)
+
   const pending: Array<{ to: string; body: string }> = []
-  const restoreEnv = installEnv()
+  const restoreEnv = installEnv(opts.sharedLine)
   const restoreFetch = installFetch((to, body) => pending.push({ to, body }))
   const restoreClock = installClock(() => nowMs)
   const { processInboundSms } = await import("../inbound_processor.ts")
@@ -294,6 +306,7 @@ export async function runSmsSandbox(
       nowMs += (turn.minutesLater ?? 1) * 60_000
       pending.length = 0
       let route: string | null = null
+      let landlordId: string | null = null
       let error: string | null = null
       try {
         const sid = `SMsimin${String(n).padStart(27, "0")}`
@@ -302,12 +315,13 @@ export async function runSmsSandbox(
           providerMessageSid: sid,
           messageId: sid,
           from: senderPhone(turn.from),
-          to: SIM_ULO_NUMBER,
+          to: receivingNumber,
           body: turn.body,
           mediaUrls: [],
           rawPayload: {},
         })
-        route = "workflowRoute" in result ? result.workflowRoute : null
+        route = "workflowRoute" in result ? result.workflowRoute ?? null : null
+        landlordId = "landlordId" in result ? result.landlordId : null
       } catch (e) {
         error = e instanceof Error ? e.message : String(e)
       }
@@ -317,6 +331,7 @@ export async function runSmsSandbox(
         turn,
         at: new Date(nowMs).toISOString(),
         route,
+        landlordId,
         outbound: [...pending],
         error,
       })
@@ -327,5 +342,5 @@ export async function runSmsSandbox(
     restoreEnv()
     resetSMSProviderCache()
   }
-  return { turns: results, db }
+  return { turns: results, db, initialTables }
 }
