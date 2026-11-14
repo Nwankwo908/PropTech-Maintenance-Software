@@ -6,7 +6,7 @@ vi.mock('@/api/adminReassignVendor', () => ({
   fetchAdminEdgeFunction: mocks.fetch,
   adminEdgeInvokeHeaders: (secret: string) => ({ 'x-admin-reassign-secret': secret }),
 }))
-import { syncSmsIdentity, ensureLandlordSmsOnboarding, registerUnitSms } from './landlordSmsOnboarding'
+import { syncSmsIdentity, ensureLandlordSmsOnboarding, registerUnitSms, registerPropertyUnitsSms } from './landlordSmsOnboarding'
 import { ADMIN_SESSION_REQUIRED } from '@/lib/adminSessionHeaders'
 const params = { phone: '+12025550123', identityType: 'resident' as const, residentId: '11111111-1111-4111-8111-111111111111' }
 beforeEach(() => {
@@ -46,10 +46,26 @@ describe('SMS identity session authorization', () => {
     vi.stubEnv('VITE_ADMIN_REASSIGN_SECRET', '')
     expect(await syncSmsIdentity(params)).toBe(true)
   })
-  it('keeps the other onboarding transports unchanged', async () => {
+  it('requires sessions and temporary bridge headers for neighboring onboarding calls', async () => {
     await ensureLandlordSmsOnboarding()
     await registerUnitSms({ unitLabel: '1' })
-    expect(mocks.getSession).not.toHaveBeenCalled()
-    for (const [, init] of mocks.fetch.mock.calls) expect(init.headers).toEqual({ 'x-admin-reassign-secret': 'unit-legacy-value' })
+    expect(mocks.getSession).toHaveBeenCalledTimes(2)
+    for (const [, init] of mocks.fetch.mock.calls) expect(init.headers).toEqual({ Authorization: 'Bearer synthetic-session', apikey: 'unit-anon-key', 'Content-Type': 'application/json', 'x-admin-reassign-secret': 'unit-legacy-value' })
   })
 })
+
+for (const [name, action] of [
+  ['onboarding', () => ensureLandlordSmsOnboarding()],
+  ['single unit', () => registerUnitSms({ unitLabel: '1' })],
+  ['bulk units', () => registerPropertyUnitsSms({ units: [{ unitLabel: '1' }] })],
+] as const) {
+  it(`${name} requires sign in without a secret-only fallback`, async () => {
+    mocks.getSession.mockResolvedValue({ data: { session: null }, error: null })
+    await expect(action()).rejects.toThrow(ADMIN_SESSION_REQUIRED)
+    expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+  it(`${name} reports expired server sessions clearly`, async () => {
+    mocks.fetch.mockResolvedValue(Response.json({ error: 'Unauthorized' }, { status: 401 }))
+    await expect(action()).rejects.toThrow(ADMIN_SESSION_REQUIRED)
+  })
+}

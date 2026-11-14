@@ -132,3 +132,33 @@ export async function authorizeAdminAccount(
     return deny("Authorization temporarily unavailable", 503)
   }
 }
+
+/** Raw provider-number operations are platform-only, never landlord self-service. */
+export async function authorizePlatformAccount(
+  request: Request,
+  landlordId: string,
+  corsHeaders: Record<string, string>,
+  runtime: Runtime = { env: (name) => Deno.env.get(name), fetch },
+): Promise<Response | null> {
+  const denied = await authorizeAdminAccount(request, landlordId, corsHeaders, runtime)
+  if (denied) return denied
+  const reject = (status: number) => new Response(JSON.stringify({
+    error: status === 403 ? "Platform access required" : "Authorization temporarily unavailable",
+  }), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } })
+  const base = runtime.env("SUPABASE_URL")?.trim().replace(/\/$/, "")
+  const anon = runtime.env("SUPABASE_ANON_KEY")?.trim()
+  const explicit = request.headers.get("x-ulo-access-token")
+  const token = explicit !== null ? explicit.trim() :
+    /^Bearer\s+(\S+)$/i.exec(request.headers.get("Authorization")?.trim() ?? "")?.[1]
+  if (!base || !anon || !token) return reject(503)
+  try {
+    const response = await runtime.fetch(`${base}/rest/v1/rpc/is_platform_staff`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(8000),
+      headers: { apikey: anon, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{}",
+    })
+    if (!response.ok) { await response.body?.cancel(); return reject(503) }
+    const staff: unknown = await response.json()
+    return staff === true ? null : reject(staff === false ? 403 : 503)
+  } catch { return reject(503) }
+}
