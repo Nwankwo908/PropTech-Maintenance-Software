@@ -177,21 +177,8 @@ export async function fetchRecognizedMaintenanceSpend(): Promise<
     .gte('submitted_at', yearStart)
     .order('submitted_at', { ascending: true })
 
-  // #region agent log
-  const { data: diagRows, error: diagErr } = await supabase
-    .from('maintenance_invoices')
-    .select('id, status, total_cost, landlord_id, approved_at, submitted_at')
-    .eq('landlord_id', landlordId)
-    .order('submitted_at', { ascending: false })
-    .limit(20)
-  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',location:'maintenanceInvoice.ts:fetchRecognized:diag',message:'all invoices for landlord',data:{landlordId,paymentsEnabled,statuses:[...statuses],diagError:diagErr?.message??null,diagCount:(diagRows??[]).length,diag:(diagRows??[]).slice(0,10).map((r)=>({status:r.status,total:r.total_cost,approved:r.approved_at,submitted:r.submitted_at}))},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{})
-  // #endregion
-
   if (error) {
     console.error('[maintenance-invoice] recognized spend fetch', error.message)
-    // #region agent log
-    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',location:'maintenanceInvoice.ts:fetchRecognized',message:'invoice spend query failed',data:{landlordId,error:error.message,yearStart,paymentsEnabled},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{})
-    // #endregion
     return []
   }
 
@@ -234,10 +221,6 @@ export async function fetchRecognizedMaintenanceSpend(): Promise<
       } satisfies RecognizedMaintenanceSpend,
     ]
   })
-
-  // #region agent log
-  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',location:'maintenanceInvoice.ts:fetchRecognized',message:'invoice spend query ok',data:{landlordId,yearStart,paymentsEnabled,rawCount:(data??[]).length,mappedCount:rows.length,sample:rows.slice(0,3).map(r=>({total:r.total_cost,statusDate:r.spend_date,ticket:r.maintenance_request_id.slice(0,8)}))},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{})
-  // #endregion
 
   return rows
 }
