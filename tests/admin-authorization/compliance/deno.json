@@ -1,0 +1,1 @@
+{"compilerOptions":{"strict":true,"lib":["deno.window","dom","esnext"]},"imports":{"https://deno.land/std/http/server.ts":"../inspection-activation/server_stub.ts","../../../supabase/functions/_shared/external_vendor/complianceLookup.ts":"./business_stub.ts"}}
