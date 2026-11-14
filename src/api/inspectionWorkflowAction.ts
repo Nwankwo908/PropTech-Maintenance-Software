@@ -30,9 +30,8 @@ export async function postInspectionWorkflowAction(
 
   let headers: Record<string, string>
   try {
-    // Phase 1 defaults to sending both session and legacy header so this
-    // frontend can ship before the two session-only Edge guards.
-    headers = await adminSessionInvokeHeaders(import.meta.env.VITE_INSPECTION_ACTIVATION_LEGACY_COMPAT !== 'false')
+    // Both Edge handlers now require account sessions; never send the legacy header.
+    headers = await adminSessionInvokeHeaders(false)
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Please sign in again to continue.' }
   }
