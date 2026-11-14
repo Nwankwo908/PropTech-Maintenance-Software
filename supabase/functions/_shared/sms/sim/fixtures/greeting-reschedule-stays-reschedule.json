@@ -1,0 +1,27 @@
+{
+  "id": "greeting-reschedule-stays-reschedule",
+  "title": "A real reschedule request with a greeting still reschedules",
+  "origin": "code review, companion to greeting-leak-opens-repair",
+  "status": "locked",
+  "setup": {
+    "ticket": {
+      "vendor_work_status": "scheduled",
+      "scheduled_at": "2026-11-12T19:00:00.000Z",
+      "scheduled_window_text": "Thu 2-4pm",
+      "schedule_confirmed_at": "2026-11-10T10:00:00.000Z"
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Good morning, can we reschedule to Friday afternoon?",
+      "expect": {
+        "route": "sms_schedule_change",
+        "replies": true
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 0
+  }
+}

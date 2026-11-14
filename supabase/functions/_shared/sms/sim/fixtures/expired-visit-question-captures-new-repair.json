@@ -1,0 +1,40 @@
+{
+  "id": "expired-visit-question-captures-new-repair",
+  "title": "An expired visit question does not capture a new repair report",
+  "origin": "code review (routing investigation)",
+  "status": "known_bug",
+  "currentBehavior": "The visit question is never cleared after its time passes. Ulo answers 'That visit proposal is no longer current...' and no repair is opened.",
+  "setup": {
+    "ticket": {},
+    "intakeState": {
+      "awaiting_schedule_confirmation": {
+        "ticketId": "{{TICKET_ID}}",
+        "vendorId": "{{VENDOR_ID}}",
+        "vendorConversationId": null,
+        "windowText": "Mon 2-4pm",
+        "scheduledAt": "2026-11-09T19:00:00.000Z",
+        "kind": "initial"
+      }
+    }
+  },
+  "turns": [
+    {
+      "from": "resident",
+      "body": "Hi, separate issue: the bathroom ceiling light stopped working.",
+      "minutesLater": 60,
+      "expect": {
+        "routeNot": [
+          "sms_schedule_change",
+          "tenant_schedule_confirm"
+        ],
+        "replies": true,
+        "replyNotMatches": [
+          "no longer current"
+        ]
+      }
+    }
+  ],
+  "expectEnd": {
+    "ticketsCreated": 1
+  }
+}
