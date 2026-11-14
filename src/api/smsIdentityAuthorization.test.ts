@@ -46,11 +46,11 @@ describe('SMS identity session authorization', () => {
     vi.stubEnv('VITE_ADMIN_REASSIGN_SECRET', '')
     expect(await syncSmsIdentity(params)).toBe(true)
   })
-  it('requires sessions and temporary bridge headers for neighboring onboarding calls', async () => {
+  it('uses session-only headers for neighboring onboarding calls even with compatibility enabled', async () => {
     await ensureLandlordSmsOnboarding()
     await registerUnitSms({ unitLabel: '1' })
     expect(mocks.getSession).toHaveBeenCalledTimes(2)
-    for (const [, init] of mocks.fetch.mock.calls) expect(init.headers).toEqual({ Authorization: 'Bearer synthetic-session', apikey: 'unit-anon-key', 'Content-Type': 'application/json', 'x-admin-reassign-secret': 'unit-legacy-value' })
+    for (const [, init] of mocks.fetch.mock.calls) expect(init.headers).toEqual({ Authorization: 'Bearer synthetic-session', apikey: 'unit-anon-key', 'Content-Type': 'application/json' })
   })
 })
 
