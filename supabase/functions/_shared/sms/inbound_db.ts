@@ -411,7 +411,6 @@ export async function resolveSharedLineInboundAccount(
           normalizeSmsPhone(phone) === normalizeSmsPhone(input.from)
         )
       })),
-      ...(input.homeCheckLandlordId ? [input.homeCheckLandlordId] : []),
     ].filter((id) => landlordMayUseSharedSmsLine(id))
     const ids = new Set(allLinks.filter((id) => !disconnected.has(id)))
     const linked = [...ids]
