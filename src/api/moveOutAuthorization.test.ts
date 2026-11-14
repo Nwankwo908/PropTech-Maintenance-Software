@@ -10,7 +10,7 @@ const calls=[()=>markUnitVacant({unitId:'11111111-1111-4111-8111-111111111111'})
 beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('VITE_SUPABASE_URL','https://qa.invalid');vi.stubEnv('VITE_SUPABASE_ANON_KEY','unit-anon');vi.stubEnv('VITE_ADMIN_REASSIGN_SECRET','unit-legacy');vi.stubEnv('VITE_F08_LEGACY_ADMIN_COMPAT','true');mocks.getSession.mockResolvedValue({data:{session:{access_token:'synthetic-session',expires_at:Date.now()/1000+3600}},error:null});mocks.fetch.mockImplementation(async()=>Response.json({ok:true,unitId:'synthetic-unit',residentId:null}))})
 afterEach(()=>vi.unstubAllEnvs())
 for(const [index,invoke] of calls.entries()){
- it(`move-out transport ${index} uses session and correct bridge state`,async()=>{await invoke();expect(mocks.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-session');expect(mocks.fetch.mock.calls[0][1].headers['x-admin-reassign-secret']).toBe(index===2?undefined:'unit-legacy')})
+ it(`move-out transport ${index} uses session-only headers even with compatibility enabled`,async()=>{await invoke();expect(mocks.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-session');expect(mocks.fetch.mock.calls[0][1].headers['x-admin-reassign-secret']).toBeUndefined()})
  it(`move-out transport ${index} missing session makes no request`,async()=>{mocks.getSession.mockResolvedValue({data:{session:null},error:null});expect(await invoke()).toMatchObject({ok:false,error:ADMIN_SESSION_REQUIRED});expect(mocks.fetch).not.toHaveBeenCalled()})
  it(`move-out transport ${index} server 401 asks sign in again`,async()=>{mocks.fetch.mockResolvedValue(Response.json({error:'Expired session'},{status:401}));expect(await invoke()).toMatchObject({ok:false,error:ADMIN_SESSION_REQUIRED})})
 }

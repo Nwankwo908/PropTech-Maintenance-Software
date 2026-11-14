@@ -46,7 +46,7 @@ async function postAdminFunction<T>(
     headers = sessionOnly
       // Activation is session-only, independent of the remaining legacy callers.
       ? await adminSessionInvokeHeaders(false)
-      : await adminSessionInvokeHeaders(true)
+      : await adminSessionInvokeHeaders(false)
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Please sign in again to continue.' }
   }
